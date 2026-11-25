@@ -873,6 +873,7 @@
         TextOnlyDrop,
         MemoryContextLeak,
         MalformedToolArgs,
+        TruncatedToolArguments,
         InvalidArgumentBatch,
         SlowStream,
         SlowRetry,
@@ -1080,6 +1081,28 @@
                         "{\"command\":\"ls -la\",\"timeout\":30",
                     )),
                     Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::TruncatedToolArguments if attempt == 1 => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        "truncated-fixture",
+                        "fixture_tool",
+                    )),
+                    Ok(stream_chunk_tool_args(0, STREAM_UNREPRESENTABLE_ARGUMENT)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::TruncatedToolArguments if attempt == 2 => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        "recovered-fixture",
+                        "fixture_tool",
+                    )),
+                    Ok(stream_chunk_tool_args(0, r#"{"value":"complete"}"#)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::TruncatedToolArguments => vec![
+                    Ok(stream_chunk_content("Recorded the complete fixture.")),
+                    Ok(stream_chunk_finish("stop")),
                 ],
                 StreamRetryScenario::InvalidArgumentBatch if attempt <= 2 => vec![
                     Ok(stream_chunk_tool_name(
@@ -1547,6 +1570,88 @@
         let parsed: Value = serde_json::from_str(&tc.function.arguments).expect("valid JSON");
         assert_eq!(parsed["command"], "ls -la");
         assert_eq!(parsed["timeout"], 30);
+    }
+
+    #[tokio::test]
+    async fn streaming_retries_truncated_arguments_before_running_the_tool() {
+        let executed = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&executed);
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "fixture_tool",
+            ToolSchema::new(
+                "fixture_tool",
+                "Record fixture input",
+                hermes_core::JsonSchema::new("object"),
+            ),
+            Arc::new(move |args| {
+                captured.lock().unwrap().push(args.clone());
+                Ok("Fixture input recorded".into())
+            }),
+        );
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            max_turns: 5,
+            truncated_tool_call_max_retries: 1,
+            invalid_tool_json_max_retries: 0,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(
+            StreamRetryScenario::TruncatedToolArguments,
+        ));
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&notices);
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone()).with_callbacks(
+            AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle" && message.starts_with("Truncated tool arguments") {
+                        captured.lock().unwrap().push(message.to_owned());
+                    }
+                })),
+                ..AgentCallbacks::default()
+            },
+        );
+
+        let result = agent
+            .run_stream(
+                vec![Message::user("Use the local fixture tool")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.finished_naturally && !result.interrupted);
+        assert_eq!(*provider.calls.lock().unwrap(), 3);
+        assert_eq!(
+            executed.lock().unwrap().as_slice(),
+            [serde_json::json!({"value": "complete"})]
+        );
+        assert_eq!(
+            notices.lock().unwrap().as_slice(),
+            ["Truncated tool arguments — retrying (1/1)"]
+        );
+        assert!(result.messages.iter().all(|row| {
+            row.tool_call_id.as_deref() != Some("truncated-fixture")
+                && row
+                    .tool_calls
+                    .iter()
+                    .flatten()
+                    .all(|call| call.id != "truncated-fixture")
+        }));
+        assert!(result.messages.iter().any(|row| {
+            row.tool_call_id.as_deref() == Some("recovered-fixture")
+                && row.content.as_deref() == Some("Fixture input recorded")
+        }));
+        assert_eq!(
+            result
+                .messages
+                .last()
+                .and_then(|row| row.content.as_deref()),
+            Some("Recorded the complete fixture.")
+        );
     }
 
     #[tokio::test]
