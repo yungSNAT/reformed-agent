@@ -95,23 +95,67 @@ fn returns_empty_todo_list(request: &Request) -> bool {
             .is_some_and(|result| result == json!({"todos": [], "total": 0}))
 }
 
+enum TurnScenario {
+    Gateway,
+    GatewayWithTool,
+    Dashboard,
+}
+
 #[tokio::test]
 async fn live_gateway_routes_complete_and_streamed_turns_to_the_configured_provider() {
-    exercise_gateway_turns(false).await;
+    exercise_gateway_turns(TurnScenario::Gateway).await;
 }
 
 #[tokio::test]
 async fn live_gateway_returns_tool_results_to_the_complete_and_streamed_provider() {
-    exercise_gateway_turns(true).await;
+    exercise_gateway_turns(TurnScenario::GatewayWithTool).await;
 }
 
-async fn exercise_gateway_turns(with_tool: bool) {
+#[tokio::test]
+async fn live_dashboard_enables_the_api_server_and_routes_a_loopback_turn() {
+    exercise_gateway_turns(TurnScenario::Dashboard).await;
+}
+
+#[tokio::test]
+async fn dashboard_refuses_a_nonlocal_host_before_writing_config() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    fs::create_dir(&home).unwrap();
+    let config = home.join("config.yaml");
+    let initial = "model: openai:gpt-4o-mini\n";
+    fs::write(&config, initial).unwrap();
+    let output = timeout(
+        Duration::from_secs(10),
+        support::isolated_hermes(sandbox.path())
+            .args(["dashboard", "--host", "192.0.2.1", "--no-open"])
+            .output(),
+    )
+    .await
+    .expect("dashboard refusal timed out")
+    .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("dashboard refused non-localhost bind without --insecure"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read_to_string(config).unwrap(), initial);
+}
+
+async fn exercise_gateway_turns(scenario: TurnScenario) {
+    let with_tool = matches!(scenario, TurnScenario::GatewayWithTool);
+    let via_dashboard = matches!(scenario, TurnScenario::Dashboard);
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(15))
         .build()
         .unwrap();
-    for streaming in [false, true] {
+    let streaming_modes: &[bool] = if via_dashboard {
+        &[false]
+    } else {
+        &[false, true]
+    };
+    for &streaming in streaming_modes {
         let provider = MockServer::start().await;
         if with_tool {
             Mock::given(method("POST"))
@@ -153,6 +197,13 @@ async fn exercise_gateway_turns(with_tool: bool) {
             let address = reservation.local_addr().unwrap();
             let base = format!("http://{address}");
             let token = format!("local-gateway-fixture-{}", address.port());
+            let enabled = !via_dashboard;
+            let saved_host = if via_dashboard {
+                "localhost"
+            } else {
+                "127.0.0.1"
+            };
+            let saved_port = if via_dashboard { 1 } else { address.port() };
             fs::write(
                 home.join("config.yaml"),
                 format!(
@@ -169,21 +220,31 @@ streaming:
   enabled: {streaming}
 platforms:
   api_server:
-    enabled: true
+    enabled: {enabled}
     token: {token}
-    host: 127.0.0.1
-    port: {}
+    host: {saved_host}
+    port: {saved_port}
     allowed_users: [fixture-client]
 "#,
                     provider.uri(),
-                    address.port(),
                 ),
             )
             .unwrap();
             let output = fs::File::create(&log).unwrap();
             let mut command = support::isolated_hermes(sandbox.path());
+            if via_dashboard {
+                command.args([
+                    "dashboard",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    &address.port().to_string(),
+                    "--no-open",
+                ]);
+            } else {
+                command.args(["gateway", "run"]);
+            }
             command
-                .args(["gateway", "run"])
                 .env("RUST_LOG", "error")
                 .env("HTTP_PROXY", "http://127.0.0.1:1")
                 .env("HTTPS_PROXY", "http://127.0.0.1:1")
@@ -218,6 +279,16 @@ platforms:
             })
             .await;
             if matches!(ready, Ok(true)) {
+                if via_dashboard {
+                    let disk: Value =
+                        serde_yaml::from_slice(&fs::read(home.join("config.yaml")).unwrap())
+                            .unwrap();
+                    let api = &disk["platforms"]["api_server"];
+                    assert_eq!(api["enabled"], true);
+                    assert_eq!(api["host"], "127.0.0.1");
+                    assert_eq!(api["port"], address.port());
+                    assert_eq!(api["allowed_users"], json!(["fixture-client"]));
+                }
                 break (child, base, token);
             }
             let transcript = fs::read_to_string(&log).unwrap_or_default();
