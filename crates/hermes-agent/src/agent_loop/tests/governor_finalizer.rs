@@ -1,4 +1,48 @@
 #[test]
+fn google_workspace_finaliser_checks_probe_evidence_before_accepting_the_answer() {
+    let request = Message::user("Summarise recent Gmail messages.");
+    let terminal_call = |id: &str, command: &str| {
+        Message::assistant_with_tool_calls(
+            None,
+            vec![ToolCall {
+                id: id.into(),
+                function: hermes_core::FunctionCall {
+                    name: "terminal".into(),
+                    arguments: json!({"command": command}).to_string(),
+                },
+                extra_content: None,
+            }],
+        )
+    };
+
+    let setup = "google-workspace/setup.py --check";
+    let blocked = format!(
+        "GOOGLE_WORKSPACE_USED: no\nGmail is blocked.\ncommand={setup}\nNot authenticated."
+    );
+    let mut setup_history = vec![request.clone()];
+    assert!(finalizer_google_workspace_requires_retry(&setup_history, &blocked, 0));
+    setup_history.push(terminal_call("fixture-setup", setup));
+    assert!(finalizer_google_workspace_requires_retry(&setup_history, &blocked, 0));
+    setup_history.push(Message::tool_result_with_name(
+        "fixture-setup",
+        "terminal",
+        "Not authenticated.",
+    ));
+    assert!(!finalizer_google_workspace_requires_retry(&setup_history, &blocked, 0));
+
+    let success = "GOOGLE_WORKSPACE_USED: yes\nGmail search and reading were successful.";
+    let mut read_history = vec![request];
+    assert!(finalizer_google_workspace_requires_retry(&read_history, success, 0));
+    read_history.push(terminal_call("fixture-read", "google_api.py gmail list"));
+    read_history.push(Message::tool_result_with_name(
+        "fixture-read",
+        "terminal",
+        r#"{"messages":[{"id":"fixture-message","subject":"Weekly summary"}]}"#,
+    ));
+    assert!(!finalizer_google_workspace_requires_retry(&read_history, success, 0));
+}
+
+#[test]
 fn memory_sync_keeps_the_words_of_an_acp_image_prompt() {
     let parts = json!([
         {"type": "text", "text": "What does this chart show?"},
