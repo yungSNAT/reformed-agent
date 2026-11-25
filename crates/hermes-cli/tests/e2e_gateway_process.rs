@@ -391,6 +391,110 @@ mod unix {
     }
 
     #[test]
+    fn gateway_cli_setup_saves_telegram_polling_or_webhook_settings() {
+        for (answers, polling, webhook) in [
+            ("\nfixture-room\n", true, None),
+            (
+                "no\nhttp://127.0.0.1:18090/fixture-hook\nfixture-room\n",
+                false,
+                Some("http://127.0.0.1:18090/fixture-hook"),
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let home = directory.path();
+            let assertion = isolated_gateway_cli(home, &["gateway", "setup"])
+                .write_stdin(format!("3\n\nfixture-telegram-token\n{answers}"))
+                .assert()
+                .success();
+            let output = assertion.get_output();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("Configuring telegram"), "{stdout}");
+            assert!(stdout.contains("Gateway setup complete."), "{stdout}");
+            assert!(!stdout.contains("fixture-telegram-token"));
+            assert!(!String::from_utf8_lossy(&output.stderr).contains("fixture-telegram-token"));
+            let config: hermes_config::GatewayConfig =
+                serde_yaml::from_str(&fs::read_to_string(home.join("config.yaml")).unwrap())
+                    .unwrap();
+            let telegram = &config.platforms["telegram"];
+            assert!(telegram.enabled);
+            assert_eq!(telegram.token.as_deref(), Some("fixture-telegram-token"));
+            assert_eq!(telegram.extra["polling"], polling);
+            assert_eq!(telegram.webhook_url.as_deref(), webhook);
+            assert_eq!(telegram.home_channel.as_deref(), Some("fixture-room"));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gateway_cli_setup_reconfigures_weixin_policies_after_qr_fallback() {
+        use serde_json::json;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let origin = server.uri();
+        Mock::given(method("GET"))
+            .and(path("/fixture-start"))
+            .and(query_param("bot_type", "3"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("fixture QR service down"))
+            .expect(4)
+            .mount(&server)
+            .await;
+        tokio::task::spawn_blocking(move || {
+            let directory = tempfile::tempdir().unwrap();
+            let home = directory.path();
+            let config_path = home.join("config.yaml");
+            fs::write(
+                &config_path,
+                format!(
+                    "platforms:\n  weixin:\n    enabled: true\n    base_url: {origin}\n    qr_start_endpoint: /fixture-start\n"
+                ),
+            )
+            .unwrap();
+            for (answers, dm_policy, group_policy, users, groups) in [
+                (
+                    "3\nfixture-a, , fixture-b\n3\nfixture-group\nfixture-room\n",
+                    "allowlist",
+                    "allowlist",
+                    json!(["fixture-a", "fixture-b"]),
+                    json!(["fixture-group"]),
+                ),
+                ("2\n2\n\n", "open", "open", json!([]), json!([])),
+                ("4\n\n\n", "disabled", "disabled", json!([]), json!([])),
+                ("\n\n\n", "pairing", "disabled", json!([]), json!([])),
+            ] {
+                let assertion = isolated_gateway_cli(home, &["gateway", "setup"])
+                    .env("WEIXIN_BASE_URL", &origin)
+                    .env("WEIXIN_ACCOUNT_ID", "fixture-weixin")
+                    .env("WEIXIN_TOKEN", "fixture-weixin-token")
+                    .write_stdin(format!("\n{answers}"))
+                    .assert()
+                    .success();
+                let output = assertion.get_output();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                assert!(stdout.contains("fixture QR service down"), "{stdout}");
+                assert!(stdout.contains("Gateway setup complete."), "{stdout}");
+                assert!(!stdout.contains("fixture-weixin-token"));
+                assert!(!String::from_utf8_lossy(&output.stderr).contains("fixture-weixin-token"));
+                let config: hermes_config::GatewayConfig =
+                    serde_yaml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+                let weixin = &config.platforms["weixin"];
+                assert!(weixin.enabled);
+                assert_eq!(weixin.token.as_deref(), Some("fixture-weixin-token"));
+                assert_eq!(weixin.home_channel.as_deref(), Some("fixture-room"));
+                assert_eq!(weixin.extra["account_id"], "fixture-weixin");
+                assert_eq!(weixin.extra["base_url"], origin);
+                assert_eq!(weixin.extra["dm_policy"], dm_policy);
+                assert_eq!(weixin.extra["group_policy"], group_policy);
+                assert_eq!(weixin.extra["allow_from"], users);
+                assert_eq!(weixin.extra["group_allow_from"], groups);
+            }
+        })
+        .await
+        .unwrap();
+        server.verify().await;
+    }
+
+    #[test]
     fn gateway_cli_setup_replaces_existing_wecom_callback_token() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
