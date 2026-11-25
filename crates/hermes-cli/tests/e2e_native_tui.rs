@@ -168,3 +168,49 @@ async fn native_tui_handles_pasted_commands_and_restores_the_terminal_on_interru
         .join("hermes/interactive.session.lock")
         .exists());
 }
+
+#[tokio::test]
+async fn native_tui_persists_timestamps_and_inserts_the_selected_question_answer() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let (mut child, mut terminal, initial_flags) = start_tui(sandbox.path());
+    read_until(&mut terminal, b"\x1b[?1049h").await;
+    terminal
+        .write_all(b"\x1b[200~/timestamps on\x1b[201~\r")
+        .unwrap();
+    read_until(&mut terminal, b"Timestamps visible").await;
+    let config = std::fs::read(sandbox.path().join("hermes/config.yaml")).unwrap();
+    let config: serde_json::Value = serde_yaml::from_slice(&config).unwrap();
+    assert_eq!(config["display"]["timestamps"], true);
+
+    terminal.write_all(b"\x1b[200~/ask\x1b[201~\r").unwrap();
+    read_until(&mut terminal, b"Usage:").await;
+    terminal
+        .write_all(b"\x1b[200~/question Which fixture? | Alpha fixture | Beta fixture\x1b[201~\r")
+        .unwrap();
+    read_until(&mut terminal, b"Interactive Question").await;
+    terminal.write_all(b"\x1b[B\r").unwrap();
+    let draft = sandbox.path().join("hermes/composer-drafts.json");
+    timeout(Duration::from_secs(12), async {
+        loop {
+            if let Ok(bytes) = std::fs::read(&draft) {
+                let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                if value["drafts"][0]["text"] == "Which fixture?\nAnswer: Beta fixture" {
+                    break;
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("selected answer is persisted in the composer draft");
+
+    // Leave the answer in the composer instead of submitting a provider turn.
+    terminal.write_all(b"\x03").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("TUI shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+}

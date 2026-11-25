@@ -7,6 +7,62 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 mod isolated;
 use isolated::isolated_hermes;
 
+#[tokio::test]
+async fn auth_matrix_reports_presence_and_source_without_exposing_values() {
+    let sandbox = tempfile::tempdir().expect("temporary CLI home");
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir(&home).expect("fixture CLI home");
+    let fixture = "plain-local-matrix-fixture";
+    std::fs::write(
+        home.join("config.yaml"),
+        format!(
+            "platforms:\n  slack:\n    enabled: true\n    token: {fixture}\n  telegram:\n    enabled: false\n"
+        ),
+    )
+    .expect("write fixture configuration");
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes(sandbox.path())
+            .env("OPENAI_API_KEY", fixture)
+            .env("TELEGRAM_BOT_TOKEN", fixture)
+            .env("HTTP_PROXY", "http://127.0.0.1:1")
+            .env("HTTPS_PROXY", "http://127.0.0.1:1")
+            .args(["auth", "status", "all"])
+            .output(),
+    )
+    .await
+    .expect("auth matrix timeout")
+    .expect("run auth matrix");
+    assert!(
+        output.status.success(),
+        "auth matrix exited with {}",
+        output.status
+    );
+    let stdout = String::from_utf8(output.stdout).expect("auth matrix output");
+    assert!(stdout.contains("Auth status matrix:"));
+    assert!(
+        !stdout.contains(fixture),
+        "matrix displayed the fixture value"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains(fixture),
+        "matrix diagnostics displayed the fixture value"
+    );
+    for (provider, fields) in [
+        ("openai", "present=true source=env"),
+        ("telegram", "present=true source=env enabled=false"),
+        ("slack", "present=true source=config enabled=true"),
+        ("discord", "present=false source=none enabled=false"),
+    ] {
+        let row = stdout
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("- "))
+            .find(|line| line.split_whitespace().next() == Some(provider))
+            .unwrap_or_else(|| panic!("matrix is missing {provider}"));
+        assert!(row.contains(fields), "unexpected {provider} matrix row");
+    }
+}
+
 async fn platform_auth(sandbox: &std::path::Path, action: &str, platform: &str) -> String {
     let output = tokio::time::timeout(
         Duration::from_secs(15),

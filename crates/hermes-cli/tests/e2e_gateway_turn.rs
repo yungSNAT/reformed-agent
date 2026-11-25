@@ -10,11 +10,26 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use wiremock::matchers::{body_partial_json, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 const REPLY: &str = "1234567890123456789é follows the SSE boundary.";
 
-fn provider_response(streaming: bool) -> ResponseTemplate {
+fn provider_response(streaming: bool, call_tool: bool) -> ResponseTemplate {
+    let (mut reply, finish_reason) = if call_tool {
+        (
+            json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "fixture-list",
+                    "type": "function",
+                    "function": {"name": "todo", "arguments": "{\"action\":\"list\"}"}
+                }]
+            }),
+            "tool_calls",
+        )
+    } else {
+        (json!({"role": "assistant", "content": REPLY}), "stop")
+    };
     if !streaming {
         return ResponseTemplate::new(200).set_body_json(json!({
             "id": "fixture-chat",
@@ -23,25 +38,28 @@ fn provider_response(streaming: bool) -> ResponseTemplate {
             "model": "deterministic",
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": REPLY},
-                "finish_reason": "stop"
+                "message": reply,
+                "finish_reason": finish_reason
             }],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
         }));
+    }
+    if call_tool {
+        reply["tool_calls"][0]["index"] = json!(0);
     }
     let start = json!({
         "id": "fixture-stream",
         "object": "chat.completion.chunk",
         "created": 0,
         "model": "deterministic",
-        "choices": [{"index": 0, "delta": {"role": "assistant", "content": REPLY}}]
+        "choices": [{"index": 0, "delta": reply}]
     });
     let stop = json!({
         "id": "fixture-stream",
         "object": "chat.completion.chunk",
         "created": 0,
         "model": "deterministic",
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]
     });
     ResponseTemplate::new(200).set_body_raw(
         format!("data: {start}\n\ndata: {stop}\n\ndata: [DONE]\n\n"),
@@ -49,8 +67,45 @@ fn provider_response(streaming: bool) -> ResponseTemplate {
     )
 }
 
+fn requests_todo_schema(request: &Request) -> bool {
+    let Ok(body) = request.body_json::<Value>() else {
+        return false;
+    };
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .is_some_and(|last| last["role"] == "user")
+        && body["tools"]
+            .as_array()
+            .is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "todo"))
+}
+
+fn returns_empty_todo_list(request: &Request) -> bool {
+    let Ok(body) = request.body_json::<Value>() else {
+        return false;
+    };
+    let Some(last) = body["messages"].as_array().and_then(|items| items.last()) else {
+        return false;
+    };
+    last["role"] == "tool"
+        && last["tool_call_id"] == "fixture-list"
+        && last["content"]
+            .as_str()
+            .and_then(|content| serde_json::from_str::<Value>(content).ok())
+            .is_some_and(|result| result == json!({"todos": [], "total": 0}))
+}
+
 #[tokio::test]
 async fn live_gateway_routes_complete_and_streamed_turns_to_the_configured_provider() {
+    exercise_gateway_turns(false).await;
+}
+
+#[tokio::test]
+async fn live_gateway_returns_tool_results_to_the_complete_and_streamed_provider() {
+    exercise_gateway_turns(true).await;
+}
+
+async fn exercise_gateway_turns(with_tool: bool) {
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(15))
@@ -58,10 +113,26 @@ async fn live_gateway_routes_complete_and_streamed_turns_to_the_configured_provi
         .unwrap();
     for streaming in [false, true] {
         let provider = MockServer::start().await;
-        Mock::given(method("POST"))
+        if with_tool {
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .and(body_partial_json(json!({"model": "deterministic"})))
+                .and(requests_todo_schema)
+                .respond_with(provider_response(streaming, true))
+                .expect(1)
+                .mount(&provider)
+                .await;
+        }
+        let reply_mock = Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .and(body_partial_json(json!({"model": "deterministic"})))
-            .respond_with(provider_response(streaming))
+            .and(body_partial_json(json!({"model": "deterministic"})));
+        let reply_mock = if with_tool {
+            reply_mock.and(returns_empty_todo_list)
+        } else {
+            reply_mock
+        };
+        reply_mock
+            .respond_with(provider_response(streaming, false))
             .expect(1)
             .mount(&provider)
             .await;
@@ -70,6 +141,11 @@ async fn live_gateway_routes_complete_and_streamed_turns_to_the_configured_provi
         let home = sandbox.path().join("hermes");
         fs::create_dir(&home).unwrap();
         let log = home.join("gateway-test.log");
+        let toolsets = if with_tool {
+            "platform_toolsets:\n  api_server: [todo]\n"
+        } else {
+            ""
+        };
         let mut attempt = 0;
         let (mut child, base, token) = loop {
             attempt += 1;
@@ -82,7 +158,7 @@ async fn live_gateway_routes_complete_and_streamed_turns_to_the_configured_provi
                 format!(
                     r#"model: local-test:deterministic
 tools: []
-llm_providers:
+{toolsets}llm_providers:
   local-test:
     base_url: {}
     api_key: local-provider-fixture
@@ -220,10 +296,10 @@ platforms:
         assert!(!home.join("gateway.pid").exists());
         provider.verify().await;
         let received = provider.received_requests().await.unwrap();
-        let [request] = received.as_slice() else {
-            panic!("expected one provider request");
-        };
-        let sent: Value = serde_json::from_slice(&request.body).unwrap();
-        assert_eq!(sent["stream"].as_bool().unwrap_or(false), streaming);
+        assert_eq!(received.len(), if with_tool { 2 } else { 1 });
+        for request in &received {
+            let sent: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(sent["stream"].as_bool().unwrap_or(false), streaming);
+        }
     }
 }
