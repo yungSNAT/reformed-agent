@@ -1104,6 +1104,7 @@
     }
 
     include!("tests/anthropic_per_request_pricing.rs");
+    include!("tests/session_spend_cap.rs");
     include!("tests/runtime_provider_resolution.rs");
 
     include!("tests/governor_finalizer.rs");
