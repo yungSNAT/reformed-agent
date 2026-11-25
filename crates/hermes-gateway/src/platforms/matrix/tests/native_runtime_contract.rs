@@ -275,6 +275,57 @@ async fn native_runtime_reuses_whoami_device_and_reconciles_generated_keys() {
 }
 
 #[tokio::test]
+async fn native_to_device_delivers_an_event_and_reports_homeserver_failures() {
+    let server = MockServer::start().await;
+    let mut adapter = adapter_for_matrix_fixture(&server);
+    adapter.native_decrypt = Some(MatrixNativeDecryptConfig {
+        device_id_override: Some("FIXTUREDEVICE".into()),
+    });
+    let runtime = adapter.ensure_native_runtime().await.unwrap().unwrap();
+
+    for (transaction, status, response) in [
+        ("fixture-ready", 200, json!({})),
+        (
+            "fixture-retry",
+            503,
+            json!({"errcode": "M_UNKNOWN", "error": "fixture homeserver unavailable"}),
+        ),
+    ] {
+        let messages = json!({"@fixture:test": {"FIXTUREDEVICE": {}}});
+        let request: ToDeviceRequest = serde_json::from_value(json!({
+            "event_type": "m.dummy",
+            "txn_id": transaction,
+            "messages": messages,
+        }))
+        .unwrap();
+        Mock::given(method("PUT"))
+            .and(path(format!(
+                "/_matrix/client/v3/sendToDevice/m.dummy/{transaction}"
+            )))
+            .and(header("Authorization", "Bearer matrix-fixture"))
+            .and(body_partial_json(json!({"messages": messages})))
+            .respond_with(ResponseTemplate::new(status).set_body_json(response))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let outcome = adapter
+            .send_native_to_device(&runtime, &request.txn_id, &request)
+            .await;
+        if status == 200 {
+            outcome.unwrap();
+        } else {
+            assert!(matches!(
+                outcome,
+                Err(GatewayError::ConnectionFailed(message))
+                    if message.contains("sendToDevice response parse failed")
+                        && message.contains("fixture homeserver unavailable")
+            ));
+        }
+    }
+}
+
+#[tokio::test]
 async fn matrix_whoami_reports_http_invalid_json_and_missing_device() {
     for (response, detail) in [
         (
