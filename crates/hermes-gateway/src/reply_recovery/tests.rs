@@ -102,6 +102,10 @@ fn the_host_boot_time_is_known_where_records_are_held_for_live_writers() {
         up < std::time::Duration::from_secs(10 * 365 * 24 * 3600),
         "uptime {up:?} is not a boot time"
     );
+    // A boot time after this process started would make every live writer's
+    // record look older than the boot, so it would be sent twice.
+    let started = writer_started(&record("me", &this_process())).expect("start stamp");
+    assert!(booted <= started, "booted {booted:?} after {started:?}");
 }
 
 #[test]
