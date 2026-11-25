@@ -7,6 +7,116 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 mod isolated;
 use isolated::isolated_hermes;
 
+// OAuth discovery uses the Unix home directory, which the fixture sets via HOME.
+#[cfg(unix)]
+#[tokio::test]
+async fn oneshot_verifies_and_retries_oauth_rejection_once_without_opening_login() {
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::matchers::{body_partial_json, header};
+
+    let prompt = "Read the fixture";
+    let reply = "Reply after the verified retry.";
+    let fixture_key = "fixture-oneshot-key";
+    for retry_succeeds in [true, false] {
+        let provider = MockServer::start().await;
+        let attempts = AtomicUsize::new(0);
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", format!("Bearer {fixture_key}")))
+            .and(body_partial_json(json!({"model": "gpt-4o-mini"})))
+            .respond_with(move |_: &wiremock::Request| {
+                let attempt = attempts.fetch_add(1, Ordering::Relaxed);
+                if attempt == 0 || !retry_succeeds {
+                    return ResponseTemplate::new(401).set_body_json(json!({
+                        "error": {"message": "fixture OAuth token rejected", "type": "authentication_error"}
+                    }));
+                }
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "id": "fixture-retry",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "gpt-4o-mini",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": reply},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                }))
+            })
+            .expect(2)
+            .mount(&provider)
+            .await;
+
+        let sandbox = tempfile::tempdir().expect("temporary CLI home");
+        let home = sandbox.path().join("hermes");
+        std::fs::create_dir(&home).expect("create fixture home");
+        let endpoint = format!("{}/v1", provider.uri());
+        std::fs::write(
+            home.join("config.yaml"),
+            format!(
+                "model: openai:gpt-4o-mini\nllm_providers:\n  openai:\n    base_url: {endpoint}\n    api_mode: chat_completions\n    discover_models: false\n    models:\n      gpt-4o-mini: {{}}\n"
+            ),
+        )
+        .expect("write fixture provider");
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            isolated_hermes(sandbox.path())
+                .env("OPENAI_BASE_URL", &endpoint)
+                .env("OPENAI_API_KEY", fixture_key)
+                .env("HTTP_PROXY", "http://127.0.0.1:1")
+                .env("HTTPS_PROXY", "http://127.0.0.1:1")
+                .env("NO_PROXY", "127.0.0.1")
+                .env("HERMES_QUERY_DISABLE_TOOLS", "1")
+                .args(["--provider", "openai", "--oneshot", prompt])
+                .output(),
+        )
+        .await
+        .expect("one-shot retry timed out")
+        .expect("run one-shot CLI");
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 stdout");
+        let stderr = String::from_utf8(output.stderr).expect("UTF-8 stderr");
+        assert_eq!(
+            output.status.success(),
+            retry_succeeds,
+            "{stdout}\n{stderr}"
+        );
+        assert!(
+            stdout.contains("Auth verify: provider='openai', status=unverified"),
+            "{stdout}\n{stderr}"
+        );
+        assert_eq!(stderr.matches("and retrying once").count(), 1, "{stderr}");
+        assert!(!stdout.contains(fixture_key) && !stderr.contains(fixture_key));
+        assert!(!stderr.contains("launching `hermes-ultra auth login"));
+        let attempts: Vec<_> = provider
+            .received_requests()
+            .await
+            .expect("recorded fixture requests")
+            .into_iter()
+            .filter(|request| request.url.path() == "/v1/chat/completions")
+            .collect();
+        assert_eq!(attempts.len(), 2, "{stdout}\n{stderr}");
+        for request in attempts {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).expect("chat body");
+            assert!(body["messages"]
+                .as_array()
+                .expect("chat messages")
+                .iter()
+                .any(|message| message["role"] == "user" && message["content"] == prompt));
+        }
+        if retry_succeeds {
+            assert!(stdout.lines().any(|line| line == reply), "{stdout}");
+        } else {
+            assert!(
+                stderr.contains("not attached to an interactive terminal"),
+                "{stderr}"
+            );
+            assert!(stderr.contains("fixture OAuth token rejected"), "{stderr}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn oauth_status_reports_offline_provider_metadata_and_masks_fixture_tokens() {
     use serde_json::json;
