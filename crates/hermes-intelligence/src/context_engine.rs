@@ -526,6 +526,43 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn compression_summarises_mixed_content_and_preserves_the_recent_turn() {
+        let engine = DefaultContextEngine::default().with_keep_ratio(0.1);
+        let long_outcome = "é".repeat(200);
+        let messages = [
+            json!({"role": "user", "content": "Review  the fixture"}),
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "Review"},
+                {"type": "image_url", "image_url": {"url": "fixture-image"}},
+                {"type": "text", "text": "the\nfixture"}
+            ]}),
+            json!({"role": "assistant", "content": [
+                {"type": "text", "text": "Use the local index."},
+                {"type": "text", "text": "Follow-up detail."}
+            ]}),
+            json!({"role": "tool", "content": long_outcome}),
+            json!({"role": "tool", "content": [{"type": "image_url"}]}),
+            json!({"role": "system", "content": "Uncategorised fixture"}),
+            json!({"role": "user", "content": "Recent question"}),
+            json!({"role": "assistant", "content": "Recent answer"}),
+        ];
+
+        let compressed = engine.compress(&messages, 1).await.unwrap();
+        assert_eq!(compressed[0]["role"], "system");
+        let summary = compressed[0]["content"].as_str().unwrap();
+        assert!(summary.contains("6 earlier messages"));
+        assert!(summary.contains("2 messages retained"));
+        assert!(summary.contains("User goals:\n- Review the fixture"));
+        assert_eq!(summary.matches("Review the fixture").count(), 1);
+        assert!(summary.contains("Assistant trajectory:\n- Use the local index."));
+        assert!(!summary.contains("Follow-up detail"));
+        assert!(summary.ends_with(&format!("Tool outcomes:\n- {}...", "é".repeat(180))));
+        assert!(!summary.contains("fixture-image"));
+        assert!(!summary.contains("Uncategorised fixture"));
+        assert_eq!(compressed[1..], messages[6..]);
+    }
+
     fn make_messages(count: usize) -> Vec<Value> {
         (0..count)
             .map(|i| {
