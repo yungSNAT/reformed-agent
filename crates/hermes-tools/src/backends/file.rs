@@ -14,16 +14,16 @@ use hermes_core::ToolError;
 
 /// Real file patch backend using fuzzy string matching.
 ///
-/// Implements a 9-strategy matching chain (ported from Python `fuzzy_match.py`):
+/// Implements the effective matching order from Python `fuzzy_match.py`.
+/// Line trimming already handles indentation-only and boundary-only differences.
+///
 /// 1. Exact match
 /// 2. Line-trimmed (strip leading/trailing whitespace per line)
 /// 3. Whitespace normalized (collapse multiple spaces/tabs)
-/// 4. Indentation flexible (ignore indentation differences)
-/// 5. Escape normalized (convert \\n literals to newlines)
-/// 6. Unicode normalized (smart punctuation aliases)
-/// 7. Trimmed boundary (trim first/last line only)
-/// 8. Block anchor (match first+last lines, similarity for middle)
-/// 9. Context-aware (every non-blank line at least 0.80 similar)
+/// 4. Escape normalized (convert \\n literals to newlines)
+/// 5. Unicode normalized (smart punctuation aliases)
+/// 6. Block anchor (match first+last lines, similarity for middle)
+/// 7. Context-aware (every non-blank line at least 0.80 similar)
 pub struct LocalPatchBackend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,16 +68,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 4: Indentation flexible
-        if let Some((start, end)) = Self::strategy_indentation_flexible(haystack, needle) {
-            return Some(FuzzyMatch {
-                start,
-                end,
-                strategy: "indentation_flexible",
-            });
-        }
-
-        // Strategy 5: Escape normalized
+        // Strategy 4: Escape normalized
         if let Some((start, end)) = Self::strategy_escape_normalized(haystack, needle) {
             return Some(FuzzyMatch {
                 start,
@@ -86,7 +77,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 6: Unicode normalized
+        // Strategy 5: Unicode normalized
         if let Some((start, end)) = Self::strategy_unicode_normalized(haystack, needle) {
             return Some(FuzzyMatch {
                 start,
@@ -95,16 +86,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 7: Trimmed boundary
-        if let Some((start, end)) = Self::strategy_trimmed_boundary(haystack, needle) {
-            return Some(FuzzyMatch {
-                start,
-                end,
-                strategy: "trimmed_boundary",
-            });
-        }
-
-        // Strategy 8: Block anchor
+        // Strategy 6: Block anchor
         if let Some((start, end)) = Self::strategy_block_anchor(haystack, needle) {
             return Some(FuzzyMatch {
                 start,
@@ -113,7 +95,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 9: Context-aware
+        // Strategy 7: Context-aware
         Self::strategy_context_aware(haystack, needle).map(|(start, end)| FuzzyMatch {
             start,
             end,
@@ -163,36 +145,7 @@ impl LocalPatchBackend {
         None
     }
 
-    /// Strategy 4: Ignore indentation differences entirely.
-    fn strategy_indentation_flexible(haystack: &str, needle: &str) -> Option<(usize, usize)> {
-        let needle_lines: Vec<&str> = needle.lines().map(|l| l.trim_start()).collect();
-        let haystack_lines: Vec<&str> = haystack.lines().collect();
-
-        if needle_lines.is_empty() {
-            return None;
-        }
-
-        for i in 0..haystack_lines.len().saturating_sub(needle_lines.len() - 1) {
-            let mut matches = true;
-            for (j, nl) in needle_lines.iter().enumerate() {
-                if i + j >= haystack_lines.len() || haystack_lines[i + j].trim_start() != *nl {
-                    matches = false;
-                    break;
-                }
-            }
-            if matches {
-                return Some(Self::line_positions(
-                    haystack,
-                    &haystack_lines,
-                    i,
-                    i + needle_lines.len(),
-                ));
-            }
-        }
-        None
-    }
-
-    /// Strategy 5: Convert escape sequences to actual characters.
+    /// Strategy 4: Convert escape sequences to actual characters.
     fn strategy_escape_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
         let unescaped = needle
             .replace("\\n", "\n")
@@ -256,41 +209,7 @@ impl LocalPatchBackend {
         Some((spans[start_char].0, spans[end_char - 1].1))
     }
 
-    /// Strategy 6: Trim whitespace from first and last lines only.
-    fn strategy_trimmed_boundary(haystack: &str, needle: &str) -> Option<(usize, usize)> {
-        let mut needle_lines: Vec<String> = needle.lines().map(|l| l.to_string()).collect();
-        if needle_lines.is_empty() {
-            return None;
-        }
-
-        needle_lines[0] = needle_lines[0].trim().to_string();
-        if needle_lines.len() > 1 {
-            let last = needle_lines.len() - 1;
-            needle_lines[last] = needle_lines[last].trim().to_string();
-        }
-
-        let haystack_lines: Vec<&str> = haystack.lines().collect();
-        let n = needle_lines.len();
-
-        for i in 0..haystack_lines.len().saturating_sub(n - 1) {
-            let mut check_lines: Vec<String> = haystack_lines[i..i + n]
-                .iter()
-                .map(|l| l.to_string())
-                .collect();
-            check_lines[0] = check_lines[0].trim().to_string();
-            if check_lines.len() > 1 {
-                let last = check_lines.len() - 1;
-                check_lines[last] = check_lines[last].trim().to_string();
-            }
-
-            if check_lines == needle_lines {
-                return Some(Self::line_positions(haystack, &haystack_lines, i, i + n));
-            }
-        }
-        None
-    }
-
-    /// Strategy 7: Match by anchoring on first and last lines.
+    /// Strategy 6: Match by anchoring on first and last lines.
     fn strategy_block_anchor(haystack: &str, needle: &str) -> Option<(usize, usize)> {
         let needle_lines: Vec<&str> = needle.lines().collect();
         if needle_lines.len() < 2 {
@@ -330,7 +249,7 @@ impl LocalPatchBackend {
         None
     }
 
-    /// Strategy 9 (last resort): the first and last lines, and every other
+    /// Strategy 7 (last resort): the first and last lines, and every other
     /// non-blank line, must each be at least 0.80 similar, as upstream requires.
     fn strategy_context_aware(haystack: &str, needle: &str) -> Option<(usize, usize)> {
         let needle_lines: Vec<&str> = needle.lines().collect();
