@@ -1481,3 +1481,4 @@ async fn runs_endpoints_require_bearer_auth_when_configured() {
 }
 
 include!("job_contract_tests.rs");
+include!("run_event_contract_tests.rs");
