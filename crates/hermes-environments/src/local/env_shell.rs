@@ -824,3 +824,28 @@ fn last_top_level_chain_operator(line: &str, stop: usize) -> Option<ChainOperato
     }
     last
 }
+
+#[cfg(all(test, unix))]
+mod login_wrapper_size_tests {
+    use super::*;
+
+    #[test]
+    fn login_wrapper_holds_the_command_once() {
+        let wrapped = with_login_profile_sources("echo marker-7f3a", &[], true, &[], None);
+        assert_eq!(wrapped.matches("marker-7f3a").count(), 1, "{wrapped}");
+    }
+
+    /// Linux caps one argument at 128 KiB. With a copy of the command for
+    /// each login shell branch (2 or 3), a 70,000-character command passed it.
+    #[tokio::test]
+    async fn a_70000_character_command_runs_through_the_login_wrapper() {
+        let command = format!("x={}; echo ${{#x}}", "a".repeat(70_000));
+        let backend = LocalBackend::new(30, 1_048_576);
+        let output = backend
+            .execute_command(&command, None, None, false, false)
+            .await
+            .unwrap();
+        assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+        assert_eq!(output.stdout.trim(), "70000");
+    }
+}
