@@ -488,7 +488,7 @@ if ($MyInvocation.InvocationName -ne '.') {
                     ForEach-Object { if ($_ -match '^GitVersion:\s*v?(\d+)\.') { [int]$Matches[1] } } |
                     Select-Object -First 1
                 if ($null -ne $cosignMajor -and $cosignMajor -lt 3) {
-                    throw "Refusing to install: cosign $cosignMajor could not verify SHA256SUMS; releases after v0.22.0 are signed with cosign 3, so install cosign 3.0 or later and retry."
+                    [Console]::Error.WriteLine("cosign $cosignMajor is older than the cosign 3 that signs current releases; update cosign to 3.0 or later and retry before treating this as a bad signature.")
                 }
                 throw "Refusing to install: SHA256SUMS is not signed by $Repo's release workflow for $resolvedVersion."
             }

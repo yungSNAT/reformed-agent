@@ -51,8 +51,8 @@ The repository copy of the formula is [`packaging/homebrew/hermes-agent.rb`](./p
 Before unpacking a release asset, both `install.sh` and [`scripts/install.ps1`](./scripts/install.ps1)
 verify it against the release's `SHA256SUMS` and, when `cosign` is on `PATH`, verify `SHA256SUMS`
 against its signature from this repository's release workflow for that tag. Releases after
-v0.22.0 are signed with cosign 3, so verifying them needs cosign 3.0 or later, and each of
-their archives has its own `<archive>.sigstore.json` bundle for `cosign verify-blob --bundle`. Set
+v0.22.0 are signed with cosign 3: verify them with cosign 3.0 or later, and use each
+archive's own `<archive>.sigstore.json` bundle with `cosign verify-blob --bundle`. Set
 `HERMES_REQUIRE_SIGNATURE=true` to refuse any install that cannot be verified that way.
 Both installers install `hermes-agent-ultra` and `hermes-ultra`, leaving any existing
 `hermes` command untouched.

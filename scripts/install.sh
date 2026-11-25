@@ -249,9 +249,9 @@ verify_release_asset() {
       "${sums}" >"${TMP_DIR}/cosign.log" 2>&1; then
       cat "${TMP_DIR}/cosign.log" >&2
       local cosign_major
-      cosign_major="$(cosign version 2>/dev/null | sed -n 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\)\..*/\1/p' | head -n 1)"
+      cosign_major="$(cosign version 2>/dev/null | sed -n 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\)\..*/\1/p' | head -n 1 || true)"
       if [[ -n "${cosign_major}" && "${cosign_major}" -lt 3 ]]; then
-        refuse_install "cosign ${cosign_major} could not verify SHA256SUMS; releases after v0.22.0 are signed with cosign 3, so install cosign 3.0 or later and retry."
+        echo "cosign ${cosign_major} is older than the cosign 3 that signs current releases; update cosign to 3.0 or later and retry before treating this as a bad signature." >&2
       fi
       refuse_install "SHA256SUMS is not signed by ${REPO}'s release workflow for ${VERSION}."
     fi
