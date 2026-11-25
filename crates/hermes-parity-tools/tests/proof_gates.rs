@@ -584,3 +584,68 @@ fn gpar_closure_check_exits_for_pending_work_without_writing_reports() {
         assert!(!parity.join("gpar-01-04-proof.md").exists());
     }
 }
+
+#[test]
+fn gpar_closure_reports_totals_for_only_scoped_tickets() {
+    let root = tempfile::tempdir().unwrap();
+    let parity = root.path().join("docs/parity");
+    fs::create_dir_all(&parity).unwrap();
+    let queue = parity.join("upstream-missing-queue.json");
+    let invoke = || {
+        parity_tool(root.path(), "generate-gpar-01-04-proof")
+            .output()
+            .unwrap()
+    };
+    fs::write(
+        &queue,
+        json!({"commits": [
+            {"target_ticket": 20, "disposition": "ported"},
+            {"target_ticket": "21", "disposition": "superseded"},
+            {"target_ticket": 22.9},
+            {"target_ticket": false},
+            {"target_ticket": 24},
+            {}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    assert_exit(invoke(), 0, "render scoped closure proof");
+    let report_path = parity.join("gpar-01-04-proof.json");
+    let report = fs::read(&report_path).unwrap();
+    let proof: Value = serde_json::from_slice(&report).unwrap();
+    assert_eq!(proof["scope"]["tickets"], json!([20, 21, 22, 23]));
+    assert_eq!(
+        proof["summary"],
+        json!({
+            "total_commits": 3, "by_disposition": {"pending": 1, "ported": 1, "superseded": 1},
+            "total_pending": 1, "pass": false
+        })
+    );
+    assert_eq!(
+        proof["ticket_breakdown"]["21"]["by_disposition"]["superseded"],
+        1
+    );
+    assert_eq!(proof["ticket_breakdown"]["22"]["pending"], 1);
+    assert_eq!(proof["ticket_breakdown"]["23"]["total"], 0);
+    let markdown = fs::read_to_string(parity.join("gpar-01-04-proof.md")).unwrap();
+    assert!(markdown.contains("- Gate: `FAIL`"));
+    assert!(markdown.contains("| #22 | GPAR-03 UX parity | 1 | 1 | 0 | 0 |"));
+
+    for (input, diagnostic) in [
+        ("{}", "upstream queue commits must be an array"),
+        (
+            r#"{"commits":[false]}"#,
+            "upstream queue commit must be an object",
+        ),
+        (
+            r#"{"commits":[{"target_ticket":{}}]}"#,
+            "target_ticket must be an integer",
+        ),
+    ] {
+        fs::write(&queue, input).unwrap();
+        let output = invoke();
+        assert!(String::from_utf8_lossy(&output.stderr).contains(diagnostic));
+        assert_exit(output, 1, diagnostic);
+        assert_eq!(fs::read(&report_path).unwrap(), report);
+    }
+}
