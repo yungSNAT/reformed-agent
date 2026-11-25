@@ -435,6 +435,7 @@ const HERMES_SKILLS_INDEX_URL: &str =
     "https://hermes-agent.nousresearch.com/docs/api/skills-index.json";
 const SKILLS_SH_SEARCH_URL: &str = "https://skills.sh/api/search";
 const CLAWHUB_API_BASE: &str = "https://clawhub.ai/api/v1";
+const LOBEHUB_AGENTS_BASE: &str = "https://chat-agents.lobehub.com";
 const SKILLS_HUB_STATE_DIR: &str = ".hub";
 const SKILLS_HUB_LOCK_FILE: &str = "lock.json";
 const SKILLS_HUB_AUDIT_FILE: &str = "audit.log";

@@ -1,4 +1,6 @@
 use super::*;
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn config_error<T>(result: Result<T, AgentError>) -> String {
     match result {
@@ -66,17 +68,135 @@ async fn github_resolution_and_fetch_propagate_lookup_failures() {
 async fn catalog_fetches_report_transport_failures() {
     let client = offline_client();
 
-    let lobe_error = config_error(fetch_lobehub_skill_files(&client, "example").await);
+    let lobe_error =
+        config_error(fetch_lobehub_skill_files(&client, LOBEHUB_AGENTS_BASE, "example").await);
     assert!(
         lobe_error.starts_with("LobeHub request failed: "),
         "{lobe_error}"
     );
 
-    let claw_error = config_error(fetch_clawhub_skill_files(&client, "example", None).await);
+    let claw_error =
+        config_error(fetch_clawhub_skill_files(&client, CLAWHUB_API_BASE, "example", None).await);
     assert!(
         claw_error.starts_with("ClawHub detail request failed: "),
         "{claw_error}"
     );
+}
+
+#[tokio::test]
+async fn skill_registry_converts_an_agent_manifest_and_reports_bad_responses() {
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    let client = offline_client();
+    let registry = server.uri();
+    let manifest = serde_json::json!({
+        "meta": {"title": "Estuary notes", "description": "Summarise survey notes"},
+        "config": {"systemRole": "List the birds sighted."}
+    });
+    Mock::given(method("GET"))
+        .and(path("/estuary.json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(manifest))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let bundle = fetch_lobehub_skill_files(&client, &registry, "estuary")
+        .await
+        .unwrap();
+    assert_eq!(bundle.len(), 1);
+    assert_eq!(bundle[0].0, "SKILL.md");
+    let markdown = std::str::from_utf8(&bundle[0].1).unwrap();
+    assert!(markdown.contains("name: estuary\ndescription: Summarise survey notes"));
+    assert!(markdown.contains("# Estuary notes\n"));
+    assert!(markdown.ends_with("## Instructions\nList the birds sighted.\n"));
+
+    for (slug, response, expected) in [
+        ("missing", ResponseTemplate::new(404), "LobeHub lookup failed"),
+        (
+            "malformed",
+            ResponseTemplate::new(200).set_body_string("invalid JSON"),
+            "Invalid LobeHub payload",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{slug}.json")))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = config_error(fetch_lobehub_skill_files(&client, &registry, slug).await);
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn skill_registry_downloads_pinned_and_latest_archives_and_retries_throttling() {
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    Mock::given(method("GET"))
+        .and(path("/skills/estuary"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({"latestVersion": {"version": " 2.0.0 "}}),
+        ))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .and(query_param("slug", "estuary"))
+        .and(query_param("version", "2.0.0"))
+        .respond_with(ResponseTemplate::new(429))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = offline_client();
+    let registry = server.uri();
+    for (hint, version) in [(None, "2.0.0"), (Some("1.0.0"), "1.0.0")] {
+        let archive = stored_zip(&[(b"bundle/SKILL.md", b"abc", 0x3524_41c2)]);
+        Mock::given(method("GET"))
+            .and(path("/download"))
+            .and(query_param("slug", "estuary"))
+            .and(query_param("version", version))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(archive, "application/zip"))
+            .with_priority(2)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let bundle = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            fetch_clawhub_skill_files(&client, &registry, "estuary", hint),
+        )
+        .await
+        .expect("loopback registry download terminates")
+        .unwrap();
+        assert_eq!(bundle, vec![("SKILL.md".to_owned(), Bytes::from_static(b"abc"))]);
+    }
+}
+
+#[tokio::test]
+async fn skill_registry_reports_missing_versions_and_failed_downloads() {
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    Mock::given(method("GET"))
+        .and(path("/skills/estuary"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .and(query_param("version", "1.0.0"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("archive temporarily unavailable"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = offline_client();
+    let registry = server.uri();
+    let missing = fetch_clawhub_skill_files(&client, &registry, "estuary", Some(" ")).await;
+    assert!(config_error(missing).contains("No ClawHub version available for 'estuary'"));
+    let failed = fetch_clawhub_skill_files(&client, &registry, "estuary", Some("1.0.0")).await;
+    assert!(config_error(failed).contains("503 Service Unavailable): archive temporarily unavailable"));
 }
 
 fn stored_zip(entries: &[(&[u8], &[u8], u32)]) -> Vec<u8> {

@@ -280,9 +280,10 @@ async fn fetch_skill_files_from_github(
 
 async fn fetch_lobehub_skill_files(
     client: &reqwest::Client,
+    registry: &str,
     slug: &str,
 ) -> Result<Vec<(String, Bytes)>, AgentError> {
-    let url = format!("https://chat-agents.lobehub.com/{}.json", slug);
+    let url = format!("{registry}/{slug}.json");
     let resp = client
         .get(&url)
         .header("Accept", "application/json,text/plain,*/*")
@@ -402,10 +403,11 @@ fn extract_clawhub_archive(bytes: &[u8]) -> Result<Vec<(String, Bytes)>, AgentEr
 
 async fn fetch_clawhub_skill_files(
     client: &reqwest::Client,
+    registry: &str,
     slug: &str,
     version_hint: Option<&str>,
 ) -> Result<Vec<(String, Bytes)>, AgentError> {
-    let detail_url = format!("{}/skills/{}", CLAWHUB_API_BASE, slug);
+    let detail_url = format!("{registry}/skills/{slug}");
     let detail = client
         .get(&detail_url)
         .header("Accept", "application/json")
@@ -442,8 +444,7 @@ async fn fetch_clawhub_skill_files(
         })?;
 
     let download_url = format!(
-        "{}/download?slug={}&version={}",
-        CLAWHUB_API_BASE,
+        "{registry}/download?slug={}&version={}",
         urlencoding::encode(slug),
         urlencoding::encode(&version)
     );

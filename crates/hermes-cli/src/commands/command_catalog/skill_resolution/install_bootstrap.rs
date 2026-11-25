@@ -13,8 +13,10 @@ async fn fetch_bundle_for_lock_entry(
             let resolved = resolve_skills_sh_source(client, &id).await?;
             fetch_skill_files_from_github(client, &resolved).await
         }
-        "lobehub" => fetch_lobehub_skill_files(client, &entry.identifier).await,
-        "clawhub" => fetch_clawhub_skill_files(client, &entry.identifier, None).await,
+        "lobehub" => fetch_lobehub_skill_files(client, LOBEHUB_AGENTS_BASE, &entry.identifier).await,
+        "clawhub" => {
+            fetch_clawhub_skill_files(client, CLAWHUB_API_BASE, &entry.identifier, None).await
+        }
         "claude-marketplace" => {
             let resolved = resolve_claude_marketplace_skill(client, &entry.identifier).await?;
             fetch_skill_files_from_github(client, &resolved).await
@@ -84,10 +86,11 @@ async fn fetch_bundle_for_lock_entry(
                         .await
                     }
                     RegistryInstallSource::LobeRegistry { slug } => {
-                        fetch_lobehub_skill_files(client, &slug).await
+                        fetch_lobehub_skill_files(client, LOBEHUB_AGENTS_BASE, &slug).await
                     }
                     RegistryInstallSource::ClawRegistry { slug, version } => {
-                        fetch_clawhub_skill_files(client, &slug, version.as_deref()).await
+                        fetch_clawhub_skill_files(client, CLAWHUB_API_BASE, &slug, version.as_deref())
+                            .await
                     }
                 };
             }
