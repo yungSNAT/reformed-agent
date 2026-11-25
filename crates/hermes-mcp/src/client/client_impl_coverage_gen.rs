@@ -342,6 +342,65 @@ async fn tool_calls_join_text_preserve_raw_content_and_classify_tool_errors() {
     );
 }
 
+#[tokio::test]
+async fn tool_errors_use_message_type_and_default_when_content_is_empty() {
+    let cases = [
+        (
+            json!({
+                "isError": true, "content": [{"text": 7}, {"text": "   "}],
+                "message": "  Fixture failed  ", "errorType": "IgnoredKind"
+            }),
+            "Fixture failed",
+        ),
+        (
+            json!({"isError": true, "message": " ", "errorType": "Temporary"}),
+            "Temporary (empty error message)",
+        ),
+        (
+            json!({"isError": true, "error_type": "  LegacyKind "}),
+            "LegacyKind (empty error message)",
+        ),
+        (
+            json!({"isError": true, "error_type": " "}),
+            "tool call returned error",
+        ),
+    ];
+    let replies: [Value; 4] =
+        std::array::from_fn(|index| reply(index as u64 + 1, cases[index].0.clone()));
+    let (mut client, log) = scripted(replies);
+    for (_, expected) in &cases {
+        assert!(matches!(
+            client.call_tool("echo", json!({})).await,
+            Err(McpError::Protocol { code: -1, message }) if message == *expected
+        ));
+    }
+    assert_eq!(log.lock().unwrap().sent.len(), cases.len());
+}
+
+#[test]
+fn http_server_config_exposes_capabilities_without_logging_header_values() {
+    let sampling: SamplingConfig = serde_json::from_value(json!({
+        "max_rpm": 10, "max_tokens_cap": 4096, "timeout_secs": 60,
+        "allowed_models": [], "max_tool_rounds": 3
+    }))
+    .unwrap();
+    assert!(sampling.enabled);
+    let mut config = McpServerConfig::http("http://127.0.0.1:1/fixture")
+        .with_parallel_tool_calls(true)
+        .with_keepalive_interval(30)
+        .with_sampling_config(sampling);
+    let marker = "fixture-private-header-value";
+    config.headers.insert("X-Fixture".into(), marker.into());
+
+    let debug = format!("{config:?}");
+    assert!(debug.contains("X-Fixture"));
+    assert!(!debug.contains(marker));
+    assert!(debug.contains("supports_parallel_tool_calls: true"));
+    let data = serde_json::to_value(&config).unwrap();
+    assert_eq!(data["keepalive_interval"], 30);
+    assert_eq!(data["sampling"]["enabled"], true);
+}
+
 #[tokio::test(start_paused = true)]
 async fn legacy_tool_call_timeout_reports_timeout_without_retrying() {
     let (mut client, log) = attached(ScriptedTransport {
