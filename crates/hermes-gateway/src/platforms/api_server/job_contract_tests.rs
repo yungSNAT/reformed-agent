@@ -1,6 +1,85 @@
 use hermes_cron::{FileJobPersistence, JobPersistence};
 
 #[tokio::test]
+async fn api_job_routes_report_invalid_bodies_and_missing_jobs() {
+    let (tx, _rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    let missing_path = "/api/jobs/aabbccddeeff";
+
+    for (method, path) in [("POST", "/api/jobs"), ("PATCH", missing_path)] {
+        let raw = format!(
+            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 1\r\n\r\n{{"
+        );
+        let response = state.roundtrip(raw, None).await;
+        assert!(
+            response.starts_with("HTTP/1.1 400 Bad Request"),
+            "{response}"
+        );
+        let error = &json_body(&response)["error"];
+        assert_eq!(error["type"], "invalid_request_error");
+        assert!(error["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Invalid request:"));
+    }
+
+    let response = state
+        .roundtrip(
+            json_request("PATCH", missing_path, serde_json::json!([])),
+            None,
+        )
+        .await;
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request"),
+        "{response}"
+    );
+    assert_eq!(
+        json_body(&response)["error"]["message"],
+        "Request body must be an object"
+    );
+
+    let response = state
+        .roundtrip(
+            json_request(
+                "POST",
+                "/api/jobs",
+                serde_json::json!({
+                    "name": "Invalid fixture schedule",
+                    "schedule": "invalid fixture schedule",
+                    "prompt": "Fixture only"
+                }),
+            ),
+            None,
+        )
+        .await;
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request"),
+        "{response}"
+    );
+    assert_eq!(
+        json_body(&response)["error"]["type"],
+        "invalid_request_error"
+    );
+
+    for (method, path) in [
+        ("DELETE", missing_path),
+        ("POST", "/api/jobs/aabbccddeeff/pause"),
+        ("POST", "/api/jobs/aabbccddeeff/resume"),
+        ("POST", "/api/jobs/aabbccddeeff/run"),
+    ] {
+        let response = state.roundtrip(empty_request(method, path), None).await;
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"), "{response}");
+        assert_eq!(
+            json_body(&response)["error"]["message"],
+            "Job not found: aabbccddeeff"
+        );
+    }
+
+    let store = FileJobPersistence::with_dir(state._cron_dir.path().join("cron"));
+    assert!(store.load_jobs().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn api_job_invalid_creates_do_not_leave_a_job_record() {
     let (tx, _rx) = mpsc::channel(1);
     let state = ApiTestState::new(tx);
