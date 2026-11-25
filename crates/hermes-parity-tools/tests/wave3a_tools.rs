@@ -239,15 +239,15 @@ CommandDef("ignored_docstring_cmd", "not real")
 """
 # CommandDef("ignored_comment_cmd", "commented out")
 # '/ignored-comment-key': "commented out"
-COMMANDS = {
-    '/model': CommandDef(
-        'model',
-        aliases=('m', '/mod'),
-    ),
-    "/raw": CommandDef("raw"),
-    "/policy": "Policy rules",
-    "/objective": "Objective management",
-}
+COMMAND_REGISTRY: list[CommandDef] = [
+    CommandDef('model', "Switch model (provider)", "Configuration",
+               aliases=('m', '/mod')),
+    CommandDef("raw", "Raw output", "Info"),
+    CommandDef("policy", "Policy rules", "Info", cli_only=True),
+    CommandDef("sethome", "Set the home channel", "Session",
+               gateway_only=True, aliases=("set-home",)),
+]
+SUBCOMMANDS = {"/raw": ["trace"]}
 "#,
     )
     .expect("write upstream");
@@ -310,5 +310,7 @@ fn test_is_ctrl_c_detection() {}
     let rpt: Value = serde_json::from_slice(&fs::read(&report).expect("read")).expect("json");
     assert_eq!(rpt["ok"], true);
     assert_eq!(rpt["missing_commands"], serde_json::json!([]));
+    // Gateway-only upstream commands are outside the runtime COMMANDS table.
+    assert_eq!(rpt["extra_commands"], serde_json::json!(["/objective"]));
     assert_eq!(rpt["missing_tui_tests"], serde_json::json!([]));
 }

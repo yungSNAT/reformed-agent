@@ -38,6 +38,9 @@ fn non_empty_trimmed(var: Option<&OsStr>) -> Option<String> {
 }
 
 fn parse_id(name: &str, raw: Option<&OsStr>, default: u32) -> Result<u32, String> {
+    if raw.is_some_and(|v| v.to_str().is_none()) {
+        return Err(format!("invalid numeric {name}: not UTF-8"));
+    }
     match non_empty_trimmed(raw) {
         Some(v) => v
             .parse::<u32>()
@@ -271,6 +274,15 @@ mod tests {
         assert_eq!(ws.app_home, PathBuf::from(" /srv/hermes "));
         assert!(build_config(None, Some(OsStr::new("not-a-uid")), None).is_err());
         assert!(build_config(None, Some(OsStr::new("1000")), Some(OsStr::new("bad-gid"))).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_ids_are_rejected_not_defaulted() {
+        use std::os::unix::ffi::OsStrExt;
+        let bad = OsStr::from_bytes(b"10\xff01");
+        assert!(build_config(None, Some(bad), None).is_err());
+        assert!(build_config(None, Some(OsStr::new("1000")), Some(bad)).is_err());
     }
 
     #[test]
