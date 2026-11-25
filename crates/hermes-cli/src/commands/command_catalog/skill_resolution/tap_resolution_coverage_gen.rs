@@ -26,6 +26,67 @@ fn offline_client() -> reqwest::Client {
         .expect("build offline client")
 }
 
+fn tree_entries<const N: usize>(entries: [(&str, &str); N]) -> [GitHubTreeEntry; N] {
+    entries.map(|(kind, path)| GitHubTreeEntry {
+        kind: kind.to_string(),
+        path: path.to_string(),
+    })
+}
+
+#[test]
+fn tap_skill_directories_only_include_manifest_blobs_beneath_the_prefix() {
+    let tree = tree_entries([
+        ("blob", "skills/North/README.md"),
+        ("blob", "skillset/East/SKILL.md"),
+        ("tree", "skills/South/SKILL.md"),
+        ("blob", "skills/North/SKILL.md"),
+        ("blob", "skills/surveys/West/SKILL.md"),
+    ]);
+
+    assert_eq!(
+        skill_directories(&tree, "skills/").collect::<Vec<_>>(),
+        [("skills/North", "North"), ("skills/surveys/West", "West")]
+    );
+}
+
+#[test]
+fn repository_skill_selection_prefers_the_requested_prefix_then_shortest_path() {
+    let tree = tree_entries([
+        ("blob", "skills/z/NORTH/SKILL.md"),
+        ("blob", "skills/a/NORTH/SKILL.md"),
+        ("blob", "skills/0-longer/NORTH/SKILL.md"),
+        ("blob", "north/SKILL.md"),
+    ]);
+
+    assert_eq!(
+        select_repository_skill(&tree, "fixture/catalog", "north", Some("/skills/")).unwrap(),
+        "skills/a/NORTH"
+    );
+    assert_eq!(
+        select_repository_skill(&tree, "fixture/catalog", "NORTH", None).unwrap(),
+        "north"
+    );
+}
+
+#[test]
+fn repository_skill_selection_returns_sorted_unique_fuzzy_suggestions() {
+    let tree = tree_entries([
+        ("blob", "skills/north-z/SKILL.md"),
+        ("blob", "skills/north-a/SKILL.md"),
+        ("blob", "extras/north-a/SKILL.md"),
+        ("blob", "extras/south/SKILL.md"),
+    ]);
+
+    assert_eq!(
+        config_error(select_repository_skill(&tree, "fixture/catalog", "North", None)),
+        "Skill 'North' not found in repo fixture/catalog. Suggestions: north-a, north-z"
+    );
+    assert_eq!(
+        config_error(select_repository_skill(&tree, "fixture/catalog", "east", None)),
+        "Skill 'east' not found in repo fixture/catalog. Suggestions: none"
+    );
+}
+
 #[tokio::test]
 async fn unavailable_taps_produce_no_matches_or_suggestions() {
     let client = offline_client();
