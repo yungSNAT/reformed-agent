@@ -1248,6 +1248,8 @@ note the fixtures"));
     mod readiness_walkthrough_contract;
     #[cfg(unix)]
     mod graph_journey_contract;
+    #[cfg(unix)]
+    mod ops_control_contract;
     mod runtime_parity_ops;
     mod skill_model_policy;
 
