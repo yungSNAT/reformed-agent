@@ -24,6 +24,94 @@ impl GuardProvider {
     }
 }
 
+#[tokio::test]
+async fn streamed_interrupt_preserves_only_answered_tool_calls() {
+    for interrupt_before_tool in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = Arc::new(GuardProvider::default());
+        let interrupt = InterruptController::new();
+        let stop = interrupt.clone();
+        let tool_runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let recorded_runs = tool_runs.clone();
+        let schema = ToolSchema::new(TOOL, "Fixture tool", JsonSchema::new("object"));
+        let mut tools = ToolRegistry::new();
+        tools.register(
+            TOOL,
+            schema.clone(),
+            Arc::new(move |_| {
+                recorded_runs.fetch_add(1, Ordering::Relaxed);
+                Ok("fixture completed".into())
+            }),
+        );
+
+        let mut callbacks = AgentCallbacks::default();
+        if interrupt_before_tool {
+            callbacks.on_tool_start = Some(Box::new(move |name, args| {
+                assert_eq!(name, TOOL);
+                assert_eq!(args, &serde_json::json!({}));
+                stop.interrupt(None);
+            }));
+        } else {
+            callbacks.on_tool_complete = Some(Box::new(move |name, result| {
+                assert_eq!(name, TOOL);
+                assert_eq!(result, "fixture completed");
+                stop.interrupt(None);
+            }));
+        }
+        let agent = AgentLoop::with_interrupt(
+            AgentConfig {
+                model: "openai:fixture-model".into(),
+                hermes_home: Some(directory.path().display().to_string()),
+                max_turns: 3,
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..Default::default()
+            },
+            Arc::new(tools),
+            provider.clone(),
+            interrupt,
+        )
+        .with_callbacks(callbacks);
+
+        let result = agent
+            .run_stream(
+                vec![Message::user("Try the fixture tool.")],
+                Some(vec![schema]),
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.interrupted);
+        assert!(!result.finished_naturally);
+        assert_eq!(provider.stream_turns.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            tool_runs.load(Ordering::Relaxed),
+            usize::from(!interrupt_before_tool)
+        );
+
+        let calls: Vec<_> = result
+            .messages
+            .iter()
+            .flat_map(|message| message.tool_calls.iter().flatten())
+            .map(|call| call.id.as_str())
+            .collect();
+        let answers: Vec<_> = result
+            .messages
+            .iter()
+            .filter(|message| message.role == MessageRole::Tool)
+            .filter_map(|message| message.tool_call_id.as_deref())
+            .collect();
+        let expected: &[&str] = if interrupt_before_tool {
+            &[]
+        } else {
+            &["fixture-0"]
+        };
+        assert_eq!(calls, expected);
+        assert_eq!(answers, expected);
+    }
+}
+
 #[async_trait::async_trait]
 impl LlmProvider for GuardProvider {
     async fn chat_completion(
