@@ -85,7 +85,11 @@ def publish_summary(
         err_tail = (proc.stderr or "").strip()[-400:]
         detail = f"exit={proc.returncode} json_err={exc}" + (f" stderr={err_tail}" if err_tail else "")
         return {"ok": False, "primary_sink": "", "attempts": [{"sink": "cli", "ok": "false", "detail": detail}]}
-    attempts = list(parsed.get("attempts", []))
+    # The CLI prints sorted keys; keep the helper's sink, ok, detail order.
+    attempts = [
+        {"sink": a.get("sink", ""), "ok": a.get("ok", ""), "detail": a.get("detail", "")}
+        for a in parsed.get("attempts", [])
+    ]
     if not parsed.get("ok") and not attempts and proc.stderr:
         attempts = [{"sink": "cli", "ok": "false", "detail": proc.stderr.strip()[-400:]}]
     if parsed.get("ok") and parsed.get("primary_sink") == "stdout":
