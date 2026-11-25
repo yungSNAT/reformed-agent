@@ -6,6 +6,71 @@ use std::time::Duration;
 use support::isolated_hermes;
 
 #[tokio::test]
+async fn offline_status_reports_route_health_and_local_state() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    let logs = home.join("logs");
+    let route_health = logs.join("route-health.json");
+    let status = || async {
+        let output = tokio::time::timeout(
+            Duration::from_secs(10),
+            isolated_hermes(sandbox.path())
+                .env("HERMES_TOOL_POLICY_MODE", "audit")
+                .env("HERMES_TOOL_POLICY_PRESET", "strict")
+                .arg("status")
+                .output(),
+        )
+        .await
+        .expect("status timed out")
+        .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    assert!(status().await.contains("Route health: (not generated)"));
+
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(&route_health, "fixture invalid JSON").unwrap();
+    assert!(status()
+        .await
+        .contains("Route health: unavailable (failed to parse"));
+
+    std::fs::write(
+        &route_health,
+        r#"{"summary":{"overall":"healthy","entries":2,"average_score":0.85}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("config.yaml"),
+        "model: openai:gpt-4o-mini\nplatforms:\n  api_server:\n    enabled: true\n",
+    )
+    .unwrap();
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(sessions.join("fixture.json"), "{}").unwrap();
+    let profiles = home.join("profiles");
+    std::fs::create_dir_all(&profiles).unwrap();
+    std::fs::write(profiles.join("sample.yml"), "{}").unwrap();
+    std::fs::write(profiles.join("ignored.txt"), "not a profile").unwrap();
+
+    let summary = status().await;
+    for expected in [
+        "Model:   openai:gpt-4o-mini",
+        "Platforms: api_server",
+        "Tool policy: mode=audit preset=strict",
+        "Route health: overall=healthy entries=2 avg_score=0.850",
+        "Saved sessions: 1",
+        "Profiles: sample",
+    ] {
+        assert!(
+            summary.lines().any(|line| line.starts_with(expected)),
+            "{summary}"
+        );
+    }
+    assert!(!summary.contains("ignored"));
+}
+
+#[tokio::test]
 async fn offline_sessions_repair_preserves_a_backup_and_restores_search() {
     let sandbox = tempfile::tempdir().unwrap();
     let home = sandbox.path().join("hermes");
