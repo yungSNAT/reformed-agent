@@ -1002,6 +1002,43 @@ session_reset:
     }
 
     #[test]
+    fn legacy_session_reset_modes_preserve_other_session_settings() {
+        use crate::session::SessionResetPolicy;
+
+        let cases = [
+            (
+                "{mode: DAILY, at_hour: 26}",
+                SessionResetPolicy::Daily { at_hour: 23 },
+            ),
+            ("{mode: daily}", SessionResetPolicy::Daily { at_hour: 0 }),
+            (
+                "{mode: idle, idle_minutes: 45}",
+                SessionResetPolicy::Idle {
+                    timeout_minutes: 45,
+                },
+            ),
+            (
+                "{mode: idle}",
+                SessionResetPolicy::Idle {
+                    timeout_minutes: 30,
+                },
+            ),
+            ("{mode: none}", SessionResetPolicy::None),
+        ];
+        for (reset, expected) in cases {
+            let mut root: Mapping =
+                serde_yaml::from_str(&format!("session_reset: {reset}\nsession: {{max_context_messages: 40, compression_enabled: true}}\n")).unwrap();
+            normalize_config_yaml_root(&mut root);
+            assert!(!root.contains_key(key("session_reset")));
+            let config: crate::config::GatewayConfig =
+                serde_yaml::from_value(Value::Mapping(root)).unwrap();
+            assert_eq!(config.session.reset_policy, expected, "legacy {reset}");
+            assert_eq!(config.session.max_context_messages, Some(40));
+            assert!(config.session.compression_enabled);
+        }
+    }
+
+    #[test]
     fn platform_toolsets_numeric_entries_normalized_to_strings() {
         let raw = r#"
 platform_toolsets:
