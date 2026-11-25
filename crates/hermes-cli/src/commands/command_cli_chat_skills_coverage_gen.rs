@@ -152,3 +152,70 @@ async fn handle_cli_skills_subscribe_without_source_errors() {
         assert!(msg.contains("Missing source"));
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn skills_snapshot_round_trips_a_local_tree_and_reports_archive_errors() {
+    if !crate::isolated_test_profile::enter(
+        "commands::coverage_gen_commands_command_cli_chat_skills::skills_snapshot_round_trips_a_local_tree_and_reports_archive_errors",
+    ) {
+        return;
+    }
+    let snapshot = |action: Option<&str>, path: Option<&str>| {
+        handle_cli_skills(
+            Some("snapshot".into()),
+            action.map(str::to_string),
+            path.map(str::to_string),
+            false,
+            false,
+            false,
+        )
+    };
+    let home = hermes_config::hermes_home();
+    let skills = home.join("skills");
+    snapshot(None, None).await.unwrap();
+    assert!(!skills.exists());
+
+    let archive = home.join("fixture-skills.tar.gz");
+    let archive_path = archive.to_str().unwrap();
+    let nested = skills.join("fixture");
+    std::fs::create_dir_all(&nested).unwrap();
+    let content = b"# Fixture skill\n";
+    std::fs::write(nested.join("SKILL.md"), content).unwrap();
+    let missing_parent = home.join("missing-parent/fixture.tar.gz");
+    let error = snapshot(Some("export"), missing_parent.to_str())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("Failed to create archive"));
+    snapshot(Some("export"), Some(archive_path)).await.unwrap();
+    assert!(archive.is_file());
+    std::fs::rename(&skills, home.join("before-import")).unwrap();
+
+    let blocked = snapshot(Some("import"), Some(archive_path))
+        .await
+        .unwrap_err();
+    assert!(blocked.to_string().contains("blocked by skills tier"));
+    assert!(!skills.exists());
+    std::env::set_var("HERMES_SKILLS_EXECUTION_TIER", "open");
+    let missing = snapshot(Some("import"), None).await.unwrap_err();
+    assert!(missing.to_string().contains("Missing snapshot path"));
+    let absent_path = home.join("absent.tar.gz");
+    let absent = snapshot(Some("import"), absent_path.to_str())
+        .await
+        .unwrap_err();
+    assert!(absent.to_string().contains("Failed to open archive"));
+    snapshot(Some("import"), Some(archive_path)).await.unwrap();
+    assert_eq!(std::fs::read(nested.join("SKILL.md")).unwrap(), content);
+    assert_eq!(
+        std::fs::read(home.join("before-import/fixture/SKILL.md")).unwrap(),
+        content
+    );
+
+    let invalid_path = home.join("invalid.tar.gz");
+    std::fs::write(&invalid_path, "fixture is not an archive").unwrap();
+    let invalid = snapshot(Some("import"), invalid_path.to_str())
+        .await
+        .unwrap_err();
+    assert!(invalid.to_string().contains("Failed to extract archive"));
+    assert_eq!(std::fs::read(nested.join("SKILL.md")).unwrap(), content);
+}
