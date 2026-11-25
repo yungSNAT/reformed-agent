@@ -132,7 +132,7 @@ python3 scripts/upstream_webhook_sync.py worker \
   --strict-risk-gate \
   --draft-pr \
   --pr-labels upstream-sync,parity-sync \
-  --redteam-cmd "python3 scripts/run-redteam-gate.py" \
+  --redteam-cmd "cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate" \
   --elite-gate \
   --elite-cmd "python3 scripts/run-elite-sync-gate.py" \
   --elite-rollback-cmd "git reset --hard origin/main"

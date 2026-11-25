@@ -36,7 +36,7 @@ audit reports live upstream drift separately from the checks against this pin.
   - Default mode: create a sync branch and open a PR
   - Supports `--draft-pr` for safer review-first PR creation
   - Supports `--pr-labels` to apply metadata/risk labels on the created PR
-  - Runs adversarial regression gate by default (`scripts/run-redteam-gate.py`)
+  - Runs adversarial regression gate by default (`cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate`)
   - Supports `--no-redteam-gate` and `--redteam-cmd` overrides
   - Supports optional consolidated elite gate: `--elite-gate` / `--elite-cmd`
   - Refreshes generated parity docs by default (`README` sync status + parity dashboard)
@@ -54,10 +54,10 @@ audit reports live upstream drift separately from the checks against this pin.
 - `scripts/upstream_webhook_sync.py`
   - Webhook listener/worker path with SQLite/SQS/Kafka queue backends
   - Includes per-upstream-commit upkeep issue queue automation (default parent issue: `#43`)
-- `scripts/run-adapter-chaos-harness.py`
+- `run-adapter-chaos-harness` (`crates/hermes-parity-tools`)
   - Runs deterministic adapter chaos scenarios (timeout/5xx/rate-limit)
   - Emits JSON diagnostics under `.sync-reports/adapter-chaos-<timestamp>.json`
-- `scripts/run-zero-copy-hotpath-bench.py`
+- `run-zero-copy-hotpath-bench` (`crates/hermes-parity-tools`)
   - Runs zero-copy policy hot-path benchmark test and captures ns/eval evidence
   - Emits JSON diagnostics under `.sync-reports/zero-copy-hotpath-<timestamp>.json`
 - `scripts/run-elite-sync-gate.py`
@@ -66,12 +66,12 @@ audit reports live upstream drift separately from the checks against this pin.
 - `cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root .`
   - Runs the release scan, SBOM inventory (`cargo metadata`), provenance signature, redaction and ACP multimodal tests
   - Emits JSON diagnostics under `.sync-reports/security-release-gate-v2-<timestamp>.json`
-- `scripts/run-performance-autopilot.py`
+- `run-performance-autopilot` (`crates/hermes-parity-tools`)
   - Runs hot-path + eval trend checks and emits deterministic tuning recommendations (`json` + `markdown`)
-- `scripts/audit_background_queue.py`
+- `audit-background-queue` (`crates/hermes-parity-tools`)
   - Audits background job manifests for malformed JSON, stale running jobs, and duplicate active tasks
   - Optional repair mode: `--repair`
-- `scripts/run-differential-parity-gate.py`
+- `run-differential-parity-gate` (`crates/hermes-parity-tools`)
   - Compares local CLI command/action surface with `upstream/main`
   - Emits gate artifact under `.sync-reports/differential-parity-gate-<timestamp>.json`
 - `run-upstream-surface-coverage-gate` (`crates/hermes-parity-tools`)
@@ -84,10 +84,10 @@ audit reports live upstream drift separately from the checks against this pin.
   - Compares upstream `/` command surface (`hermes_cli/commands.py`) against Rust `SLASH_COMMANDS`
   - Fails on missing upstream commands unless explicitly allowlisted in `docs/parity/slash-command-divergence.json`
   - Emits gate artifact under `.sync-reports/upstream-slash-parity-gate-<timestamp>.json`
-- `scripts/run-eval-trend-gate.py`
+- `run-eval-trend-gate` (`crates/hermes-parity-tools`)
   - Compares eval run baselines and enforces regression thresholds
   - Emits gate artifact under `.sync-reports/eval-trend-gate-<timestamp>.json`
-- `scripts/run-self-evolution-loop.py`
+- `run-self-evolution-loop` (`crates/hermes-parity-tools`)
   - Runs a unified intelligence loop across golden parity + eval trend + elite sync gates
   - Emits recommendations and intelligence index under `.sync-reports/self-evolution-loop-<timestamp>.json`
 - `scripts/run-nightly-elite-gate.sh`
@@ -99,9 +99,9 @@ audit reports live upstream drift separately from the checks against this pin.
     - `github` issue comment fallback
     - `local` file fallback
   - Used by nightly and webhook automation paths for resilient summary reporting
-- `scripts/compare-adapter-chaos-reports.py`
+- `compare-adapter-chaos-reports` (`crates/hermes-parity-tools`)
   - Compares chaos reports and fails on attempts/fallback/outcome regressions
-- `scripts/generate-readme-sync-status.py`
+- `generate-readme-sync-status` (`crates/hermes-parity-tools`)
   - Regenerates README “Live Upstream Sync Status” block from latest `.sync-reports/upstream-sync-*.txt`
 - `hermes-parity-tools generate-parity-dashboard`
   - Builds `docs/parity/PARITY_DASHBOARD.md` from parity JSON artifacts
@@ -113,14 +113,14 @@ bash scripts/sync-upstream.sh --dry-run
 bash scripts/sync-upstream.sh
 bash scripts/sync-upstream.sh --draft-pr
 bash scripts/sync-upstream.sh --draft-pr --pr-labels "upstream-sync,parity-sync,risk-reviewed"
-bash scripts/sync-upstream.sh --redteam-cmd "python3 scripts/run-redteam-gate.py --suite scripts/redteam-cases.json"
-python3 scripts/run-adapter-chaos-harness.py --repo-root .
-python3 scripts/run-zero-copy-hotpath-bench.py --repo-root .
+bash scripts/sync-upstream.sh --redteam-cmd "cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate --suite scripts/redteam-cases.json"
+cargo run --locked -q -p hermes-parity-tools -- run-adapter-chaos-harness --repo-root .
+cargo run --locked -q -p hermes-parity-tools -- run-zero-copy-hotpath-bench --repo-root .
 python3 scripts/run-elite-sync-gate.py --repo-root .
 cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/main --local-mode worktree
-python3 scripts/run-self-evolution-loop.py --repo-root . --json
+cargo run --locked -q -p hermes-parity-tools -- run-self-evolution-loop --repo-root . --json
 cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard --repo-root .
-python3 scripts/generate-readme-sync-status.py --repo-root .
+cargo run --locked -q -p hermes-parity-tools -- generate-readme-sync-status --repo-root .
 bash scripts/sync-upstream.sh --elite-gate
 bash scripts/sync-upstream.sh --elite-gate --elite-rollback-cmd "git reset --hard origin/main"
 ```
