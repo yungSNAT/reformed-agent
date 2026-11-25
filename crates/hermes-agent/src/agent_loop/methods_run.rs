@@ -613,8 +613,7 @@ impl AgentLoop {
 
             if let Some(limit) = self.config.max_cost_usd {
                 let spent = spent_before_run_usd + session_cost_usd;
-                if !cost_warned && spent >= limit * self.config.cost_guard_degrade_at_ratio
-                {
+                if !cost_warned && spent >= limit * self.config.cost_guard_degrade_at_ratio {
                     cost_warned = true;
                     if forced_runtime_route.is_none() {
                         if let Some(model) = self.resolve_cost_degrade_model() {

@@ -22,8 +22,7 @@ impl LlmProvider for SixMilliDollarHaiku {
         _model: Option<&str>,
         _extra_body: Option<&serde_json::Value>,
     ) -> Result<hermes_core::LlmResponse, AgentError> {
-        self.calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(hermes_core::LlmResponse {
             message: Message::assistant("done"),
             usage: Some(six_milli_dollar_usage()),
@@ -41,8 +40,7 @@ impl LlmProvider for SixMilliDollarHaiku {
         _model: Option<&str>,
         _extra_body: Option<&serde_json::Value>,
     ) -> futures::stream::BoxStream<'static, Result<StreamChunk, AgentError>> {
-        self.calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         futures::StreamExt::boxed(futures::stream::iter(vec![
             Ok(StreamChunk {
                 delta: Some(hermes_core::StreamDelta {
