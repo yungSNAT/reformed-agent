@@ -91,6 +91,77 @@ async fn run_setup(
 }
 
 #[tokio::test]
+async fn setup_can_decline_oauth_and_keep_a_manual_key_in_the_vault() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let proxy = MockServer::start().await;
+    assert!(proxy.address().ip().is_loopback());
+    let key = "fixture-setup-key";
+    run_vault_setup(sandbox.path(), &proxy.uri(), key).await;
+
+    let home = sandbox.path().join("hermes");
+    let config_path = home.join("config.yaml");
+    let config = hermes_config::load_user_config_file(&config_path).unwrap();
+    assert_eq!(config.model.as_deref(), Some("openai:fixture-manual-model"));
+    assert!(home.join("auth/tokens.json").is_file());
+    assert!(!std::fs::read_to_string(config_path).unwrap().contains(key));
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes::isolated_hermes(sandbox.path())
+            .env("HTTP_PROXY", proxy.uri())
+            .env("HTTPS_PROXY", proxy.uri())
+            .args(["secrets", "list"])
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    let listed = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        listed.contains("openai (env: HERMES_OPENAI_API_KEY)"),
+        "{listed}"
+    );
+    assert!(!listed.contains(key));
+}
+
+async fn run_vault_setup(root: &Path, proxy: &str, fixture_key: &str) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut child = isolated_hermes::isolated_hermes(root)
+            .env("HTTP_PROXY", proxy)
+            .env("HTTPS_PROXY", proxy)
+            .env("ALL_PROXY", proxy)
+            .arg("setup")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut menu = BufReader::new(child.stdout.take().unwrap()).lines();
+        let mut input = child.stdin.take().unwrap();
+        select(&mut menu, &mut input, "Quick setup").await;
+        select(&mut menu, &mut input, "OpenAI (OAuth/API key)").await;
+        input
+            .write_all(format!("n\n{fixture_key}\ny\n").as_bytes())
+            .await
+            .unwrap();
+        select(&mut menu, &mut input, "Custom model ID").await;
+        input.write_all(b"fixture-manual-model\n").await.unwrap();
+        drop(input);
+        let mut stdout = String::new();
+        menu.into_inner().read_to_string(&mut stdout).await.unwrap();
+        assert!(child.wait().await.unwrap().success(), "{stdout}");
+        assert!(
+            stdout.contains("Stored OpenAI key in encrypted vault"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("Setup complete!"), "{stdout}");
+        assert!(!stdout.contains(fixture_key));
+    })
+    .await
+    .expect("manual key setup timed out");
+}
+
+#[tokio::test]
 async fn setup_discovers_a_local_model_and_preserves_existing_configuration() {
     let service = MockServer::start().await;
     Mock::given(method("GET"))
