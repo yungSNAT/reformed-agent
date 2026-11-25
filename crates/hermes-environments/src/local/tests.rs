@@ -1038,10 +1038,52 @@ async fn test_background_process_lifecycle_with_stdin() {
         .to_string();
 
     let write = backend
-        .write_process_stdin(&session_id, "hello from stdin\n")
+        .write_process_stdin(&session_id, "hello from stdin\nsecond line\nthird line\n")
         .await
         .unwrap();
     assert_eq!(write["status"], "ok");
+
+    let tail = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let log = backend
+                .read_process_log(&session_id, None, Some(2))
+                .await
+                .unwrap();
+            if log["total_lines"] == 3 && log["output"] == "second line\nthird line" {
+                break log;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("background process did not publish its log");
+    assert_eq!(tail["status"], "running");
+    assert_eq!(tail["output"], "second line\nthird line");
+    assert_eq!(tail["showing"], "2 lines");
+    let page = backend
+        .read_process_log(&session_id, Some(1), Some(1))
+        .await
+        .unwrap();
+    assert_eq!(page["output"], "second line");
+
+    let list = backend.list_processes().await.unwrap();
+    assert_eq!(list["count"], 1);
+    let summary = &list["sessions"][0];
+    assert_eq!(summary["session_id"], session_id);
+    assert_eq!(summary["command"], "cat");
+    assert_eq!(summary["status"], "running");
+    assert!(summary["output_preview"].as_str().unwrap().lines().eq([
+        "hello from stdin",
+        "second line",
+        "third line"
+    ]));
+
+    let before_close = backend.wait_process(&session_id, Some(0)).await.unwrap();
+    assert_eq!(before_close["status"], "timeout");
+    assert_eq!(
+        before_close["timeout_note"],
+        "Waited 0s, process still running"
+    );
 
     let close = backend.close_process_stdin(&session_id).await.unwrap();
     assert_eq!(close["status"], "ok");
@@ -1053,10 +1095,18 @@ async fn test_background_process_lifecycle_with_stdin() {
         panic!("background process did not exit after closing stdin: wait={wait}, poll={poll}");
     }
     assert_eq!(wait["status"], "exited");
+    assert_eq!(wait["exit_code"], 0);
+    assert_eq!(
+        wait["timeout_note"],
+        "Requested wait of 20s was clamped to configured limit of 10s"
+    );
     assert!(wait["output"]
         .as_str()
         .unwrap_or_default()
         .contains("hello from stdin"));
+    let finished = backend.poll_process(&session_id).await.unwrap();
+    assert_eq!(finished["status"], "exited");
+    assert_eq!(finished["exit_code"], 0);
 }
 
 #[tokio::test]
