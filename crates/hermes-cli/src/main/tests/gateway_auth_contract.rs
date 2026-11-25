@@ -12,6 +12,105 @@ async fn gateway_fixture_auth(cli: &Cli, action: &str, provider: &str) -> Result
     .await
 }
 
+#[cfg(feature = "gateway-weixin")]
+#[tokio::test]
+async fn weixin_poll_restores_the_saved_cursor_and_message_context() {
+    if !crate::isolated_test_profile::enter(
+        "tests::weixin_poll_restores_the_saved_cursor_and_message_context",
+    ) {
+        return;
+    }
+    use hermes_core::traits::PlatformAdapter;
+    use hermes_gateway::platforms::weixin::{WeChatAdapter, WeixinConfig};
+    use serde_json::json;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let home = hermes_config::hermes_home();
+    let accounts = home.join("weixin/accounts");
+    std::fs::create_dir_all(&accounts).unwrap();
+    let cursor_path = accounts.join("fixture-account.sync.json");
+    std::fs::write(&cursor_path, r#"{"get_updates_buf":"fixture-start"}"#).unwrap();
+    let deadline = std::time::Duration::from_secs(5);
+
+    for (cursor, next, text, new_context) in [
+        (
+            "fixture-start",
+            "fixture-next",
+            "first fixture",
+            Some("fixture-context"),
+        ),
+        ("fixture-next", "fixture-end", "second fixture", None),
+    ] {
+        let server = MockServer::start().await;
+        let mut inbound = json!({
+            "from_user_id":"fixture-peer",
+            "message_id":next,
+            "item_list":[{"type":1, "text_item":{"text":text}}]
+        });
+        if let Some(context) = new_context {
+            inbound["context_token"] = json!(context);
+        }
+        Mock::given(method("POST"))
+            .and(path("/ilink/bot/getupdates"))
+            .and(body_partial_json(json!({"get_updates_buf":cursor})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ret":0, "get_updates_buf":next, "longpolling_timeout_ms":1200, "msgs":[inbound]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/ilink/bot/sendmessage"))
+            .and(body_partial_json(json!({
+                "msg":{"to_user_id":"fixture-peer", "context_token":"fixture-context",
+                       "item_list":[{"type":1, "text_item":{"text":"fixture reply"}}]}
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ret":0})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let adapter = WeChatAdapter::new(WeixinConfig {
+            account_id: "fixture-account".into(),
+            token: "fixture-value".into(),
+            base_url: server.uri(),
+            cdn_base_url: server.uri(),
+            dm_policy: "allowlist".into(),
+            group_policy: "disabled".into(),
+            allow_from: vec!["fixture-peer".into()],
+            group_allow_from: Vec::new(),
+            proxy: Default::default(),
+        })
+        .unwrap();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        adapter.set_inbound_sender(sender).await;
+        adapter.start().await.unwrap();
+        assert!(adapter.is_running());
+        let message = tokio::time::timeout(deadline, receiver.recv())
+            .await
+            .expect("fixture poll timed out")
+            .unwrap();
+        assert_eq!(message.user_id, "fixture-peer");
+        assert_eq!(message.chat_id, "fixture-peer");
+        assert_eq!(message.message_id.as_deref(), Some(next));
+        assert_eq!(message.text, text);
+        assert!(message.is_dm);
+        tokio::time::timeout(
+            deadline,
+            adapter.send_ilink_text("fixture-peer", "fixture reply"),
+        )
+        .await
+        .expect("fixture reply timed out")
+        .unwrap();
+        adapter.stop().await.unwrap();
+        assert!(!adapter.is_running());
+        server.verify().await;
+        let stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&cursor_path).unwrap()).unwrap();
+        assert_eq!(stored, json!({"get_updates_buf":next}));
+    }
+}
+
 #[tokio::test]
 async fn gateway_auth_lifecycle_uses_the_isolated_profile() {
     let answers = concat!(
