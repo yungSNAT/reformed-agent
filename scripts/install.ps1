@@ -483,6 +483,13 @@ if ($MyInvocation.InvocationName -ne '.') {
                         [Console]::Error.WriteLine($line)
                     }
                 }
+                $versionRes = Invoke-NativeCaptured -FilePath $cosign.Source -ArgumentList @('version')
+                $cosignMajor = $versionRes.Lines |
+                    ForEach-Object { if ($_ -match '^GitVersion:\s*v?(\d+)\.') { [int]$Matches[1] } } |
+                    Select-Object -First 1
+                if ($null -ne $cosignMajor -and $cosignMajor -lt 3) {
+                    throw "Refusing to install: cosign $cosignMajor could not verify SHA256SUMS; releases after v0.22.0 are signed with cosign 3, so install cosign 3.0 or later and retry."
+                }
                 throw "Refusing to install: SHA256SUMS is not signed by $Repo's release workflow for $resolvedVersion."
             }
             Write-Output 'Verified the signature on SHA256SUMS.'
