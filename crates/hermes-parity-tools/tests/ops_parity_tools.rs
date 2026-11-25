@@ -1357,3 +1357,69 @@ fi
         "test -p hermes-cli --test e2e_replay_suite -- --nocapture\n"
     );
 }
+
+#[test]
+fn ultra_feature_gate_uses_one_target_directory_and_stops_on_failure() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path().join("repo");
+    let mock_bin = sandbox.path().join("bin");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(&mock_bin).unwrap();
+    write_executable(
+        &mock_bin.join("cargo"),
+        r#"#!/bin/sh
+set -eu
+printf '%s|%s\n' "$CARGO_TARGET_DIR" "$*" >> "$FIXTURE_CALLS"
+if [ -n "$FIXTURE_FAILURE" ] && [ "${4:-}" = "$FIXTURE_FAILURE" ]; then
+    exit 7
+fi
+"#,
+    );
+
+    let target = sandbox.path().join("custom-target");
+    let steps = [
+        "test -p hermes-tools tools::ultra_features --lib",
+        "test -p hermes-tools register_builtins::tests::builtin_registry_registers_core_tool_surfaces_for_parity --lib",
+        "fmt --all --check",
+    ];
+    let named_test =
+        "register_builtins::tests::builtin_registry_registers_core_tool_surfaces_for_parity";
+    for (mode, custom_target, failed, expected_exit, steps_run) in [
+        ("default", false, "", 0, 3),
+        ("override", true, named_test, 7, 2),
+    ] {
+        let calls = sandbox.path().join(mode);
+        let mut command = Command::new(bin());
+        command
+            .args(["run-ultra-feature-benchmarks", "--repo-root"])
+            .arg(&root)
+            .env_clear()
+            .env("PATH", &mock_bin)
+            .env("HOME", sandbox.path())
+            .env("FIXTURE_CALLS", &calls)
+            .env("FIXTURE_FAILURE", failed)
+            .current_dir(sandbox.path());
+        if custom_target {
+            command.env("CARGO_TARGET_DIR", &target);
+        }
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env(
+                "LLVM_PROFILE_FILE",
+                std::env::current_dir().unwrap().join(profile),
+            );
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(expected_exit), "{output:?}");
+        let expected_target = if custom_target {
+            target.to_str().unwrap()
+        } else {
+            "/Volumes/wd_black/hermes-agent-ultra/target"
+        };
+        let log = fs::read_to_string(calls).unwrap();
+        let expected: Vec<_> = steps[..steps_run]
+            .iter()
+            .map(|step| format!("{expected_target}|{step}"))
+            .collect();
+        assert_eq!(log.lines().collect::<Vec<_>>(), expected);
+    }
+}
