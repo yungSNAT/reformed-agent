@@ -7,6 +7,83 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 mod isolated;
 use isolated::isolated_hermes;
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn auth_pool_imports_local_oauth_state_and_clears_it_when_removed() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let source = sandbox.path().join("import-fixture.json");
+    let state_path = sandbox.path().join("fixture-state.json");
+    let access = "fixture-local-oauth-access";
+    let refresh = "fixture-local-oauth-refresh";
+    let source_state = serde_json::json!({
+        "claudeAiOauth": {
+            "accessToken": access,
+            "refreshToken": refresh,
+            "expiresAt": jiff::Timestamp::now().as_millisecond() + 3_600_000
+        }
+    })
+    .to_string();
+    std::fs::write(&source, &source_state).unwrap();
+
+    for (args, expected) in [
+        (
+            &[
+                "auth",
+                "add",
+                "anthropic",
+                "--type",
+                "oauth",
+                "--label",
+                "fixture-entry",
+            ][..],
+            "Added Anthropic OAuth credential (label='fixture-entry'",
+        ),
+        (&["auth", "list", "anthropic"], "anthropic (1 credentials):"),
+        (
+            &["auth", "remove", "anthropic", "fixture-entry"],
+            "Removed pooled credential for provider 'anthropic' (label='fixture-entry'",
+        ),
+        (
+            &["auth", "list", "anthropic"],
+            "No pooled credentials configured.",
+        ),
+    ] {
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            isolated_hermes(sandbox.path())
+                .env("HERMES_ANTHROPIC_OAUTH_FILE", &source)
+                .env("HERMES_AUTH_FILE", &state_path)
+                // Reject browser setup before it can launch if discovery regresses.
+                .env(
+                    "HERMES_ANTHROPIC_OAUTH_AUTHORIZE_URL",
+                    "invalid-fixture-url",
+                )
+                .env("HERMES_ANTHROPIC_OAUTH_TOKEN_URL", "http://127.0.0.1:1")
+                .args(args)
+                .output(),
+        )
+        .await
+        .expect("offline OAuth command timed out")
+        .unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stdout.contains(expected), "{args:?}: {stdout}");
+        assert!(!stdout.contains(access) && !stdout.contains(refresh));
+        assert!(!stderr.contains(access) && !stderr.contains(refresh));
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+        if args[1] == "add" {
+            assert_eq!(saved["providers"]["anthropic"]["access_token"], access);
+            assert_eq!(saved["providers"]["anthropic"]["refresh_token"], refresh);
+        } else if args[1] == "remove" {
+            assert!(saved["providers"].get("anthropic").is_none());
+            assert!(saved.get("active_provider").is_none());
+        }
+    }
+    assert_eq!(std::fs::read_to_string(source).unwrap(), source_state);
+}
+
 #[tokio::test]
 async fn auth_matrix_reports_presence_and_source_without_exposing_values() {
     let sandbox = tempfile::tempdir().expect("temporary CLI home");
