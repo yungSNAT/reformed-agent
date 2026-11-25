@@ -67,3 +67,28 @@ fn cache_reads_never_exceed_the_prompt_and_default_to_none() {
     let usage = parse_openai_response(&plain).unwrap().usage.unwrap();
     assert_eq!(usage.cache_read_tokens, 0);
 }
+
+#[test]
+fn openrouter_cache_writes_are_counted_beside_reads() {
+    let reply = openai_reply_with_usage(serde_json::json!({
+        "prompt_tokens": 194,
+        "completion_tokens": 2,
+        "total_tokens": 196,
+        "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 100}
+    }));
+    let usage = parse_openai_response(&reply).unwrap().usage.unwrap();
+    assert_eq!(usage.cache_read_tokens, 0);
+    assert_eq!(usage.cache_write_tokens, 100);
+
+    let chunk = serde_json::json!({
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 1,
+            "total_tokens": 101,
+            "prompt_tokens_details": {"cached_tokens": 80, "cache_write_tokens": 500}
+        }
+    });
+    let usage = parse_sse_chunk(&chunk).unwrap().usage.unwrap();
+    assert_eq!((usage.cache_read_tokens, usage.cache_write_tokens), (80, 20));
+}
