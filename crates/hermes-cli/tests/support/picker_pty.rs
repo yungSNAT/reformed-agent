@@ -1,5 +1,6 @@
 use super::{read_until, start_command_in_pty, terminal_flags};
-use hermes_cli::{curses_select, curses_select_embedded};
+use hermes_cli::{curses_checklist, curses_select, curses_select_embedded};
+use std::collections::HashSet;
 use std::io::Write;
 use std::time::Duration;
 use tokio::process::Command;
@@ -21,6 +22,25 @@ fn native_picker_driver() {
             assert!(!hermes_cli::checklist::embedded_picker_active());
             crossterm::terminal::disable_raw_mode().unwrap();
             result
+        }
+        "checklist-confirm" | "checklist-cancel" => {
+            let initial = HashSet::from([0, 2]);
+            let status = |chosen: &HashSet<usize>| {
+                if mode == "checklist-confirm" {
+                    format!("Fixture chosen {}", chosen.len())
+                } else {
+                    String::new()
+                }
+            };
+            let result =
+                curses_checklist("Select survey records", &choices, &initial, Some(&status));
+            let mut selected: Vec<_> = result.selected.into_iter().collect();
+            selected.sort_unstable();
+            println!(
+                "CHECKLIST_RESULT selected={selected:?} confirmed={}",
+                result.confirmed
+            );
+            return;
         }
         other => panic!("unexpected picker fixture mode {other}"),
     };
@@ -88,4 +108,43 @@ async fn embedded_picker_cancel_preserves_initial_selection_and_screen() {
         .unwrap()
         .success());
     assert_eq!(terminal_flags(&terminal), initial_flags);
+}
+
+#[tokio::test]
+async fn checklist_confirms_toggles_and_cancels_without_mutating_defaults() {
+    let home = tempfile::tempdir().unwrap();
+    for (mode, expected) in [
+        (
+            "checklist-confirm",
+            "CHECKLIST_RESULT selected=[2, 34] confirmed=true",
+        ),
+        (
+            "checklist-cancel",
+            "CHECKLIST_RESULT selected=[0, 2] confirmed=false",
+        ),
+    ] {
+        let command = picker_command(home.path(), mode);
+        let (mut child, mut terminal, initial_flags) = start_command_in_pty(command);
+        if mode == "checklist-confirm" {
+            read_until(&mut terminal, b"Fixture chosen 2").await;
+            terminal.write_all(b" ").unwrap();
+            read_until(&mut terminal, b"Fixture chosen 1").await;
+            terminal.write_all(b"k").unwrap();
+            read_until(&mut terminal, b"items 10-35 of 35").await;
+            terminal.write_all(b" \r").unwrap();
+        } else {
+            read_until(&mut terminal, b"items 1-26 of 35").await;
+            terminal.write_all(b"j ").unwrap();
+            read_until(&mut terminal, "❯ [✓] Choice 01".as_bytes()).await;
+            terminal.write_all(b"q").unwrap();
+        }
+        let output = read_until(&mut terminal, expected.as_bytes()).await;
+        assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
+        assert!(timeout(Duration::from_secs(5), child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success());
+        assert_eq!(terminal_flags(&terminal), initial_flags);
+    }
 }
