@@ -85,6 +85,104 @@ async fn auth_pool_imports_local_oauth_state_and_clears_it_when_removed() {
 }
 
 #[tokio::test]
+async fn weixin_login_restores_a_saved_account_after_local_logout() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let account = "weixin-fixture";
+    let fixture_token = "hermes-weixin-cli-fixture";
+    let account_path = sandbox
+        .path()
+        .join("hermes/weixin/accounts/weixin-fixture.json");
+    let login = |supply_account| {
+        let mut command = isolated_hermes(sandbox.path());
+        command
+            .args(["auth", "login", "weixin"])
+            .stdin(std::process::Stdio::null());
+        if supply_account {
+            command
+                .env("WEIXIN_ACCOUNT_ID", format!("  {account}  "))
+                .env("WEIXIN_TOKEN", format!("  {fixture_token}  "));
+        }
+        command
+    };
+    let first = tokio::time::timeout(Duration::from_secs(15), login(true).output())
+        .await
+        .expect("Weixin login timed out")
+        .unwrap();
+    assert!(first.status.success(), "{first:?}");
+    assert!(!String::from_utf8_lossy(&first.stdout).contains(fixture_token));
+    let saved = std::fs::read(&account_path).unwrap();
+    let account_state: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+    assert_eq!(account_state["token"], fixture_token);
+
+    for (action, expected) in [
+        (
+            "status",
+            "cfg_token_present=true saved_token_present=true enabled=true",
+        ),
+        ("logout", "token cleared and platform disabled"),
+        (
+            "status",
+            "cfg_token_present=false saved_token_present=true enabled=false",
+        ),
+    ] {
+        let stdout = platform_auth(sandbox.path(), action, "weixin").await;
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(!stdout.contains(fixture_token));
+    }
+    assert_eq!(std::fs::read(account_path).unwrap(), saved);
+
+    let restored = tokio::time::timeout(Duration::from_secs(15), login(false).output())
+        .await
+        .expect("Weixin saved-account login timed out")
+        .unwrap();
+    assert!(restored.status.success(), "{restored:?}");
+    let config =
+        hermes_config::load_user_config_file(&sandbox.path().join("hermes/config.yaml")).unwrap();
+    assert!(config.platforms["weixin"].enabled);
+    assert_eq!(
+        config.platforms["weixin"].token.as_deref(),
+        Some(fixture_token)
+    );
+    assert_eq!(config.platforms["weixin"].extra["account_id"], account);
+}
+
+#[tokio::test]
+async fn qqbot_manual_login_uses_local_credentials_and_preserves_markdown_settings() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let config_path = sandbox.path().join("hermes/config.yaml");
+    std::fs::create_dir(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        "platforms:\n  qqbot:\n    enabled: false\n    markdown_support: false\n",
+    )
+    .unwrap();
+    let app_id = "qqbot-app-fixture";
+    let fixture_secret = "hermes-qqbot-cli-fixture";
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes(sandbox.path())
+            .args(["auth", "login", "qqbot"])
+            .env("QQ_APP_ID", format!("  {app_id}  "))
+            .env("QQ_CLIENT_SECRET", format!("  {fixture_secret}  "))
+            .stdin(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .expect("QQBot login timed out")
+    .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("QQBot: app_id/client_secret saved and platform enabled"));
+    assert!(!stdout.contains(fixture_secret));
+    let config = hermes_config::load_user_config_file(&config_path).unwrap();
+    let platform = &config.platforms["qqbot"];
+    assert!(platform.enabled);
+    assert_eq!(platform.extra["app_id"], app_id);
+    assert_eq!(platform.extra["client_secret"], fixture_secret);
+    assert_eq!(platform.extra["markdown_support"], false);
+}
+
+#[tokio::test]
 async fn auth_matrix_reports_presence_and_source_without_exposing_values() {
     let sandbox = tempfile::tempdir().expect("temporary CLI home");
     let home = sandbox.path().join("hermes");
