@@ -2240,6 +2240,36 @@
         }
     }
 
+    #[test]
+    fn fallback_chain_walks_configured_providers_and_restores_primary() {
+        let primary: Arc<dyn LlmProvider> = Arc::new(RecordingProvider::default());
+        let first: Arc<dyn LlmProvider> = Arc::new(RecordingProvider::default());
+        let second: Arc<dyn LlmProvider> = Arc::new(RecordingProvider::default());
+        let chain = crate::FallbackChain::new(primary.clone())
+            .with_fallback(first.clone())
+            .with_fallback(second.clone())
+            .with_cooldown(Duration::MAX);
+
+        assert!(chain.try_restore_primary());
+        assert!(Arc::ptr_eq(&chain.active_provider(), &primary));
+        assert!(!chain.is_on_fallback());
+        assert!(chain.activate_fallback());
+        assert!(chain.is_on_fallback());
+        assert!(Arc::ptr_eq(&chain.active_provider(), &first));
+        assert!(!chain.try_restore_primary());
+        assert!(chain.activate_fallback());
+        assert!(Arc::ptr_eq(&chain.active_provider(), &second));
+        assert!(!chain.activate_fallback());
+        assert!(Arc::ptr_eq(&chain.active_provider(), &second));
+
+        let chain = chain.with_cooldown(Duration::ZERO);
+        assert!(chain.try_restore_primary());
+        assert!(!chain.is_on_fallback());
+        assert!(Arc::ptr_eq(&chain.active_provider(), &primary));
+        assert!(chain.activate_fallback());
+        assert!(Arc::ptr_eq(&chain.active_provider(), &first));
+    }
+
     #[tokio::test]
     async fn plain_and_streamed_runs_wait_for_their_session_end_hook() {
         struct FlushRecorder(Arc<Mutex<Vec<Value>>>);
