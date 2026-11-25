@@ -7,6 +7,64 @@ mod cron_webhook {
 
         const CHILD_STATE: &str = "HERMES_TEST_CRON_WEBHOOK_COVERAGE_STATE";
 
+        #[tokio::test]
+        async fn cron_webhook_worker_drains_the_remaining_event_after_receiver_lag() {
+            use hermes_cli::webhook_delivery::{save_webhook_store, WebhookRecord, WebhookStore};
+            use hermes_cron::CronJob;
+            use wiremock::matchers::{method, path};
+            use wiremock::{Mock, MockServer, ResponseTemplate};
+
+            let Some(state) = isolated_state(&[("NO_PROXY", "127.0.0.1")], |_| {}) else {
+                return;
+            };
+            let server = MockServer::start().await;
+            let store_path = state.join("webhooks.json");
+            save_webhook_store(
+                &store_path,
+                &WebhookStore {
+                    webhooks: vec![WebhookRecord {
+                        id: "fixture-worker".into(),
+                        url: format!("{}/completed", server.uri()),
+                        created_at: String::new(),
+                    }],
+                },
+            )
+            .unwrap();
+            Mock::given(method("POST"))
+                .and(path("/completed"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let (sender, receiver) = broadcast::channel(1);
+            let old_job = CronJob::new("0 * * * *", "Old fixture");
+            let recent_job = CronJob::new("0 * * * *", "Recent fixture");
+            let result = hermes_core::AgentResult {
+                messages: vec![hermes_core::Message::assistant("Recent fixture completed")],
+                finished_naturally: true,
+                ..Default::default()
+            };
+            for job in [&old_job, &recent_job] {
+                sender
+                    .send(CronCompletionEvent::new(job, "schedule", Ok(&result)))
+                    .unwrap();
+            }
+            drop(sender);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                run_cron_webhook_delivery_loop(receiver, store_path),
+            )
+            .await
+            .expect("worker drains its remaining event and exits");
+
+            let requests = server.received_requests().await.unwrap();
+            assert_eq!(requests.len(), 1);
+            let body: serde_json::Value = requests[0].body_json().unwrap();
+            assert_eq!(body["job_id"], recent_job.id);
+            assert_eq!(body["assistant_snippet"], "Recent fixture completed");
+        }
+
         // Give the child an isolated home and capture stdout without changing
         // the process environment shared by the other tests.
         fn isolated_state(
