@@ -397,6 +397,26 @@ streaming:
 
 #[tokio::test]
 async fn native_tui_interrupt_retains_the_inflight_prompt_and_the_next_draft() {
+    assert_native_tui_shutdown_keeps_prompt_and_draft(|_, terminal| {
+        terminal.write_all(b"\x03").unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn native_tui_sigterm_retains_the_inflight_prompt_and_the_next_draft() {
+    assert_native_tui_shutdown_keeps_prompt_and_draft(|child, _| {
+        let pid = i32::try_from(child.id().expect("isolated TUI child has a PID")).unwrap();
+        assert!(pid > 0);
+        // Only signal the isolated child, which is still owned and awaited by this test.
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    })
+    .await;
+}
+
+async fn assert_native_tui_shutdown_keeps_prompt_and_draft(
+    shut_down: impl FnOnce(&Child, &mut File),
+) {
     use tokio::io::AsyncBufReadExt;
 
     let provider = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -458,7 +478,7 @@ streaming:
     })
     .await
     .expect("pasting the next prompt stores a draft during the active turn");
-    terminal.write_all(b"\x03").unwrap();
+    shut_down(&child, &mut terminal);
     read_until(&mut terminal, b"\x1b[?1049l").await;
     assert!(timeout(Duration::from_secs(10), child.wait())
         .await
