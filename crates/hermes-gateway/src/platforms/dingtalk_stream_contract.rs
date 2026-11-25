@@ -1,7 +1,8 @@
 use super::*;
 use serde_json::json;
+use std::io::Cursor;
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use wiremock::matchers::{body_json, body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -41,17 +42,16 @@ async fn websocket_start_delivers_callback_and_acks_duplicate() {
         .await;
 
     let mut peer = tokio::spawn(async move {
-        let (socket, _) = listener.accept().await.unwrap();
-        let mut ws =
-            tokio_tungstenite::accept_hdr_async(socket, |request: &Request, response: Response| {
-                assert_eq!(
-                    request.uri().path_and_query().unwrap().as_str(),
-                    "/fixture?region=local&ticket=fixture+ticket%2F%26",
-                );
-                Ok(response)
-            })
-            .await
-            .unwrap();
+        const REQUEST_LINE: &[u8] =
+            b"GET /fixture?region=local&ticket=fixture+ticket%2F%26 HTTP/1.1\r\n";
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request_line = [0; REQUEST_LINE.len()];
+        socket.read_exact(&mut request_line).await.unwrap();
+        assert_eq!(request_line.as_slice(), REQUEST_LINE);
+        // Replay the checked request line so Tungstenite receives the full handshake.
+        let (reader, writer) = socket.into_split();
+        let socket = tokio::io::join(Cursor::new(request_line).chain(reader), writer);
+        let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
         ws.send(WsMessage::Ping(b"fixture-ping".to_vec().into()))
             .await
             .unwrap();
