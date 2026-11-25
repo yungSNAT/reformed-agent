@@ -270,6 +270,128 @@ fn pressure_cache_ignores_disabled_and_expired_status() {
 }
 
 #[test]
+fn memory_requests_apply_cached_pressure_only_to_implicit_retrieval_modes() {
+    const CASE: &str = "local-pressure";
+    if std::env::var(CHILD_CASE).as_deref() != Ok(CASE) {
+        run_child(
+            "memory_requests_apply_cached_pressure_only_to_implicit_retrieval_modes",
+            CASE,
+            &[("NO_PROXY", "127.0.0.1"), ("no_proxy", "127.0.0.1")],
+        );
+        return;
+    }
+
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/v1/info"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "status": {"queue": {"pending_total": 15, "cooldown_active": 1}}
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/memory/search"))
+                .and(body_partial_json(json!({
+                    "query":"fixture search", "retrieval_mode":"fast", "sources":["rollups"]
+                })))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "results":[{"summary":"fixture result"}]
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/memory/context-pack"))
+                .and(body_partial_json(json!({
+                    "query":"implicit fixture pack", "retrieval_mode":"fast", "sources":["rollups"]
+                })))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "summary":"fixture packed result"
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/memory/context-pack"))
+                .and(body_partial_json(
+                    json!({"query":"fixture pack", "retrieval_mode":"deep"}),
+                ))
+                .and(|request: &wiremock::Request| {
+                    serde_json::from_slice::<Value>(&request.body)
+                        .is_ok_and(|body| body.get("sources").is_none())
+                })
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/memory/write"))
+                .and(body_partial_json(json!({"content":"fixture note"})))
+                .respond_with(ResponseTemplate::new(503).set_body_string("fixture unavailable"))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let cfg = ContextLatticeConfig {
+                orchestrator_url: server.uri(),
+                timeout_secs: 5.0,
+                pressure_aware: true,
+                pressure_status_ttl_secs: 30.0,
+                api_key: None,
+                ..offline_config()
+            };
+            tokio::task::spawn_blocking(move || {
+                let plugin = ContextLatticeMemoryPlugin::new();
+                *plugin.config.lock().unwrap() = Some(cfg);
+                let call = |tool, args: Value| {
+                    serde_json::from_str::<Value>(&plugin.handle_tool_call(tool, &args)).unwrap()
+                };
+                assert_eq!(
+                    call("contextlattice_search", json!({"query":" fixture search "})),
+                    json!({"results":[{"summary":"fixture result"}]})
+                );
+                assert_eq!(
+                    call(
+                        "contextlattice_context_pack",
+                        json!({"query":"implicit fixture pack"}),
+                    ),
+                    json!({"summary":"fixture packed result"})
+                );
+                assert_eq!(
+                    call(
+                        "contextlattice_context_pack",
+                        json!({"query":"fixture pack", "retrieval_mode":"deep"}),
+                    ),
+                    json!({})
+                );
+                let error = call("contextlattice_write", json!({"content":" fixture note "}));
+                assert!(error["error"].as_str().unwrap().contains("503"));
+                assert!(error["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("fixture unavailable"));
+                let cache = plugin.pressure_cache.lock().unwrap();
+                let snapshot = cache.as_ref().unwrap();
+                assert_eq!((snapshot.pending_total, snapshot.cooldown_active), (15, 1));
+                assert!(snapshot.pressure_active);
+            })
+            .await
+            .unwrap();
+            server.verify().await;
+        });
+    println!("{CHILD_DONE}");
+}
+
+#[test]
 fn pressure_tuning_leaves_payload_unchanged_without_active_pressure() {
     let cfg = offline_config();
     let inactive = QueuePressureSnapshot {
