@@ -271,7 +271,7 @@ CommandDef("ignored_docstring_cmd", "not real")
 # '/ignored-comment-key': "commented out"
 COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef('model', "Switch model (provider)", "Configuration",
-               aliases=('m', '/mod')),
+               aliases=('m', 'mod')),
     CommandDef("raw", "Raw output", "Info"),
     CommandDef("policy", "Policy rules", "Info", cli_only=True),
     CommandDef("sethome", "Set the home channel", "Session",

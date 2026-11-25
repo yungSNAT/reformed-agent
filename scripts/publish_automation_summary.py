@@ -59,46 +59,58 @@ def publish_summary(
     github_issue: int,
     local_path: pathlib.Path,
 ) -> dict[str, Any]:
-    cmd = [
+    # Each sink runs on its own, in the order given, as the script's loop did:
+    # unsupported names are recorded, repeats are retried and an empty order
+    # tries nothing. `--opt=value` keeps values that start with "-" intact.
+    base_cmd = [
         "cargo", "run", "--locked", "--manifest-path", str(REPO_ROOT / "Cargo.toml"),
         "-q", "-p", "hermes-parity-tools", "--", "publish-automation-summary",
-        "--repo-root", str(repo_root),
-        "--sink-order", ",".join(sink_order),
-        "--preformatted-markdown", "-",
-        "--contextlattice-url", str(contextlattice_url),
-        "--context-timeout-secs", str(context_timeout_secs),
-        "--context-project", str(context_project),
-        "--context-file-name", str(context_file_name),
-        "--context-topic-path", str(context_topic_path),
-        "--github-issue", str(github_issue),
-        "--local-path", str(local_path),
+        f"--repo-root={repo_root}",
+        "--preformatted-markdown=-",
+        f"--contextlattice-url={contextlattice_url}",
+        f"--context-timeout-secs={context_timeout_secs}",
+        f"--context-project={context_project}",
+        f"--context-file-name={context_file_name}",
+        f"--context-topic-path={context_topic_path}",
+        f"--github-issue={github_issue}",
+        f"--local-path={local_path}",
         "--json",
     ]
     env = dict(os.environ)
     env["AUTOMATION_SUMMARY_CONTEXT_API_KEY"] = str(context_api_key)
     if not str(context_api_key):
         env.pop("CONTEXTLATTICE_API_KEY", None)
-    proc = subprocess.run(cmd, input=summary_markdown, capture_output=True, text=True, env=env, check=False)
-    try:
-        parsed = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError as exc:
-        err_tail = (proc.stderr or "").strip()[-400:]
-        detail = f"exit={proc.returncode} json_err={exc}" + (f" stderr={err_tail}" if err_tail else "")
-        return {"ok": False, "primary_sink": "", "attempts": [{"sink": "cli", "ok": "false", "detail": detail}]}
-    # The CLI prints sorted keys; keep the helper's sink, ok, detail order.
-    attempts = [
-        {"sink": a.get("sink", ""), "ok": a.get("ok", ""), "detail": a.get("detail", "")}
-        for a in parsed.get("attempts", [])
-    ]
-    if not parsed.get("ok") and not attempts and proc.stderr:
-        attempts = [{"sink": "cli", "ok": "false", "detail": proc.stderr.strip()[-400:]}]
-    if parsed.get("ok") and parsed.get("primary_sink") == "stdout":
-        print(summary_markdown)
-    return {
-        "ok": bool(parsed.get("ok")),
-        "primary_sink": str(parsed.get("primary_sink", "")),
-        "attempts": attempts,
-    }
+    attempts: list[dict[str, str]] = []
+    for sink in sink_order:
+        if sink not in SUPPORTED_SINKS:
+            attempts.append({"sink": sink, "ok": "false", "detail": "unsupported_sink"})
+            continue
+        proc = subprocess.run(
+            [*base_cmd, f"--sink-order={sink}"],
+            input=summary_markdown, capture_output=True, text=True, env=env, check=False,
+        )
+        try:
+            parsed = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            err_tail = (proc.stderr or "").strip()[-400:]
+            detail = f"exit={proc.returncode} json_err={exc}" + (f" stderr={err_tail}" if err_tail else "")
+            attempts.append({"sink": "cli", "ok": "false", "detail": detail})
+            return {"ok": False, "primary_sink": "", "attempts": attempts}
+        returned = parsed.get("attempts") or []
+        if not returned:
+            detail = (proc.stderr or "").strip()[-400:] or f"exit={proc.returncode}"
+            attempts.append({"sink": "cli", "ok": "false", "detail": detail})
+            return {"ok": False, "primary_sink": "", "attempts": attempts}
+        # The CLI prints sorted keys; keep the helper's sink, ok, detail order.
+        attempts.extend(
+            {"sink": a.get("sink", ""), "ok": a.get("ok", ""), "detail": a.get("detail", "")}
+            for a in returned
+        )
+        if parsed.get("ok"):
+            if sink == "stdout":
+                print(summary_markdown)
+            return {"ok": True, "primary_sink": sink, "attempts": attempts}
+    return {"ok": False, "primary_sink": "", "attempts": attempts}
 
 
 def main() -> int:

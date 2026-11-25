@@ -1,34 +1,72 @@
 //! Sink dispatch helpers for `publish-automation-summary`.
 
-use std::collections::hash_map::RandomState;
-use std::fs::{self, File, OpenOptions};
-use std::hash::BuildHasher;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::automation_summary::{parse_sink_order, AutomationSummaryArgs};
 use crate::py::{self, Py};
 
-static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+/// Most bytes kept from a child's stdout or stderr; the rest is drained unread.
+const MAX_CHILD_OUTPUT: u64 = 64 * 1024;
+/// urllib's `HTTPRedirectHandler.max_redirections` and `max_repeats`.
+const MAX_REDIRECTS: usize = 10;
+const MAX_REPEATS: usize = 4;
+#[cfg(windows)]
+const NULL_DEVICE: &str = "NUL";
+#[cfg(not(windows))]
+const NULL_DEVICE: &str = "/dev/null";
 
-struct HeaderConfigGuard(PathBuf);
-
-impl Drop for HeaderConfigGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
+/// `urlopen(timeout=max(0.5, t))`: no upper bound; NaN behaves as 0.5 and an
+/// infinite or unrepresentable timeout means none.
+pub(crate) fn bounded_timeout_secs(raw: f64) -> Option<Duration> {
+    let secs = if raw.is_nan() { 0.5 } else { raw.max(0.5) };
+    Duration::try_from_secs_f64(secs).ok()
 }
 
-pub(crate) fn bounded_timeout_secs(raw: f64) -> Duration {
-    let clamped = if raw.is_finite() {
-        raw.clamp(0.5, 3600.0)
-    } else {
-        8.0
-    };
-    Duration::from_secs_f64(clamped)
+pub(crate) struct Captured {
+    pub(crate) success: bool,
+    pub(crate) code: Option<i32>,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+}
+
+fn read_bounded<R: Read>(mut reader: R) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let _ = reader.by_ref().take(MAX_CHILD_OUTPUT).read_to_end(&mut buf);
+    let _ = io::copy(&mut reader, &mut io::sink());
+    buf
+}
+
+/// Runs `cmd` with `input` on stdin, keeping at most `MAX_CHILD_OUTPUT` bytes of
+/// each output stream; threads keep every pipe moving so the child never blocks.
+pub(crate) fn run_bounded(mut cmd: Command, input: &[u8]) -> io::Result<Captured> {
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdin = child.stdin.take();
+    let input = input.to_vec();
+    let writer = std::thread::spawn(move || {
+        if let Some(mut pipe) = stdin {
+            let _ = pipe.write_all(&input);
+        }
+    });
+    let err_pipe = child.stderr.take();
+    let err_reader = std::thread::spawn(move || err_pipe.map(read_bounded).unwrap_or_default());
+    let stdout = child.stdout.take().map(read_bounded).unwrap_or_default();
+    let stderr = err_reader.join().unwrap_or_default();
+    let _ = writer.join();
+    let status = child.wait()?;
+    Ok(Captured {
+        success: status.success(),
+        code: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    })
 }
 
 fn validate_endpoint(raw: &str) -> Result<&str, String> {
@@ -45,123 +83,108 @@ fn validate_endpoint(raw: &str) -> Result<&str, String> {
     Ok(url)
 }
 
-fn open_auth_config(opts: &OpenOptions, pid: u32, seq: u64) -> Result<(PathBuf, File), String> {
-    let hasher = RandomState::new();
-    let dir = std::env::temp_dir();
-    for attempt in 0..16u32 {
-        let rand_id = hasher.hash_one((pid, seq, attempt));
-        let path = dir.join(format!("hermes-summary-curl-{pid}-{rand_id:016x}.cfg"));
-        match opts.open(&path) {
-            Ok(file) => return Ok((path, file)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("error=OSError:failed creating curl config: {e}")),
-        }
-    }
-    Err("error=OSError:failed creating unique curl config after retries".to_string())
+/// A curl config-file string value: quoted, with backslash and quote escaped.
+fn config_value(raw: &str) -> String {
+    format!("\"{}\"", raw.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-fn write_auth_config(api_key: &str) -> Result<HeaderConfigGuard, String> {
-    let trimmed = api_key.trim();
-    if trimmed.bytes().any(|b| b.is_ascii_control()) {
+/// Curl config read from stdin (`-K -`), so the API key never reaches argv or
+/// a file. `body` is `Some` for the first POST and `None` for a redirected GET.
+pub(crate) fn curl_config(api_key: &str, body: Option<&str>) -> Result<String, String> {
+    let key = api_key.trim();
+    if key.bytes().any(|b| b.is_ascii_control()) {
         return Err("error=ValueError:invalid control character in API key".to_string());
     }
-    let escaped = trimmed.replace('\\', "\\\\").replace('"', "\\\"");
-    let pid = std::process::id();
-    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let mut opts = OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
+    let mut lines = Vec::new();
+    if let Some(data) = body {
+        lines.push(format!(
+            "header = {}",
+            config_value("Content-Type: application/json")
+        ));
+        lines.push(format!("data-binary = {}", config_value(data)));
     }
-    let (path, mut file) = open_auth_config(&opts, pid, seq)?;
-    let guard = HeaderConfigGuard(path);
-    writeln!(file, "header = \"Authorization: Bearer {escaped}\"")
-        .map_err(|e| format!("error=OSError:failed writing curl config: {e}"))?;
-    Ok(guard)
+    lines.push(format!(
+        "header = {}",
+        config_value("Accept: application/json")
+    ));
+    if !key.is_empty() {
+        lines.push(format!(
+            "header = {}",
+            config_value(&format!("Authorization: Bearer {key}"))
+        ));
+    }
+    lines.push(String::new());
+    Ok(lines.join("\n"))
 }
 
-fn spawn_curl_post(
-    url: &str,
-    auth_guard: Option<&HeaderConfigGuard>,
-    timeout: Duration,
-    body: &Py,
-) -> Result<std::process::Output, String> {
-    let max_time = format!("{:.3}", timeout.as_secs_f64());
+/// One curl request; returns the status code and the redirect target.
+fn curl_once(url: &str, config: &str, timeout: Option<Duration>) -> Result<(u16, String), String> {
     let mut cmd = Command::new("curl");
-    cmd.args([
-        "-sS",
-        "--max-time",
-        &max_time,
-        "-X",
-        "POST",
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        "Accept: application/json",
-    ]);
-    if let Some(guard) = auth_guard {
-        cmd.arg("-K").arg(&guard.0);
+    // `-q` first: ~/.curlrc must not add --fail, -L or --insecure.
+    cmd.args(["-q", "-sS", "--proto", "=http,https", "-o", NULL_DEVICE]);
+    if let Some(t) = timeout {
+        cmd.args(["--max-time", &format!("{:.3}", t.as_secs_f64())]);
     }
-    cmd.args(["--data-binary", "@-", "-w", "\n%{http_code}", "--", url])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| format!("error=CurlError:{e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let json_body = py::dumps(body, None, false);
-        let _ = stdin.write_all(json_body.as_bytes());
+    cmd.args(["-w", "%{http_code}\\n%{redirect_url}", "-K", "-", "--", url]);
+    let out = run_bounded(cmd, config.as_bytes()).map_err(|e| format!("error=CurlError:{e}"))?;
+    if !out.success {
+        let err = out.stderr.trim();
+        return Err(if err.is_empty() {
+            format!("error=RequestError:curl_exit_{}", out.code.unwrap_or(1))
+        } else {
+            format!("error=RequestError:{err}")
+        });
     }
-    child
-        .wait_with_output()
-        .map_err(|e| format!("error=CurlError:{e}"))
+    let mut lines = out.stdout.lines();
+    let code = lines
+        .next()
+        .and_then(|line| line.trim().parse::<u16>().ok())
+        .ok_or_else(|| "error=CurlError:missing_http_status".to_string())?;
+    Ok((code, lines.next().unwrap_or("").trim().to_string()))
 }
 
-fn parse_curl_status(out: std::process::Output) -> (bool, String) {
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let detail = if err.is_empty() {
-            format!("curl_exit_{}", out.status.code().unwrap_or(1))
-        } else {
-            err
-        };
-        return (false, format!("error=RequestError:{detail}"));
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let code = stdout
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .and_then(|line| line.trim().parse::<u16>().ok());
-    match code {
-        Some(c) => ((200..300).contains(&c), format!("http_status={c}")),
-        None => (false, "error=CurlError:missing_http_status".to_string()),
-    }
+/// urllib's redirect rules: a POST follows 301, 302 and 303 as a GET without
+/// the body; a GET also follows 307 and 308; other schemes, more than
+/// `MAX_REDIRECTS` distinct targets or a target seen `MAX_REPEATS` times end
+/// on the redirect status.
+pub(crate) fn follows_redirect(code: u16, is_post: bool) -> bool {
+    matches!(code, 301..=303) || (!is_post && matches!(code, 307 | 308))
 }
 
 fn post_contextlattice_json(
     endpoint: &str,
     api_key: &str,
-    timeout: Duration,
+    timeout: Option<Duration>,
     body: &Py,
 ) -> (bool, String) {
-    let url = match validate_endpoint(endpoint) {
-        Ok(u) => u,
+    let mut url = match validate_endpoint(endpoint) {
+        Ok(u) => u.to_string(),
         Err(err) => return (false, err),
     };
-    let _auth_guard = if api_key.trim().is_empty() {
-        None
-    } else {
-        match write_auth_config(api_key) {
-            Ok(g) => Some(g),
+    let json_body = py::dumps(body, None, false);
+    let mut is_post = true;
+    let mut visited: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    loop {
+        let config = match curl_config(api_key, is_post.then_some(json_body.as_str())) {
+            Ok(c) => c,
             Err(err) => return (false, err),
+        };
+        let (code, location) = match curl_once(&url, &config, timeout) {
+            Ok(r) => r,
+            Err(err) => return (false, err),
+        };
+        let can_follow = location.starts_with("http://") || location.starts_with("https://");
+        let seen = visited.get(&location).copied().unwrap_or(0);
+        if !follows_redirect(code, is_post)
+            || !can_follow
+            || seen >= MAX_REPEATS
+            || visited.len() >= MAX_REDIRECTS
+        {
+            return ((200..300).contains(&code), format!("http_status={code}"));
         }
-    };
-    match spawn_curl_post(url, _auth_guard.as_ref(), timeout, body) {
-        Ok(out) => parse_curl_status(out),
-        Err(err) => (false, err),
+        visited.insert(location.clone(), seen + 1);
+        url = location;
+        is_post = false;
     }
 }
 
@@ -191,28 +214,14 @@ fn comment_github_issue(repo_root: &Path, issue: i64, content: &str) -> (bool, S
     if issue <= 0 {
         return (false, "issue_not_configured".to_string());
     }
-    let mut child = match Command::new("gh")
-        .args(["issue", "comment", &issue.to_string(), "--body-file", "-"])
-        .current_dir(repo_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return (false, "gh_cli_missing".to_string());
-        }
-        Err(e) => return (false, format!("gh_spawn_error:{e}")),
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(content.as_bytes());
-    }
-    match child.wait_with_output() {
-        Ok(out) if out.status.success() => (true, "commented".to_string()),
+    let mut cmd = Command::new("gh");
+    cmd.args(["issue", "comment", &issue.to_string(), "--body-file", "-"])
+        .current_dir(repo_root);
+    match run_bounded(cmd, content.as_bytes()) {
+        Ok(out) if out.success => (true, "commented".to_string()),
         Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            let code = out.status.code().unwrap_or(1);
+            let err = out.stderr.trim().to_string();
+            let code = out.code.unwrap_or(1);
             (
                 false,
                 if err.is_empty() {
@@ -222,7 +231,8 @@ fn comment_github_issue(repo_root: &Path, issue: i64, content: &str) -> (bool, S
                 },
             )
         }
-        Err(e) => (false, format!("gh_wait_error:{e}")),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (false, "gh_cli_missing".to_string()),
+        Err(e) => (false, format!("gh_spawn_error:{e}")),
     }
 }
 
@@ -281,4 +291,65 @@ pub(crate) fn try_sinks(
         }
     }
     (false, String::new(), attempts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bounded_timeout_secs, curl_config, follows_redirect, run_bounded};
+    use std::time::Duration;
+
+    #[test]
+    fn api_key_travels_only_in_the_stdin_config() {
+        let cfg = curl_config(" k\"e\\y ", Some("{\"a\": \"b\\\\c\"}")).expect("config");
+        assert_eq!(
+            cfg,
+            "header = \"Content-Type: application/json\"\n\
+             data-binary = \"{\\\"a\\\": \\\"b\\\\\\\\c\\\"}\"\n\
+             header = \"Accept: application/json\"\n\
+             header = \"Authorization: Bearer k\\\"e\\\\y\"\n"
+        );
+        let get = curl_config("", None).expect("get config");
+        assert_eq!(get, "header = \"Accept: application/json\"\n");
+        assert!(curl_config("bad\nkey", None).is_err());
+    }
+
+    #[test]
+    fn redirects_follow_urllib_rules() {
+        for code in [301, 302, 303] {
+            assert!(follows_redirect(code, true));
+            assert!(follows_redirect(code, false));
+        }
+        assert!(!follows_redirect(307, true));
+        assert!(!follows_redirect(308, true));
+        assert!(follows_redirect(307, false));
+        assert!(!follows_redirect(200, false));
+    }
+
+    #[test]
+    fn timeout_matches_urlopen_floor() {
+        assert_eq!(bounded_timeout_secs(0.1), Some(Duration::from_millis(500)));
+        assert_eq!(
+            bounded_timeout_secs(f64::NAN),
+            Some(Duration::from_millis(500))
+        );
+        assert_eq!(
+            bounded_timeout_secs(7200.0),
+            Some(Duration::from_secs(7200))
+        );
+        assert_eq!(bounded_timeout_secs(f64::INFINITY), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_output_is_capped_and_drained() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args([
+            "-c",
+            "head -c 300000 /dev/zero; head -c 200000 /dev/zero >&2; cat >/dev/null",
+        ]);
+        let out = run_bounded(cmd, &vec![b'x'; 200_000]).expect("run");
+        assert!(out.success);
+        assert_eq!(out.stdout.len(), 64 * 1024);
+        assert_eq!(out.stderr.len(), 64 * 1024);
+    }
 }

@@ -30,23 +30,20 @@ struct EntryConfig {
     explicit_non_default_uid: bool,
 }
 
-fn non_empty_trimmed(var: Option<&OsStr>) -> Option<String> {
-    var.and_then(|s| s.to_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-}
-
+/// `${NAME:-default}`: unset or empty gives the default; anything else must be
+/// ASCII digits (no sign, padding or whitespace) that fit a u32.
 fn parse_id(name: &str, raw: Option<&OsStr>, default: u32) -> Result<u32, String> {
-    if raw.is_some_and(|v| v.to_str().is_none()) {
-        return Err(format!("invalid numeric {name}: not UTF-8"));
+    let Some(raw) = raw.filter(|v| !v.is_empty()) else {
+        return Ok(default);
+    };
+    let text = raw
+        .to_str()
+        .ok_or_else(|| format!("invalid numeric {name}: not UTF-8"))?;
+    if !text.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("invalid numeric {name}: {text:?}"));
     }
-    match non_empty_trimmed(raw) {
-        Some(v) => v
-            .parse::<u32>()
-            .map_err(|_| format!("invalid numeric {name}: {v}")),
-        None => Ok(default),
-    }
+    text.parse::<u32>()
+        .map_err(|_| format!("invalid numeric {name}: {text:?}"))
 }
 
 fn build_config(
@@ -61,7 +58,7 @@ fn build_config(
     };
     let target_uid = parse_id("HERMES_UID", uid, 10_000)?;
     let target_gid = parse_id("HERMES_GID", gid, target_uid)?;
-    let explicit_non_default_uid = non_empty_trimmed(uid).is_some_and(|v| v != "10000");
+    let explicit_non_default_uid = uid.is_some_and(|v| !v.is_empty() && v != "10000");
     Ok(EntryConfig {
         app_home,
         target_uid,
@@ -159,30 +156,44 @@ fn reconcile_hermes_identity(cfg: &EntryConfig) -> Result<(u32, u32), String> {
     Ok((actual_uid, actual_gid))
 }
 
+/// The shell's `exec` status when the program cannot run: 127 when it is not
+/// found, 126 when it is found but cannot be executed.
+fn exec_failure_code(err: &std::io::Error) -> u8 {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        127
+    } else {
+        126
+    }
+}
+
 #[cfg(unix)]
-fn exec_command(program: &OsString, args: &[OsString]) -> Result<ExitCode, String> {
+fn exec_command(program: &OsString, args: &[OsString]) -> ExitCode {
     use std::os::unix::process::CommandExt;
     let err = Command::new(program).args(args).exec();
-    Err(format!(
-        "failed to exec {}: {err}",
+    eprintln!(
+        "hermes-entrypoint: exec: {}: {err}",
         program.to_string_lossy()
-    ))
+    );
+    ExitCode::from(exec_failure_code(&err))
 }
 
 #[cfg(not(unix))]
-fn exec_command(program: &OsString, args: &[OsString]) -> Result<ExitCode, String> {
-    let status = Command::new(program)
-        .args(args)
-        .status()
-        .map_err(|err| format!("failed to run {}: {err}", program.to_string_lossy()))?;
-    let code = status.code().unwrap_or(1);
-    Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+fn exec_command(program: &OsString, args: &[OsString]) -> ExitCode {
+    match Command::new(program).args(args).status() {
+        Ok(status) => ExitCode::from(u8::try_from(status.code().unwrap_or(1)).unwrap_or(1)),
+        Err(err) => {
+            eprintln!(
+                "hermes-entrypoint: exec: {}: {err}",
+                program.to_string_lossy()
+            );
+            ExitCode::from(exec_failure_code(&err))
+        }
+    }
 }
 
-fn prepare_command(
-    program: &OsString,
-    args: &[OsString],
-) -> Result<(OsString, Vec<OsString>), String> {
+/// The program and arguments to exec; `None` when not root and no command was
+/// given (the shell's bare `exec` then exits 0).
+fn prepare_command(argv: &[OsString]) -> Result<Option<(OsString, Vec<OsString>)>, String> {
     let cfg = config_from_env()?;
     fs::create_dir_all(&cfg.app_home)
         .map_err(|e| format!("failed to create {}: {e}", cfg.app_home.display()))?;
@@ -205,25 +216,21 @@ fn prepare_command(
                 ],
             );
         }
-        let mut gosu_args = vec![
-            OsString::from(format!("{actual_uid}:{actual_gid}")),
-            program.clone(),
-        ];
-        gosu_args.extend(args.iter().cloned());
-        return Ok((OsString::from("gosu"), gosu_args));
+        let mut gosu_args = vec![OsString::from(format!("{actual_uid}:{actual_gid}"))];
+        gosu_args.extend(argv.iter().cloned());
+        return Ok(Some((OsString::from("gosu"), gosu_args)));
     }
 
-    Ok((program.clone(), args.to_vec()))
+    Ok(argv
+        .split_first()
+        .map(|(program, rest)| (program.clone(), rest.to_vec())))
 }
 
 fn main() -> ExitCode {
-    let raw: Vec<OsString> = env::args_os().skip(1).collect();
-    let Some((program, rest)) = raw.split_first() else {
-        eprintln!("usage: hermes-entrypoint <command> [args...]");
-        return ExitCode::from(2);
-    };
-    match prepare_command(program, rest).and_then(|(prog, argv)| exec_command(&prog, &argv)) {
-        Ok(code) => code,
+    let argv: Vec<OsString> = env::args_os().skip(1).collect();
+    match prepare_command(&argv) {
+        Ok(Some((program, args))) => exec_command(&program, &args),
+        Ok(None) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("hermes-entrypoint: {err}");
             ExitCode::FAILURE
@@ -233,7 +240,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_config, capture_u32, should_chown};
+    use super::{build_config, capture_u32, exec_failure_code, should_chown};
     use std::ffi::OsStr;
     use std::path::PathBuf;
 
@@ -272,8 +279,29 @@ mod tests {
     fn preserves_non_empty_whitespace_home_and_rejects_bad_ids() {
         let ws = build_config(Some(OsStr::new(" /srv/hermes ")), None, None).expect("ws home");
         assert_eq!(ws.app_home, PathBuf::from(" /srv/hermes "));
-        assert!(build_config(None, Some(OsStr::new("not-a-uid")), None).is_err());
+        for bad in ["not-a-uid", "  ", " 1001 ", "+1000", "-1", "4294967296"] {
+            assert!(
+                build_config(None, Some(OsStr::new(bad)), None).is_err(),
+                "{bad:?}"
+            );
+        }
         assert!(build_config(None, Some(OsStr::new("1000")), Some(OsStr::new("bad-gid"))).is_err());
+        let padded = build_config(None, Some(OsStr::new("010000")), None).expect("leading zero");
+        assert_eq!(padded.target_uid, 10_000);
+        assert!(
+            padded.explicit_non_default_uid,
+            "shell compares the text, not the number"
+        );
+    }
+
+    #[test]
+    fn exec_failures_use_the_shell_status() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(exec_failure_code(&Error::from(ErrorKind::NotFound)), 127);
+        assert_eq!(
+            exec_failure_code(&Error::from(ErrorKind::PermissionDenied)),
+            126
+        );
     }
 
     #[cfg(unix)]
