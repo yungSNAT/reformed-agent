@@ -801,6 +801,37 @@ note the fixtures"));
         assert!(latest_ui_assistant_text(&app).contains("Empty prompt"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prompt_editor_failures_report_the_error_and_remove_drafts() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let drafts = tmp.path().join("drafts");
+        std::fs::create_dir(&drafts).unwrap();
+        let _drafts = EnvVarGuard::set("TMPDIR", &drafts);
+        let _visual_guard = EnvVarGuard::set("VISUAL", " ");
+        let failing_editor = tmp.path().join("editor-exit-7");
+        write_test_executable(&failing_editor);
+        std::fs::write(&failing_editor, "#!/bin/sh\nexit 7\n").unwrap();
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        for (editor, expected) in [
+            (tmp.path().join("missing-editor"), "Could not launch editor"),
+            (failing_editor, "exit status: 7"),
+        ] {
+            let _editor_guard = EnvVarGuard::set("EDITOR", &editor);
+            let result = handle_slash_command(&mut app, "/compose", &["fixture"])
+                .await
+                .unwrap();
+            assert_eq!(result, CommandResult::Handled);
+            let output = latest_ui_assistant_text(&app);
+            assert!(output.starts_with("Could not open prompt editor: "), "{output}");
+            assert!(output.contains(expected), "{output}");
+            assert!(app.take_pending_agent_seed().is_none());
+            assert!(std::fs::read_dir(&drafts).unwrap().next().is_none());
+        }
+    }
+
     #[tokio::test]
     async fn learn_command_records_learning_request_for_next_turn() {
         let _guard = test_env_lock::lock_async().await;
@@ -834,6 +865,37 @@ note the fixtures"));
         assert_eq!(app.pet_settings().mood, "hyped");
         assert_eq!(app.pending_system_note_count(), 1);
         assert!(latest_ui_assistant_text(&app).contains("Pet hatch request captured"));
+    }
+
+    #[tokio::test]
+    async fn hatch_infers_mood_and_persists_each_described_companion() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let pet_file = tmp.path().join("pet.json");
+
+        let empty = handle_slash_command(&mut app, "/hatch", &[" "]).await.unwrap();
+        assert_eq!(empty, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).starts_with("Usage: /hatch"));
+        assert_eq!(app.pending_system_note_count(), 0);
+        assert!(!pet_file.exists());
+
+        for (description, species, mood) in [
+            ("energetic owl", "owl", "hyped"),
+            ("cozy fox", "fox", "chill"),
+        ] {
+            let result = handle_slash_command(&mut app, "/hatch", &[description]).await.unwrap();
+            assert_eq!(result, CommandResult::Handled);
+            assert_eq!(app.pet_settings().species, species);
+            assert_eq!(app.pet_settings().mood, mood);
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&pet_file).unwrap()).unwrap();
+            assert_eq!(saved["enabled"], true);
+            assert_eq!(saved["species"], species);
+            assert_eq!(saved["mood"], mood);
+        }
+        assert_eq!(app.pending_system_note_count(), 2);
     }
 
     #[tokio::test]
