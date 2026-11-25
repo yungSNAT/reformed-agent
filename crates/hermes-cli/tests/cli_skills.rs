@@ -190,3 +190,117 @@ fn skills_cli_snapshot_round_trip_restores_uninstalled_content() {
         "two nests"
     );
 }
+
+#[test]
+fn skills_cli_reports_local_configuration_quality_and_audit_findings() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let before = success_text(skills(root, &["update"]).assert());
+    assert!(before.contains("No skills installed."), "{before}");
+
+    let complete = root.join("skills/heron-notes");
+    let draft = root.join("skills/wren-draft");
+    write_skill(
+        &complete,
+        &format!(
+            "---\nname: heron-notes\nversion: '1.0'\ndescription: Survey notes\ncategory: research\n---\n{}",
+            "Record the date of the field survey.\n".repeat(84)
+        ),
+    );
+    for directory in ["scripts", "examples", "templates", "tests"] {
+        fs::create_dir(complete.join(directory)).unwrap();
+    }
+    write_skill(&draft, "# Wren draft\n\nTODO write field notes.\n");
+
+    let missing =
+        success_text(skills(root, &["config", "heron-notes", "--extra", "region"]).assert());
+    assert!(
+        missing.contains("No config for skill 'heron-notes'."),
+        "{missing}"
+    );
+    for entry in ["colour=blue", "region=outer=coast"] {
+        skills(root, &["config", "heron-notes", "--extra", entry])
+            .assert()
+            .success();
+    }
+    let config: Value =
+        serde_json::from_str(&fs::read_to_string(complete.join("config.json")).unwrap()).unwrap();
+    assert_eq!(
+        config,
+        serde_json::json!({"colour": "blue", "region": "outer=coast"})
+    );
+    let region =
+        success_text(skills(root, &["config", "heron-notes", "--extra", "region"]).assert());
+    assert!(region.contains("region = \"outer=coast\""), "{region}");
+    let absent =
+        success_text(skills(root, &["config", "heron-notes", "--extra", "unknown"]).assert());
+    assert!(absent.contains("Key 'unknown' not found"), "{absent}");
+    let listing = success_text(skills(root, &["config", "heron-notes"]).assert());
+    assert!(
+        listing.contains("Config for skill 'heron-notes':"),
+        "{listing}"
+    );
+
+    let quality = success_text(skills(root, &["quality"]).assert());
+    let best = quality
+        .lines()
+        .find(|line| line.starts_with("heron-notes"))
+        .unwrap();
+    let weakest = quality
+        .lines()
+        .find(|line| line.starts_with("wren-draft"))
+        .unwrap();
+    assert!(best.contains("100") && best.contains("excellent"), "{best}");
+    assert!(weakest.contains("fallback") && weakest.contains("contains_placeholder_markers"));
+    assert!(quality.contains("- wren-draft: run"), "{quality}");
+
+    let clean = success_text(skills(root, &["audit"]).assert());
+    assert!(
+        clean.contains("Audited 2 skill(s)") && clean.contains("All clear"),
+        "{clean}"
+    );
+    fs::create_dir(draft.join("docs")).unwrap();
+    fs::write(
+        draft.join("docs/service.md"),
+        "Fixture service http://127.0.0.1:8080.",
+    )
+    .unwrap();
+    let audited = success_text(skills(root, &["audit"]).assert());
+    assert!(audited.contains("heron-notes — clean"), "{audited}");
+    assert!(
+        audited.contains("[WARN] docs/service.md — Internal network URL"),
+        "{audited}"
+    );
+    assert!(
+        audited.contains("Critical: 0") && audited.contains("Warnings: 1"),
+        "{audited}"
+    );
+
+    let updates = success_text(skills(root, &["update"]).assert());
+    assert!(
+        updates.contains("No hub-installed skills tracked"),
+        "{updates}"
+    );
+}
+
+#[test]
+fn skills_cli_tap_add_and_remove_preserve_the_default_catalogue() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let url = "https://catalogue.example.invalid/skills";
+    let list = || success_text(skills(root, &["tap", "list"]).assert());
+    let original = list();
+    assert!(original.contains("Skill taps:"), "{original}");
+    skills(root, &["tap", "add"]).assert().failure();
+    let added = success_text(skills(root, &["tap", "add", "--extra", url]).assert());
+    assert!(added.contains("Added tap:"), "{added}");
+    assert_eq!(list().matches(url).count(), 1);
+    let duplicate = success_text(skills(root, &["tap", "add", "--extra", url]).assert());
+    assert!(duplicate.contains("Tap already exists"), "{duplicate}");
+    assert_eq!(list().matches(url).count(), 1);
+    let removed = success_text(skills(root, &["tap", "remove", "--extra", url]).assert());
+    assert!(removed.contains("Removed tap:"), "{removed}");
+    let missing = success_text(skills(root, &["tap", "remove", "--extra", url]).assert());
+    assert!(missing.contains("Tap not found"), "{missing}");
+    assert_eq!(list(), original);
+}
