@@ -899,6 +899,60 @@ note the fixtures"));
     }
 
     #[tokio::test]
+    async fn harness_command_reports_the_requested_workspace_and_action() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let repo = tmp.path().join("fixture project");
+        std::fs::create_dir(&repo).unwrap();
+        let repo = repo.to_str().unwrap();
+
+        let result = handle_slash_command(&mut app, "/harness", &[" ", "STATUS", repo])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let rendered = latest_ui_assistant_text(&app);
+        assert!(rendered.contains("status=ok"));
+        assert!(rendered.contains(&format!("repo_root={repo}")));
+
+        let result = handle_slash_command(&mut app, "/harness", &[repo, "--json"])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let status: serde_json::Value = serde_json::from_str(&latest_ui_assistant_text(&app)).unwrap();
+        assert_eq!(status["repo_root"], repo);
+        assert_eq!(status["proof"]["gate_snapshot"]["status"], "missing_report_dir");
+
+        let result = handle_slash_command(&mut app, "/harness", &["help", repo])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let help: serde_json::Value = serde_json::from_str(&latest_ui_assistant_text(&app)).unwrap();
+        assert_eq!(help["tool"], "harness_cockpit");
+        assert!(help["actions"].as_array().unwrap().iter().any(|action| action == "proof"));
+    }
+
+    #[tokio::test]
+    async fn toolcards_command_distinguishes_help_from_tui_export_guidance() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+
+        let help = handle_slash_command(&mut app, "/toolcards", &[]).await.unwrap();
+        assert_eq!(help, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).contains("/toolcards export"));
+
+        let export = handle_slash_command(&mut app, "/toolcards", &["export"]).await.unwrap();
+        assert_eq!(export, CommandResult::Handled);
+        let rendered = latest_ui_assistant_text(&app);
+        assert!(rendered.contains("interactive TUI"));
+        assert!(rendered.contains("logs/toolcards-export.txt"));
+        assert!(!tmp.path().join("logs/toolcards-export.txt").exists());
+    }
+
+    #[tokio::test]
     async fn reasoning_full_and_clamp_commands_update_mode_and_status() {
         let _guard = test_env_lock::lock_async().await;
         let _reasoning_guard = ReasoningFullResetGuard::new();
