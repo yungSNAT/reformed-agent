@@ -874,6 +874,108 @@ mod tests {
         assert_eq!(cron_platform_delivery_text(&silent), None);
     }
 
+    struct CronDeliveryRecorder(
+        tokio::sync::mpsc::UnboundedSender<(String, String, hermes_core::traits::SendMessageOptions)>,
+    );
+
+    #[async_trait::async_trait]
+    impl hermes_gateway::PlatformAdapter for CronDeliveryRecorder {
+        async fn start(&self) -> Result<(), hermes_gateway::GatewayError> {
+            Ok(())
+        }
+
+        async fn stop(&self) -> Result<(), hermes_gateway::GatewayError> {
+            Ok(())
+        }
+
+        async fn send_message(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<hermes_gateway::ParseMode>,
+        ) -> Result<(), hermes_gateway::GatewayError> {
+            panic!("cron delivery must preserve explicit send options");
+        }
+
+        async fn send_message_with_options(
+            &self,
+            chat_id: &str,
+            text: &str,
+            _: Option<hermes_gateway::ParseMode>,
+            options: hermes_core::traits::SendMessageOptions,
+        ) -> Result<(), hermes_gateway::GatewayError> {
+            self.0.send((chat_id.into(), text.into(), options)).unwrap();
+            Ok(())
+        }
+
+        async fn edit_message(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<(), hermes_gateway::GatewayError> {
+            panic!("cron delivery sends a new message");
+        }
+
+        async fn send_file(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<(), hermes_gateway::GatewayError> {
+            panic!("the cron fixture delivers plain text");
+        }
+
+        fn is_running(&self) -> bool {
+            true
+        }
+
+        fn platform_name(&self) -> &str {
+            "telegram"
+        }
+    }
+
+    #[tokio::test]
+    async fn cron_delivery_keeps_the_thread_after_skipped_and_failed_sends() {
+        let gateway = make_gateway();
+        let (delivery_tx, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
+        gateway
+            .register_adapter("telegram", Arc::new(CronDeliveryRecorder(delivery_tx)))
+            .await;
+
+        let mut job = hermes_cron::CronJob::new("0 * * * *", "check inventory");
+        job.name = Some("inventory".into());
+        job.deliver = parse_deliver_config("telegram:-1001:42", None);
+        let failed = CronCompletionEvent::new(&job, "schedule", Err("  Fixture runner failed  ".into()));
+        let mut local = failed.clone();
+        local.deliver = parse_deliver_config("local", None);
+        let mut silent = failed.clone();
+        silent.ok = true;
+        silent.assistant_output = Some(" [SILENT] No change".into());
+        let mut unwired = failed.clone();
+        unwired.deliver = parse_deliver_config("slack:fixture-chat", None);
+
+        let (tx, rx) = tokio::sync::broadcast::channel(4);
+        // The first completion is overwritten before the receiver starts.
+        for event in [failed.clone(), local, silent, unwired, failed] {
+            tx.send(event).unwrap();
+        }
+        drop(tx);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            run_cron_gateway_delivery_loop(rx, gateway),
+        )
+        .await
+        .expect("delivery loop stops when the last sender closes");
+
+        let (chat, text, options) = deliveries.try_recv().expect("threaded failure notification");
+        assert_eq!(chat, "-1001");
+        assert_eq!(text, "Cron job 'inventory' failed:\nFixture runner failed");
+        assert_eq!(options.thread_id.as_deref(), Some("42"));
+        assert_eq!(options.delivery_audit_label.as_deref(), Some(job.id.as_str()));
+        assert!(deliveries.try_recv().is_err());
+    }
+
     #[test]
     fn shared_provider_aliases_normalise_to_their_provider() {
         for (id, aliases) in hermes_core::providers::PROVIDER_ALIASES {
