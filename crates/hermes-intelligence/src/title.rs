@@ -406,6 +406,27 @@ mod tests {
         assert!(user_prompt.len() < 100);
     }
 
+    #[tokio::test]
+    async fn title_prompt_applies_message_limit_and_preserves_complete_characters() {
+        let provider = ScriptedProvider::with_response("Draft Review");
+        let generator = TitleGenerator::new(provider.clone(), "title-fixture")
+            .with_max_messages(3)
+            .with_max_message_chars(5);
+        let messages = [
+            Message::system("aé🧩z"),
+            Message::user("Draft"),
+            Message::tool_result("draft-1", "Ready"),
+            Message::assistant("Later"),
+        ];
+        assert_eq!(
+            generator.generate_title(&messages).await.unwrap(),
+            "Draft Review"
+        );
+        let calls = provider.recorded();
+        let prompt = calls[0].messages[1].content.as_deref().unwrap();
+        assert_eq!(prompt, "System: aé\nUser: Draft\nTool: Ready");
+    }
+
     // Helper for tests that don't need a real provider
     impl TitleGenerator {
         #[cfg(test)]
