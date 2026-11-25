@@ -305,6 +305,11 @@ mod tests {
             serde_json::from_str::<Value>(&services).unwrap(),
             json!({"services": [sensor_services], "total": 1})
         );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests
+            .iter()
+            .all(|request| request.method.as_str() == "GET"));
     }
 
     #[test]
