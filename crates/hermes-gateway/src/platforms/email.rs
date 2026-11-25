@@ -799,7 +799,6 @@ fn imap_fetch_unseen(
     password: &str,
     auth_policy: EmailInboundAuthPolicy,
 ) -> Result<Vec<IncomingMessage>, GatewayError> {
-    use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;
 
@@ -827,7 +826,15 @@ fn imap_fetch_unseen(
         .map_err(|e| GatewayError::Platform(format!("IMAP connect {addr}: {e}")))?;
     tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
     let mut stream = rustls::StreamOwned::new(conn, tcp);
+    read_unseen_imap_messages(&mut stream, username, password, &auth_policy)
+}
 
+fn read_unseen_imap_messages(
+    stream: &mut (impl std::io::Read + std::io::Write),
+    username: &str,
+    password: &str,
+    auth_policy: &EmailInboundAuthPolicy,
+) -> Result<Vec<IncomingMessage>, GatewayError> {
     let mut tag = 0u32;
     let mut next_tag = || -> String {
         tag += 1;
@@ -835,7 +842,7 @@ fn imap_fetch_unseen(
     };
 
     fn read_response(
-        stream: &mut rustls::StreamOwned<rustls::ClientConnection, TcpStream>,
+        stream: &mut impl std::io::Read,
         tag: &str,
     ) -> Result<Vec<String>, GatewayError> {
         let mut lines = Vec::new();
@@ -874,7 +881,7 @@ fn imap_fetch_unseen(
     stream
         .write_all(cmd.as_bytes())
         .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-    let login_resp = read_response(&mut stream, &t)?;
+    let login_resp = read_response(stream, &t)?;
     let last = login_resp.last().map(|s| s.as_str()).unwrap_or("");
     if !last.contains("OK") {
         return Err(GatewayError::Platform(format!("IMAP LOGIN failed: {last}")));
@@ -886,7 +893,7 @@ fn imap_fetch_unseen(
     stream
         .write_all(cmd.as_bytes())
         .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-    let _ = read_response(&mut stream, &t)?;
+    let _ = read_response(stream, &t)?;
 
     // SEARCH UNSEEN
     let t = next_tag();
@@ -894,7 +901,7 @@ fn imap_fetch_unseen(
     stream
         .write_all(cmd.as_bytes())
         .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-    let search_resp = read_response(&mut stream, &t)?;
+    let search_resp = read_response(stream, &t)?;
 
     let mut msg_ids: Vec<String> = Vec::new();
     for line in &search_resp {
@@ -917,10 +924,9 @@ fn imap_fetch_unseen(
         stream
             .write_all(cmd.as_bytes())
             .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-        let fetch_resp = read_response(&mut stream, &t)?;
+        let fetch_resp = read_response(stream, &t)?;
 
-        if let Some(message) = incoming_message_from_imap_fetch(mid, &fetch_resp, &auth_policy, &t)
-        {
+        if let Some(message) = incoming_message_from_imap_fetch(mid, &fetch_resp, auth_policy, &t) {
             messages.push(message);
         }
     }
@@ -994,6 +1000,10 @@ fn base64_encode_lines(data: &[u8]) -> String {
 #[cfg(test)]
 #[path = "email/tests/smtp_contract.rs"]
 mod smtp_contract;
+
+#[cfg(all(test, unix))]
+#[path = "email/tests/imap_contract.rs"]
+mod imap_contract;
 
 #[cfg(test)]
 mod tests {
