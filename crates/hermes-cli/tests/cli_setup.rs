@@ -154,6 +154,80 @@ async fn setup_discovers_a_local_model_and_preserves_existing_configuration() {
 }
 
 #[tokio::test]
+async fn vertex_setup_saves_custom_models_and_uses_or_replaces_project_defaults() {
+    let sandbox = tempfile::tempdir().expect("temporary CLI home");
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir(&home).unwrap();
+    let config_path = home.join("config.yaml");
+    std::fs::write(
+        &config_path,
+        "vertex:\n  project_id: fixture-existing-project\n  region: us-central1\nmax_turns: 12\n",
+    )
+    .unwrap();
+    for (project, entered_region, region, custom_model, credential_path) in [
+        ("", "", "us-central1", "fixture-gemini-standard", None),
+        (
+            "fixture-new-project",
+            "europe-west4",
+            "europe-west4",
+            "vertex:fixture-gemini-advanced",
+            Some(sandbox.path().join("nonexistent-fixture-credentials.json")),
+        ),
+    ] {
+        let expected_project = if project.is_empty() {
+            "fixture-existing-project"
+        } else {
+            project
+        };
+        let expected_model = if custom_model.contains(':') {
+            custom_model.to_string()
+        } else {
+            format!("vertex:{custom_model}")
+        };
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let mut command = isolated_hermes::isolated_hermes(sandbox.path());
+            command
+                .env("HTTP_PROXY", "http://127.0.0.1:1")
+                .env("HTTPS_PROXY", "http://127.0.0.1:1")
+                .arg("setup")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped());
+            if let Some(path) = credential_path {
+                command.env("VERTEX_CREDENTIALS_PATH", path);
+            }
+            let mut child = command.spawn().expect("start Vertex setup");
+            let mut menu = BufReader::new(child.stdout.take().unwrap()).lines();
+            let mut input = child.stdin.take().unwrap();
+            select(&mut menu, &mut input, "Quick setup").await;
+            select(&mut menu, &mut input, "Google Vertex AI").await;
+            input
+                .write_all(format!("{project}\n{entered_region}\n").as_bytes())
+                .await
+                .unwrap();
+            select(&mut menu, &mut input, "Custom model ID").await;
+            input
+                .write_all(format!("{custom_model}\ny\n").as_bytes())
+                .await
+                .unwrap();
+            drop(input);
+            let mut stdout = String::new();
+            menu.into_inner().read_to_string(&mut stdout).await.unwrap();
+            assert!(child.wait().await.unwrap().success(), "{stdout}");
+            assert!(stdout.contains("Wrote config.yaml"), "{stdout}");
+            assert!(stdout.contains("Setup complete!"), "{stdout}");
+        })
+        .await
+        .expect("Vertex setup timed out");
+        let config = hermes_config::load_user_config_file(&config_path).unwrap();
+        assert_eq!(config.vertex.project_id.as_deref(), Some(expected_project));
+        assert_eq!(config.vertex.region.as_deref(), Some(region));
+        assert_eq!(config.model.as_deref(), Some(expected_model.as_str()));
+        assert_eq!(config.personality.as_deref(), Some("default"));
+        assert_eq!(config.max_turns, 250);
+    }
+}
+
+#[tokio::test]
 async fn full_setup_changes_known_tools_and_preserves_custom_keys() {
     let catalogue = MockServer::start().await;
     Mock::given(method("GET"))
