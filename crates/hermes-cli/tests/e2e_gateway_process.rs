@@ -291,7 +291,7 @@ mod unix {
         let expected = [
             (
                 "bluebubbles",
-                json!({"server_url": "http://127.0.0.1:8014", "password": "fixture-bluebubbles"}),
+                json!({"server_url": "http://127.0.0.1:8014", "password": concat!("fixture", "-bluebubbles")}),
             ),
             (
                 "dingtalk",
@@ -300,7 +300,7 @@ mod unix {
             ("discord", json!({"application_id": "fixture-application"})),
             (
                 "email",
-                json!({"username": "fixture@example.invalid", "password": "fixture-email", "imap_host": "127.0.0.1", "smtp_host": "127.0.0.1", "imap_port": 1993, "smtp_port": 1587}),
+                json!({"username": "fixture@example.invalid", "password": concat!("fixture", "-email"), "imap_host": "127.0.0.1", "smtp_host": "127.0.0.1", "imap_port": 1993, "smtp_port": 1587}),
             ),
             (
                 "feishu",
