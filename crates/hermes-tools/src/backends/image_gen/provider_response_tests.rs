@@ -30,6 +30,58 @@ fn request(prompt: &str) -> ImageGenerateRequest {
     }
 }
 
+#[test]
+fn local_image_references_distinguish_missing_files_from_read_errors() {
+    let fixture = tempfile::tempdir().unwrap();
+    let missing = fixture.path().join("missing.gif");
+    let unreadable = fixture.path().join("directory.gif");
+    std::fs::create_dir(&unreadable).unwrap();
+    let image = fixture.path().join("fixture.GIF");
+    std::fs::write(&image, b"GIF89a").unwrap();
+    let openrouter = openrouter_compat_image_url_part;
+    let codex = codex_image_reference_part;
+    for (resolve, expected_error) in [
+        (
+            openrouter as fn(&str) -> Result<Option<String>, ToolError>,
+            "Could not read reference image",
+        ),
+        (codex, "Could not read Codex source image"),
+    ] {
+        assert!(resolve("  ").unwrap().is_none());
+        assert!(resolve(missing.to_str().unwrap()).unwrap().is_none());
+        assert!(matches!(
+            resolve(unreadable.to_str().unwrap()),
+            Err(ToolError::ExecutionFailed(detail)) if detail.contains(expected_error)
+        ));
+        assert_eq!(
+            resolve(image.to_str().unwrap()).unwrap().as_deref(),
+            Some("data:image/gif;base64,R0lGODlh")
+        );
+    }
+    assert!(matches!(
+        codex("data:;base64,R0lGODlh"),
+        Err(ToolError::InvalidParams(detail)) if detail.contains("must include a raster image media type")
+    ));
+}
+
+#[test]
+fn krea_error_bodies_keep_messages_and_bound_unstructured_fallbacks() {
+    for (body, expected) in [
+        (
+            r#"{"error":{"message":" fixture problem "},"detail":"fallback"}"#,
+            "fixture problem",
+        ),
+        (r#"{"error":" fixture rejection "}"#, "fixture rejection"),
+        (r#"{"message":" fixture message "}"#, "fixture message"),
+        (r#"{"detail":" fixture detail "}"#, "fixture detail"),
+        (r#"{"detail":" "}"#, r#"{"detail":" "}"#),
+    ] {
+        assert_eq!(krea_error_message(body), expected);
+    }
+    let long = "é".repeat(501);
+    assert_eq!(krea_error_message(&long), "é".repeat(500));
+}
+
 fn compatible_backend(server: &MockServer, cache: PathBuf) -> OpenRouterCompatImageGenBackend {
     OpenRouterCompatImageGenBackend {
         client: Client::builder()
