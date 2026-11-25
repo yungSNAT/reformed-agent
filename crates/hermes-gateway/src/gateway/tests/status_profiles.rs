@@ -1064,6 +1064,144 @@ async fn gateway_admin_approve_and_deny_affects_dm_authorization() {
 }
 
 #[tokio::test]
+async fn gateway_dm_access_commands_reject_a_paired_non_admin() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_ignore_behavior();
+    dm.authorize_user("fixture-paired");
+    dm.authorize_user("fixture-existing");
+    let gw = Gateway::new(session_mgr, dm, GatewayConfig::default());
+    gw.register_adapter(
+        "test",
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+    let mut incoming = IncomingMessage {
+        platform: "test".into(),
+        chat_id: "fixture-access-chat".into(),
+        user_id: "fixture-paired".into(),
+        text: String::new(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    for (command, label) in [
+        ("/approve fixture-unapproved", "/approve"),
+        ("/deny fixture-existing", "/deny"),
+    ] {
+        incoming.text = command.into();
+        gw.route_message(&incoming).await.unwrap();
+        let replies = std::mem::take(&mut *sent.lock().unwrap());
+        assert_eq!(
+            replies,
+            [(
+                incoming.chat_id.clone(),
+                format!("🚫 {label} requires admin privileges."),
+            )]
+        );
+    }
+    let dm = gw.dm_manager.read().await;
+    assert!(!dm.is_authorized("fixture-unapproved"));
+    assert!(dm.is_authorized("fixture-existing"));
+}
+
+#[tokio::test]
+async fn gateway_idle_commands_report_local_session_state_and_tool_acknowledgements() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_ignore_behavior();
+    dm.authorize_user("fixture-user");
+    let gw = Gateway::new(sessions.clone(), dm, GatewayConfig::default());
+    gw.register_adapter(
+        "test",
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+    let mut incoming = IncomingMessage {
+        platform: "test".into(),
+        chat_id: "fixture-command-chat".into(),
+        user_id: "fixture-user".into(),
+        text: String::new(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    let first_chat = incoming.chat_id.clone();
+    let other_chat = "fixture-other-chat";
+    for (chat, command, expected) in [
+        (
+            first_chat.as_str(),
+            "/reasoning",
+            "Reasoning visibility: ON",
+        ),
+        (other_chat, "/think", "Reasoning visibility: ON"),
+        (first_chat.as_str(), "/think", "Reasoning visibility: OFF"),
+        (
+            first_chat.as_str(),
+            "/branch",
+            "Current branch context: main",
+        ),
+        (
+            first_chat.as_str(),
+            "/branch fixture",
+            "Branch context switched to: fixture",
+        ),
+        (
+            first_chat.as_str(),
+            "/branch",
+            "Current branch context: fixture",
+        ),
+        (other_chat, "/branch", "Current branch context: main"),
+        (
+            first_chat.as_str(),
+            "/tools",
+            "Tools.\nRegistered MCP tools",
+        ),
+        (
+            first_chat.as_str(),
+            "/tools list fixture",
+            "Tools (filter: `fixture`)",
+        ),
+        (
+            first_chat.as_str(),
+            "/tools enable fixture",
+            "Tool enabled: `fixture`",
+        ),
+        (
+            first_chat.as_str(),
+            "/tools disable fixture",
+            "Tool disabled: `fixture`",
+        ),
+        (
+            first_chat.as_str(),
+            "/queue fixture",
+            "No active gateway turn is running.",
+        ),
+        (
+            first_chat.as_str(),
+            "/steer fixture",
+            "Use /steer while a task is in flight.",
+        ),
+    ] {
+        incoming.chat_id = chat.into();
+        incoming.text = command.into();
+        gw.route_message(&incoming).await.unwrap();
+        let replies = std::mem::take(&mut *sent.lock().unwrap());
+        assert_eq!(replies.len(), 1, "{command}: {replies:?}");
+        assert_eq!(replies[0].0, chat);
+        assert!(replies[0].1.contains(expected), "{command}: {replies:?}");
+    }
+    let first_key = sessions.compose_session_key("test", &first_chat, "fixture-user");
+    let other_key = sessions.compose_session_key("test", other_chat, "fixture-user");
+    assert!(sessions.get_messages(&first_key).await.is_empty());
+    assert!(sessions.get_messages(&other_key).await.is_empty());
+}
+
+#[tokio::test]
 async fn gateway_reload_mcp_and_status_reflect_runtime_state() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(TestAdapter {
