@@ -635,6 +635,109 @@ async fn platform_auth_status_and_logout_update_the_isolated_profile() {
 }
 
 #[tokio::test]
+async fn anthropic_verify_reuses_cached_state_and_persists_a_successful_refresh() {
+    use wiremock::matchers::body_string_contains;
+
+    let service = MockServer::start().await;
+    let access = "synthetic-anthropic-cached";
+    let refresh = "synthetic-anthropic-renewal";
+    let renewed_access = "synthetic-anthropic-renewed";
+    let renewed_refresh = "synthetic-anthropic-next";
+    for (route, reply) in [
+        (
+            "/renew",
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": renewed_access,
+                "refresh_token": renewed_refresh,
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })),
+        ),
+        (
+            "/reject",
+            ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant"
+            })),
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(route))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains(format!("refresh_token={refresh}")))
+            .respond_with(reply)
+            .expect(1)
+            .mount(&service)
+            .await;
+    }
+
+    for (route, expires, success, expected) in [
+        (
+            "/cached",
+            4_102_444_800_000_i64,
+            true,
+            "status=valid, source=fixture-state",
+        ),
+        (
+            "/renew",
+            1,
+            true,
+            "status=valid_refreshed, source=hermes_pkce_refresh",
+        ),
+        ("/reject", 1, false, "status=refresh_failed"),
+    ] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let state = sandbox.path().join("fixture-auth.json");
+        let original = serde_json::json!({
+            "version": 1,
+            "providers": {"anthropic": {
+                "access_token": access,
+                "refreshToken": refresh,
+                "source": "fixture-state",
+                "expires_at_ms": expires
+            }}
+        })
+        .to_string();
+        std::fs::write(&state, &original).unwrap();
+        let output = tokio::time::timeout(
+            Duration::from_secs(20),
+            isolated_hermes(sandbox.path())
+                .env("HERMES_AUTH_FILE", &state)
+                .env(
+                    "HERMES_ANTHROPIC_OAUTH_TOKEN_URL",
+                    format!("{}{route}", service.uri()),
+                )
+                .env("HERMES_ANTHROPIC_OAUTH_CLIENT_ID", "fixture-client")
+                .args(["auth", "verify", "anthropic"])
+                .output(),
+        )
+        .await
+        .expect("Anthropic verification timed out")
+        .unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.success(), success, "{stdout}\n{stderr}");
+        assert!(stdout.contains(expected), "{stdout}");
+        for value in [access, refresh, renewed_access, renewed_refresh] {
+            assert!(!stdout.contains(value) && !stderr.contains(value));
+        }
+
+        let saved = std::fs::read_to_string(&state).unwrap();
+        if route == "/renew" {
+            let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+            let updated = &saved["providers"]["anthropic"];
+            assert_eq!(updated["source"], "hermes_pkce_refresh");
+            assert_eq!(updated["access_token"], renewed_access);
+            assert_eq!(updated["refresh_token"], renewed_refresh);
+            assert!(updated["expires_at_ms"].as_i64().unwrap() > expires);
+        } else {
+            assert_eq!(saved, original);
+        }
+    }
+    let requests = service.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+}
+
+#[tokio::test]
 async fn gemini_verify_persists_the_cached_credential_without_contacting_the_provider() {
     let sandbox = tempfile::tempdir().unwrap();
     let source = sandbox.path().join("gemini-oauth.json");
