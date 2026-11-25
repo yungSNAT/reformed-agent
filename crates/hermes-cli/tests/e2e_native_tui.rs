@@ -1,5 +1,7 @@
 #![cfg(target_os = "linux")]
 
+#[path = "support/picker_pty.rs"]
+mod picker_pty;
 #[path = "support/isolated_hermes.rs"]
 mod support;
 
@@ -31,6 +33,18 @@ fn start_in_pty(
     args: &[&str],
     allow_loopback: bool,
 ) -> (Child, File, libc::tcflag_t) {
+    let mut command = support::isolated_hermes(sandbox);
+    command
+        .env("HTTP_PROXY", "http://127.0.0.1:1")
+        .env("HTTPS_PROXY", "http://127.0.0.1:1")
+        .args(args);
+    if allow_loopback {
+        command.env("NO_PROXY", "127.0.0.1");
+    }
+    start_command_in_pty(command)
+}
+
+fn start_command_in_pty(mut command: tokio::process::Command) -> (Child, File, libc::tcflag_t) {
     let mut master_fd = -1;
     let mut slave_fd = -1;
     let dimensions = libc::winsize {
@@ -73,18 +87,11 @@ fn start_in_pty(
     );
 
     let initial_flags = terminal_flags(&slave);
-    let mut command = support::isolated_hermes(sandbox);
     command
         .env("TERM", "xterm-256color")
-        .env("HTTP_PROXY", "http://127.0.0.1:1")
-        .env("HTTPS_PROXY", "http://127.0.0.1:1")
-        .args(args)
         .stdin(slave.try_clone().unwrap())
         .stdout(slave.try_clone().unwrap())
         .stderr(slave);
-    if allow_loopback {
-        command.env("NO_PROXY", "127.0.0.1");
-    }
     // The child attaches only its own PTY slave so crossterm can open /dev/tty.
     unsafe {
         command.pre_exec(|| {
