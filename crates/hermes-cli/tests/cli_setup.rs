@@ -216,6 +216,87 @@ async fn quick_setup_imports_the_selected_providers_local_oauth_session() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn quick_setup_reuses_anthropic_and_qwen_oauth_without_refreshing() {
+    use hermes_cli::auth::{
+        ANTHROPIC_OAUTH_CLIENT_ID, ANTHROPIC_OAUTH_TOKEN_URL, QWEN_OAUTH_CLIENT_ID,
+        QWEN_OAUTH_TOKEN_URL,
+    };
+
+    let proxy = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/fixture-token"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(0)
+        .mount(&proxy)
+        .await;
+    let origin = proxy.uri();
+    let access = "synthetic-setup-oauth-access";
+    let expires = jiff::Timestamp::now().as_millisecond() + 3_600_000;
+    for (provider, menu, source_var, fixture, receipt, token_url, client_id) in [
+        (
+            "anthropic",
+            "Anthropic",
+            "CLAUDE_CODE_CREDENTIALS_FILE",
+            serde_json::json!({"claudeAiOauth": {
+                "accessToken": access,
+                "expiresAt": expires
+            }}),
+            "Detected existing Anthropic OAuth session",
+            ANTHROPIC_OAUTH_TOKEN_URL,
+            ANTHROPIC_OAUTH_CLIENT_ID,
+        ),
+        (
+            "qwen-oauth",
+            "Qwen OAuth",
+            "HERMES_QWEN_CLI_AUTH_FILE",
+            serde_json::json!({"access_token": access, "expiry_date": expires}),
+            "Saved Qwen OAuth state",
+            QWEN_OAUTH_TOKEN_URL,
+            QWEN_OAUTH_CLIENT_ID,
+        ),
+    ] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let source = sandbox.path().join("oauth-fixture.json");
+        let contents = fixture.to_string();
+        std::fs::write(&source, &contents).unwrap();
+        let mut command = isolated_hermes::isolated_hermes(sandbox.path());
+        command
+            .env(source_var, &source)
+            .env(
+                "HERMES_ANTHROPIC_OAUTH_TOKEN_URL",
+                format!("{origin}/fixture-token"),
+            )
+            .env(
+                "HERMES_QWEN_OAUTH_TOKEN_URL",
+                format!("{origin}/fixture-token"),
+            );
+        let stdout = run_authenticated_setup(command, &origin, menu, "y\n", None).await;
+        assert!(stdout.contains(receipt), "{stdout}");
+        assert!(
+            stdout.contains(&format!("Stored {menu} key in encrypted vault")),
+            "{stdout}"
+        );
+        assert!(!stdout.contains(access));
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), contents);
+
+        let home = sandbox.path().join("hermes");
+        let config_path = home.join("config.yaml");
+        let config = hermes_config::load_user_config_file(&config_path).unwrap();
+        assert!(config.model.unwrap().starts_with(&format!("{provider}:")));
+        let settings = &config.llm_providers[provider];
+        assert_eq!(settings.oauth_token_url.as_deref(), Some(token_url));
+        assert_eq!(settings.oauth_client_id.as_deref(), Some(client_id));
+        assert!(settings.api_key.is_none());
+        assert!(home.join("auth").join("tokens.json").is_file());
+        assert!(!std::fs::read_to_string(config_path)
+            .unwrap()
+            .contains(access));
+    }
+    proxy.verify().await;
+}
+
 async fn run_authenticated_setup(
     mut command: tokio::process::Command,
     proxy: &str,
