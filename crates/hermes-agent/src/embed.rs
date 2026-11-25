@@ -3,10 +3,11 @@
 //! [`Agent::builder`] takes any [`LlmProvider`], a model name and the host's own tools, and
 //! the agent sees only what the host gives it. By default it runs in a fresh, empty home of
 //! its own, removed when the agent is dropped, so it reads no `SOUL.md`, memories or skills of
-//! the person running the host; and it is [isolated](AgentConfig::isolated): it reads nothing
-//! from the working folder (no `AGENTS.md`, `@file:` or other `@` references, code index or
-//! LSP notes), runs no claim verifier or background review, and posts no ContextLattice
-//! checkpoint. [`AgentBuilder::home`] points it at a Hermes home instead.
+//! the person running the host. It reads nothing from the working folder: context files, the
+//! code index, LSP notes and background review are off, and [`AgentConfig::isolated`] stops
+//! `@file:` and the other `@` references, the claim and repo-research evidence checks, the
+//! ContextLattice checkpoint and `HERMES_MAX_TURNS_UNLIMITED`. [`AgentBuilder::home`] points it
+//! at a Hermes home instead.
 //!
 //! ```no_run
 //! use std::sync::Arc;

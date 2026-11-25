@@ -549,9 +549,10 @@ pub struct AgentConfig {
     pub lsp_context_max_chars: usize,
 
     /// Read and send nothing the caller did not pass in: no `@file:`, `@folder:`, `@diff`,
-    /// `@staged` or `@git` expansion from the working folder, no claim-verifier policy read
-    /// or working-folder checks, and no ContextLattice compaction checkpoint. The embedding
-    /// facade sets it.
+    /// `@staged` or `@git` expansion from the working folder, no claim-verifier policy read,
+    /// no claim or repo-research evidence checks against the working folder, no ContextLattice
+    /// compaction checkpoint, and `HERMES_MAX_TURNS_UNLIMITED` cannot lift `max_turns`. The
+    /// embedding facade sets it.
     #[serde(default)]
     pub isolated: bool,
 }
@@ -572,8 +573,9 @@ fn unlimited_turns_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn effective_max_turns(config_max_turns: u32) -> Option<u32> {
-    if unlimited_turns_enabled() || config_max_turns == 0 {
+/// An isolated agent ignores `HERMES_MAX_TURNS_UNLIMITED`, so its host's cap holds.
+fn effective_max_turns(config_max_turns: u32, isolated: bool) -> Option<u32> {
+    if config_max_turns == 0 || (!isolated && unlimited_turns_enabled()) {
         None
     } else {
         Some(config_max_turns)
