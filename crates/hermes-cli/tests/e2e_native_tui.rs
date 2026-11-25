@@ -396,6 +396,103 @@ streaming:
 }
 
 #[tokio::test]
+async fn native_tui_interrupt_retains_the_inflight_prompt_and_the_next_draft() {
+    use tokio::io::AsyncBufReadExt;
+
+    let provider = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(
+        home.join("config.yaml"),
+        format!(
+            r#"model: local-fixture:deterministic
+tools: []
+llm_providers:
+  local-fixture:
+    base_url: http://{}
+    api_key: fixture-inflight-value
+    discover_models: false
+    models:
+      deterministic: {{}}
+streaming:
+  enabled: true
+"#,
+            provider.local_addr().unwrap()
+        ),
+    )
+    .unwrap();
+
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["--ignore-rules"], true);
+    read_until(&mut terminal, b"\x1b[?1049h").await;
+    let in_flight = "Read the first synthetic fixture";
+    write!(terminal, "\x1b[200~{in_flight}\x1b[201~\r").unwrap();
+    let (connection, _) = timeout(Duration::from_secs(12), provider.accept())
+        .await
+        .expect("first request reaches the local provider")
+        .unwrap();
+    let mut connection = tokio::io::BufReader::new(connection);
+    let mut request = String::new();
+    timeout(Duration::from_secs(5), connection.read_line(&mut request))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.trim_end(), "POST /chat/completions HTTP/1.1");
+
+    // Keep the response pending so attempting another submission exercises the busy state.
+    let draft = "Keep the second fixture for later";
+    write!(terminal, "\x1b[200~{draft}\x1b[201~\r").unwrap();
+    let draft_path = home.join("composer-drafts.json");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(bytes) = std::fs::read(&draft_path) {
+                if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                    if value["drafts"][0]["text"] == draft {
+                        break;
+                    }
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("pasting the next prompt stores a draft during the active turn");
+    terminal.write_all(b"\x03").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+
+    let snapshots = std::fs::read_dir(home.join("sessions")).unwrap();
+    let messages = snapshots
+        .map(Result::unwrap)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .map(|entry| {
+            serde_json::from_slice::<Value>(&std::fs::read(entry.path()).unwrap()).unwrap()
+        })
+        .find_map(|snapshot| {
+            let messages = snapshot["messages"].as_array()?;
+            messages
+                .iter()
+                .any(|message| message["content"] == in_flight)
+                .then(|| messages.clone())
+        })
+        .expect("interrupted turn is saved");
+    assert!(!messages
+        .iter()
+        .any(|message| message["role"] == "Assistant" || message["content"] == draft));
+    let drafts: Value = serde_json::from_slice(&std::fs::read(draft_path).unwrap()).unwrap();
+    assert_eq!(drafts["drafts"][0]["text"], draft);
+    assert!(timeout(Duration::from_millis(100), provider.accept())
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn native_tui_plan_controls_set_depth_and_block_an_unsupported_task() {
     let sandbox = tempfile::tempdir().unwrap();
     let (mut child, mut terminal, initial_flags) = start_in_pty(
