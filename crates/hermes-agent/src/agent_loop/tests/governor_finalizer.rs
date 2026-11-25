@@ -891,6 +891,64 @@ fn test_extract_marker_values_collects_unique_paths_and_cmds() {
     assert_eq!(cmds, vec!["rg".to_string(), "cargo".to_string()]);
 }
 
+struct FinalizerReplyProvider {
+    calls: Arc<std::sync::atomic::AtomicU32>,
+    first_reply: Option<&'static str>,
+    reply: String,
+}
+
+impl FinalizerReplyProvider {
+    fn next_reply(&self) -> &str {
+        let attempt = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let (0, Some(reply)) = (attempt, self.first_reply) {
+            reply
+        } else {
+            &self.reply
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for FinalizerReplyProvider {
+    async fn chat_completion(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&serde_json::Value>,
+    ) -> Result<hermes_core::LlmResponse, AgentError> {
+        Ok(hermes_core::LlmResponse {
+            message: Message::assistant(self.next_reply()),
+            usage: None,
+            model: "dummy".into(),
+            finish_reason: Some("stop".into()),
+        })
+    }
+
+    fn chat_completion_stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&serde_json::Value>,
+    ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+        let chunk = StreamChunk {
+            delta: Some(hermes_core::StreamDelta {
+                content: Some(self.next_reply().to_owned()),
+                tool_calls: None,
+                extra: None,
+            }),
+            finish_reason: Some("stop".into()),
+            usage: None,
+        };
+        futures::stream::iter(vec![Ok(chunk)]).boxed()
+    }
+}
+
 /// A reply that drops the user's explicit anchor (`U1-abc`) is re-asked only when the turn
 /// offers tools to gather evidence; without tools the first answer stands, on both loops. The
 /// output-quality rewrite (a placeholder reply) needs no tools and is re-asked either way.
@@ -898,60 +956,13 @@ fn test_extract_marker_values_collects_unique_paths_and_cmds() {
 fn test_finalizer_retries_need_tools() {
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    struct AnchorlessProvider {
-        calls: Arc<AtomicU32>,
-        reply: &'static str,
-    }
-
-    #[async_trait::async_trait]
-    impl LlmProvider for AnchorlessProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant(self.reply),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let chunk = StreamChunk {
-                delta: Some(hermes_core::StreamDelta {
-                    content: Some(self.reply.into()),
-                    tool_calls: None,
-                    extra: None,
-                }),
-                finish_reason: Some("stop".into()),
-                usage: None,
-            };
-            futures::stream::iter(vec![Ok(chunk)]).boxed()
-        }
-    }
-
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let calls_for = |reply: &'static str, tools: Vec<ToolSchema>, stream: bool| {
         let calls = Arc::new(AtomicU32::new(0));
-        let provider = Arc::new(AnchorlessProvider {
+        let provider = Arc::new(FinalizerReplyProvider {
             calls: calls.clone(),
-            reply,
+            first_reply: None,
+            reply: reply.to_owned(),
         });
         let agent = AgentLoop::new(
             AgentConfig::default(),
@@ -973,5 +984,93 @@ fn test_finalizer_retries_need_tools() {
         assert_eq!(calls_for("remote hello", Vec::new(), stream), 1);
         assert!(calls_for("remote hello", echo(), stream) > 1);
         assert!(calls_for("U1-abc: see [URL](URL)", Vec::new(), stream) > 1);
+    }
+}
+
+#[tokio::test]
+async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
+    use serde_json::json;
+
+    let home = tempfile::tempdir().unwrap();
+    let alpha = home.path().join("alpha");
+    std::fs::create_dir(&alpha).unwrap();
+    let trend = alpha.join("objective_eval_trend.json");
+    let ledger = alpha.join("objective_runtime_ledger.jsonl");
+    std::fs::write(&trend, r#"{"samples":false}"#).unwrap();
+    let objective_id = "obj-c39e3c1ce183";
+    let config = AgentConfig {
+        hermes_home: Some(home.path().display().to_string()),
+        stored_system_prompt: Some(format!("{SESSION_OBJECTIVE_PREFIX}Review fixture progress")),
+        skip_context_files: true,
+        skip_memory: true,
+        ..AgentConfig::default()
+    };
+    let cases = [
+        (false, "advancing", "promote", 1.0, 2),
+        (true, "regressing", "investigate", 0.0, 1),
+        (false, "unproven", "collect-more-evidence", 0.25, 1),
+        (true, "flat", "monitor", 0.5, 1),
+    ];
+    let mut expected_entries = Vec::new();
+    let mut expected_samples = Vec::new();
+    for (stream, state, decision, score, turns) in cases {
+        let reply = format!(
+            "PATCH_VERIFIED:\npath=fixture.md exists_now=true\nANALYTICS_VERIFIED:\nobjective_state={state}\ncmd=fixture-check"
+        );
+        let first_reply = (turns == 2).then_some("The fixture shows progress.");
+        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let agent = AgentLoop::new(
+            config.clone(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(FinalizerReplyProvider {
+                calls: calls.clone(),
+                first_reply,
+                reply,
+            }),
+        );
+        let messages = vec![Message::user("What does the fixture show?")];
+        let result = if stream {
+            agent.run_stream(messages, Some(Vec::new()), None).await
+        } else {
+            agent.run(messages, Some(Vec::new())).await
+        }
+        .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), turns);
+        assert_eq!(result.total_turns, turns);
+
+        expected_entries.push((state, decision, turns));
+        let text = std::fs::read_to_string(&ledger).unwrap();
+        let records: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), expected_entries.len());
+        for (record, (state, decision, turns)) in records.iter().zip(&expected_entries) {
+            assert_eq!(record["objective_id"], objective_id);
+            assert_eq!(record["objective_state"], *state);
+            assert_eq!(record["decision"], *decision);
+            assert_eq!(record["turns"], *turns);
+            assert_eq!(record["evidence_files"], json!(["fixture.md"]));
+            assert_eq!(record["evidence_commands"], json!(["fixture-check"]));
+        }
+
+        let mut data: Value = serde_json::from_slice(&std::fs::read(&trend).unwrap()).unwrap();
+        let samples = data["samples"].as_array().unwrap();
+        let sample = samples.last().unwrap();
+        assert_eq!(sample["objective_id"], objective_id);
+        assert_eq!(sample["objective_state"], state);
+        assert_eq!(sample["score"], score);
+        assert_eq!(sample["note"], format!("decision={decision} turns={turns}"));
+        expected_samples.push(sample.clone());
+        if expected_samples.len() > 512 {
+            expected_samples.remove(0);
+        }
+        assert_eq!(*samples, expected_samples);
+        if state == "advancing" {
+            expected_samples.splice(0..0, (0..511).map(|index| json!({"objective_id": index})));
+            data["samples"] = json!(expected_samples);
+            std::fs::write(&trend, data.to_string()).unwrap();
+        }
     }
 }
