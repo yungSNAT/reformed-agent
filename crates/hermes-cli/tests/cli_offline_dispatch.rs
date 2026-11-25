@@ -5,6 +5,65 @@ use std::time::Duration;
 
 use support::isolated_hermes;
 
+#[tokio::test]
+async fn offline_hermes_export_import_publishes_only_valid_history() {
+    const EXPORT: &str =
+        include_str!("../../hermes-parity-tests/fixtures/session_import/hermes_export.jsonl");
+    let sandbox = tempfile::tempdir().unwrap();
+    let source = sandbox.path().join("export.jsonl");
+    let profile = sandbox.path().join("imported");
+    let run_import = || {
+        let mut command = isolated_hermes(sandbox.path());
+        command
+            .arg("import-hermes-sessions")
+            .arg(&source)
+            .arg("--profile-dir")
+            .arg(&profile);
+        tokio::time::timeout(Duration::from_secs(15), command.output())
+    };
+
+    std::fs::write(&source, format!("{}\n{{}}\n", EXPORT.trim_end())).unwrap();
+    let rejected = run_import().await.unwrap().unwrap();
+    assert_eq!(rejected.status.code(), Some(1), "{rejected:?}");
+    assert!(String::from_utf8_lossy(&rejected.stderr)
+        .contains("Hermes export line 3: invalid session record"));
+    assert!(!profile.exists());
+
+    std::fs::write(&source, EXPORT).unwrap();
+    let accepted = run_import().await.unwrap().unwrap();
+    assert!(accepted.status.success(), "{accepted:?}");
+    let stdout = String::from_utf8_lossy(&accepted.stdout);
+    assert!(stdout.contains("Imported 2 sessions with 5 active messages"));
+    assert!(stdout.contains("Excluded 2 inactive or metadata rows"));
+    assert!(profile.join("sessions.db").is_file());
+    let history = hermes_agent::SessionPersistence::new(&profile)
+        .load_session("20261109_103200_c0ffeed1")
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].content.as_deref(), Some("Continue the notes."));
+    assert!(!sandbox.path().join("hermes").exists());
+}
+
+#[tokio::test]
+async fn offline_cli_rejects_two_explicit_homes_before_creating_either() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let custom_home = sandbox.path().join("custom");
+    let mut command = isolated_hermes(sandbox.path());
+    command
+        .args(["--profile", "office", "--config-dir"])
+        .arg(&custom_home)
+        .arg("status");
+    let rejected = tokio::time::timeout(Duration::from_secs(15), command.output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(1), "{rejected:?}");
+    assert!(String::from_utf8_lossy(&rejected.stderr)
+        .contains("--profile and --config-dir each choose the home"));
+    assert!(!custom_home.exists());
+    assert!(!sandbox.path().join("hermes").exists());
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn offline_up_explains_linux_service_fallback_and_dry_run() {
