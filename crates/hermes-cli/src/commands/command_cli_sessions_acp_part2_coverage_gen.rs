@@ -371,6 +371,83 @@
     }
 
     #[test]
+    fn acp_startup_answers_initialize_on_stdio_for_both_handlers() {
+        let defaults = hermes_acp::AcpConfig::default();
+        assert_eq!(defaults.model, "default");
+        assert_eq!(defaults.max_turns, 100);
+        assert!(defaults.tools.is_empty());
+        assert!(serde_json::to_value(&defaults)
+            .unwrap()
+            .get("personality")
+            .is_none());
+
+        let request = format!(
+            "{}\n",
+            json!({
+                "jsonrpc":"2.0", "id":74, "method":"initialize",
+                "params":{"protocolVersion":1, "clientCapabilities":{}}
+            })
+        );
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let harness_prefix = format!("test {module}::isolated_worker ... ");
+        for (scenario, name) in [
+            ("acp-default-stdio", "hermes-agent"),
+            ("acp-custom-stdio", "fixture-stdio-handler"),
+        ] {
+            let output = run_scenario(scenario, &request);
+            let mut responses = output
+                .lines()
+                .filter_map(|line| {
+                    serde_json::from_str::<Value>(line.strip_prefix(&harness_prefix).unwrap_or(line))
+                        .ok()
+                })
+                .filter(|row| row["id"] == 74);
+            let response = responses
+                .next()
+                .unwrap_or_else(|| panic!("{scenario} did not answer:\n{output}"));
+            assert!(responses.next().is_none(), "{scenario} answered twice");
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["result"]["protocolVersion"], 1);
+            assert_eq!(response["result"]["agentInfo"]["name"], name);
+        }
+    }
+
+    async fn acp_stdio(home: &Path, custom_handler: bool) {
+        let managed = home.join("managed");
+        std::fs::create_dir(&managed).unwrap();
+        std::env::set_var("HERMES_MANAGED_DIR", managed);
+        let config: hermes_acp::AcpConfig =
+            serde_json::from_value(json!({"model":"fixture-model"})).unwrap();
+        assert_eq!(config.max_turns, 100);
+        assert!(config.tools.is_empty());
+        if custom_handler {
+            struct FixtureHandler;
+
+            #[async_trait::async_trait]
+            impl hermes_acp::AcpHandler for FixtureHandler {
+                async fn handle_request(
+                    &self,
+                    request: hermes_acp::AcpRequest,
+                ) -> hermes_acp::AcpResponse {
+                    assert_eq!(request.method, "initialize");
+                    hermes_acp::AcpResponse::success(
+                        request.id,
+                        json!({"protocolVersion":1, "agentInfo":{"name":"fixture-stdio-handler"}}),
+                    )
+                }
+            }
+            hermes_acp::start_acp_server_with_handler(
+                config,
+                std::sync::Arc::new(FixtureHandler),
+            )
+            .await
+            .unwrap();
+        } else {
+            hermes_acp::start_acp_server(config).await.unwrap();
+        }
+    }
+
+    #[test]
     fn pairing_reports_empty_store_and_requires_device_ids() {
         assert_output(
             &run_scenario("pairing", ""),
@@ -477,6 +554,8 @@
             "repair" => repair(&home).await,
             "whatsapp-status" => whatsapp_status_and_art(&home).await,
             "whatsapp-qr" => whatsapp_qr_bridge(&home).await,
+            "acp-default-stdio" => acp_stdio(&home, false).await,
+            "acp-custom-stdio" => acp_stdio(&home, true).await,
             "whatsapp-setup" => {
                 handle_cli_whatsapp(Some("setup".into())).await.unwrap();
                 assert!(!home.join("config.yaml").exists());
