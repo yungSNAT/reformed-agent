@@ -91,6 +91,8 @@ async fn quorum_artifact_status_prefers_the_latest_from_the_current_session() {
     let mut app = build_test_app_with_stream(&hermes_config::hermes_home()).await;
     handle_swarm_command(&mut app, &[]).await.unwrap();
     assert!(latest_ui_assistant_text(&app).contains("latest_artifact=(none yet)"));
+    handle_swarm_command(&mut app, &["artifact"]).await.unwrap();
+    assert!(latest_ui_assistant_text(&app).contains("No swarm/quorum artifact exists"));
 
     let output = app.state_root.join("quorum");
     std::fs::create_dir_all(&output).unwrap();
@@ -122,4 +124,26 @@ async fn quorum_artifact_status_prefers_the_latest_from_the_current_session() {
     assert!(
         latest_ui_assistant_text(&app).contains(&format!("latest_artifact={}", latest.display()))
     );
+
+    std::fs::write(
+        &latest,
+        serde_json::json!({
+            "session_id": app.session_id,
+            "saved_at": "2026-01-02T03:04:05Z",
+            "voters": [{}, {}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    handle_swarm_command(&mut app, &["artifact"]).await.unwrap();
+    let summary = latest_ui_assistant_text(&app);
+    assert!(summary.contains(&format!("path={}", latest.display())));
+    assert!(summary.contains(&format!("session_id={}", app.session_id)));
+    assert!(summary.contains("saved_at=2026-01-02T03:04:05Z\nvoters=2"));
+
+    std::fs::write(&latest, b"incomplete artifact").unwrap();
+    handle_swarm_command(&mut app, &["artifact"]).await.unwrap();
+    let summary = latest_ui_assistant_text(&app);
+    assert!(summary.contains(&format!("path={}", latest.display())));
+    assert!(summary.contains("(unable to parse artifact summary)"));
 }
