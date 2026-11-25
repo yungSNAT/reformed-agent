@@ -1,13 +1,28 @@
 use super::*;
 
+#[cfg(unix)]
 #[test]
-fn discover_setup_env_sources_returns_unique_existing_files() {
-    let sources = discover_setup_env_sources();
-    let mut seen = std::collections::HashSet::new();
-    for path in &sources {
-        assert!(path.is_file(), "non-file returned: {}", path.display());
-        assert!(seen.insert(path.clone()), "duplicate: {}", path.display());
+fn discover_setup_env_sources_orders_the_isolated_legacy_profiles() {
+    if !crate::isolated_test_profile::enter(
+        "coverage_gen_main_setup_flow::discover_setup_env_sources_orders_the_isolated_legacy_profiles",
+    ) {
+        return;
     }
+
+    let root = std::env::current_dir().unwrap();
+    let working = root.join("working");
+    std::fs::create_dir(&working).unwrap();
+    std::env::set_current_dir(working).unwrap();
+    let first = root.join("Documents/Projects/hermes-agent/.env");
+    let second = root.join("Projects/hermes-agent/.env");
+    for (path, contents) in [
+        (&first, "SURVEY_ONE=first\n"),
+        (&second, "SURVEY_TWO=second\n"),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+    assert_eq!(discover_setup_env_sources(), [first, second]);
 }
 
 #[test]
@@ -112,12 +127,41 @@ fn upsert_env_key_replaces_and_preserves_other_keys() {
     );
 }
 
+#[cfg(unix)]
 #[test]
-fn maybe_import_legacy_env_declined_does_not_write() {
-    let dir = tempfile::tempdir().unwrap();
-    let env_path = dir.path().join(".env");
-    let mut reader = std::io::Cursor::new(b"n\n".to_vec());
-    let result = maybe_import_legacy_env(&mut reader, &env_path);
-    assert!(result.is_ok());
-    assert!(!env_path.exists());
+fn maybe_import_legacy_env_respects_consent_and_retains_existing_keys() {
+    if !crate::isolated_test_profile::enter(
+        "coverage_gen_main_setup_flow::maybe_import_legacy_env_respects_consent_and_retains_existing_keys",
+    ) {
+        return;
+    }
+
+    let root = std::env::current_dir().unwrap();
+    let working = root.join("working");
+    std::fs::create_dir(&working).unwrap();
+    std::env::set_current_dir(working).unwrap();
+    let legacy = root.join("Documents/Projects/hermes-agent/.env");
+    let target = root.join("wizard.env");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(
+        &legacy,
+        "SURVEY_KEEP=legacy\nSURVEY_NEW=added\nSURVEY_SKIP=''\n",
+    )
+    .unwrap();
+    std::fs::write(&target, "SURVEY_KEEP=existing").unwrap();
+
+    let mut decline = std::io::Cursor::new(b"No\n");
+    maybe_import_legacy_env(&mut decline, &target).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "SURVEY_KEEP=existing"
+    );
+
+    let expected =
+        "SURVEY_KEEP=existing\n# Imported by `hermes-ultra setup` from .env\nSURVEY_NEW=added\n";
+    for _ in 0..2 {
+        let mut accept = std::io::Cursor::new(b"\n");
+        maybe_import_legacy_env(&mut accept, &target).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
+    }
 }
