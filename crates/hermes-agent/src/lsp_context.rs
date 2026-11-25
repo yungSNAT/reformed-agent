@@ -374,10 +374,14 @@ mod tests {
             "rust syntax: error:",
             "rust: failed to read file:",
             "python syntax: skipped",
-            "References before rename `target` -> `replacement`",
         ] {
             assert!(note.contains(line), "{line} missing from {note}");
         }
+        let (_, references) = note
+            .split_once("References before rename `target` -> `replacement`")
+            .expect("rename references section");
+        let expected_hit = format!("{}:3: fn target() {{}}", source.display());
+        assert!(references.contains(&expected_hit), "{references}");
         assert_eq!(index.list_file_symbols(&added, 1)[0].name, "new_symbol");
         assert!(build_lsp_context_note(
             &calls,
@@ -409,12 +413,15 @@ mod tests {
     fn file_tool_notes_skip_failed_unmatched_and_unusable_calls() {
         let tmp = tempfile::tempdir().unwrap();
         let mut index = CodeIndex::new(tmp.path(), CodeIndexConfig::default());
+        let failed = json!({"path": tmp.path().join("failed.rs")}).to_string();
+        let unindexed = json!({"path": tmp.path().join("unindexed.rs")}).to_string();
+        let non_source = json!({"path": tmp.path().join("fixture.txt")}).to_string();
         let calls = [
-            ("failed", "write_file", r#"{"path":"failed.rs"}"#),
+            ("failed", "write_file", failed.as_str()),
             ("malformed", "read_file", "{"),
             ("no-path", "read_file", r#"{"path":null}"#),
-            ("unindexed", "read_file", r#"{"path":"unindexed.rs"}"#),
-            ("non-source", "write_file", r#"{"path":"fixture.txt"}"#),
+            ("unindexed", "read_file", unindexed.as_str()),
+            ("non-source", "write_file", non_source.as_str()),
             ("other-tool", "search", "{}"),
         ]
         .map(|(id, name, arguments)| ToolCall {
