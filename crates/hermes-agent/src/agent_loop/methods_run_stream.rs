@@ -875,11 +875,13 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_claim_requires_evidence_retry(
-                    ctx.get_messages(),
-                    assistant_msg.content.as_deref().unwrap_or_default(),
-                    finalizer_evidence_retries,
-                ) {
+                if !self.config.isolated
+                    && finalizer_claim_requires_evidence_retry(
+                        ctx.get_messages(),
+                        assistant_msg.content.as_deref().unwrap_or_default(),
+                        finalizer_evidence_retries,
+                    )
+                {
                     finalizer_evidence_retries = finalizer_evidence_retries.saturating_add(1);
                     ctx.add_message(Message::system(
                         "[SYSTEM] Finalizer evidence contract: include explicit evidence lines and confidence calibration.\n\

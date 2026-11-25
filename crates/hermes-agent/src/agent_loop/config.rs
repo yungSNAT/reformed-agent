@@ -547,6 +547,13 @@ pub struct AgentConfig {
     /// Maximum character budget for injected LSP context block.
     #[serde(default = "default_lsp_context_max_chars")]
     pub lsp_context_max_chars: usize,
+
+    /// Read and send nothing the caller did not pass in: no `@file:`, `@folder:`, `@diff`,
+    /// `@staged` or `@git` expansion from the working folder, no claim-verifier policy read
+    /// or working-folder checks, and no ContextLattice compaction checkpoint. The embedding
+    /// facade sets it.
+    #[serde(default)]
+    pub isolated: bool,
 }
 
 fn default_max_turns() -> u32 {
@@ -777,6 +784,7 @@ impl Default for AgentConfig {
             code_index_max_symbols: default_code_index_max_symbols(),
             lsp_context_enabled: default_lsp_context_enabled(),
             lsp_context_max_chars: default_lsp_context_max_chars(),
+            isolated: false,
         }
     }
 }

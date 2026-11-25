@@ -4,6 +4,9 @@ impl AgentLoop {
     /// Earlier messages stay as the history holds them: text an earlier expansion attached
     /// can itself name a file. In an ACP prompt's parts, only the text parts are expanded.
     async fn expand_context_references(&self, messages: &mut [Message]) {
+        if self.config.isolated {
+            return;
+        }
         let Some(msg) = messages.iter_mut().rfind(|m| m.role == MessageRole::User) else {
             return;
         };
@@ -760,11 +763,13 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_claim_requires_evidence_retry(
-                    ctx.get_messages(),
-                    assistant_msg.content.as_deref().unwrap_or_default(),
-                    finalizer_evidence_retries,
-                ) {
+                if !self.config.isolated
+                    && finalizer_claim_requires_evidence_retry(
+                        ctx.get_messages(),
+                        assistant_msg.content.as_deref().unwrap_or_default(),
+                        finalizer_evidence_retries,
+                    )
+                {
                     finalizer_evidence_retries = finalizer_evidence_retries.saturating_add(1);
                     ctx.add_message(Message::system(
                         "[SYSTEM] Finalizer evidence contract: include explicit evidence lines and confidence calibration.\n\
