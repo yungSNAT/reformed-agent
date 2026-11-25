@@ -5,6 +5,64 @@ use std::time::Duration;
 
 use support::isolated_hermes;
 
+#[tokio::test]
+async fn offline_plugin_toggle_persists_general_and_provider_choices() {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let plugins = root.path().join("hermes/plugins");
+    let general = plugins.join("fixture-general");
+    let provider_a = plugins.join("fixture-provider-a");
+    let provider_b = plugins.join("fixture-provider-b");
+    for (dir, name, kind) in [
+        (&general, "fixture-general", ""),
+        (&provider_a, "fixture-provider-a", "kind: exclusive\n"),
+        (&provider_b, "fixture-provider-b", "kind: exclusive\n"),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.yaml"),
+            format!("name: {name}\nversion: '1.0'\ndescription: Offline fixture\n{kind}"),
+        )
+        .unwrap();
+    }
+    let general_marker = general.join(".disabled");
+    let marker_a = provider_a.join(".disabled");
+    let marker_b = provider_b.join(".disabled");
+    std::fs::write(&marker_b, "").unwrap();
+
+    for (input, general_disabled, message) in [
+        ("1\n3\n", true, "Updated plugin state:"),
+        ("1\n1\n", false, "keeping provider state unchanged"),
+    ] {
+        let child = isolated_hermes(root.path())
+            .arg("plugins")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = tokio::time::timeout(Duration::from_secs(15), async {
+            let mut child = child;
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(input.as_bytes()).await.unwrap();
+            drop(stdin);
+            child.wait_with_output().await.unwrap()
+        })
+        .await
+        .expect("plugin toggle timed out");
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("General Plugins"), "{stdout}");
+        assert!(stdout.contains("Provider Plugins"), "{stdout}");
+        assert!(stdout.contains(message), "{stdout}");
+        assert_eq!(general_marker.is_file(), general_disabled);
+        assert!(marker_a.is_file());
+        assert!(!marker_b.exists());
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn offline_backup_and_import_round_trip_a_disposable_profile() {
