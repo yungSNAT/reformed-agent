@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::json;
-use wiremock::matchers::{body_json, header};
+use wiremock::matchers::{body_json, body_string, header, path_regex, query_param};
 
 const ROOM: &str = "!room:fixture.invalid";
 const TOKEN: &str = "fixture-matrix-room-key";
@@ -9,6 +9,9 @@ const ROOM_NAME: &str = "/_matrix/client/v3/rooms/!room:fixture.invalid/state/m.
 const POWER_LEVELS: &str =
     "/_matrix/client/v3/rooms/!room:fixture.invalid/state/m.room.power_levels/";
 const LEAVE: &str = "/_matrix/client/v3/rooms/!room:fixture.invalid/leave";
+const UPLOAD: &str = "/_matrix/media/v3/upload";
+const SEND: &str = r"^/_matrix/client/v3/rooms/!room:fixture\.invalid/send/m\.room\.message/[^/]+$";
+const SYNC: &str = "/_matrix/client/v3/sync";
 
 fn room_adapter(server: &MockServer) -> MatrixAdapter {
     let mut adapter = MatrixAdapter::new(MatrixConfig {
@@ -25,6 +28,140 @@ fn room_adapter(server: &MockServer) -> MatrixAdapter {
         .build()
         .expect("loopback-only client");
     adapter
+}
+
+#[tokio::test]
+async fn room_files_upload_original_bytes_and_send_the_matching_media_type() {
+    let server = MockServer::start().await;
+    let adapter = room_adapter(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let authorization = format!("Bearer {TOKEN}");
+    let cases = [
+        (
+            "a photo.png",
+            "image/png",
+            "m.image",
+            Some("Fixture caption"),
+        ),
+        ("a clip.mp4", "video/mp4", "m.video", None),
+        ("a note.ogg", "audio/ogg", "m.audio", None),
+        ("a file.txt", "text/plain", "m.file", None),
+    ];
+    for (index, (name, mime, message_type, caption)) in cases.into_iter().enumerate() {
+        let data = format!("fixture media bytes for {name}");
+        let source = dir.path().join(name);
+        std::fs::write(&source, &data).unwrap();
+        let mxc = format!("mxc://fixture.invalid/file-{index}");
+        Mock::given(method("POST"))
+            .and(path(UPLOAD))
+            .and(query_param("filename", name))
+            .and(header("authorization", authorization.clone()))
+            .and(header("content-type", mime))
+            .and(body_string(&data))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"content_uri": mxc})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path_regex(SEND))
+            .and(header("authorization", authorization.clone()))
+            .and(body_json(json!({
+                "msgtype": message_type, "body":caption.unwrap_or(name), "url":mxc,
+                "info":{"mimetype":mime,"size":data.len()}
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id": "$fixture"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        adapter
+            .send_file(ROOM, source.to_str().unwrap(), caption)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        cases.len() * 2
+    );
+}
+
+#[tokio::test]
+async fn rejected_uploads_and_bad_replies_never_send_a_room_event() {
+    let server = MockServer::start().await;
+    let adapter = room_adapter(&server);
+    let dir = tempfile::tempdir().unwrap();
+    for (name, status, body, expected) in [
+        (
+            "rejected.png",
+            413,
+            "fixture too large",
+            "fixture too large",
+        ),
+        ("bad-json.png", 200, "{", "Matrix upload parse"),
+        ("missing-uri.png", 200, "{}", "No content_uri"),
+    ] {
+        let source = dir.path().join(name);
+        std::fs::write(&source, b"fixture").unwrap();
+        Mock::given(method("POST"))
+            .and(path(UPLOAD))
+            .and(query_param("filename", name))
+            .respond_with(ResponseTemplate::new(status).set_body_string(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            adapter.send_file(ROOM, source.to_str().unwrap(), None).await,
+            Err(GatewayError::SendFailed(detail)) if detail.contains(expected)
+        ));
+    }
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(requests.iter().all(|request| request.url.path() == UPLOAD));
+}
+
+#[tokio::test]
+async fn sync_delivers_messages_and_stops_when_the_continuation_is_rejected() {
+    let server = MockServer::start().await;
+    let mut adapter = room_adapter(&server);
+    adapter.native_decrypt = None;
+    adapter.decrypt_ffi = None;
+    let authorization = format!("Bearer {TOKEN}");
+    Mock::given(method("GET"))
+        .and(path(SYNC))
+        .and(header("authorization", authorization.clone()))
+        .and(query_param("since", "fixture-next"))
+        .respond_with(ResponseTemplate::new(403).set_body_string("fixture sync access denied"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(SYNC))
+        .and(header("authorization", authorization))
+        .and(|request: &wiremock::Request| !request.url.query_pairs().any(|(key, _)| key == "since"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "next_batch":"fixture-next",
+            "rooms":{"join":{(ROOM):{"timeline":{"events":[
+                {"type":"m.room.message","event_id":"$sync-fixture","sender":"@alice:fixture.invalid",
+                 "content":{"msgtype":"m.text","body":"fixture message"}}
+            ]}}}}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    adapter.start().await.unwrap();
+    let mut messages = Vec::new();
+    let stopped = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        adapter.sync_loop(|batch| messages.extend(batch)),
+    )
+    .await
+    .expect("Matrix sync fixture timed out");
+    assert!(
+        matches!(stopped, Err(GatewayError::Auth(detail)) if detail.contains("fixture sync access denied"))
+    );
+    assert!(!adapter.is_running());
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].body, "fixture message");
+    assert_eq!(messages[0].event_id, "$sync-fixture");
 }
 
 #[tokio::test]
