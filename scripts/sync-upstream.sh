@@ -25,7 +25,7 @@ Options:
   --test-cmd <command>      Verification command (default: cargo test -p hermes-gateway)
   --redteam-gate            Run adversarial red-team gate after verification (default)
   --no-redteam-gate         Skip adversarial red-team gate
-  --redteam-cmd <command>   Red-team gate command (default: python3 scripts/run-redteam-gate.py)
+  --redteam-cmd <command>   Red-team gate command (default: cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate)
   --elite-gate              Run consolidated elite sync gate (optional)
   --no-elite-gate           Skip consolidated elite sync gate (default)
   --elite-cmd <command>     Elite gate command (default: python3 scripts/run-elite-sync-gate.py)
@@ -59,12 +59,12 @@ SYNC_STRATEGY="merge"
 RUN_TESTS="1"
 TEST_CMD="cargo test -p hermes-gateway"
 RUN_REDTEAM_GATE="${RUN_REDTEAM_GATE:-1}"
-REDTEAM_CMD="${REDTEAM_CMD:-python3 scripts/run-redteam-gate.py}"
+REDTEAM_CMD="${REDTEAM_CMD:-cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate}"
 RUN_ELITE_GATE="${RUN_ELITE_GATE:-0}"
 ELITE_CMD="${ELITE_CMD:-python3 scripts/run-elite-sync-gate.py}"
 ELITE_ROLLBACK_CMD="${ELITE_ROLLBACK_CMD:-}"
 RUN_DOC_REFRESH="${RUN_DOC_REFRESH:-1}"
-DOC_REFRESH_CMD="${DOC_REFRESH_CMD:-cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard --repo-root . && python3 scripts/generate-readme-sync-status.py --repo-root .}"
+DOC_REFRESH_CMD="${DOC_REFRESH_CMD:-cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard --repo-root . && cargo run --locked -q -p hermes-parity-tools -- generate-readme-sync-status --repo-root .}"
 CREATE_PR="1"
 PR_DRAFT="0"
 PR_LABELS="${PR_LABELS:-upstream-sync,parity-sync}"
