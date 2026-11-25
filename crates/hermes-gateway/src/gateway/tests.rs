@@ -848,10 +848,15 @@ impl PlatformAdapter for StatusUpdateAdapter {
 
     async fn edit_message(
         &self,
-        _chat_id: &str,
-        _message_id: &str,
-        _text: &str,
+        chat_id: &str,
+        message_id: &str,
+        text: &str,
     ) -> Result<(), GatewayError> {
+        self.updates.lock().unwrap().push((
+            chat_id.to_string(),
+            message_id.to_string(),
+            text.to_string(),
+        ));
         Ok(())
     }
 

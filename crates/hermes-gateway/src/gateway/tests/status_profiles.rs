@@ -103,6 +103,46 @@ async fn gateway_status_updates_use_platform_status_api() {
 }
 
 #[tokio::test]
+async fn gateway_edits_native_messages_and_reports_missing_delivery_adapters() {
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let gw = Gateway::with_defaults(session_mgr, GatewayConfig::default());
+    gw.register_adapter(
+        "status-test",
+        Arc::new(StatusUpdateAdapter {
+            updates: updates.clone(),
+        }),
+    )
+    .await;
+
+    gw.edit_message("status-test", "chat1", "message-42", "revised text")
+        .await
+        .expect("native edit should reach the adapter");
+    let errors = [
+        gw.edit_message("unknown", "chat1", "message-42", "revised text")
+            .await,
+        gw.send_or_update_status("unknown", "chat1", "progress", "working", None)
+            .await,
+        gw.send_file("unknown", "chat1", "report.pdf", None).await,
+    ];
+    for result in errors {
+        assert!(matches!(
+            result,
+            Err(GatewayError::Platform(message))
+                if message == "No adapter registered for platform: unknown"
+        ));
+    }
+    assert_eq!(
+        updates.lock().unwrap().as_slice(),
+        &[(
+            String::from("chat1"),
+            String::from("message-42"),
+            String::from("revised text"),
+        )],
+    );
+}
+
+#[tokio::test]
 async fn gateway_route_dm_denied() {
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let dm_manager = DmManager::with_ignore_behavior();
