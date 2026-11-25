@@ -94,6 +94,7 @@ fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata()
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["primary_sink"], "stdout");
     assert_eq!(parsed["metadata"]["status"], true);
+    assert!(String::from_utf8_lossy(&stdout_json.stderr).contains("## - Hyphen Heading"));
 
     let log_file = root.join("rel-meta.log");
     let local_out = Command::new(bin())
@@ -119,6 +120,12 @@ fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata()
     assert_eq!(local_out.status.code(), Some(0));
     let local_json: Value = serde_json::from_slice(&local_out.stdout).expect("json");
     assert_eq!(local_json["local_path"], "rel-meta.log");
+    assert_eq!(
+        local_json["context"]["project"],
+        root.file_name()
+            .and_then(|s| s.to_str())
+            .expect("root name")
+    );
     let text = fs::read_to_string(&log_file).expect("read");
     assert!(text.contains("- status: `True`"));
     assert!(text.contains(r#"- metadata: `{"agent_id": "hermes_ultra_automation", "arr": [1, "a"], "big": 18446744073709551615, "flag": true}`"#));
@@ -226,6 +233,7 @@ fn golden_parity_harness_scans_tui_dir_aliases_and_negative_allow_missing() {
         upstream.join("hermes_cli/commands.py"),
         r#"
 """
+Docstring escape check: \é
 CommandDef("ignored_docstring_cmd", "not real")
 "/ignored-dict": "ignored"
 """

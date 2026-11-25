@@ -41,11 +41,14 @@ pub(crate) fn strip_py_comments_and_docstrings(src: &str) -> String {
             let q = b[i];
             i += 3;
             while i + 2 < b.len() && !(b[i] == q && b[i + 1] == q && b[i + 2] == q) {
-                i += if b[i] == b'\\' && i + 1 < b.len() {
-                    2
+                if b[i] == b'\\' {
+                    i += 1;
+                    if i < b.len() {
+                        i += src[i..].chars().next().map_or(1, char::len_utf8);
+                    }
                 } else {
-                    1
-                };
+                    i += src[i..].chars().next().map_or(1, char::len_utf8);
+                }
             }
             i = (i + 3).min(b.len());
             out.push(' ');
@@ -66,10 +69,11 @@ pub fn parse_upstream_commands(upstream_root: &Path) -> Result<BTreeSet<String>,
         .map_err(|e| format!("failed to read upstream {}: {e}", commands_py.display()))?;
     let stripped = strip_py_comments_and_docstrings(&raw);
     let mut cmds = extract_upstream_slash_commands(&stripped);
-    let def_re = Regex::new(r#"(?s)CommandDef\s*\(\s*["']([a-z0-9_-]+)["']"#).expect("valid regex");
+    let def_re =
+        Regex::new(r#"(?s)CommandDef\s*\(\s*["']([a-zA-Z0-9_-]+)["']"#).expect("valid regex");
     let alias_re =
         Regex::new(r#"(?s)aliases\s*=\s*(?:\(([^)]*)\)|\[([^\]]*)\])"#).expect("valid regex");
-    let qstr_re = Regex::new(r#"["']/?([a-z0-9_-]+)["']"#).expect("valid regex");
+    let qstr_re = Regex::new(r#"["']/?([a-zA-Z0-9_-]+)["']"#).expect("valid regex");
     let dict_re = Regex::new(r#"["'](/[a-zA-Z0-9_-]+)["']\s*:"#).expect("valid regex");
     for cap in def_re.captures_iter(&stripped) {
         cmds.insert(format!("/{}", cap[1].trim()));

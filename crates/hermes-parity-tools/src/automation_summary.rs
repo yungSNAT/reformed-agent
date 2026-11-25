@@ -304,7 +304,7 @@ fn print_summary_output(
         ("attempts", Py::List(attempts.to_vec())),
         ("metadata", metadata.clone()),
         (
-            "contextlattice",
+            "context",
             Py::dict([
                 ("project", Py::from(project)),
                 ("topic_path", Py::from(args.context_topic_path.as_str())),

@@ -88,6 +88,8 @@ def publish_summary(
     attempts = list(parsed.get("attempts", []))
     if not parsed.get("ok") and not attempts and proc.stderr:
         attempts = [{"sink": "cli", "ok": "false", "detail": proc.stderr.strip()[-400:]}]
+    if parsed.get("ok") and parsed.get("primary_sink") == "stdout":
+        print(summary_markdown)
     return {
         "ok": bool(parsed.get("ok")),
         "primary_sink": str(parsed.get("primary_sink", "")),

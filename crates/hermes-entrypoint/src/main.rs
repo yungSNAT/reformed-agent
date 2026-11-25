@@ -1,5 +1,6 @@
 //! Container entrypoint binary replacing shell logic in `docker/entrypoint.sh`.
 
+#![forbid(unsafe_code)]
 #![cfg_attr(
     not(test),
     deny(

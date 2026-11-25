@@ -1,6 +1,8 @@
 //! Sink dispatch helpers for `publish-automation-summary`.
 
-use std::fs::{self, OpenOptions};
+use std::collections::hash_map::RandomState;
+use std::fs::{self, File, OpenOptions};
+use std::hash::BuildHasher;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -43,15 +45,29 @@ fn validate_endpoint(raw: &str) -> Result<&str, String> {
     Ok(url)
 }
 
+fn open_auth_config(opts: &OpenOptions, pid: u32, seq: u64) -> Result<(PathBuf, File), String> {
+    let hasher = RandomState::new();
+    let dir = std::env::temp_dir();
+    for attempt in 0..16u32 {
+        let rand_id = hasher.hash_one((pid, seq, attempt));
+        let path = dir.join(format!("hermes-summary-curl-{pid}-{rand_id:016x}.cfg"));
+        match opts.open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("error=OSError:failed creating curl config: {e}")),
+        }
+    }
+    Err("error=OSError:failed creating unique curl config after retries".to_string())
+}
+
 fn write_auth_config(api_key: &str) -> Result<HeaderConfigGuard, String> {
     let trimmed = api_key.trim();
-    if trimmed.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0) {
+    if trimmed.bytes().any(|b| b.is_ascii_control()) {
         return Err("error=ValueError:invalid control character in API key".to_string());
     }
     let escaped = trimmed.replace('\\', "\\\\").replace('"', "\\\"");
     let pid = std::process::id();
     let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("hermes-summary-curl-{pid}-{seq}.cfg"));
     let mut opts = OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]
@@ -59,9 +75,7 @@ fn write_auth_config(api_key: &str) -> Result<HeaderConfigGuard, String> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let mut file = opts
-        .open(&path)
-        .map_err(|e| format!("error=OSError:failed creating curl config: {e}"))?;
+    let (path, mut file) = open_auth_config(&opts, pid, seq)?;
     let guard = HeaderConfigGuard(path);
     writeln!(file, "header = \"Authorization: Bearer {escaped}\"")
         .map_err(|e| format!("error=OSError:failed writing curl config: {e}"))?;
@@ -248,7 +262,9 @@ pub(crate) fn try_sinks(
             "local" => append_local_log(local_path, markdown),
             "stdout" => {
                 // Keep JSON stdout uncorrupted when --json is active.
-                if !args.json {
+                if args.json {
+                    eprintln!("{markdown}");
+                } else {
                     println!("{markdown}");
                 }
                 (true, "printed_stdout".to_string())
