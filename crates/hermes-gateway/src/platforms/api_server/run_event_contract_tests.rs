@@ -108,3 +108,82 @@ async fn api_run_dispatch_failures_appear_in_events_and_release_pending_state() 
         assert!(state.run_cancels.read().await.pending.is_empty());
     }
 }
+
+#[tokio::test]
+async fn api_run_stopped_while_queued_never_reaches_the_inbound_pipeline() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    let run_id = "run_fixture_queued";
+    let inbound = ApiInboundRequest {
+        request_id: run_id.into(),
+        session_id: "fixture-session".into(),
+        user_id: "fixture-user".into(),
+        model: None,
+        provider: None,
+        personality: None,
+        prompt: "Never dispatch this fixture".into(),
+    };
+    state.run_store.write().await.insert(RunRecord::new(
+        inbound.request_id.clone(),
+        inbound.session_id.clone(),
+        inbound.user_id.clone(),
+        None,
+        None,
+        None,
+    ));
+
+    let stop = state
+        .roundtrip(empty_request("POST", &format!("/v1/runs/{run_id}/stop")), None)
+        .await;
+    assert_eq!(json_body(&stop)["status"], "stopping");
+
+    let mailbox_key = inbound.session_id.clone();
+    run_background_request(
+        Arc::clone(&state.mailbox),
+        Arc::clone(&state.run_cancels),
+        Arc::clone(&state.run_store),
+        Arc::clone(&state.inbound_tx),
+        inbound,
+        mailbox_key,
+    )
+    .await;
+
+    assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+    let record = state.run_store.read().await.get(run_id).unwrap();
+    assert_eq!(record.status, "cancelled");
+    assert!(record.completed_at.is_some());
+    assert_eq!(record.events.last().unwrap()["error"], "Run stopped before dispatch");
+    assert!(state.mailbox.read().await.pending.is_empty());
+    assert!(state.run_cancels.read().await.pending.is_empty());
+}
+
+#[tokio::test]
+async fn api_run_reports_a_closed_response_channel_and_clears_pending_state() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    let start = state
+        .roundtrip(
+            json_request("POST", "/v1/runs", serde_json::json!({"input": "fixture prompt"})),
+            None,
+        )
+        .await;
+    assert!(start.starts_with("HTTP/1.1 202 Accepted"), "{start}");
+    let started = json_body(&start);
+    let run_id = started["run_id"].as_str().unwrap();
+    let request = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.request_id, run_id);
+    let mut mailbox = state.mailbox.write().await;
+    assert_eq!(mailbox.pending.len(), 1);
+    mailbox.pending.clear();
+    drop(mailbox);
+
+    let record = wait_for_run_status(&state.run_store, run_id, "failed").await;
+    let failure = record.events.last().unwrap();
+    assert_eq!(failure["code"], 502);
+    assert_eq!(failure["error"], "Gateway closed response channel");
+    assert!(state.mailbox.read().await.pending.is_empty());
+    assert!(state.run_cancels.read().await.pending.is_empty());
+}
