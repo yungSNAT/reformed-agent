@@ -496,7 +496,6 @@ pub async fn login_nous_device_code(
 pub async fn login_openai_codex_device_code(
     options: CodexDeviceCodeOptions,
 ) -> Result<CodexAuthState, AgentError> {
-    let issuer = DEFAULT_CODEX_ISSUER;
     let timeout_secs = if options.timeout_seconds.is_finite() {
         options.timeout_seconds.clamp(5.0, 120.0)
     } else {
@@ -507,7 +506,21 @@ pub async fn login_openai_codex_device_code(
         .timeout(Duration::from_secs_f64(timeout_secs))
         .build()
         .map_err(|e| AgentError::Io(format!("build oauth client: {}", e)))?;
+    login_codex_device_code_with_client(
+        &client,
+        DEFAULT_CODEX_ISSUER,
+        CODEX_OAUTH_TOKEN_URL,
+        options.open_browser,
+    )
+    .await
+}
 
+async fn login_codex_device_code_with_client(
+    client: &reqwest::Client,
+    issuer: &str,
+    token_url: &str,
+    open_browser: bool,
+) -> Result<CodexAuthState, AgentError> {
     let usercode_resp = client
         .post(format!("{issuer}/api/accounts/deviceauth/usercode"))
         .json(&serde_json::json!({
@@ -560,7 +573,7 @@ pub async fn login_openai_codex_device_code(
     println!("\n  2. Enter this code:");
     println!("     {}", user_code);
     println!("\nWaiting for sign-in... (press Ctrl+C to cancel)");
-    if options.open_browser {
+    if open_browser {
         let _ = try_open_url(&verify_url);
     }
 
@@ -618,7 +631,7 @@ pub async fn login_openai_codex_device_code(
         .to_string();
 
     let token_resp = client
-        .post(CODEX_OAUTH_TOKEN_URL)
+        .post(token_url)
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", authorization_code.as_str()),

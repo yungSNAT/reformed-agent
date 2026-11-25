@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_env_lock;
+use serde_json::json;
 
 fn nous_test_jwt(seconds: i64, scope: Value) -> String {
     let header = serde_json::json!({ "alg": "none", "typ": "JWT" });
@@ -370,6 +371,156 @@ fn clear_provider_auth_state_is_noop_when_missing() {
     let provider = format!("missing-{}", uuid::Uuid::new_v4().simple());
     let removed = clear_provider_auth_state(&provider).expect("clear");
     assert!(!removed);
+}
+
+#[tokio::test]
+async fn codex_device_login_retries_pending_approval_and_exchanges_the_code() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    if !crate::isolated_test_profile::enter(
+        "auth::tests::codex_device_login_retries_pending_approval_and_exchanges_the_code",
+    ) {
+        return;
+    }
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let origin = server.uri();
+    let issued = "synthetic-device-access";
+    let poll = json!({"device_auth_id": "fixture-device", "user_code": "FIXTURE"});
+    Mock::given(method("POST"))
+        .and(path("/api/accounts/deviceauth/usercode"))
+        .and(body_json(json!({"client_id": CODEX_OAUTH_CLIENT_ID})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "device_auth_id": "fixture-device", "user_code": "FIXTURE", "interval": "1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/accounts/deviceauth/token"))
+        .and(body_json(&poll))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/accounts/deviceauth/token"))
+        .and(body_json(poll))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authorization_code": "fixture-authorization",
+            "code_verifier": "fixture-verifier"
+        })))
+        .with_priority(2)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": issued, "expires_in": "3600"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resolved = tokio::time::timeout(
+        Duration::from_secs(10),
+        login_codex_device_code_with_client(
+            &client,
+            &origin,
+            &format!("{origin}/oauth/token"),
+            false,
+        ),
+    )
+    .await
+    .expect("device sign-in fixture timed out")
+    .unwrap();
+    assert_eq!(resolved.tokens.access_token, issued);
+    assert!(resolved.tokens.refresh_token.is_none());
+    assert_eq!(resolved.tokens.expires_in, Some(3600));
+    assert_eq!(resolved.base_url, DEFAULT_CODEX_BASE_URL);
+    assert_eq!(resolved.auth_mode.as_deref(), Some("chatgpt"));
+    assert_eq!(resolved.source.as_deref(), Some("device_code"));
+    let requests = server.received_requests().await.unwrap();
+    let exchange = requests
+        .iter()
+        .find(|request| request.url.path() == "/oauth/token")
+        .expect("token exchange request");
+    let mut form_url = exchange.url.clone();
+    form_url.set_query(Some(std::str::from_utf8(&exchange.body).unwrap()));
+    let form = form_url.query_pairs().collect::<Vec<_>>();
+    assert_eq!(form.len(), 5);
+    for (name, value) in [
+        ("grant_type", "authorization_code"),
+        ("code", "fixture-authorization"),
+        (
+            "redirect_uri",
+            "https://auth.openai.com/deviceauth/callback",
+        ),
+        ("client_id", CODEX_OAUTH_CLIENT_ID),
+        ("code_verifier", "fixture-verifier"),
+    ] {
+        assert!(form
+            .iter()
+            .any(|(key, actual)| key == name && actual == value));
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn codex_device_login_reports_service_and_incomplete_code_responses() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let origin = server.uri();
+    for (case, response, expected) in [
+        (
+            "unavailable",
+            ResponseTemplate::new(503).set_body_json(json!({"error": "try later"})),
+            "device code request failed (503 Service Unavailable): try later",
+        ),
+        (
+            "incomplete",
+            ResponseTemplate::new(200).set_body_string("{"),
+            "invalid codex device code response",
+        ),
+        (
+            "missing-user",
+            ResponseTemplate::new(200).set_body_json(json!({"device_auth_id": "fixture-device"})),
+            "device code response missing user_code",
+        ),
+        (
+            "missing-device",
+            ResponseTemplate::new(200).set_body_json(json!({"user_code": "FIXTURE"})),
+            "device code response missing device_auth_id",
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(format!("/{case}/api/accounts/deviceauth/usercode")))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            login_codex_device_code_with_client(
+                &client,
+                &format!("{origin}/{case}"),
+                &format!("{origin}/oauth/token"),
+                false,
+            ),
+        )
+        .await
+        .expect("device sign-in fixture timed out")
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
 }
 
 #[test]
