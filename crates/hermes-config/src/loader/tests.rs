@@ -218,7 +218,7 @@ fn env_overrides_model() {
 }
 
 #[test]
-fn atomic_json_write_roundtrips_and_cleans_temp() {
+fn atomic_json_writes_roundtrip_and_clean_temporary_files() {
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -229,6 +229,17 @@ fn atomic_json_write_roundtrips_and_cleans_temp() {
     let loaded: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(loaded, json!({"key": "value", "nested": {"a": 1}}));
+
+    let replacement = json!({"nested": {"items": ["first", "second"]}});
+    atomic_json_write_pretty(&path, &replacement).unwrap();
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents
+        .lines()
+        .any(|line| line.starts_with("  \"nested\":")));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&contents).unwrap(),
+        replacement
+    );
     assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| entry
         .unwrap()
         .file_name()
