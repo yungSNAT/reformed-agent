@@ -218,6 +218,50 @@ async fn native_tui_persists_timestamps_and_inserts_the_selected_question_answer
 }
 
 #[tokio::test]
+async fn native_tui_filters_pickers_and_applies_skin_and_personality() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["--ignore-user-config", "--ignore-rules"]);
+    read_until(&mut terminal, b"\x1b[?1049h").await;
+
+    terminal
+        .write_all(b"\x1b[200~/skin list\x1b[201~\r")
+        .unwrap();
+    read_until(&mut terminal, b"Select Skin").await;
+    terminal
+        .write_all(b"\x1b[200~ignored fixture paste\x1b[201~")
+        .unwrap();
+    // The terminal's incremental redraw can split status text between words.
+    read_until(&mut terminal, b"Paste ignored").await;
+    terminal.write_all(b"unlisted-fixture\r").unwrap();
+    read_until(&mut terminal, b"Nothing").await;
+    terminal.write_all(b"\x15neon-glow\r").unwrap();
+    read_until(&mut terminal, b"Skin: neon-glow").await;
+
+    terminal
+        .write_all(b"\x1b[200~/personality\x1b[201~\r")
+        .unwrap();
+    read_until(&mut terminal, b"Select Personality").await;
+    terminal.write_all(b"\x1b").unwrap();
+    read_until(&mut terminal, b"Picker").await;
+    terminal
+        .write_all(b"\x1b[200~/personality list\x1b[201~\r")
+        .unwrap();
+    read_until(&mut terminal, b"Select Personality").await;
+    terminal.write_all(b"concise\r").unwrap();
+    read_until(&mut terminal, b"Personality: concise").await;
+
+    terminal.write_all(b"\x1b[200~/quit\x1b[201~\r").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("TUI shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+}
+
+#[tokio::test]
 async fn gateway_setup_leaves_the_existing_config_unchanged_when_cancelled() {
     let sandbox = tempfile::tempdir().unwrap();
     let config = sandbox.path().join("hermes/config.yaml");
