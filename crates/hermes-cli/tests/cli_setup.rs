@@ -14,8 +14,11 @@ async fn select(
     menu: &mut Lines<BufReader<ChildStdout>>,
     input: &mut ChildStdin,
     label_prefix: &str,
-) {
+) -> String {
+    let mut observed = String::new();
     while let Some(line) = menu.next_line().await.expect("read setup menu") {
+        observed.push_str(&line);
+        observed.push('\n');
         let Some((marker, label)) = line.trim().split_once(". ") else {
             continue;
         };
@@ -34,7 +37,7 @@ async fn select(
             .write_all(format!("{choice}\n").as_bytes())
             .await
             .expect("choose setup option");
-        return;
+        return observed;
     }
     panic!("setup exited before offering {label_prefix}");
 }
@@ -96,7 +99,20 @@ async fn setup_can_decline_oauth_and_keep_a_manual_key_in_the_vault() {
     let proxy = MockServer::start().await;
     assert!(proxy.address().ip().is_loopback());
     let key = "fixture-setup-key";
-    run_vault_setup(sandbox.path(), &proxy.uri(), key).await;
+    let answers = format!("n\n{key}\ny\n");
+    let stdout = run_authenticated_setup(
+        isolated_hermes::isolated_hermes(sandbox.path()),
+        &proxy.uri(),
+        "OpenAI (OAuth/API key)",
+        &answers,
+        Some("fixture-manual-model"),
+    )
+    .await;
+    assert!(
+        stdout.contains("Stored OpenAI key in encrypted vault"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains(key));
 
     let home = sandbox.path().join("hermes");
     let config_path = home.join("config.yaml");
@@ -125,9 +141,90 @@ async fn setup_can_decline_oauth_and_keep_a_manual_key_in_the_vault() {
     assert!(!listed.contains(key));
 }
 
-async fn run_vault_setup(root: &Path, proxy: &str, fixture_key: &str) {
+#[tokio::test]
+async fn quick_setup_imports_the_selected_providers_local_oauth_session() {
+    use hermes_cli::auth::{CODEX_OAUTH_CLIENT_ID, CODEX_OAUTH_TOKEN_URL, DEFAULT_CODEX_BASE_URL};
+
+    let proxy = MockServer::start().await;
+    assert!(proxy.address().ip().is_loopback());
+    let token = "local-oauth-setup-fixture";
+    for (provider, menu_label, display, answers, model_after_picker) in [
+        (
+            "openai",
+            "OpenAI (OAuth/API key)",
+            "OpenAI",
+            "y\n",
+            Some("fixture-import-model"),
+        ),
+        (
+            "openai-codex",
+            "OpenAI Codex",
+            "OpenAI Codex",
+            "y\nfixture-import-model\n",
+            None,
+        ),
+    ] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let fixture = sandbox.path().join("fixture-import.json");
+        std::fs::write(
+            &fixture,
+            serde_json::json!({"tokens": {"access_token": token}}).to_string(),
+        )
+        .unwrap();
+        let mut command = isolated_hermes::isolated_hermes(sandbox.path());
+        command.env("HERMES_CODEX_AUTH_FILE", &fixture);
+        let stdout = run_authenticated_setup(
+            command,
+            &proxy.uri(),
+            menu_label,
+            answers,
+            model_after_picker,
+        )
+        .await;
+        assert!(
+            stdout.contains(&format!("Detected existing {display} OAuth session")),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!("Stored {display} key in encrypted vault")),
+            "{stdout}"
+        );
+        assert!(!stdout.contains(token));
+
+        let home = sandbox.path().join("hermes");
+        let config_path = home.join("config.yaml");
+        let config = hermes_config::load_user_config_file(&config_path).unwrap();
+        assert_eq!(
+            config.model,
+            Some(format!("{provider}:fixture-import-model"))
+        );
+        let settings = &config.llm_providers[provider];
+        assert_eq!(settings.base_url.as_deref(), Some(DEFAULT_CODEX_BASE_URL));
+        assert_eq!(
+            settings.oauth_token_url.as_deref(),
+            Some(CODEX_OAUTH_TOKEN_URL)
+        );
+        assert_eq!(
+            settings.oauth_client_id.as_deref(),
+            Some(CODEX_OAUTH_CLIENT_ID)
+        );
+        assert!(settings.api_key.is_none());
+        assert!(home.join("auth/tokens.json").is_file());
+        assert!(!std::fs::read_to_string(config_path)
+            .unwrap()
+            .contains(token));
+    }
+}
+
+async fn run_authenticated_setup(
+    mut command: tokio::process::Command,
+    proxy: &str,
+    provider: &str,
+    answers: &str,
+    model_after_picker: Option<&str>,
+) -> String {
     tokio::time::timeout(Duration::from_secs(30), async {
-        let mut child = isolated_hermes::isolated_hermes(root)
+        let mut child = command
             .env("HTTP_PROXY", proxy)
             .env("HTTPS_PROXY", proxy)
             .env("ALL_PROXY", proxy)
@@ -139,26 +236,24 @@ async fn run_vault_setup(root: &Path, proxy: &str, fixture_key: &str) {
         let mut menu = BufReader::new(child.stdout.take().unwrap()).lines();
         let mut input = child.stdin.take().unwrap();
         select(&mut menu, &mut input, "Quick setup").await;
-        select(&mut menu, &mut input, "OpenAI (OAuth/API key)").await;
-        input
-            .write_all(format!("n\n{fixture_key}\ny\n").as_bytes())
-            .await
-            .unwrap();
-        select(&mut menu, &mut input, "Custom model ID").await;
-        input.write_all(b"fixture-manual-model\n").await.unwrap();
-        drop(input);
+        select(&mut menu, &mut input, provider).await;
+        input.write_all(answers.as_bytes()).await.unwrap();
         let mut stdout = String::new();
+        if let Some(model) = model_after_picker {
+            stdout = select(&mut menu, &mut input, "Custom model ID").await;
+            input
+                .write_all(format!("{model}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+        drop(input);
         menu.into_inner().read_to_string(&mut stdout).await.unwrap();
         assert!(child.wait().await.unwrap().success(), "{stdout}");
-        assert!(
-            stdout.contains("Stored OpenAI key in encrypted vault"),
-            "{stdout}"
-        );
         assert!(stdout.contains("Setup complete!"), "{stdout}");
-        assert!(!stdout.contains(fixture_key));
+        stdout
     })
     .await
-    .expect("manual key setup timed out");
+    .expect("authenticated setup timed out")
 }
 
 #[tokio::test]
