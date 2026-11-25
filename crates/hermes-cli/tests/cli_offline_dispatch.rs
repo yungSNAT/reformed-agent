@@ -5,6 +5,76 @@ use std::time::Duration;
 
 use support::isolated_hermes;
 
+#[tokio::test]
+async fn offline_sessions_repair_preserves_a_backup_and_restores_search() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    let persistence = hermes_agent::SessionPersistence::new(&home);
+    let repair = || async {
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            isolated_hermes(sandbox.path())
+                .args(["sessions", "repair"])
+                .output(),
+        )
+        .await
+        .expect("sessions repair timed out")
+        .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    assert!(repair().await.contains("nothing to repair"));
+    let messages = [
+        hermes_core::Message::user("Can you find the fixture?"),
+        hermes_core::Message::assistant("The orchard is in the fixture."),
+    ];
+    persistence
+        .persist_session("repair-fixture", &messages, None, None, None, None)
+        .unwrap();
+    let path = persistence.db_path();
+    {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        connection
+            .execute_batch("PRAGMA writable_schema=ON")
+            .unwrap();
+        let duplicates = connection
+            .execute(
+                "INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql)
+                 SELECT type, name, tbl_name, rootpage, sql
+                 FROM sqlite_master
+                 WHERE name = 'messages_fts'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(duplicates, 1);
+    }
+    let reason = persistence.db_health_error().unwrap();
+    assert!(hermes_agent::SessionPersistence::is_malformed_db_error_message(&reason));
+    let original = std::fs::read(path).unwrap();
+
+    let repaired = repair().await;
+    assert!(repaired.contains("Repaired sessions.db (strategy: dedup_schema)."));
+    let backup = repaired
+        .lines()
+        .find_map(|line| line.strip_prefix("Backup: "))
+        .map(std::path::Path::new)
+        .unwrap();
+    assert_eq!(backup.parent(), Some(home.as_path()));
+    assert_eq!(std::fs::read(backup).unwrap(), original);
+    assert!(repair().await.contains("opens cleanly; no repair needed"));
+
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let content: String = connection
+        .query_row(
+            "SELECT content FROM messages_fts WHERE messages_fts MATCH 'orchard'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(content, "The orchard is in the fixture.");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn offline_legacy_migration_preserves_existing_files_and_allows_cleanup_to_be_cancelled() {
