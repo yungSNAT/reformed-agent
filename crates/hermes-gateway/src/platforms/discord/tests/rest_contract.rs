@@ -425,4 +425,75 @@ mod rest_contract {
             "https://example.invalid/fixture.png"
         );
     }
+
+    #[tokio::test]
+    async fn rest_write_errors_keep_the_operation_and_provider_message() {
+        let server = MockServer::start().await;
+        let adapter = adapter_for_mock(&server, Some("fixture-app"));
+        let maintenance = "fixture REST service unavailable";
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(503).set_body_string(maintenance))
+            .expect(8)
+            .mount(&server)
+            .await;
+
+        let errors = [
+            (
+                "forum post",
+                adapter.send_forum_post("forum", "Fixture summary", None).await.unwrap_err(),
+            ),
+            (
+                "embed",
+                adapter.send_embed("channel", Some("Fixture embed"), &[]).await.unwrap_err(),
+            ),
+            (
+                "add_reaction",
+                adapter.add_reaction("channel", "message", "%E2%9C%85").await.unwrap_err(),
+            ),
+            (
+                "remove_reaction",
+                adapter.remove_reaction("channel", "message", "%E2%9C%85").await.unwrap_err(),
+            ),
+            (
+                "create_thread",
+                adapter.create_thread("channel", "message", "Fixture topic", None).await.unwrap_err(),
+            ),
+            (
+                "register_commands",
+                adapter.register_slash_commands(&[]).await.unwrap_err(),
+            ),
+            (
+                "register_guild_commands",
+                adapter.register_guild_slash_commands("fixture-guild", &[]).await.unwrap_err(),
+            ),
+            (
+                "interaction response",
+                adapter.respond_to_interaction("fixture-interaction", "fixture-callback-value", "Fixture response")
+                    .await
+                    .unwrap_err(),
+            ),
+        ];
+        for (operation, error) in errors {
+            assert!(matches!(error, GatewayError::SendFailed(ref message)
+                if message == &format!("Discord {operation} API error: {maintenance}")),
+                "{operation}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn forum_posts_fall_back_to_the_thread_id_without_a_starter() {
+        let server = MockServer::start().await;
+        let adapter = adapter_for_mock(&server, None);
+        Mock::given(method("POST"))
+            .and(path("/channels/fixture-forum/threads"))
+            .and(body_partial_json(json!({"message": {"content": "Fixture summary"}})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "fixture-thread"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let outcome = adapter.send_forum_post("fixture-forum", "Fixture summary", None).await.unwrap();
+        assert_eq!(outcome.thread_id, "fixture-thread");
+        assert_eq!(outcome.message_id, "fixture-thread");
+        assert!(outcome.warnings.is_empty());
+    }
 }
