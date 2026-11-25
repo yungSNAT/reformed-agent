@@ -34,6 +34,25 @@ fn run_cli(cwd: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+fn git_fixture(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .current_dir(root)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+}
+
 #[test]
 fn check_skills_index_validates_freshness_and_floors() {
     let tmp = tempfile::tempdir().unwrap();
@@ -488,18 +507,7 @@ fn redteam_gate_filters_severity_and_writes_sorted_report() {
 fn differential_parity_gate_detects_rust_cli_drift() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    let git = |args: &[&str]| {
-        let st = Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
-            .status()
-            .unwrap();
-        assert!(st.success(), "git {args:?} failed");
-    };
+    let git = |args: &[&str]| git_fixture(root, args);
 
     git(&["init", "-b", "upstream"]);
     fs::create_dir_all(root.join("crates/hermes-cli/src")).unwrap();
@@ -553,6 +561,112 @@ fn differential_parity_gate_detects_rust_cli_drift() {
         parsed["drift"]["top_level"]["missing_in_local"],
         serde_json::json!(["status"])
     );
+}
+
+#[test]
+fn differential_parity_gate_compares_legacy_slash_commands_and_reports_fallback() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let git = |args: &[&str]| git_fixture(root, args);
+    git(&["init", "-b", "notes"]);
+    git(&["commit", "--allow-empty", "-m", "Empty surface"]);
+
+    git(&["checkout", "-b", "legacy"]);
+    fs::create_dir(root.join("hermes_cli")).unwrap();
+    fs::write(
+        root.join("cli.py"),
+        "from hermes_cli.commands import commands\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("hermes_cli/commands.py"),
+        r#"commands = [
+    CommandDef("help",
+        aliases=("assist",),
+    ),
+]
+"#,
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "Legacy slash commands"]);
+
+    git(&["checkout", "-b", "rust", "notes"]);
+    let cli_src = root.join("crates/hermes-cli/src");
+    fs::create_dir_all(cli_src.join("commands")).unwrap();
+    fs::write(
+        cli_src.join("cli.rs"),
+        "enum Commands {\n    ReadOnly,\n}\n",
+    )
+    .unwrap();
+    fs::write(cli_src.join("main.rs"), "fn main() {}\n").unwrap();
+    fs::write(
+        cli_src.join("commands/interactive.rs"),
+        r#"const COMMANDS: &[Command] = &[Command { name: "/help" }, Command { name: "/review" }];"#,
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "Split Rust command registry"]);
+
+    let run = |upstream: &str| {
+        run_cli(
+            root,
+            &[
+                "run-differential-parity-gate",
+                "--local-ref",
+                "rust",
+                "--upstream-ref",
+                upstream,
+                "--report-path",
+                "diff.json",
+                "--fallback-cmd",
+                "touch .fallback-used; printf 'fixture stdout'; printf 'fixture stderr' >&2; exit 7",
+            ],
+        )
+    };
+    let saved =
+        || serde_json::from_slice::<Value>(&fs::read(root.join("diff.json")).unwrap()).unwrap();
+
+    let compared = run("legacy");
+    assert_eq!(compared.status.code(), Some(1), "{compared:?}");
+    let report = saved();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["drift"]["surface_kind"], "rust_vs_python");
+    assert_eq!(
+        report["drift"]["slash_commands"],
+        serde_json::json!({"missing_in_local": ["assist"], "extra_in_local": ["review"]})
+    );
+    assert_eq!(
+        report["local_surface"]["top_level"],
+        serde_json::json!(["read-only"])
+    );
+    assert_eq!(
+        report["upstream_surface"]["slash_commands"],
+        serde_json::json!(["assist", "help"])
+    );
+    assert_eq!(report["commits"]["behind"], 1);
+    assert_eq!(report["commits"]["behind_gate_enforced"], false);
+    assert!(!root.join(".fallback-used").exists());
+
+    let missing = run("missing");
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stdout).contains("FAILED (missing ref)"));
+    let report = saved();
+    assert_eq!(report["reason"], "missing_git_ref");
+    assert_eq!(report["local_ref_exists"], true);
+    assert_eq!(report["upstream_ref_exists"], false);
+    assert!(!root.join(".fallback-used").exists());
+
+    let fallback = run("notes");
+    assert_eq!(fallback.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&fallback.stdout).contains("FAILED (fallback)"));
+    let report = saved();
+    assert_eq!(report["reason"], "cli_surface_unavailable_fallback");
+    assert_eq!(report["fallback"]["ok"], false);
+    assert_eq!(report["fallback"]["exit_code"], 7);
+    assert_eq!(report["fallback"]["stdout_tail"], "fixture stdout");
+    assert_eq!(report["fallback"]["stderr_tail"], "fixture stderr");
+    assert!(root.join(".fallback-used").is_file());
 }
 
 #[test]
