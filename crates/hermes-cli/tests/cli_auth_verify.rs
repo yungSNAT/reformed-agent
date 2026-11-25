@@ -7,6 +7,107 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 mod isolated;
 use isolated::isolated_hermes;
 
+#[tokio::test]
+async fn oauth_status_reports_offline_provider_metadata_and_masks_fixture_tokens() {
+    use serde_json::json;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let state = sandbox.path().join("hermes-oauth-fixture.json");
+    let google = sandbox.path().join("google-oauth-fixture.json");
+    let qwen = sandbox.path().join("qwen-oauth-fixture.json");
+    let access = "fixture-access-tail";
+    let expiry = 4_102_444_800_000_i64;
+    for present in [false, true] {
+        if present {
+            std::fs::write(
+                &state,
+                json!({"version": 1, "providers": {
+                    "anthropic": {"access_token": access, "source": "fixture-state", "expires_at_ms": expiry},
+                    "google-gemini-cli": {"access_token": access},
+                    "qwen-oauth": {"access_token": access}
+                }})
+                .to_string(),
+            )
+            .unwrap();
+            std::fs::write(
+                &google,
+                json!({
+                    "access": access,
+                    "expires": expiry,
+                    "email": "fixture@example.invalid",
+                    "project_id": "fixture-project"
+                })
+                .to_string(),
+            )
+            .unwrap();
+            std::fs::write(
+                &qwen,
+                json!({"access_token": access, "expiry_date": expiry}).to_string(),
+            )
+            .unwrap();
+        }
+
+        for (provider, label, fixture_source) in [
+            ("anthropic", "Anthropic OAuth", "fixture-state"),
+            ("google-gemini-cli", "Google Gemini OAuth", "google-oauth"),
+            ("qwen-oauth", "Qwen OAuth", "qwen-cli"),
+        ] {
+            let output = tokio::time::timeout(
+                Duration::from_secs(10),
+                isolated_hermes(sandbox.path())
+                    .env("HERMES_AUTH_FILE", &state)
+                    .env("HERMES_GEMINI_OAUTH_FILE", &google)
+                    .env("HERMES_QWEN_CLI_AUTH_FILE", &qwen)
+                    .env("HTTP_PROXY", "http://127.0.0.1:1")
+                    .env("HTTPS_PROXY", "http://127.0.0.1:1")
+                    .args(["auth", "status", provider])
+                    .output(),
+            )
+            .await
+            .expect("offline auth status timed out")
+            .unwrap();
+            assert!(output.status.success(), "{provider}: {output:?}");
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(!stdout.contains(access) && !stderr.contains(access));
+            let status = stdout
+                .lines()
+                .find(|line| line.starts_with(&format!("{label}: ")))
+                .unwrap_or_else(|| panic!("{provider}: {stdout}"));
+            let oauth_source = if present { fixture_source } else { "none" };
+            let expires = if present {
+                expiry.to_string()
+            } else {
+                "unknown".to_owned()
+            };
+            assert!(
+                status.starts_with(&format!("{label}: logged_in={present} "))
+                    && status.ends_with(&format!(" source={oauth_source} expires_at_ms={expires}")),
+                "{provider}: {stdout}"
+            );
+            let source = if present { "auth_json" } else { "none" };
+            assert!(
+                stdout.contains(&format!(
+                    "provider='{provider}', credential_present={present}, source={source}, oauth_state_present={present}"
+                )),
+                "{provider}: {stdout}"
+            );
+            if present {
+                assert!(
+                    stdout.contains("OAuth token: ********"),
+                    "{provider}: {stdout}"
+                );
+                if provider == "google-gemini-cli" {
+                    assert!(stdout.contains("Google account: fixture@example.invalid"));
+                    assert!(stdout.contains("Google project_id: fixture-project"));
+                }
+            } else {
+                assert!(stdout.contains("OAuth detail:"), "{provider}: {stdout}");
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn auth_pool_imports_local_oauth_state_and_clears_it_when_removed() {
