@@ -264,6 +264,96 @@ async fn invalid_remote_requests() {
     );
 }
 
+#[test]
+fn openai_speech_uses_the_configured_endpoint_and_preserves_output_on_error() {
+    run_isolated("openai_speech_round_trip", |command, _| {
+        command.env("VOICE_TOOLS_OPENAI_KEY", "fixture-speech-value");
+    });
+}
+
+#[tokio::test]
+#[ignore = "run with isolated credentials by the parent test"]
+async fn openai_speech_round_trip() {
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    let audio = b"fixture audio";
+    Mock::given(method("POST"))
+        .and(path("/audio/speech"))
+        .and(header("authorization", "Bearer fixture-speech-value"))
+        .and(body_json(json!({
+            "model": "tts-1",
+            "input": "Read the weather report",
+            "voice": "nova",
+            "speed": 4.0,
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(audio.to_vec(), "audio/mpeg"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let backend = MultiTtsBackend {
+        openai_base_url: server.uri(),
+        ..MultiTtsBackend::default()
+    };
+    let output = std::env::temp_dir().join("speech.mp3");
+    let output_str = output.to_str().unwrap();
+    let result = backend
+        .synthesize(
+            "Read the weather report",
+            Some("nova"),
+            Some("openai"),
+            Some(output_str),
+            Some(8.0),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&result).unwrap(),
+        json!({
+            "provider": "openai",
+            "transport": "direct",
+            "file": output_str,
+            "voice": "nova",
+            "bytes": audio.len(),
+        })
+    );
+    assert_eq!(tokio::fs::read(&output).await.unwrap(), audio);
+
+    server.verify().await;
+    server.reset().await;
+    Mock::given(method("POST"))
+        .and(path("/audio/speech"))
+        .and(body_json(json!({
+            "model": "tts-1",
+            "input": "Read the weather report",
+            "voice": "alloy",
+        })))
+        .respond_with(ResponseTemplate::new(503).set_body_string("speech unavailable"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let message = execution_failure(
+        backend
+            .synthesize(
+                "Read the weather report",
+                None,
+                Some("openai"),
+                Some(output_str),
+                None,
+            )
+            .await
+            .unwrap_err(),
+    );
+    assert_eq!(
+        message,
+        "OpenAI TTS error (503 Service Unavailable): speech unavailable"
+    );
+    assert_eq!(tokio::fs::read(&output).await.unwrap(), audio);
+}
+
 #[cfg(unix)]
 fn child_root() -> PathBuf {
     PathBuf::from(std::env::var_os(CHILD_ROOT).unwrap())
