@@ -65,6 +65,63 @@ fn picker_confirmation_updates_personality_and_keeps_question_answers_as_drafts(
     });
 }
 
+#[test]
+fn model_picker_applies_an_offline_preset_and_preserves_it_on_failure() {
+    if !crate::isolated_test_profile::enter(
+        "tui::tests::model_picker_applies_an_offline_preset_and_preserves_it_on_failure",
+    ) {
+        return;
+    }
+
+    let mut app = build_test_app(&hermes_config::hermes_home());
+    let mut state = TuiState::default();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let preset = |id: &str| PickerItem {
+        label: id.to_owned(),
+        detail: String::new(),
+        value: id.to_owned(),
+    };
+    runtime.block_on(async {
+        open_provider_model_modal(&mut state, &app, "fixture-unknown").await;
+        assert_eq!(
+            state.status_message,
+            "No models available for provider `fixture-unknown`"
+        );
+        assert!(!state.modal_active());
+
+        state.open_modal(PickerModal::new(
+            PickerKind::ModelProvider,
+            "Select Provider",
+            vec![preset("moa")],
+        ));
+        process_modal_confirm(&mut state, &mut app).await.unwrap();
+        assert_eq!(state.status_message, "Provider selected: moa");
+        let modal = state.modal.as_ref().unwrap();
+        assert!(matches!(&modal.kind, PickerKind::ModelForProvider { provider } if provider == "moa"));
+        assert_eq!(modal.selected_item().unwrap().value, "default");
+
+        process_modal_confirm(&mut state, &mut app).await.unwrap();
+        assert_eq!(app.current_model, "moa:default");
+        assert_eq!(state.status_message, "Switched model to moa:default");
+        assert!(!state.modal_active());
+
+        state.open_modal(PickerModal::new(
+            PickerKind::ModelForProvider { provider: "moa".into() },
+            "Select moa model",
+            vec![preset("fixture-unknown")],
+        ));
+        process_modal_confirm(&mut state, &mut app).await.unwrap();
+        assert_eq!(app.current_model, "moa:default");
+        assert!(!state.modal_active());
+        assert!(state.status_message.contains("unsupported MoA preset 'fixture-unknown'"));
+        assert!(state.status_message.ends_with("staying on moa:default."));
+        assert_eq!(
+            app.ui_messages.last().unwrap().message.content.as_deref(),
+            Some(state.status_message.as_str())
+        );
+    });
+}
+
 fn pending_test_turn() -> TuiState {
     TuiState {
         processing: true,
