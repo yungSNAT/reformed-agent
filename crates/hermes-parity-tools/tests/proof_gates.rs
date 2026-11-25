@@ -66,6 +66,98 @@ fn fixture_commit(root: &Path, message: &str) {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn fork_carry_reports_tests_that_run_and_keeps_declared_gaps_visible() {
+    let fixture = tempfile::tempdir_in("/tmp").unwrap();
+    let root = fixture.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"carry-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"carry-fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        r#"
+pub fn draft_title(input: &str) -> &str {
+    input.trim()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn keeps_draft() {
+        assert_eq!(super::draft_title(" Outline "), "Outline");
+    }
+}
+"#,
+    )
+    .unwrap();
+    fixture_git(root, &["init", "--quiet", "--template="]);
+    fixture_git(
+        root,
+        &["add", "--", "Cargo.toml", "Cargo.lock", "src/lib.rs"],
+    );
+    fixture_commit(root, "Fork carry fixture");
+
+    fs::create_dir_all(root.join("docs/parity")).unwrap();
+    let registry = root.join("docs/parity/fork-carry-contracts.v1.json");
+    let cargo = Path::new(env!("CARGO"));
+    for (test, cargo_path, code, expected) in [
+        (
+            "tests::keeps_draft",
+            cargo.to_path_buf(),
+            0,
+            "- PASS carry-draft",
+        ),
+        (
+            "tests::missing_draft",
+            cargo.to_path_buf(),
+            1,
+            "exact test missing",
+        ),
+        (
+            "tests::keeps_draft",
+            root.join("missing-cargo"),
+            1,
+            "could not launch Cargo",
+        ),
+    ] {
+        let document = json!({
+            "version": 1,
+            "required": [{
+                "id": "carry-draft", "behaviour": "Keeps the draft",
+                "package": "carry-fixture", "test": test
+            }],
+            "uncovered": [{"id": "carry-preview", "behaviour": "Preview still needs a test"}]
+        });
+        fs::write(&registry, document.to_string()).unwrap();
+        let mut command = parity_tool(root, "check-fork-carry");
+        isolate_git(&mut command, root);
+        let output = command
+            .env("CARGO", cargo_path)
+            .env("CARGO_HOME", root.join("cargo-home"))
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("RUSTC", cargo.with_file_name("rustc"))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert_exit(output, code, expected);
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(stdout.contains("- UNCOVERED carry-preview: Preview still needs a test"));
+        let passed = i32::from(code == 0);
+        assert!(stdout.contains(&format!(
+            "{passed}/1 required contracts passed. 1 known gaps."
+        )));
+    }
+}
+
 #[test]
 fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
     let fixture = tempfile::tempdir().unwrap();
