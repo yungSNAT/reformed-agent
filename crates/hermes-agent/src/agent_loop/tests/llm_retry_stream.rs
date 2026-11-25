@@ -896,6 +896,16 @@
                 pending_stream_polled: Arc::new(tokio::sync::Notify::new()),
             }
         }
+
+        fn cost_limit_usage() -> UsageStats {
+            UsageStats {
+                prompt_tokens: 3,
+                completion_tokens: 2,
+                total_tokens: 5,
+                estimated_cost: Some(0.5),
+                ..Default::default()
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -909,6 +919,15 @@
             _model: Option<&str>,
             _extra_body: Option<&serde_json::Value>,
         ) -> Result<hermes_core::LlmResponse, AgentError> {
+            if matches!(self.scenario, StreamRetryScenario::CostLimit) {
+                *self.calls.lock().expect("calls lock") += 1;
+                return Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("Fixture draft"),
+                    usage: Some(Self::cost_limit_usage()),
+                    model: "fixture-model".into(),
+                    finish_reason: Some("stop".into()),
+                });
+            }
             if !matches!(self.scenario, StreamRetryScenario::SemanticRetry) {
                 return Err(AgentError::LlmApi("unused".to_string()));
             }
@@ -953,13 +972,7 @@
                 StreamRetryScenario::CostLimit => vec![
                     Ok(stream_chunk_content("Fixture draft")),
                     Ok(StreamChunk {
-                        usage: Some(hermes_core::UsageStats {
-                            prompt_tokens: 3,
-                            completion_tokens: 2,
-                            total_tokens: 5,
-                            estimated_cost: Some(0.5),
-                            ..Default::default()
-                        }),
+                        usage: Some(Self::cost_limit_usage()),
                         ..stream_chunk_finish("stop")
                     }),
                 ],
@@ -1300,6 +1313,59 @@
             result.messages.last().and_then(|message| message.content.as_deref()),
             Some("Partial answer")
         );
+    }
+
+    #[tokio::test]
+    async fn nonstreaming_usage_stops_the_turn_at_the_session_cost_limit() {
+        for (degrade_model, warning) in [
+            (
+                Some(" anthropic:fixture-small "),
+                "Switching to cheaper model `anthropic:fixture-small`.",
+            ),
+            (None, "Cost guard warning: session spend is now"),
+        ] {
+            let home = tempfile::tempdir().expect("fixture home");
+            let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::CostLimit));
+            let agent = AgentLoop::new(
+                AgentConfig {
+                    model: "anthropic:fixture-model".into(),
+                    hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                    max_cost_usd: Some(0.25),
+                    cost_guard_degrade_model: degrade_model.map(str::to_owned),
+                    skip_memory: true,
+                    skip_context_files: true,
+                    code_index_enabled: false,
+                    ..AgentConfig::default()
+                },
+                Arc::new(ToolRegistry::new()),
+                provider.clone(),
+            );
+            let result = agent
+                .run(vec![Message::user("Fixture question")], None)
+                .await
+                .expect("cost guard returns the session state");
+
+            assert!(!result.finished_naturally);
+            assert!(!result.interrupted);
+            assert_eq!(result.total_turns, 1);
+            assert_eq!(result.session_cost_usd, Some(0.5));
+            assert_eq!(result.usage.expect("reported usage").total_tokens, 5);
+            assert_eq!(*provider.calls.lock().expect("calls lock"), 1);
+            let notices: Vec<_> = result
+                .messages
+                .iter()
+                .filter(|message| message.role == MessageRole::System)
+                .filter_map(|message| message.content.as_deref())
+                .collect();
+            assert!(notices.iter().any(|text| text.contains(warning)));
+            assert!(notices
+                .iter()
+                .any(|text| text.contains("Cost guard tripped")));
+            assert!(!result
+                .messages
+                .iter()
+                .any(|message| message.role == MessageRole::Assistant));
+        }
     }
 
     #[tokio::test]
