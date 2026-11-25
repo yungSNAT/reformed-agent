@@ -72,35 +72,77 @@ pub fn file_identity(path: &Path) -> Option<FileIdentity> {
 /// The identity of an already-opened file handle.
 #[cfg(windows)]
 pub fn file_identity_from_file(file: &std::fs::File) -> Option<FileIdentity> {
-    file_identity_and_reparse_from_file(file).map(|(id, _)| id)
+    file_identity_and_kind_from_file(file).map(|(id, _)| id)
+}
+
+/// What a handle opened without following reparse points names.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HandleKind {
+    Regular,
+    /// A reparse point that names no other file, such as a cloud placeholder
+    /// or a deduplicated file.
+    OtherReparse,
+    /// A directory, or a reparse point that names another file: a symlink,
+    /// junction or any other name-surrogate tag.
+    LinkOrDir,
+}
+
+/// Sorts a handle by its file attributes and reparse tag. Only name-surrogate
+/// tags (`IsReparseTagNameSurrogate`) redirect to another file.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn handle_kind(attributes: u32, reparse_tag: u32) -> HandleKind {
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    const NAME_SURROGATE_BIT: u32 = 0x2000_0000;
+    if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        HandleKind::LinkOrDir
+    } else if attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+        HandleKind::Regular
+    } else if reparse_tag & NAME_SURROGATE_BIT != 0 {
+        HandleKind::LinkOrDir
+    } else {
+        HandleKind::OtherReparse
+    }
 }
 
 #[cfg(windows)]
-pub(crate) fn file_identity_and_reparse_from_file(
+pub(crate) fn file_identity_and_kind_from_file(
     file: &std::fs::File,
-) -> Option<(FileIdentity, bool)> {
+) -> Option<(FileIdentity, HandleKind)> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
-        FILE_ATTRIBUTE_REPARSE_POINT,
+        FileAttributeTagInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_TAG_INFO,
     };
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: the handle is open for the call and `info` is a valid out pointer.
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
         return None;
     }
-    let is_reparse_or_dir =
-        (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) != 0;
+    let mut tag = FILE_ATTRIBUTE_TAG_INFO::default();
+    // SAFETY: as above; the size passed is the size of `tag`.
+    if unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileAttributeTagInfo,
+            (&raw mut tag).cast(),
+            std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        )
+    } == 0
+    {
+        return None;
+    }
     let id = FileIdentity {
         volume: u64::from(info.dwVolumeSerialNumber),
         file: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
         links: u64::from(info.nNumberOfLinks),
     };
-    Some((id, is_reparse_or_dir))
+    Some((id, handle_kind(info.dwFileAttributes, tag.ReparseTag)))
 }
 
-/// The identity of a regular non-reparse file at `path`, without following a
-/// leaf symlink or junction.
+/// The identity of the file at `path`, without following a leaf symlink or
+/// junction. None for a directory or a link.
 #[cfg(windows)]
 pub(crate) fn file_identity_no_follow(path: &Path) -> Option<FileIdentity> {
     use std::os::windows::fs::OpenOptionsExt;
@@ -112,13 +154,32 @@ pub(crate) fn file_identity_no_follow(path: &Path) -> Option<FileIdentity> {
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .ok()?;
-    let (id, is_reparse_or_dir) = file_identity_and_reparse_from_file(&file)?;
-    (!is_reparse_or_dir).then_some(id)
+    let (id, kind) = file_identity_and_kind_from_file(&file)?;
+    (kind != HandleKind::LinkOrDir).then_some(id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_name_surrogate_reparse_points_count_as_links() {
+        const REPARSE: u32 = 0x400;
+        const ARCHIVE: u32 = 0x20;
+        // IO_REPARSE_TAG_SYMLINK, _MOUNT_POINT (junctions) and _LX_SYMLINK.
+        for tag in [0xA000_000C, 0xA000_0003, 0xA000_001D] {
+            assert_eq!(handle_kind(ARCHIVE | REPARSE, tag), HandleKind::LinkOrDir);
+        }
+        // IO_REPARSE_TAG_CLOUD_6 (OneDrive Files On-Demand) and _DEDUP.
+        for tag in [0x9000_601A, 0x8000_0013] {
+            assert_eq!(
+                handle_kind(ARCHIVE | REPARSE, tag),
+                HandleKind::OtherReparse
+            );
+        }
+        assert_eq!(handle_kind(ARCHIVE, 0), HandleKind::Regular);
+        assert_eq!(handle_kind(0x10, 0), HandleKind::LinkOrDir);
+    }
 
     #[test]
     fn hard_links_share_an_identity_and_count_their_links() {

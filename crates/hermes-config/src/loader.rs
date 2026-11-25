@@ -125,42 +125,52 @@ enum AtomicWriteMode {
 /// the default mode, as before); on Windows the replacement keeps the
 /// existing file's DACL.
 pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
-    atomic_write_bytes_with_mode(path, bytes, AtomicWriteMode::PreserveExisting)
+    atomic_write_bytes_with_mode(path, bytes, AtomicWriteMode::PreserveExisting, None)
 }
 
 /// Atomically write private bytes (`0o600` on Unix) to `path`, keeping a
 /// symlinked store linked whilst refusing a link whose target folder is missing.
 pub fn atomic_write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
-    atomic_write_bytes_with_mode(path, bytes, AtomicWriteMode::OwnerOnly)
+    atomic_write_bytes_with_mode(path, bytes, AtomicWriteMode::OwnerOnly, None)
 }
 
 /// Atomically write bytes to `path` without following a leaf symlink. When
 /// `expected_existing` is `Some`, also requires the file at `path` to still be
-/// the one that read opened, until replacement.
+/// the one that read opened when the write last checks it.
+///
+/// The replacement keeps the replaced file's Unix mode bits or Windows DACL;
+/// as with any rename, a Unix owner, POSIX ACLs and extended attributes are
+/// not carried over and a hard link is split. A swap between the last check
+/// and the rename is still written over: the rename never follows a link, so
+/// that loses the swapped-in file's update but writes nowhere else.
 pub fn atomic_write_bytes_no_follow(
     path: &Path,
     bytes: &[u8],
-    expected_existing: Option<&NoFollowRead>,
+    expected_existing: Option<NoFollowRead>,
 ) -> Result<(), ConfigError> {
+    let (identity, open) = expected_existing
+        .map(|read| (read.identity, read.open))
+        .unzip();
     atomic_write_bytes_with_mode(
         path,
         bytes,
-        AtomicWriteMode::NoFollowExisting(expected_existing.map(|read| read.identity)),
+        AtomicWriteMode::NoFollowExisting(identity),
+        open,
     )
 }
 
 /// A regular file read by [`read_regular_file_no_follow`].
 ///
-/// On Unix it keeps the file open: a freed inode number can go straight to the
-/// next new file (ext4 does this), so a file swapped in after the read could
-/// otherwise carry the read file's identity. NTFS file IDs carry a reuse
-/// sequence number, so Windows needs no open handle.
+/// It keeps the file open until the write's last check: a filesystem may give
+/// a freed file ID to the next new file (ext4 inodes, FAT directory slots), so
+/// a file swapped in after the read could otherwise carry the read file's
+/// identity. A filesystem that reports reused or constant IDs for live files,
+/// as some FUSE mounts do, defeats the check.
 #[derive(Debug)]
 pub struct NoFollowRead {
     pub content: String,
     identity: crate::FileIdentity,
-    #[cfg(unix)]
-    _open: std::fs::File,
+    open: std::fs::File,
 }
 
 /// Read a regular UTF-8 file without following a leaf symlink. Pass the result
@@ -173,8 +183,7 @@ pub fn read_regular_file_no_follow(path: &Path) -> Result<NoFollowRead, ConfigEr
     Ok(NoFollowRead {
         content,
         identity,
-        #[cfg(unix)]
-        _open: file,
+        open: file,
     })
 }
 
@@ -207,19 +216,37 @@ fn open_regular_file_no_follow(
     })?;
     #[cfg(windows)]
     {
-        let (handle_id, is_reparse_or_dir) =
-            crate::file_identity::file_identity_and_reparse_from_file(&file).ok_or_else(|| {
-                ConfigError::ParseError(format!(
-                    "could not read handle identity of {}",
-                    display_path.display()
-                ))
-            })?;
-        if is_reparse_or_dir {
-            return Err(ConfigError::ParseError(format!(
-                "refusing to follow symlink at {}",
+        use crate::file_identity::HandleKind;
+        let no_identity = || {
+            ConfigError::ParseError(format!(
+                "could not read handle identity of {}",
                 display_path.display()
-            )));
-        }
+            ))
+        };
+        let (handle_id, kind) = crate::file_identity::file_identity_and_kind_from_file(&file)
+            .ok_or_else(no_identity)?;
+        let file = match kind {
+            HandleKind::LinkOrDir => {
+                return Err(ConfigError::ParseError(format!(
+                    "refusing to follow symlink at {}",
+                    display_path.display()
+                )))
+            }
+            HandleKind::Regular => file,
+            // A cloud placeholder or deduplicated file redirects nowhere, but
+            // only its filter can supply the content: read it through a plain
+            // open of the same file.
+            HandleKind::OtherReparse => {
+                let plain = std::fs::File::open(open_path).map_err(io_to_config_error)?;
+                if crate::file_identity_from_file(&plain) != Some(handle_id) {
+                    return Err(ConfigError::ParseError(format!(
+                        "target file changed concurrently at {}",
+                        display_path.display()
+                    )));
+                }
+                plain
+            }
+        };
         if !file.metadata().map_err(io_to_config_error)?.is_file() {
             return Err(ConfigError::ParseError(format!(
                 "refusing non-regular file at {}",
@@ -306,6 +333,8 @@ fn atomic_write_bytes_with_mode(
     path: &Path,
     bytes: &[u8],
     mode: AtomicWriteMode,
+    // The replaced file, held open until the last identity check.
+    mut held: Option<std::fs::File>,
 ) -> Result<(), ConfigError> {
     let (target_buf, expected_parent, expected_id) = match mode {
         AtomicWriteMode::PreserveExisting => (resolve_symlink_target(path), None, None),
@@ -370,6 +399,24 @@ fn atomic_write_bytes_with_mode(
         drop(file);
         written = true;
         if let Some(ref real_parent) = expected_parent {
+            // The rename below skips ReplaceFileW, which could follow a link,
+            // so give the new file the replaced file's access list here.
+            #[cfg(windows)]
+            {
+                if held.is_none() {
+                    held = open_regular_file_no_follow(target, path)
+                        .ok()
+                        .map(|(file, _)| file);
+                }
+                if let Some(existing) = &held {
+                    copy_dacl(existing, &tmp_path).map_err(|err| {
+                        ConfigError::ParseError(format!(
+                            "could not keep the access list of {}: {err}",
+                            path.display()
+                        ))
+                    })?;
+                }
+            }
             if std::fs::canonicalize(target_parent(path)).ok().as_ref() != Some(real_parent) {
                 return Err(ConfigError::ParseError(format!(
                     "parent directory changed concurrently for {}",
@@ -378,6 +425,7 @@ fn atomic_write_bytes_with_mode(
             }
             check_no_follow_leaf(target, expected_id, expected_id.is_some())?;
         }
+        drop(held.take());
         replace_temp_file(
             &tmp_path,
             target,
@@ -482,6 +530,87 @@ fn replace_file_keeping_acl(tmp_path: &Path, path: &Path) -> bool {
             std::ptr::null(),
         ) != 0
     }
+}
+
+/// Give the file at `to` the DACL of `from`, keeping its protection from
+/// inheritance, as `ReplaceFileW` would. A volume without access lists (FAT)
+/// reports a null DACL, which leaves nothing to keep.
+#[cfg(windows)]
+fn copy_dacl(from: &std::fs::File, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
+    use windows_sys::Win32::Security::Authorization::{
+        GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorControl, ACL, DACL_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
+        UNPROTECTED_DACL_SECURITY_INFORMATION,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_OPEN_REPARSE_POINT, READ_CONTROL, WRITE_DAC,
+    };
+
+    let mut dacl: *mut ACL = null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+    // SAFETY: the handle is open for the call; the out pointers are valid and
+    // the descriptor is freed below.
+    let status = unsafe {
+        GetSecurityInfo(
+            from.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            &mut dacl,
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(std::io::Error::from_raw_os_error(status as i32));
+    }
+    let result = (|| {
+        if dacl.is_null() {
+            return Ok(());
+        }
+        let (mut control, mut revision) = (0u16, 0u32);
+        // SAFETY: `descriptor` came from GetSecurityInfo and is still live.
+        if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let inheritance = if control & SE_DACL_PROTECTED != 0 {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+        let target = std::fs::OpenOptions::new()
+            .access_mode(WRITE_DAC | READ_CONTROL)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(to)?;
+        // SAFETY: the handle is open with WRITE_DAC; `dacl` points into the
+        // live descriptor.
+        let status = unsafe {
+            SetSecurityInfo(
+                target.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | inheritance,
+                null_mut(),
+                null_mut(),
+                dacl,
+                null_mut(),
+            )
+        };
+        if status == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(std::io::Error::from_raw_os_error(status as i32))
+        }
+    })();
+    // SAFETY: GetSecurityInfo allocated the descriptor with LocalAlloc.
+    unsafe { LocalFree(descriptor.cast()) };
+    result
 }
 
 fn is_cross_device_rename_error(err: &std::io::Error) -> bool {

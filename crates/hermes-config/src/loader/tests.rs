@@ -858,15 +858,72 @@ fn read_regular_file_and_write_no_follow_detect_concurrent_swap() {
     std::fs::write(&path, "before").unwrap();
 
     let read = read_regular_file_no_follow(&path).unwrap();
+    let stale = read_regular_file_no_follow(&path).unwrap();
     assert_eq!(read.content, "before");
 
-    atomic_write_bytes_no_follow(&path, b"after", Some(&read)).unwrap();
+    atomic_write_bytes_no_follow(&path, b"after", Some(read)).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
 
-    // The file this read opened has since been replaced.
-    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(&read)).unwrap_err();
+    // The file `stale` opened has since been replaced.
+    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(stale)).unwrap_err();
     assert!(err.to_string().contains("changed concurrently"), "{err}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
+}
+
+/// FAT gives a recreated file its old directory slot and so its old file ID;
+/// only the read's open handle stops that.
+#[cfg(windows)]
+#[test]
+fn a_no_follow_read_keeps_the_file_open_until_the_write() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    std::fs::write(&path, "before").unwrap();
+    let exclusive = || {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+    };
+
+    let read = read_regular_file_no_follow(&path).unwrap();
+    assert!(exclusive().is_err(), "the read holds no handle");
+    atomic_write_bytes_no_follow(&path, b"after", Some(read)).unwrap();
+    assert!(exclusive().is_ok(), "the write left the handle open");
+}
+
+#[cfg(windows)]
+#[test]
+fn write_no_follow_keeps_an_explicit_access_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    std::fs::write(&path, "before").unwrap();
+    let shown = path.to_str().unwrap().to_owned();
+    let icacls = |args: &[&str]| {
+        let out = std::process::Command::new("icacls")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "icacls {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).replace(&shown, "")
+    };
+    // The running account's SID, from `whoami /user /fo csv /nh`.
+    let whoami = std::process::Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .output()
+        .unwrap();
+    let whoami = String::from_utf8_lossy(&whoami.stdout);
+    let sid = whoami.trim().rsplit(',').next().unwrap().trim_matches('"');
+    icacls(&["/inheritance:r", "/grant:r", &format!("*{sid}:(F)")]);
+    let before = icacls(&[]);
+
+    let read = read_regular_file_no_follow(&path).unwrap();
+    atomic_write_bytes_no_follow(&path, b"after", Some(read)).unwrap();
+    assert_eq!(icacls(&[]), before);
+    atomic_write_bytes_no_follow(&path, b"again", None).unwrap();
+    assert_eq!(icacls(&[]), before);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "again");
 }
 
 /// ext4 hands a freed inode number to the next new file, so a file deleted and
@@ -881,7 +938,7 @@ fn write_no_follow_refuses_a_file_recreated_after_the_read() {
     std::fs::remove_file(&path).unwrap();
     std::fs::write(&path, "swapped").unwrap();
 
-    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(&read)).unwrap_err();
+    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(read)).unwrap_err();
     assert!(err.to_string().contains("changed concurrently"), "{err}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "swapped");
 }
@@ -906,6 +963,6 @@ fn atomic_write_bytes_no_follow_rejects_leaf_symlink_and_allows_symlinked_dir() 
     std::os::unix::fs::symlink(&real_dir, &dir_link).unwrap();
     let via_dir = dir_link.join("target.txt");
     let read = read_regular_file_no_follow(&via_dir).unwrap();
-    atomic_write_bytes_no_follow(&via_dir, b"updated", Some(&read)).unwrap();
+    atomic_write_bytes_no_follow(&via_dir, b"updated", Some(read)).unwrap();
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "updated");
 }

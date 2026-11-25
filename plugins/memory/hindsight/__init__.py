@@ -473,9 +473,12 @@ def _persist_env_writes(hermes_home, env_writes: dict[str, Any]) -> None:
 
     try:
         from hermes_cli.config import save_env_value
-    except ImportError:
-        logger.warning("hindsight: hermes_cli.config unavailable — skipping .env write")
-        return
+    except ImportError as exc:
+        names = ", ".join(sorted(env_writes))
+        raise RuntimeError(
+            f"hindsight: could not save {names} to {Path(hermes_home) / '.env'}: "
+            "hermes_cli.config is unavailable; set them there by hand"
+        ) from exc
     target_home = str(Path(hermes_home).resolve())
     default_home = str(Path(get_hermes_home()).resolve())
     override = target_home != default_home

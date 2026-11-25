@@ -540,7 +540,7 @@ impl PatchBackend for LocalPatchBackend {
             hermes_config::atomic_write_bytes_no_follow(
                 &target_write,
                 new_content.as_bytes(),
-                Some(&read),
+                Some(read),
             )
         })
         .await
