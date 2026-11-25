@@ -65,6 +65,42 @@ fn picker_confirmation_updates_personality_and_keeps_question_answers_as_drafts(
     });
 }
 
+#[cfg(unix)]
+#[test]
+fn provider_picker_shows_credential_sources_without_values_in_the_catalogue() {
+    if !crate::isolated_test_profile::enter(
+        "tui::tests::provider_picker_shows_credential_sources_without_values_in_the_catalogue",
+    ) {
+        return;
+    }
+
+    let home = hermes_config::hermes_home();
+    assert_eq!(dirs::home_dir().as_deref(), Some(home.as_path()));
+    std::env::set_var("AWS_SHARED_CREDENTIALS_FILE", home.join("unused-credentials"));
+    std::env::set_var("AWS_CONFIG_FILE", home.join("unused-aws-config"));
+    std::env::set_var("HERMES_HF_CATALOG_DISABLE_LIVE", "1");
+    hermes_intelligence::models_dev::default_client()
+        .seed_cache(serde_json::json!({"fixture": {"models": {}}}));
+    let mut app = build_test_app(&home);
+    app.current_model = "openai:fixture-chat".to_owned();
+    let sample = format!("fixture-value-{}", uuid::Uuid::nil());
+    std::env::set_var("OPENAI_API_KEY", &sample);
+
+    let mut state = TuiState::default();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(open_model_provider_modal(&mut state, &app));
+    let modal = state.modal.as_ref().unwrap();
+    assert!(matches!(modal.kind, PickerKind::ModelProvider));
+    assert_eq!(modal.title, "Select Provider");
+    let openai = modal.selected_item().unwrap();
+    assert_eq!(openai.value, "openai");
+    assert!(openai.detail.contains("models"), "{}", openai.detail);
+    assert!(openai.detail.contains("auth:env:OPENAI_API_KEY"));
+    let other = modal.items.iter().find(|item| item.value == "anthropic").unwrap();
+    assert!(other.detail.contains("auth:missing"));
+    assert!(modal.items.iter().all(|item| !item.detail.contains(&sample)));
+}
+
 #[test]
 fn model_picker_applies_an_offline_preset_and_preserves_it_on_failure() {
     if !crate::isolated_test_profile::enter(
