@@ -338,7 +338,11 @@ mod isolated_cli {
 
     fn run_scenario(scenario: &str, input: &str) -> String {
         let root = tempfile::tempdir().unwrap();
-        let home = root.path().join("home");
+        run_scenario_in(root.path(), scenario, input)
+    }
+
+    fn run_scenario_in(root: &Path, scenario: &str, input: &str) -> String {
+        let home = root.join("home");
         let hermes = home.join(".hermes");
         std::fs::create_dir_all(&hermes).unwrap();
 
@@ -354,9 +358,9 @@ mod isolated_cli {
             .env_clear()
             .env("HOME", &home)
             .env("HERMES_HOME", &hermes)
-            .env("TMPDIR", root.path())
+            .env("TMPDIR", root)
             .env(SCENARIO_ENV, scenario)
-            .current_dir(root.path())
+            .current_dir(root)
             .stdin(stdin);
         if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
             command.env("LLVM_PROFILE_FILE", std::env::current_dir().unwrap().join(profile));

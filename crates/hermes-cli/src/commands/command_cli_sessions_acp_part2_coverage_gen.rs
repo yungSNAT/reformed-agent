@@ -346,6 +346,8 @@
         assert!(PairingStore::open_default().list().unwrap().is_empty());
     }
 
+    include!("tests/pairing_cli_contract.rs");
+
     #[test]
     fn claw_reports_legacy_files_and_only_cleans_after_confirmation() {
         assert_output(
@@ -423,6 +425,7 @@
                 assert!(!home.join("config.yaml").exists());
             }
             "pairing" => pairing(&home).await,
+            "pairing-lifecycle" => pairing_lifecycle(&home).await,
             "claw" => claw(&home).await,
             other => panic!("unknown coverage scenario: {other}"),
         }
