@@ -670,6 +670,131 @@ fn differential_parity_gate_compares_legacy_slash_commands_and_reports_fallback(
 }
 
 #[test]
+fn performance_autopilot_reports_degraded_profiles_and_actions() {
+    struct Case {
+        profile: &'static str,
+        hotpath: &'static str,
+        eval: &'static str,
+        mcp: &'static str,
+        telemetry: &'static str,
+        recommendations: &'static [&'static str],
+        actions: &'static [&'static str],
+        indexes: [f64; 3],
+    }
+
+    let healthy = r#"printf '%s' '{"health":{"ok":true},"context_pack":{"retrieval":{"source_counts":{"fixture":1}}}}'"#;
+    let cases = [
+        Case {
+            profile: "safety",
+            hotpath: "printf 'tool_policy_hot_path_ns_per_eval=unavailable'; exit 3",
+            eval: "exit 4",
+            mcp: "exit 5",
+            telemetry: "printf 'no telemetry'; exit 6",
+            recommendations: &[
+                "HOTPATH_FAIL",
+                "EVAL_TREND_FAIL",
+                "MCP_STALE_RECOVERY_FAIL",
+                "CONTEXTLATTICE_PREFLIGHT_FAIL",
+                "CONTEXTLATTICE_ZERO_SOURCE_COVERAGE",
+            ],
+            actions: &["HERMES_TOOL_POLICY_MODE=enforce", "HERMES_REPLAY_ENABLED=1"],
+            indexes: [20.0, 0.0, 11.0],
+        },
+        Case {
+            profile: "throughput",
+            hotpath: "printf 'tool_policy_hot_path_ns_per_eval=24000'",
+            eval: "true",
+            mcp: "true",
+            telemetry: r#"printf '%s\n' 'fixture preflight' '{"health":{"ok":false},"warnings":["fixture warning"],"context_pack":{"retrieval":{"source_counts":[],"fallback_counts":{"python_hot_path_total":4}}},"status":{"queue":{"pendingTotal":12}}}' 'fixture end'"#,
+            recommendations: &[
+                "HOTPATH_SLOW",
+                "CONTEXTLATTICE_UNHEALTHY",
+                "CONTEXTLATTICE_PYTHON_FALLBACK",
+                "CONTEXTLATTICE_QUEUE_PRESSURE",
+            ],
+            actions: &[
+                "HERMES_TOOL_POLICY_PRESET=standard",
+                "HERMES_MODEL_CATALOG_GUARD=1",
+            ],
+            indexes: [90.0, 46.0, 70.2],
+        },
+        Case {
+            profile: "quality",
+            hotpath: "true",
+            eval: "false",
+            mcp: "true",
+            telemetry: healthy,
+            recommendations: &["EVAL_TREND_FAIL"],
+            actions: &["HERMES_REPLAY_ENABLED=1", "HERMES_MODEL_AUTO_REMEDIATE=1"],
+            indexes: [100.0, 60.0, 82.0],
+        },
+        Case {
+            profile: "reliability",
+            hotpath: "true",
+            eval: "true",
+            mcp: "false",
+            telemetry: healthy,
+            recommendations: &["MCP_STALE_RECOVERY_FAIL"],
+            actions: &["HERMES_TOOL_POLICY_MODE=enforce"],
+            indexes: [80.0, 88.0, 83.6],
+        },
+    ];
+
+    for case in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let args = [
+            "run-performance-autopilot",
+            "--hotpath-cmd",
+            case.hotpath,
+            "--eval-cmd",
+            case.eval,
+            "--mcp-cmd",
+            case.mcp,
+            "--contextlattice-cmd",
+            case.telemetry,
+            "--apply-env",
+            "recommendations.txt",
+        ];
+        let strict = run_cli(root, &[args.as_slice(), &["--strict", "--json"]].concat());
+        let ok = case.profile == "throughput";
+        assert_eq!(strict.status.code(), Some(i32::from(!ok)), "{strict:?}");
+        let report: Value = serde_json::from_slice(&strict.stdout).unwrap();
+        assert_eq!(report["ok"], ok);
+        assert_eq!(report["profile_recommendation"], case.profile);
+        let recommendations: Vec<_> = report["recommendations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(recommendations, case.recommendations);
+        for (key, value) in ["performance_index", "intelligence_index", "adaptive_index"]
+            .into_iter()
+            .zip(case.indexes)
+        {
+            assert_eq!(report[key], value, "{}: {key}", case.profile);
+        }
+        let applied = fs::read_to_string(root.join("recommendations.txt")).unwrap();
+        assert!(applied.lines().any(|line| {
+            line.strip_prefix("HERMES_PERF_AUTOPILOT_PROFILE=") == Some(case.profile)
+        }));
+        for action in case.actions {
+            assert!(applied.lines().any(|line| line == *action), "{applied}");
+        }
+        let markdown = fs::read_to_string(report["report_markdown"].as_str().unwrap()).unwrap();
+        assert!(markdown.contains(&format!("- profile_recommendation: `{}`", case.profile)));
+        if case.profile == "safety" {
+            let advisory = run_cli(root, &args);
+            assert_eq!(advisory.status.code(), Some(0));
+            assert!(String::from_utf8_lossy(&advisory.stdout)
+                .contains("[performance-autopilot] FAILED"));
+            assert!(markdown.contains("- `eval_trend`: FAIL (exit=4)"));
+        }
+    }
+}
+
+#[test]
 fn performance_autopilot_and_self_evolution_loop_compute_reports() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
