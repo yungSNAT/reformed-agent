@@ -473,6 +473,99 @@ async fn offline_agent_import_plans_then_applies_into_the_explicit_home() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn native_elite_check_records_each_gate_and_enforces_strict_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    let docs = root.path().join("docs/parity");
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::create_dir_all(&docs).unwrap();
+    let bash = bin.join("bash");
+    std::fs::write(
+        &bash,
+        r#"#!/bin/sh
+[ "$#" -eq 2 ] && [ "$1" = "-lc" ] || exit 64
+case "$2" in
+  'scripts/check-rust-runtime-no-python.sh'|'scripts/check-runtime-placeholders.sh'|\
+  'cargo test -p hermes-tools tool_policy_hot_path_benchmark_report -- --nocapture'|\
+  'cargo test -p hermes-mcp stale_transport_marker_detection_matches_known_variants -- --nocapture')
+    printf '%s' 'fixture probe passed'
+    ;;
+  *) exit 65 ;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&bash, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(
+        docs.join("global-parity-proof.json"),
+        r#"{"release_gate":{"pass":true}}"#,
+    )
+    .unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+        .expect(3)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/memory/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "degraded": false, "result_state": "fixture",
+        })))
+        .expect(3)
+        .mount(&server)
+        .await;
+
+    for (pending, strict, expected_exit) in [(1, false, 0), (1, true, 1), (0, true, 0)] {
+        std::fs::write(
+            docs.join("shared-diff-backlog.json"),
+            format!(r#"{{"summary":{{"pending_classification":0,"pending_review":{pending}}}}}"#),
+        )
+        .unwrap();
+        let mut command = isolated_hermes(root.path());
+        command
+            .env("PATH", &bin)
+            .env("CONTEXTLATTICE_ORCHESTRATOR_URL", server.uri())
+            .args(["elite-check", "--json"]);
+        if strict {
+            command.arg("--strict");
+        }
+        let output = tokio::time::timeout(Duration::from_secs(15), command.output())
+            .await
+            .expect("elite-check timed out")
+            .unwrap();
+        assert_eq!(output.status.code(), Some(expected_exit), "{output:?}");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["ok"], pending == 0);
+        assert_eq!(report["summary"]["total_sections"], 8);
+        assert_eq!(report["summary"]["failed_sections"], pending);
+        assert_eq!(report["sections"]["shared_backlog"]["ok"], pending == 0);
+        for gate in ["runtime_python_guard", "hotpath", "mcp_stale_recovery"] {
+            assert_eq!(
+                report["sections"][gate]["stdout_tail"],
+                "fixture probe passed"
+            );
+        }
+        assert_eq!(report["sections"]["performance_autopilot"]["ok"], true);
+        let report_path = std::path::Path::new(report["report_path"].as_str().unwrap())
+            .canonicalize()
+            .unwrap();
+        assert!(report_path.starts_with(root.path().join(".sync-reports").canonicalize().unwrap()));
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+        assert_eq!(persisted, report);
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 6);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn offline_slo_violations_reach_the_exit_code_without_rolling_back_in_dry_run() {
     let root = tempfile::tempdir().unwrap();
     for (check, exit_code, violated) in [("exit 0", 0, false), ("exit 7", 1, true)] {
