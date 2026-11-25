@@ -619,6 +619,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn python_provider_only_model_preserves_scalar_switch_value() {
+        let raw = r#"
+model:
+  provider: 'custom:office'
+  persist_switch_by_default: false
+model_switch: legacy
+"#;
+        let expected = r#"
+model: 'office:'
+model_switch:
+  value: legacy
+  persist_switch_by_default: false
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+        assert_eq!(root, serde_yaml::from_str::<Mapping>(expected).unwrap());
+    }
+
+    #[test]
+    fn python_model_without_route_keeps_mapping_and_lifts_switch_flag() {
+        let raw = r#"
+model:
+  default: { provider: office }
+  persist_switch_by_default: true
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        let original_model = root[key("model")].clone();
+        normalize_config_yaml_root(&mut root);
+        assert_eq!(root[key("model")], original_model);
+        assert_eq!(root[key("model_switch")]["persist_switch_by_default"], true);
+        assert!(!root.contains_key(key("llm_providers")));
+    }
+
+    #[test]
     fn python_model_block_to_string_and_llm() {
         let raw = r#"
 model:
@@ -844,6 +878,29 @@ providers:
         let both = cfg.llm_providers.get("both").expect("both provider");
         assert_eq!(both.base_url.as_deref(), Some("http://127.0.0.1:40109/v1"));
         assert_eq!(both.api_key_env.as_deref(), Some("FIRST_KEY"));
+    }
+
+    #[test]
+    fn python_providers_replace_scalar_root_and_skip_empty_names() {
+        let raw = r#"
+llm_providers: legacy
+providers:
+  7: { base_url: http://127.0.0.1:8123/v1 }
+  '': { base_url: http://127.0.0.1:8124/v1 }
+  office:
+    url: ' '
+    api: ' http://127.0.0.1:8125/v1/ '
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+        assert!(!root.contains_key(key("providers")));
+        let cfg: crate::config::GatewayConfig =
+            serde_yaml::from_value(Value::Mapping(root)).unwrap();
+        assert_eq!(cfg.llm_providers.len(), 1);
+        assert_eq!(
+            cfg.llm_providers["office"].base_url.as_deref(),
+            Some("http://127.0.0.1:8125/v1"),
+        );
     }
 
     #[test]
