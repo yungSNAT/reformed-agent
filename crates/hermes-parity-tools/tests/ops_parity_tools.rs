@@ -4,6 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -337,6 +338,94 @@ fn eval_trend_gate_and_hotpath_bench_work() {
     assert_eq!(hp.status.code(), Some(0));
     let hp_json: Value = serde_json::from_str(&fs::read_to_string(&hp_out).unwrap()).unwrap();
     assert_eq!(hp_json["ns_per_eval"], 4321);
+}
+
+#[test]
+fn eval_trend_gate_selects_recent_reports_and_enforces_duration_and_cost_limits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let evals = root.join("evals");
+    fs::create_dir(&evals).unwrap();
+    let baseline = evals.join("z-baseline.json");
+    let current = evals.join("a-current.json");
+    let report_path = root.join("trend.json");
+    let args = ["run-eval-trend-gate", "--report-path", "trend.json"];
+
+    fs::write(
+        &baseline,
+        r#"{"metrics":{"total":2,"pass_at_1":0.75,"total_duration":{"seconds":"2","nanoseconds":500000000},"total_cost_usd":0}}"#,
+    )
+    .unwrap();
+    let missing = run_cli(root, &args);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stdout)
+        .contains("[eval-trend-gate] FAILED (missing baseline/current report)"));
+    let report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    assert_eq!(report["reason"], "missing_eval_inputs");
+    assert!(report["baseline_path"].is_null());
+    assert_eq!(report["current_path"], baseline.to_str().unwrap());
+
+    fs::write(
+        &current,
+        r#"{"metrics":{"total":2,"pass_at_1":0.75,"total_duration":" 5S ","total_cost_usd":0.25}}"#,
+    )
+    .unwrap();
+    for (path, seconds) in [(&baseline, 1_700_000_000), (&current, 1_700_000_001)] {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(seconds)))
+            .unwrap();
+    }
+    fs::create_dir(evals.join("a-directory.json")).unwrap();
+    fs::write(evals.join("notes.txt"), "ignored").unwrap();
+
+    let failed = run_cli(root, &args);
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&failed.stdout).contains(
+        "[eval-trend-gate] FAILED (pass_drop=0.0000, duration_increase=1.000, cost_increase=1.000)"
+    ));
+    let report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    assert_eq!(report["baseline_path"], baseline.to_str().unwrap());
+    assert_eq!(report["current_path"], current.to_str().unwrap());
+    assert_eq!(report["baseline_metrics"]["mean_task_duration_secs"], 1.25);
+    assert_eq!(report["current_metrics"]["mean_task_duration_secs"], 2.5);
+    assert_eq!(
+        report["checks"],
+        serde_json::json!([
+            {"name":"pass_at_1_drop","value":0.0,"limit":0.03,"ok":true},
+            {"name":"mean_task_duration_increase","value":1.0,"limit":0.4,"ok":false},
+            {"name":"total_cost_increase","value":1.0,"limit":0.5,"ok":false},
+        ])
+    );
+
+    let allowed = run_cli(
+        root,
+        &[
+            args.as_slice(),
+            &[
+                "--json",
+                "--max-mean-task-duration-increase",
+                "1",
+                "--max-cost-increase",
+                "1",
+            ],
+        ]
+        .concat(),
+    );
+    assert_eq!(allowed.status.code(), Some(0));
+    let mut printed: Value = serde_json::from_slice(&allowed.stdout).unwrap();
+    assert_eq!(printed["ok"], true);
+    let checks = printed["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 3);
+    assert!(checks.iter().all(|check| check["ok"] == true));
+    assert_eq!(
+        printed.as_object_mut().unwrap().remove("report_path"),
+        Some(Value::from(report_path.to_str().unwrap()))
+    );
+    let saved: Value = serde_json::from_slice(&fs::read(report_path).unwrap()).unwrap();
+    assert_eq!(saved, printed);
 }
 
 #[test]
