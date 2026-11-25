@@ -187,6 +187,29 @@ async fn matrix_messaging_keeps_homeserver_errors_in_send_failures() {
 }
 
 #[tokio::test]
+async fn matrix_typing_reports_a_transport_failure() {
+    let server = MockServer::start().await;
+    let mut adapter = adapter_for_matrix_fixture(&server);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    adapter.config.homeserver_url = format!("http://{}", listener.local_addr().unwrap());
+    let ((), result) = tokio::time::timeout(Duration::from_secs(7), async {
+        tokio::join!(
+            async move { drop(listener.accept().await.unwrap()) },
+            adapter.send_typing("!room:test", true, None)
+        )
+    })
+    .await
+    .expect("typing request and disconnect timed out");
+    assert!(matches!(
+        result,
+        Err(GatewayError::SendFailed(message))
+            if message.starts_with("Matrix typing indicator failed:")
+    ));
+}
+
+#[tokio::test]
 async fn native_runtime_reuses_whoami_device_and_reconciles_generated_keys() {
     let server = MockServer::start().await;
     let adapter = adapter_for_matrix_fixture(&server);
