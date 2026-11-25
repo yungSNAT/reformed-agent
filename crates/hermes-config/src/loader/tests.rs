@@ -237,6 +237,24 @@ fn atomic_json_write_roundtrips_and_cleans_temp() {
 }
 
 #[test]
+fn atomic_write_cleans_staged_file_if_directory_blocks_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("config.yaml");
+    std::fs::create_dir(&target).unwrap();
+    let sentinel = target.join("fixture");
+    std::fs::write(&sentinel, b"preserved fixture").unwrap();
+
+    assert!(atomic_write_bytes(&target, b"new synthetic data").is_err());
+    assert!(target.is_dir());
+    assert_eq!(std::fs::read(sentinel).unwrap(), b"preserved fixture");
+    let entries: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, [std::ffi::OsString::from("config.yaml")]);
+}
+
+#[test]
 fn cross_device_rename_detection_matches_platform_error_code() {
     #[cfg(unix)]
     assert!(is_cross_device_rename_error(
