@@ -246,14 +246,37 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
             // Custom base rates retain the known model's cache-to-input price ratios.
             let scale = input / base_input?;
             (scale * entry.cache_read_cost_per_million?, scale * entry.cache_write_cost_per_million?)
-        } else {
+        } else if model.to_ascii_lowercase().contains("claude") {
             let (read, write) =
                 hermes_intelligence::usage_pricing::ANTHROPIC_STANDARD_CACHE_RATIOS;
             (input * read, input * write)
+        } else {
+            non_anthropic_cache_rates(model, config.provider.as_deref(), input)
         };
         cost += read * usage.cache_read_tokens as f64 + write * usage.cache_write_tokens as f64;
     }
     Some(cost / 1_000_000.0)
+}
+
+/// Cache read and write prices per million tokens for a model priced at `input`: the
+/// official table's cache rates scaled to `input`, else full input price, so an unknown
+/// discount never makes the estimate low.
+fn non_anthropic_cache_rates(model: &str, provider: Option<&str>, input: f64) -> (f64, f64) {
+    use hermes_intelligence::usage_pricing::{get_pricing_entry, PricingEntry};
+    let (prefix, bare) = match model.split_once(':') {
+        Some((prefix, bare)) => (Some(prefix), bare),
+        None => (None, model),
+    };
+    let entry = get_pricing_entry(bare, provider.or(prefix), None);
+    let rate = |pick: fn(&PricingEntry) -> Option<f64>| {
+        let entry = entry.as_ref()?;
+        let base = entry.input_cost_per_million.filter(|base| *base > 0.0)?;
+        Some(pick(entry)? * input / base)
+    };
+    (
+        rate(|e| e.cache_read_cost_per_million).unwrap_or(input),
+        rate(|e| e.cache_write_cost_per_million).unwrap_or(input),
+    )
 }
 
 #[cfg(test)]
