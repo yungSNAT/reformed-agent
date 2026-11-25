@@ -3,6 +3,8 @@ use std::collections::HashMap;
 // The crate's one lock for tests that change environment variables.
 use crate::managed_gateway::test_lock::ENV_LOCK;
 
+mod terminal_bridge_contract;
+
 fn clear_terminal_env_bridge_vars() {
     for (_, env_key) in terminal_config_env_bridge_pairs() {
         // SAFETY: tests serialize env mutation with ENV_LOCK.
