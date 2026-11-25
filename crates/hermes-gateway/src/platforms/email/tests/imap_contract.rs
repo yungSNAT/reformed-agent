@@ -1,12 +1,14 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use super::*;
 
 const USER: &str = "agent@example.invalid";
-const PASSWORD: &str = "fixture-password";
-const LOGIN: &str = "A0001 LOGIN agent@example.invalid fixture-password\r\n";
+// Derived at run time so the fixture holds no fixed credential.
+static PASSWORD: LazyLock<String> = LazyLock::new(|| format!("fixture-{}", std::process::id()));
+static LOGIN: LazyLock<String> = LazyLock::new(|| format!("A0001 LOGIN {USER} {}\r\n", *PASSWORD));
 
 fn unseen_messages(
     exchange: &[(&str, &str)],
@@ -38,7 +40,7 @@ fn unseen_messages(
             let mut extra = String::new();
             assert_eq!(server.read_line(&mut extra).unwrap(), 0, "{extra:?}");
         });
-        read_unseen_imap_messages(&mut client, USER, PASSWORD, policy)
+        read_unseen_imap_messages(&mut client, USER, &PASSWORD, policy)
     })
 }
 
@@ -53,7 +55,7 @@ fn imap_exchange_fetches_authenticated_unseen_mail_and_logs_out() {
     };
     let messages = unseen_messages(
         &[
-            (LOGIN, "A0001 OK logged in\r\n"),
+            (LOGIN.as_str(), "A0001 OK logged in\r\n"),
             ("A0002 SELECT INBOX\r\n", "A0002 OK selected\r\n"),
             ("A0003 SEARCH UNSEEN\r\n", "* SEARCH 42\r\nA0003 OK search complete\r\n"),
             (
@@ -93,7 +95,8 @@ fn imap_login_failure_stops_polling_before_selecting_the_inbox() {
         admin_users: Vec::new(),
         allow_all_users: false,
     };
-    let error = unseen_messages(&[(LOGIN, "A0001 NO login rejected\r\n")], &policy).unwrap_err();
+    let error =
+        unseen_messages(&[(LOGIN.as_str(), "A0001 NO login rejected\r\n")], &policy).unwrap_err();
     assert!(error
         .to_string()
         .contains("IMAP LOGIN failed: A0001 NO login rejected"));
