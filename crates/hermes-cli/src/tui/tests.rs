@@ -198,6 +198,98 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn input_box_renders_editing_modes_and_history_search() {
+        let area = Rect::new(0, 0, 84, 5);
+        let mut state = TuiState {
+            mode: InputMode::Insert,
+            ..TuiState::default()
+        };
+        let mut cursor = None;
+        let empty = rendered_frame(area.width, area.height, |frame, colors| {
+            cursor = render_input(frame, &state, area, colors);
+        });
+        assert!(empty.contains("INSERT"));
+        assert!(empty.contains("Type a message"));
+        assert_eq!(cursor, Some(Position { x: 1, y: 1 }));
+
+        state.mode = InputMode::Command;
+        state.input = "/help\ncafé".into();
+        state.cursor_position = state.input.len();
+        state.history_search_active = true;
+        state.history_search_query = "café".into();
+        let searching = rendered_frame(area.width, area.height, |frame, colors| {
+            cursor = render_input(frame, &state, area, colors);
+        });
+        assert!(searching.contains("COMMAND"));
+        assert!(searching.contains("L2"));
+        assert!(searching.contains("/help"));
+        assert!(searching.contains("reverse-i-search: `café`"));
+        assert_eq!(cursor, Some(Position { x: 5, y: 2 }));
+
+        state.mode = InputMode::Normal;
+        let normal = rendered_frame(area.width, area.height, |frame, colors| {
+            cursor = render_input(frame, &state, area, colors);
+        });
+        assert!(normal.contains("NORMAL"));
+        assert_eq!(cursor, None);
+    }
+
+    #[test]
+    fn status_bar_renders_active_jobs_and_docks_the_pet() {
+        if !crate::isolated_test_profile::enter(
+            "tui::tests::status_bar_renders_active_jobs_and_docks_the_pet",
+        ) {
+            return;
+        }
+        let mut app = build_test_app(&hermes_config::hermes_home());
+        app.set_mouse_enabled(false);
+        app.pet_settings = crate::app::PetSettings {
+            enabled: true,
+            species: "bytecat".into(),
+            mood: "hyped".into(),
+            dock: crate::app::PetDock::Left,
+            ..crate::app::PetSettings::default()
+        };
+        let mut state = TuiState {
+            processing: true,
+            show_timestamps: true,
+            activity_lane_mode: ActivityLaneMode::Cockpit,
+            background_jobs_running: 2,
+            active_subagents_running: 3,
+            scroll_offset: 4,
+            sticky_prompt: "Keep the summary short".into(),
+            status_message: "Warning: fixture busy".into(),
+            ..TuiState::default()
+        };
+        let status = |app: &App, state: &TuiState| {
+            let area = Rect::new(0, 0, 240, 1);
+            rendered_frame(area.width, area.height, |frame, colors| {
+                render_status(frame, app, state, area, colors);
+            })
+        };
+        let active = status(&app, &state);
+        assert!(active.starts_with("=^x^= |"));
+        for text in [
+            "PROCESSING",
+            "ts:on",
+            "(cockpit)",
+            "bg:2",
+            "⛓:3",
+            "mouse:off",
+            "Keep the summary short",
+            "Warning: fixture busy (history +4)",
+        ] {
+            assert!(active.contains(text), "missing {text:?} from {active}");
+        }
+
+        state.processing = false;
+        app.pet_settings.dock = crate::app::PetDock::Right;
+        let idle = status(&app, &state);
+        assert!(idle.starts_with("✓"));
+        assert!(idle.trim_end().ends_with("| =^o^=!"));
+    }
+
     fn rendered_activity_lane(state: &TuiState, area: Rect) -> String {
         rendered_frame(80, 16, |frame, colors| {
             render_live_details(frame, "fixture-model", state, area, colors);
