@@ -1,6 +1,7 @@
 use super::*;
 use axum::body::to_bytes;
 use axum::http::HeaderValue;
+use hermes_agent::session_persistence::ImportedSession;
 use serde_json::json;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -51,6 +52,86 @@ fn command_request(command: &str) -> CommandRequest {
         session_id: Some("coverage-commands".into()),
         user_id: Some("coverage-user".into()),
     }
+}
+
+#[tokio::test]
+async fn server_startup_prunes_only_expired_sessions_when_enabled() {
+    let home = TempDir::new().unwrap();
+    let store = SessionPersistence::new(home.path());
+    let old_time = (jiff::Timestamp::now() - jiff::SignedDuration::from_hours(14 * 24)).to_string();
+    let old_messages = [(Message::user("older fixture"), old_time.clone())];
+    store
+        .import_sessions(|import| {
+            import.add_session(&ImportedSession {
+                id: "older-fixture",
+                model: None,
+                platform: Some("http"),
+                title: None,
+                system_prompt: None,
+                model_config: None,
+                parent_session_id: None,
+                created_at: &old_time,
+                updated_at: &old_time,
+                ended_at: None,
+                end_reason: None,
+                messages: &old_messages,
+            })
+        })
+        .unwrap();
+    store
+        .persist_session(
+            "fresh-fixture",
+            &[Message::user("keep this fixture")],
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let mut config = GatewayConfig {
+        home_dir: Some(format!("  {}  ", home.path().display())),
+        ..GatewayConfig::default()
+    };
+    config.sessions.auto_prune = false;
+    config.sessions.retention_days = 7;
+    HttpServerState::build(config.clone()).await.unwrap();
+    assert_eq!(store.load_session("older-fixture").unwrap().len(), 1);
+    assert_eq!(store.get_meta("last_auto_prune").unwrap(), None);
+
+    config.sessions.auto_prune = true;
+    config.sessions.retention_days = 30;
+    config.sessions.min_interval_hours = 0;
+    HttpServerState::build(config.clone()).await.unwrap();
+    assert_eq!(store.load_session("older-fixture").unwrap().len(), 1);
+    assert!(store.get_meta("last_auto_prune").unwrap().is_some());
+
+    config.sessions.retention_days = 7;
+    config.sessions.vacuum_after_prune = true;
+    HttpServerState::build(config).await.unwrap();
+    assert!(store.load_session("older-fixture").unwrap().is_empty());
+    assert_eq!(
+        store.load_session("fresh-fixture").unwrap()[0]
+            .content
+            .as_deref(),
+        Some("keep this fixture")
+    );
+    assert!(store.get_meta("last_auto_prune").unwrap().is_some());
+}
+
+#[tokio::test]
+async fn server_startup_stays_available_when_session_maintenance_cannot_open_its_home() {
+    let home = TempDir::new().unwrap();
+    let home_file = home.path().join("unavailable-home");
+    std::fs::write(&home_file, b"fixture remains intact").unwrap();
+    let mut config = GatewayConfig {
+        home_dir: Some(home_file.to_str().unwrap().into()),
+        ..GatewayConfig::default()
+    };
+    config.sessions.auto_prune = true;
+    let state = HttpServerState::build(config).await.unwrap();
+    assert!(state.config.sessions.auto_prune);
+    assert_eq!(std::fs::read(home_file).unwrap(), b"fixture remains intact");
 }
 
 #[tokio::test]
