@@ -1,6 +1,154 @@
 use super::*;
 
 #[tokio::test]
+async fn mission_trading_views_render_the_saved_report() {
+    use crate::alpha_runtime::{
+        CapitalAllocationRow, EnvProvenanceGate, ExperimentSpec, PortfolioRiskGovernor,
+        RemediationRunbookAction, ReplayCanaryResult, RepoDriftSentinel, ResearchSourceIngestion,
+        RunContextAudit, StrategyHypothesis, TradingAlphaReport,
+    };
+
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::session_mission_contract::mission_trading_views_render_the_saved_report",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    let report_dir = crate::alpha_runtime::alpha_state_dir().join("trading");
+    std::fs::create_dir_all(&report_dir).unwrap();
+    let report_path = report_dir.join("last_report.json");
+    let project = "fixture-project";
+    let report = TradingAlphaReport {
+        generated_at: "2024-01-01T00:00:00Z".into(),
+        postmortem: "Fixture incident summary".into(),
+        hypotheses: vec![StrategyHypothesis {
+            id: "hypothesis-a".into(),
+            statement: "Fixture hypothesis".into(),
+            ..Default::default()
+        }],
+        experiments: vec![ExperimentSpec {
+            id: "experiment-a".into(),
+            control: "off".into(),
+            treatment: "on".into(),
+            pass_criterion: "reproducible".into(),
+            ..Default::default()
+        }],
+        backtest_matrix: vec!["fixture backtest".into()],
+        walkforward_checks: vec!["fixture walkforward".into()],
+        meta_ranking: vec!["fixture ranking".into()],
+        capital_allocator: vec![CapitalAllocationRow {
+            project_id: project.into(),
+            target_weight: 0.25,
+            ..Default::default()
+        }],
+        risk_governor: PortfolioRiskGovernor {
+            mode: "hold".into(),
+            halt_new_entries: true,
+            reason: "fixture drawdown rule".into(),
+            ..Default::default()
+        },
+        repo_drift: vec![RepoDriftSentinel {
+            project_id: project.into(),
+            git_head: "current".into(),
+            baseline_head: "baseline".into(),
+            dirty_files: 2,
+            changed_since_baseline: true,
+            drift_state: "changed".into(),
+        }],
+        run_context_audits: vec![
+            RunContextAudit {
+                project_id: project.into(),
+                files_scanned: 2,
+                missing_metrics: vec!["latency".into(), "slippage".into()],
+                ..Default::default()
+            },
+            RunContextAudit {
+                project_id: "complete-fixture".into(),
+                passed: true,
+                files_scanned: 1,
+                ..Default::default()
+            },
+        ],
+        env_provenance: vec![EnvProvenanceGate {
+            project_id: project.into(),
+            inspected_files: vec!["fixture-config".into()],
+            conflicting_keys: vec!["FIXTURE_SETTING".into()],
+            decision: "review".into(),
+            ..Default::default()
+        }],
+        replay_canary: vec![ReplayCanaryResult {
+            project_id: project.into(),
+            sample_size: 4,
+            pass_rate: 0.75,
+            decision: "hold".into(),
+        }],
+        remediation_runbook: vec![RemediationRunbookAction {
+            project_id: project.into(),
+            priority: "p1".into(),
+            title: "Review snapshot".into(),
+            command: "fixture-review".into(),
+            rationale: "fixture mismatch".into(),
+        }],
+        research_sources: vec![ResearchSourceIngestion {
+            project_id: project.into(),
+            source: "notes".into(),
+            path: "fixture-notes".into(),
+            found: true,
+            items: 2,
+        }],
+        ..Default::default()
+    };
+    let saved = serde_json::to_vec(&report).unwrap();
+    std::fs::write(&report_path, &saved).unwrap();
+
+    for (args, expected) in [
+        (&["trading"][..], &["generated_at: 2024-01-01T00:00:00Z"][..]),
+        (&["trading", "postmortem"], &["Fixture incident summary"]),
+        (
+            &["trading", "autoresearch"],
+            &[
+                "hypothesis-a",
+                "experiment-a off -> on pass=reproducible",
+                "fixture backtest",
+                "fixture walkforward",
+                "fixture ranking",
+            ],
+        ),
+        (&["trading", "allocator"], &["fixture-project weight=0.2500"]),
+        (
+            &["trading", "governor"],
+            &["mode=hold", "halt_new_entries=true", "fixture drawdown rule"],
+        ),
+        (
+            &["trading", "drift"],
+            &["fixture-project state=changed head=current baseline=baseline dirty_files=2 changed_since_baseline=true"],
+        ),
+        (
+            &["trading", "audit"],
+            &["files_scanned=2 missing=latency,slippage", "complete-fixture passed=true files_scanned=1 missing=none"],
+        ),
+        (
+            &["trading", "provenance"],
+            &["inspected_files=1 conflicts=FIXTURE_SETTING decision=review"],
+        ),
+        (&["trading", "replay"], &["sample_size=4 pass_rate=0.750 decision=hold"]),
+        (
+            &["trading", "runbook"],
+            &["[p1] fixture-project :: Review snapshot", "cmd: fixture-review", "why: fixture mismatch"],
+        ),
+        (&["trading", "sources"], &["fixture-project:notes found=true items=2 path=fixture-notes"]),
+        (&["trading", "unknown"], &["Usage: /mission trading"]),
+    ] {
+        let output = command_output(&mut app, "/mission", args).await;
+        for &fragment in expected {
+            assert!(output.contains(fragment), "{args:?} missing {fragment:?}: {output}");
+        }
+    }
+    assert_eq!(std::fs::read(report_path).unwrap(), saved);
+}
+
+#[tokio::test]
 async fn session_commands_restore_saved_messages_and_diagnose_invalid_snapshots() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::session_mission_contract::session_commands_restore_saved_messages_and_diagnose_invalid_snapshots",
