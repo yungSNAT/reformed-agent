@@ -1328,5 +1328,9 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "voice_transport_tests.rs"]
+mod transport_tests;
+
+#[cfg(test)]
 #[path = "voice_coverage_gen.rs"]
 mod coverage_gen;
