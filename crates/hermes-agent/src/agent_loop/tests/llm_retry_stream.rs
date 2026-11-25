@@ -858,6 +858,8 @@
         }
     }
 
+    const STREAM_UNREPRESENTABLE_ARGUMENT: &str = r#"{"value":1e999}"#;
+
     #[derive(Clone, Copy)]
     enum StreamRetryScenario {
         CostLimit,
@@ -870,6 +872,7 @@
         TextOnlyDrop,
         MemoryContextLeak,
         MalformedToolArgs,
+        InvalidArgumentBatch,
         SlowStream,
         SlowRetry,
     }
@@ -1057,6 +1060,30 @@
                         "{\"command\":\"ls -la\",\"timeout\":30",
                     )),
                     Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::InvalidArgumentBatch if attempt <= 2 => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        &format!("invalid-fixture-{attempt}"),
+                        "fixture_invalid",
+                    )),
+                    Ok(stream_chunk_tool_args(0, STREAM_UNREPRESENTABLE_ARGUMENT)),
+                    Ok(stream_chunk_tool_name(
+                        1,
+                        &format!("skipped-fixture-{attempt}"),
+                        "fixture_valid",
+                    )),
+                    Ok(stream_chunk_tool_args(1, r#"{"value":"skipped"}"#)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::InvalidArgumentBatch if attempt == 3 => vec![
+                    Ok(stream_chunk_tool_name(0, "valid-fixture-3", "fixture_valid")),
+                    Ok(stream_chunk_tool_args(0, r#"{"value":"recovered"}"#)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::InvalidArgumentBatch => vec![
+                    Ok(stream_chunk_content("Recovered after the tool result")),
+                    Ok(stream_chunk_finish("stop")),
                 ],
             };
 
@@ -1469,6 +1496,96 @@
         let parsed: Value = serde_json::from_str(&tc.function.arguments).expect("valid JSON");
         assert_eq!(parsed["command"], "ls -la");
         assert_eq!(parsed["timeout"], 30);
+    }
+
+    #[tokio::test]
+    async fn streamed_tool_batches_retry_invalid_arguments_before_executing_siblings() {
+        assert!(serde_json::from_str::<serde::de::IgnoredAny>(STREAM_UNREPRESENTABLE_ARGUMENT)
+            .is_ok());
+        assert!(serde_json::from_str::<Value>(STREAM_UNREPRESENTABLE_ARGUMENT).is_err());
+
+        let executed = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = ToolRegistry::new();
+        for name in ["fixture_invalid", "fixture_valid"] {
+            let executed = Arc::clone(&executed);
+            registry.register(
+                name,
+                ToolSchema::new(name, "Record fixture input", hermes_core::JsonSchema::new("object")),
+                Arc::new(move |args| {
+                    executed.lock().unwrap().push((name, args.clone()));
+                    Ok("recorded fixture input".to_string())
+                }),
+            );
+        }
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            max_turns: 6,
+            invalid_tool_json_max_retries: 2,
+            truncated_tool_call_max_retries: 0,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::InvalidArgumentBatch));
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&notices);
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone())
+            .with_callbacks(AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle"
+                        && (message.starts_with("Invalid tool JSON")
+                            || message.starts_with("Max invalid JSON"))
+                    {
+                        captured.lock().unwrap().push(message.to_owned());
+                    }
+                })),
+                ..AgentCallbacks::default()
+            });
+        let result = agent
+            .run_stream(
+                vec![Message::user("Use the local fixture tool")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.finished_naturally && !result.interrupted);
+        assert_eq!(*provider.calls.lock().unwrap(), 4);
+        assert_eq!(
+            executed.lock().unwrap().as_slice(),
+            [("fixture_valid", serde_json::json!({"value":"recovered"}))]
+        );
+        assert_eq!(
+            notices.lock().unwrap().as_slice(),
+            [
+                "Invalid tool JSON arguments — retrying (1/2)",
+                "Max invalid JSON retries reached (2); returning tool errors",
+            ]
+        );
+        assert!(result.messages.iter().all(|row| {
+            !matches!(
+                row.tool_call_id.as_deref(),
+                Some("invalid-fixture-1" | "skipped-fixture-1")
+            ) && row.tool_calls.iter().flatten().all(|call| {
+                !matches!(call.id.as_str(), "invalid-fixture-1" | "skipped-fixture-1")
+            })
+        }));
+        for (id, expected) in [
+            ("invalid-fixture-2", "Error: Invalid JSON arguments"),
+            ("skipped-fixture-2", "Skipped: other tool call"),
+            ("valid-fixture-3", "recorded fixture input"),
+        ] {
+            assert!(result.messages.iter().any(|row| {
+                row.role == MessageRole::Tool
+                    && row.tool_call_id.as_deref() == Some(id)
+                    && row.content.as_deref().is_some_and(|text| text.contains(expected))
+            }));
+        }
+        assert_eq!(
+            result.messages.last().and_then(|row| row.content.as_deref()),
+            Some("Recovered after the tool result")
+        );
     }
 
     #[tokio::test]
