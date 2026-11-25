@@ -1453,6 +1453,38 @@ mod tests {
     }
 
     #[test]
+    fn assistant_code_fence_preserves_text_and_styles_syntax_tokens() {
+        let theme = Theme::default_theme();
+        let colors = theme.colors.to_ratatui_colors();
+        let styles = theme.resolved_styles();
+        let code = "let note = (42, \"fixture text\");";
+        let content = format!("~~~rust\n{code}\n~~~");
+
+        let lines = render_assistant_markdown_lines(&content, &styles, &colors);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].to_string().contains("code (rust)"));
+        assert_eq!(lines[1].to_string(), format!("    │ {code}"));
+        assert!(lines[2].to_string().contains("end code"));
+
+        for (text, foreground) in [
+            ("let", colors.accent),
+            ("note", colors.status_bar_text),
+            (" ", colors.status_bar_text),
+            ("42", colors.status_bar_good),
+            ("\"fixture text\"", colors.status_bar_warn),
+            (";", colors.status_bar_dim),
+        ] {
+            let span = lines[1]
+                .spans
+                .iter()
+                .find(|span| span.content == text)
+                .unwrap_or_else(|| panic!("missing code token {text:?}"));
+            assert_eq!(span.style.fg, Some(foreground), "token {text:?}");
+            assert_eq!(span.style.bg, Some(colors.background), "token {text:?}");
+        }
+    }
+
+    #[test]
     fn test_scaffold_detector_matches_embedded_tool_tags() {
         let line = "random prefix <tool_use><name>terminal</name></tool_use> suffix";
         assert!(looks_like_internal_scaffold_line(line));
