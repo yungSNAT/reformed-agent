@@ -296,6 +296,68 @@ fn readme_sync_status_updates_and_checks_block() {
 }
 
 #[test]
+fn readme_sync_status_uses_the_latest_report_and_preserves_surrounding_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let readme = root.join("README.md");
+    let reports = root.join(".sync-reports");
+    let command = ["generate-readme-sync-status", "--repo-root", "."];
+    let original = "# Fixture\n\n## Upstream Sync and Parity Upkeep\n\nLocal notes.\n";
+    fs::write(&readme, original).unwrap();
+    fs::create_dir(&reports).unwrap();
+    fs::write(reports.join("other.txt"), "not a sync report\n").unwrap();
+
+    let missing = run_cli(root, &command);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no upstream-sync reports found"));
+    assert_eq!(fs::read_to_string(&readme).unwrap(), original);
+
+    let older = reports.join("upstream-sync-20260101.txt");
+    let latest = reports.join("upstream-sync-20260102.txt");
+    fs::write(&older, "upstream_sha: older-fixture\n").unwrap();
+    fs::write(
+        &latest,
+        concat!(
+            "timestamp_utc: 2026-01-02T03:04:05Z\r\nupstream_sha: latest-fixture\r\n",
+            "## Pending Upstream Commits\r\n",
+            "Ignore the heading text.\r\n```\r\nfirst\r\n\r\nsecond\r\n```\r\n",
+            "Ignore the footer.\r\n"
+        ),
+    )
+    .unwrap();
+    for (report, modified) in [(older, 1_800_000_000), (latest, 1_700_000_000)] {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(report)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(modified))
+            .unwrap();
+    }
+    let docs = root.join("docs/parity");
+    fs::create_dir_all(&docs).unwrap();
+    fs::write(
+        docs.join("global-parity-proof.json"),
+        r#"{"release_gate":{"pass":true},"ci_gate":{"pass":false}}"#,
+    )
+    .unwrap();
+
+    let output = run_cli(root, &command);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let contents = fs::read_to_string(&readme).unwrap();
+    assert!(contents.starts_with("# Fixture\n\n## Upstream Sync and Parity Upkeep\n"));
+    assert!(contents.ends_with("\nLocal notes.\n"));
+    assert!(contents.contains("Source report: [`upstream-sync-20260102.txt`]"));
+    assert!(contents.contains("Pending commits captured in report: `2`"));
+    assert!(contents.contains("release `pass`, ci `fail`"));
+    assert!(contents.contains("`latest-fixture`"));
+    assert!(!contents.contains("older-fixture"));
+}
+
+#[test]
 fn eval_trend_gate_and_hotpath_bench_work() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
