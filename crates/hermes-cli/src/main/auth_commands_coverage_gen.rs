@@ -132,3 +132,100 @@ async fn refresh_oauth_store_credential_rejects_unconfigured_provider() {
         Ok(_) => panic!("expected error for unconfigured provider"),
     }
 }
+
+#[tokio::test]
+async fn auth_verify_refreshes_a_fixture_credential_and_keeps_it_on_rejection() {
+    use wiremock::{
+        matchers::{body_string_contains, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let test_name =
+        format!("{module}::auth_verify_refreshes_a_fixture_credential_and_keeps_it_on_rejection");
+    if !crate::isolated_test_profile::enter(&test_name) {
+        return;
+    }
+
+    let server = MockServer::start().await;
+    let home = tempfile::tempdir().unwrap();
+    let credential_store = home.path().join("fixture-store.json");
+    let store = FileTokenStore::new(&credential_store).await.unwrap();
+    let manager = AuthManager::new(store.clone());
+    let provider = "openai";
+    let mut expired = sample_credential(provider, Some("fixture-old-renewal"));
+    expired.expires_at = Some(hermes_core::time::now_plus_secs(-3600));
+    manager.save_credential(expired.clone()).await.unwrap();
+    std::env::set_var("HERMES_OPENAI_OAUTH_CLIENT_ID", "fixture-client");
+    let set_endpoint = |path: &str| {
+        let url = format!("{}{path}", server.uri());
+        std::env::set_var("HERMES_OPENAI_OAUTH_TOKEN_URL", &url);
+        assert_eq!(oauth_refresh_config_for_provider(provider).unwrap().0, url);
+    };
+    set_endpoint("/refresh");
+    Mock::given(method("POST"))
+        .and(path("/refresh"))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .and(body_string_contains("refresh_token=fixture-old-renewal"))
+        .and(body_string_contains("client_id=fixture-client"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "fixture-updated-access",
+            "refresh_token": "fixture-updated-renewal",
+            "expires_in": 3600
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let verified = verify_single_oauth_provider(provider, &store, &manager)
+        .await
+        .unwrap();
+    assert_eq!(verified.outcome.as_str(), "valid_refreshed");
+    assert_eq!(verified.source, "token_store_refresh");
+    assert!(verified.credential_present);
+    let reopened = FileTokenStore::new(&credential_store).await.unwrap();
+    let saved = reopened.get(provider).await.unwrap();
+    assert_eq!(saved.access_token, "fixture-updated-access");
+    assert_eq!(saved.refresh_token.as_deref(), Some("fixture-updated-renewal"));
+    assert!(saved.expires_at.is_some());
+    assert!(!saved.is_expired(60));
+    run_auth_verify(provider, &reopened, &AuthManager::new(reopened.clone()))
+        .await
+        .unwrap();
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    set_endpoint("/declined");
+    Mock::given(method("POST"))
+        .and(path("/declined"))
+        .and(body_string_contains("refresh_token=fixture-old-renewal"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "invalid_grant"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    manager.save_credential(expired.clone()).await.unwrap();
+    let rejected = verify_single_oauth_provider(provider, &store, &manager)
+        .await
+        .unwrap();
+    assert_eq!(rejected.outcome.as_str(), "refresh_failed");
+    assert!(rejected.detail.is_some());
+    let retained = FileTokenStore::new(&credential_store)
+        .await
+        .unwrap()
+        .get(provider)
+        .await
+        .unwrap();
+    assert_eq!(retained.access_token, expired.access_token);
+    assert_eq!(retained.refresh_token, expired.refresh_token);
+    assert_eq!(retained.expires_at, expired.expires_at);
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+
+    expired.refresh_token = None;
+    manager.save_credential(expired).await.unwrap();
+    assert!(matches!(
+        run_auth_verify(provider, &store, &manager).await,
+        Err(AgentError::AuthFailed(ref message)) if message.contains(provider)
+    ));
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    server.verify().await;
+}
