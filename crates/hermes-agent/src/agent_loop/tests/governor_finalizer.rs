@@ -1106,6 +1106,64 @@ fn test_finalizer_retries_need_tools() {
 }
 
 #[tokio::test]
+async fn stream_reissues_final_answers_with_the_required_contract() {
+    let cases = [
+        (
+            "Verify the fixture session is ready.",
+            "I will check the fixture session shortly.",
+            "Execution contract",
+            "BLOCKED: read_fixture is unavailable. Next probe: check the fixture registry.",
+        ),
+        (
+            "Search the web for the estuary water level and cite sources.",
+            "The estuary is calm.",
+            "Web research contract failed",
+            "WEB_SEARCH_USED: no\nBLOCKED: web search is unavailable.",
+        ),
+        (
+            "Research the missing repo path /fixtures/missing-notes and report blockers.",
+            "The repo path /fixtures/missing-notes needs further review.",
+            "Repo research planning contract failed",
+            "REPO_RESEARCH_PLAN: blocked\nblocker=path missing\ncmd=list /fixtures/missing-notes",
+        ),
+    ];
+    for (prompt, first_reply, contract, reply) in cases {
+        let mut config = AgentConfig {
+            skip_context_files: true,
+            skip_memory: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(FinalizerReplyProvider {
+                calls: calls.clone(),
+                first_reply: Some(first_reply),
+                reply: reply.to_owned(),
+            }),
+        );
+        let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
+        let result = agent
+            .run_stream(vec![Message::user(prompt)], Some(vec![schema]), None)
+            .await
+            .expect("stream finalizer completes the fixture turn");
+        assert!(result.finished_naturally, "{prompt}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2, "{prompt}");
+        assert!(result.messages.iter().any(|message| {
+            message.role == MessageRole::System
+                && message.content.as_deref().is_some_and(|text| text.contains(contract))
+        }), "missing retry contract for {prompt}");
+        assert_eq!(
+            result.messages.last().and_then(|message| message.content.as_deref()),
+            Some(reply),
+            "{prompt}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
     use serde_json::json;
 
@@ -1125,7 +1183,7 @@ async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
     };
     let cases = [
         (false, "advancing", "promote", 1.0, 2),
-        (true, "regressing", "investigate", 0.0, 1),
+        (true, "regressing", "investigate", 0.0, 2),
         (false, "unproven", "collect-more-evidence", 0.25, 1),
         (true, "flat", "monitor", 0.5, 1),
     ];
@@ -1156,6 +1214,15 @@ async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
         assert!(result.finished_naturally);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), turns);
         assert_eq!(result.total_turns, turns);
+        if turns == 2 {
+            assert!(result.messages.iter().any(|message| {
+                message.role == MessageRole::System
+                    && message
+                        .content
+                        .as_deref()
+                        .is_some_and(|text| text.contains("Objective guard check failed"))
+            }));
+        }
 
         expected_entries.push((state, decision, turns));
         let text = std::fs::read_to_string(&ledger).unwrap();
