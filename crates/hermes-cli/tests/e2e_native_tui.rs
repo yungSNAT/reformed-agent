@@ -23,7 +23,7 @@ fn terminal_flags(terminal: &File) -> libc::tcflag_t {
     unsafe { attributes.assume_init().c_lflag }
 }
 
-fn start_tui(sandbox: &Path) -> (Child, File, libc::tcflag_t) {
+fn start_in_pty(sandbox: &Path, args: &[&str]) -> (Child, File, libc::tcflag_t) {
     let mut master_fd = -1;
     let mut slave_fd = -1;
     let dimensions = libc::winsize {
@@ -71,7 +71,7 @@ fn start_tui(sandbox: &Path) -> (Child, File, libc::tcflag_t) {
         .env("TERM", "xterm-256color")
         .env("HTTP_PROXY", "http://127.0.0.1:1")
         .env("HTTPS_PROXY", "http://127.0.0.1:1")
-        .args(["--ignore-user-config", "--ignore-rules"])
+        .args(args)
         .stdin(slave.try_clone().unwrap())
         .stdout(slave.try_clone().unwrap())
         .stderr(slave);
@@ -132,7 +132,8 @@ async fn read_until(terminal: &mut File, expected: &[u8]) -> Vec<u8> {
 #[tokio::test]
 async fn native_tui_handles_pasted_commands_and_restores_the_terminal_on_interrupt() {
     let sandbox = tempfile::tempdir().unwrap();
-    let (mut child, mut terminal, initial_flags) = start_tui(sandbox.path());
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["--ignore-user-config", "--ignore-rules"]);
     read_until(&mut terminal, b"\x1b[?1049h").await;
     terminal
         .write_all(b"\x1b[200~/objective Check the synthetic fixture\x1b[201~")
@@ -172,7 +173,8 @@ async fn native_tui_handles_pasted_commands_and_restores_the_terminal_on_interru
 #[tokio::test]
 async fn native_tui_persists_timestamps_and_inserts_the_selected_question_answer() {
     let sandbox = tempfile::tempdir().unwrap();
-    let (mut child, mut terminal, initial_flags) = start_tui(sandbox.path());
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["--ignore-user-config", "--ignore-rules"]);
     read_until(&mut terminal, b"\x1b[?1049h").await;
     terminal
         .write_all(b"\x1b[200~/timestamps on\x1b[201~\r")
@@ -213,4 +215,69 @@ async fn native_tui_persists_timestamps_and_inserts_the_selected_question_answer
         .expect("wait for isolated CLI")
         .success());
     assert_eq!(terminal_flags(&terminal), initial_flags);
+}
+
+#[tokio::test]
+async fn gateway_setup_leaves_the_existing_config_unchanged_when_cancelled() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let config = sandbox.path().join("hermes/config.yaml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let existing = b"platforms:\n  api_server:\n    enabled: true\n    port: 18090\n";
+    std::fs::write(&config, existing).unwrap();
+
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["gateway", "setup"]);
+    read_until(&mut terminal, "[✓] API Server".as_bytes()).await;
+    terminal.write_all(b"k ").unwrap();
+    read_until(&mut terminal, b"none selected").await;
+    terminal.write_all(b"q").unwrap();
+    let restored = read_until(&mut terminal, b"Gateway setup cancelled.").await;
+    assert!(restored.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("gateway setup shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+    assert_eq!(std::fs::read(config).unwrap(), existing);
+}
+
+#[tokio::test]
+async fn gateway_setup_saves_the_selected_loopback_api_server() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["gateway", "setup"]);
+    read_until(&mut terminal, b"Select platforms to configure").await;
+    terminal.write_all(b"kjk ").unwrap();
+    read_until(&mut terminal, "[✓] API Server".as_bytes()).await;
+    terminal.write_all(b"\r").unwrap();
+    let restored = read_until(&mut terminal, b"API server host (default 127.0.0.1):").await;
+    assert!(restored.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+
+    terminal.write_all(b"127.0.0.1\r").unwrap();
+    read_until(&mut terminal, b"API server port (default 8090):").await;
+    terminal.write_all(b"18090\r").unwrap();
+    read_until(
+        &mut terminal,
+        b"API server auth_token (required for non-loopback host):",
+    )
+    .await;
+    terminal.write_all(b"\r").unwrap();
+    read_until(&mut terminal, b"Gateway setup complete.").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("gateway setup shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+
+    let config = std::fs::read(sandbox.path().join("hermes/config.yaml")).unwrap();
+    let config: serde_json::Value = serde_yaml::from_slice(&config).unwrap();
+    let platforms = config["platforms"].as_object().unwrap();
+    assert_eq!(platforms.len(), 1);
+    let api = &platforms["api_server"];
+    assert_eq!(api["enabled"], true);
+    assert_eq!(api["host"], "127.0.0.1");
+    assert_eq!(api["port"], 18090);
+    assert!(api.get("auth_token").is_none());
 }
