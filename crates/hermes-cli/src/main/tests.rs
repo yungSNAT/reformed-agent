@@ -101,6 +101,8 @@ mod tests {
     include!("tests/gateway_registration_contract.rs");
     include!("tests/gateway_auth_contract.rs");
     include!("tests/auth_pool_contract.rs");
+    #[cfg(feature = "gateway-telegram")]
+    include!("tests/telegram_inbound_contract.rs");
 
     fn assert_gateway_feature_guard(platform: &str, feature_enabled: bool, feature_name: &str) {
         if feature_enabled {
