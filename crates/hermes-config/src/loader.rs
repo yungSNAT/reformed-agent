@@ -404,9 +404,12 @@ fn atomic_write_bytes_with_mode(
             #[cfg(windows)]
             {
                 if held.is_none() {
-                    held = open_regular_file_no_follow(target, path)
-                        .ok()
-                        .map(|(file, _)| file);
+                    held = open_access_list(target).map_err(|err| {
+                        ConfigError::ParseError(format!(
+                            "could not keep the access list of {}: {err}",
+                            path.display()
+                        ))
+                    })?;
                 }
                 if let Some(existing) = &held {
                     copy_dacl(existing, &tmp_path).map_err(|err| {
@@ -540,6 +543,24 @@ fn replace_file_keeping_acl(tmp_path: &Path, path: &Path) -> bool {
             std::ptr::null(),
             std::ptr::null(),
         ) != 0
+    }
+}
+
+/// Open the file at `path`, without following a link, only to read its access
+/// list; None when there is no file. A file the writer may not read still
+/// answers, so its access list is kept rather than silently replaced.
+#[cfg(windows)]
+fn open_access_list(path: &Path) -> std::io::Result<Option<std::fs::File>> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_OPEN_REPARSE_POINT, READ_CONTROL};
+    match std::fs::OpenOptions::new()
+        .access_mode(READ_CONTROL)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+    {
+        Ok(file) => Ok(Some(file)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
     }
 }
 

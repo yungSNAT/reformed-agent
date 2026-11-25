@@ -924,6 +924,12 @@ fn write_no_follow_keeps_an_explicit_access_list() {
     atomic_write_bytes_no_follow(&path, b"again", None).unwrap();
     assert_eq!(icacls(&[]), before);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "again");
+
+    // A file the writer may replace but not read keeps its list too.
+    icacls(&["/deny", &format!("*{sid}:(RD)")]);
+    let unreadable = icacls(&[]);
+    atomic_write_bytes_no_follow(&path, b"blind", None).unwrap();
+    assert_eq!(icacls(&[]), unreadable);
 }
 
 /// ext4 hands a freed inode number to the next new file, so a file deleted and
