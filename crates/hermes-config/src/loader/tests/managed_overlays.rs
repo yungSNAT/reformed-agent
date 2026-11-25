@@ -236,6 +236,27 @@ fn load_config_ignore_user_config_still_honors_managed_scope() {
 }
 
 #[test]
+fn effective_config_keeps_the_managed_overlay_when_user_yaml_is_unusable() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_managed_scope_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let managed = tempfile::tempdir().unwrap();
+    let user_config = home.path().join("config.yaml");
+    std::fs::write(managed.path().join("config.yaml"), "max_turns: 24\n").unwrap();
+    set_test_env("HERMES_HOME", home.path());
+    set_test_env("HERMES_MANAGED_DIR", managed.path());
+
+    let mut results = vec![load_effective_config_yaml_value(&user_config)];
+    for content in [" \n", "- old-item\n", "max_turns: [unclosed\n"] {
+        std::fs::write(&user_config, content).unwrap();
+        results.push(load_effective_config_yaml_value(&user_config));
+    }
+    clear_managed_scope_test_env();
+
+    assert_eq!(results, vec![Some(serde_json::json!({"max_turns": 24})); 4]);
+}
+
+#[test]
 fn load_effective_config_yaml_value_applies_managed_raw_overlay() {
     use tempfile::tempdir;
 
