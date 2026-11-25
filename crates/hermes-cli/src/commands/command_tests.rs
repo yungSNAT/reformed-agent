@@ -1244,6 +1244,8 @@ note the fixtures"));
     mod browser_command_contract;
     #[cfg(unix)]
     mod triage_contract;
+    #[cfg(unix)]
+    mod readiness_walkthrough_contract;
     mod runtime_parity_ops;
     mod skill_model_policy;
 
