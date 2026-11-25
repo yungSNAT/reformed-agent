@@ -693,6 +693,38 @@ fn xai_backend(server: &MockServer, cache: PathBuf) -> XaiImageGenBackend {
 }
 
 #[tokio::test]
+async fn image_runtime_reports_each_provider_model_and_reference_limit() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("images");
+    let openai = ImageGenRuntimeBackend::OpenAi(backend(&server, cache.clone()));
+    let xai = ImageGenRuntimeBackend::Xai(xai_backend(&server, cache.clone()));
+    let mut krea = krea_backend(
+        KreaTransport::Direct {
+            api_key: "local-krea-fixture".into(),
+            base_url: server.uri(),
+        },
+        cache,
+    );
+    // Unrecognised model IDs fall back to the supported default.
+    krea.config.model = "fixture-unknown-model".into();
+    let krea = ImageGenRuntimeBackend::Krea(krea);
+
+    for (runtime, provider, model, max_references) in [
+        (openai, "openai", "gpt-image-2-low", 16),
+        (xai, "xai", "fixture-image-model", 2),
+        (krea, "krea", "krea-2-medium", 10),
+    ] {
+        let capabilities = runtime.capabilities();
+        assert_eq!(capabilities.provider.as_deref(), Some(provider));
+        assert_eq!(capabilities.model.as_deref(), Some(model));
+        assert_eq!(capabilities.modalities, ["text", "image"]);
+        assert_eq!(capabilities.max_reference_images, max_references);
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn xai_generation_returns_provider_url_and_edit_saves_the_base64_result() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
