@@ -1485,3 +1485,7 @@ struct QueuedBackgroundJob {
 }
 
 include!("command_background_browser/triage_background.rs");
+
+#[cfg(test)]
+#[path = "command_background_browser_coverage_gen.rs"]
+mod coverage_gen_commands_command_background_browser;

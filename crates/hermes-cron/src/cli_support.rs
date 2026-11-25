@@ -78,3 +78,60 @@ pub fn cron_scheduler_for_data_dir(data_dir: PathBuf) -> CronScheduler {
     let runner = Arc::new(CronRunner::new(llm, Arc::new(ToolRegistry::new())));
     CronScheduler::new(persistence, runner)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fallback_scheduler_starts_and_stops_idempotently_without_jobs() {
+        let state = tempfile::tempdir().unwrap();
+        let scheduler = cron_scheduler_for_data_dir(state.path().to_path_buf());
+        scheduler.load_persisted_jobs().await.unwrap();
+        assert!(scheduler.list_jobs().await.is_empty());
+        assert!(!scheduler.is_running().await);
+
+        scheduler.start().await;
+        scheduler.start().await;
+        assert!(scheduler.is_running().await);
+        tokio::task::yield_now().await;
+        assert_eq!(scheduler.tick_due_jobs().await, 0);
+
+        scheduler.stop().await;
+        scheduler.stop().await;
+        assert!(!scheduler.is_running().await);
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn fallback_cron_llm_returns_model_labels_and_a_terminal_stream_chunk() {
+        let llm = MinimalCronLlm;
+        for (requested, expected) in [(None, "fallback"), (Some("fixture-model"), "fixture-model")]
+        {
+            let result = llm
+                .chat_completion(&[], &[], None, None, requested, None)
+                .await
+                .unwrap();
+            assert_eq!(result.model, expected);
+            assert_eq!(result.finish_reason.as_deref(), Some("stop"));
+            assert!(result
+                .message
+                .content
+                .as_deref()
+                .unwrap()
+                .contains("fallback LLM path"));
+        }
+
+        let chunks = llm
+            .chat_completion_stream(&[], &[], None, None, None, None)
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(chunks.len(), 2);
+        let first = chunks[0].as_ref().unwrap();
+        let terminal = chunks[1].as_ref().unwrap();
+        assert_eq!(first.delta.as_ref().unwrap().content.as_deref(), Some("ok"));
+        assert!(first.finish_reason.is_none());
+        assert!(terminal.delta.is_none());
+        assert_eq!(terminal.finish_reason.as_deref(), Some("stop"));
+    }
+}

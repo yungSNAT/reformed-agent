@@ -1048,3 +1048,7 @@ fn handle_agents_command(app: &mut App, args: &[&str]) -> Result<CommandResult, 
     }
     Ok(CommandResult::Handled)
 }
+
+#[cfg(test)]
+#[path = "skills_memory_cron_coverage_gen.rs"]
+mod coverage_gen_commands_command_reasoning_session_skills_memory_cron;

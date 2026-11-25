@@ -978,3 +978,7 @@ mod tests {
         std::env::remove_var("HERMES_DASHBOARD_COOKIE_SECURE");
     }
 }
+
+#[cfg(test)]
+#[path = "dashboard_oidc_coverage_gen.rs"]
+mod coverage_gen;

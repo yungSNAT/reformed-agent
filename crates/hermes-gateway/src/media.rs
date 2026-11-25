@@ -1253,3 +1253,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "media_coverage_gen.rs"]
+mod coverage_gen;

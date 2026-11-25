@@ -103,6 +103,46 @@ async fn gateway_status_updates_use_platform_status_api() {
 }
 
 #[tokio::test]
+async fn gateway_edits_native_messages_and_reports_missing_delivery_adapters() {
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let gw = Gateway::with_defaults(session_mgr, GatewayConfig::default());
+    gw.register_adapter(
+        "status-test",
+        Arc::new(StatusUpdateAdapter {
+            updates: updates.clone(),
+        }),
+    )
+    .await;
+
+    gw.edit_message("status-test", "chat1", "message-42", "revised text")
+        .await
+        .expect("native edit should reach the adapter");
+    let errors = [
+        gw.edit_message("unknown", "chat1", "message-42", "revised text")
+            .await,
+        gw.send_or_update_status("unknown", "chat1", "progress", "working", None)
+            .await,
+        gw.send_file("unknown", "chat1", "report.pdf", None).await,
+    ];
+    for result in errors {
+        assert!(matches!(
+            result,
+            Err(GatewayError::Platform(message))
+                if message == "No adapter registered for platform: unknown"
+        ));
+    }
+    assert_eq!(
+        updates.lock().unwrap().as_slice(),
+        &[(
+            String::from("chat1"),
+            String::from("message-42"),
+            String::from("revised text"),
+        )],
+    );
+}
+
+#[tokio::test]
 async fn gateway_route_dm_denied() {
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let dm_manager = DmManager::with_ignore_behavior();
@@ -869,7 +909,9 @@ async fn gateway_compress_command_emits_summary_without_warning() {
         .add_message(&session_key, Message::system("sys"))
         .await;
     for i in 0..40 {
-        let message = if i % 2 == 0 {
+        let message = if i == 0 {
+            Message::user(format!("  {}\n  old draft  ", "🧩".repeat(190)))
+        } else if i % 2 == 0 {
             Message::user(format!("turn {i} content"))
         } else {
             Message::assistant(format!("turn {i} content"))
@@ -897,15 +939,46 @@ async fn gateway_compress_command_emits_summary_without_warning() {
     }
 
     let updated = gw.session_manager.get_messages(&session_key).await;
-    assert!(
-        updated.iter().any(|m| {
-            m.content
-                .as_deref()
-                .unwrap_or("")
-                .contains("[CONTEXT COMPACTION] Earlier conversation was compacted")
-        }),
-        "summary marker should be persisted into compressed transcript"
+    assert_eq!(updated.len(), 25);
+    assert_eq!(updated[0].content.as_deref(), Some("sys"));
+    assert_eq!(updated[1].role, MessageRole::Assistant);
+    let summary = updated[1].content.as_deref().unwrap();
+    let lines: Vec<_> = summary.lines().collect();
+    assert!(lines[0].starts_with("[CONTEXT COMPACTION] Earlier conversation was compacted"));
+    assert_eq!(lines.len(), 7);
+    assert_eq!(lines[1], format!("• user: {}...", "🧩".repeat(177)));
+    assert_eq!(lines[2], "• assistant: turn 1 content");
+    assert_eq!(lines[6], "• assistant: turn 5 content");
+    assert_eq!(updated[2].content.as_deref(), Some("turn 17 content"));
+    assert_eq!(updated[24].content.as_deref(), Some("turn 39 content"));
+}
+
+#[tokio::test]
+async fn gateway_context_compaction_keeps_short_history_and_rejects_stale_generation() {
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let gw = Gateway::new(
+        sessions.clone(),
+        DmManager::with_pair_behavior(),
+        GatewayConfig::default(),
     );
+    let admission = sessions
+        .admit_session("test", "compaction-short", "user", None)
+        .await
+        .unwrap();
+    let key = sessions.compose_session_key("test", "compaction-short", "user");
+    let history = [Message::system("Drafting instructions"), Message::user("Review this draft")];
+    for message in &history {
+        sessions.add_message(&key, message.clone()).await;
+    }
+    let outcome = gw.compress_context(&key, &admission.generation, 2).await;
+    assert!(matches!(outcome, Some(CompressionOutcome::Unchanged)));
+    assert_eq!(sessions.get_messages(&key).await, history);
+
+    sessions.reset_session(&key).await;
+    let new_message = Message::user("Start a new draft");
+    sessions.add_message(&key, new_message.clone()).await;
+    assert!(gw.compress_context(&key, &admission.generation, 0).await.is_none());
+    assert_eq!(sessions.get_messages(&key).await, [new_message]);
 }
 
 #[tokio::test]
@@ -1061,6 +1134,144 @@ async fn gateway_admin_approve_and_deny_affects_dm_authorization() {
         is_dm: true,
     };
     assert!(gw.route_message(&denied_dm).await.is_ok());
+}
+
+#[tokio::test]
+async fn gateway_dm_access_commands_reject_a_paired_non_admin() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_ignore_behavior();
+    dm.authorize_user("fixture-paired");
+    dm.authorize_user("fixture-existing");
+    let gw = Gateway::new(session_mgr, dm, GatewayConfig::default());
+    gw.register_adapter(
+        "test",
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+    let mut incoming = IncomingMessage {
+        platform: "test".into(),
+        chat_id: "fixture-access-chat".into(),
+        user_id: "fixture-paired".into(),
+        text: String::new(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    for (command, label) in [
+        ("/approve fixture-unapproved", "/approve"),
+        ("/deny fixture-existing", "/deny"),
+    ] {
+        incoming.text = command.into();
+        gw.route_message(&incoming).await.unwrap();
+        let replies = std::mem::take(&mut *sent.lock().unwrap());
+        assert_eq!(
+            replies,
+            [(
+                incoming.chat_id.clone(),
+                format!("🚫 {label} requires admin privileges."),
+            )]
+        );
+    }
+    let dm = gw.dm_manager.read().await;
+    assert!(!dm.is_authorized("fixture-unapproved"));
+    assert!(dm.is_authorized("fixture-existing"));
+}
+
+#[tokio::test]
+async fn gateway_idle_commands_report_local_session_state_and_tool_acknowledgements() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_ignore_behavior();
+    dm.authorize_user("fixture-user");
+    let gw = Gateway::new(sessions.clone(), dm, GatewayConfig::default());
+    gw.register_adapter(
+        "test",
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+    let mut incoming = IncomingMessage {
+        platform: "test".into(),
+        chat_id: "fixture-command-chat".into(),
+        user_id: "fixture-user".into(),
+        text: String::new(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    let first_chat = incoming.chat_id.clone();
+    let other_chat = "fixture-other-chat";
+    for (chat, command, expected) in [
+        (
+            first_chat.as_str(),
+            "/reasoning",
+            "Reasoning visibility: ON",
+        ),
+        (other_chat, "/think", "Reasoning visibility: ON"),
+        (first_chat.as_str(), "/think", "Reasoning visibility: OFF"),
+        (
+            first_chat.as_str(),
+            "/branch",
+            "Current branch context: main",
+        ),
+        (
+            first_chat.as_str(),
+            "/branch fixture",
+            "Branch context switched to: fixture",
+        ),
+        (
+            first_chat.as_str(),
+            "/branch",
+            "Current branch context: fixture",
+        ),
+        (other_chat, "/branch", "Current branch context: main"),
+        (
+            first_chat.as_str(),
+            "/tools",
+            "Tools.\nRegistered MCP tools",
+        ),
+        (
+            first_chat.as_str(),
+            "/tools list fixture",
+            "Tools (filter: `fixture`)",
+        ),
+        (
+            first_chat.as_str(),
+            "/tools enable fixture",
+            "Tool enabled: `fixture`",
+        ),
+        (
+            first_chat.as_str(),
+            "/tools disable fixture",
+            "Tool disabled: `fixture`",
+        ),
+        (
+            first_chat.as_str(),
+            "/queue fixture",
+            "No active gateway turn is running.",
+        ),
+        (
+            first_chat.as_str(),
+            "/steer fixture",
+            "Use /steer while a task is in flight.",
+        ),
+    ] {
+        incoming.chat_id = chat.into();
+        incoming.text = command.into();
+        gw.route_message(&incoming).await.unwrap();
+        let replies = std::mem::take(&mut *sent.lock().unwrap());
+        assert_eq!(replies.len(), 1, "{command}: {replies:?}");
+        assert_eq!(replies[0].0, chat);
+        assert!(replies[0].1.contains(expected), "{command}: {replies:?}");
+    }
+    let first_key = sessions.compose_session_key("test", &first_chat, "fixture-user");
+    let other_key = sessions.compose_session_key("test", other_chat, "fixture-user");
+    assert!(sessions.get_messages(&first_key).await.is_empty());
+    assert!(sessions.get_messages(&other_key).await.is_empty());
 }
 
 #[tokio::test]

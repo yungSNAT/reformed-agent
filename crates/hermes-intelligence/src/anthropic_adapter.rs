@@ -1093,3 +1093,7 @@ mod tests {
         assert!(fast_mode_request_beta_list(None, false).is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "anthropic_adapter_coverage_gen.rs"]
+mod coverage_gen;

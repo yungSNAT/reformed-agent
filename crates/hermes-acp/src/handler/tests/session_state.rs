@@ -346,6 +346,66 @@ async fn test_context_slash_command_includes_usage_and_threshold() {
 }
 
 #[tokio::test]
+async fn context_commands_report_empty_sessions_and_the_compression_threshold() {
+    let handler = make_handler_with_auth_provider(None);
+    let session_id = create_session(&handler).await;
+    let prompt = |request_id, command| AcpRequest {
+        jsonrpc: "2.0".into(),
+        id: Some(json!(request_id)),
+        method: "prompt".into(),
+        params: Some(json!({"sessionId": session_id, "text": command})),
+    };
+    for (request_id, command, expected) in [
+        (2, "/model", "Current model: unknown\nProvider: auto"),
+        (3, "/context", "Conversation is empty (no messages yet)."),
+        (
+            4,
+            "/tools",
+            "Tip: use `/tools json` for machine-readable output.",
+        ),
+    ] {
+        let response = handler.handle_request(prompt(request_id, command)).await;
+        assert_eq!(response.result.unwrap()["stopReason"], "end_turn");
+        let events = handler.event_sink.drain_for_session(&session_id);
+        assert!(
+            events.iter().any(|event| {
+                event.kind == AcpEventKind::MessageComplete
+                    && event
+                        .text
+                        .as_deref()
+                        .is_some_and(|text| text.contains(expected))
+            }),
+            "{command}"
+        );
+    }
+    assert!(handler
+        .session_manager
+        .get_session(&session_id)
+        .unwrap()
+        .history
+        .is_empty());
+
+    handler
+        .session_manager
+        .update_model(&session_id, "gpt-4o")
+        .unwrap();
+    handler.session_manager.set_history(
+        &session_id,
+        vec![json!({"role": "user", "content": "wide ".repeat(110_000)})],
+    );
+    let response = handler.handle_request(prompt(5, "/context")).await;
+    assert_eq!(response.result.unwrap()["stopReason"], "end_turn");
+    let events = handler.event_sink.drain_for_session(&session_id);
+    let context = events
+        .iter()
+        .find(|event| event.kind == AcpEventKind::MessageComplete)
+        .and_then(|event| event.text.as_deref())
+        .expect("completed context reply");
+    assert!(context.contains("Conversation: 1 messages"));
+    assert!(context.contains("Compression: due now (threshold ~102,400, 80%)."));
+}
+
+#[tokio::test]
 async fn test_version_slash_command_uses_shared_version_label() {
     let handler = make_handler();
     let state = handler.session_manager.create_session("/workspace");

@@ -147,4 +147,55 @@ mod tests {
         let sys = req.messages[0].content.as_deref().unwrap();
         assert!(sys.contains("Classify intent"));
     }
+
+    #[test]
+    fn compression_request_preserves_the_history_and_pending_actions() {
+        let history = "User: How many surveys remain?\nAssistant: Check the register.";
+        let request = build_compression_request(history);
+        assert_eq!(request.task, Some(AuxiliaryTask::Compression));
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, MessageRole::System);
+        assert!(request.messages[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("pending action items"));
+        assert_eq!(request.messages[1].role, MessageRole::User);
+        assert_eq!(request.messages[1].content.as_deref(), Some(history));
+    }
+
+    #[test]
+    fn web_extraction_request_passes_the_source_html_as_user_content() {
+        let html = "<nav>Menu</nav><article><h1>Estuary notes</h1></article>";
+        let request = build_web_extract_request(html);
+        assert_eq!(request.task, Some(AuxiliaryTask::WebExtract));
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, MessageRole::System);
+        assert!(request.messages[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("Preserve headings"));
+        assert_eq!(request.messages[1].role, MessageRole::User);
+        assert_eq!(request.messages[1].content.as_deref(), Some(html));
+    }
+
+    #[test]
+    fn session_search_request_numbers_candidates_in_input_order() {
+        let snippets = ["First survey".into(), "Latest survey".into()];
+        let request = build_session_search_request("When was the survey?", &snippets);
+        assert_eq!(request.task, Some(AuxiliaryTask::SessionSearch));
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, MessageRole::System);
+        assert!(request.messages[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("no candidate is relevant"));
+        assert_eq!(request.messages[1].role, MessageRole::User);
+        assert_eq!(
+            request.messages[1].content.as_deref(),
+            Some("Query: When was the survey?\n\nCandidates:\n[0] First survey\n\n[1] Latest survey\n\n")
+        );
+    }
 }

@@ -596,6 +596,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_bulk_replacement_rolls_back_when_job_ids_collide() {
+        let dir = tempdir().unwrap();
+        let persistence = SqliteJobPersistence::with_path(dir.path().join("fixture.db"));
+        let old = CronJob::new("0 9 * * *", "Review the existing draft");
+        persistence.save_job(&old).await.unwrap();
+        let first = CronJob::new("0 10 * * *", "Review the new draft");
+        let mut duplicate = CronJob::new("0 11 * * *", "Review the duplicate draft");
+        duplicate.id = first.id.clone();
+
+        let result = persistence.save_jobs(&[first, duplicate]).await;
+        assert!(matches!(
+            result,
+            Err(CronPersistenceError::Sqlite(message)) if message.contains("cron_jobs.id")
+        ));
+        let stored = persistence.load_jobs().await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, old.id);
+        assert_eq!(stored[0].prompt, old.prompt);
+    }
+
+    #[tokio::test]
+    async fn sqlite_reports_unavailable_database_paths_without_changing_them() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("fixture.db");
+        std::fs::create_dir(&database).unwrap();
+        let existing = database.join("note.txt");
+        std::fs::write(&existing, "Existing fixture").unwrap();
+        let persistence = SqliteJobPersistence::with_path(database);
+
+        assert!(matches!(
+            persistence.load_jobs().await,
+            Err(CronPersistenceError::Sqlite(_))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(existing).unwrap(),
+            "Existing fixture"
+        );
+    }
+
+    #[tokio::test]
     async fn test_sqlite_upsert() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test_cron.db");

@@ -65,6 +65,53 @@ mod tests {
     }
 
     #[test]
+    fn context_firewall_audits_rejected_items_and_truncates_admitted_text_by_character() {
+        let source = ContextSource::new("local", "fixture.rs");
+        let input = [
+            ContextItem::new(
+                "empty",
+                ContextLane::WebEvidence,
+                TrustLevel::Observed,
+                "  ",
+                source.clone(),
+            ),
+            ContextItem::new(
+                "policy",
+                ContextLane::SystemPolicy,
+                TrustLevel::Verified,
+                "Local policy",
+                source.clone(),
+            ),
+            ContextItem::new(
+                "source",
+                ContextLane::RepoEvidence,
+                TrustLevel::Observed,
+                "  é雪abc followed by a long fixture description  ",
+                source,
+            ),
+        ];
+        let firewall = ContextFirewall::new(ContextFirewallConfig {
+            max_prompt_item_chars: 20,
+            ..ContextFirewallConfig::default()
+        });
+        let report = firewall.compile(&input, ContextUse::Evidence, now());
+        assert_eq!(report.target_use, ContextUse::Evidence);
+        assert_eq!(report.counts_by_lane.len(), 3);
+        assert_eq!(report.counts_by_lane[&ContextLane::RepoEvidence], 1);
+        assert_eq!(report.blocked.len(), 2);
+        assert_eq!(report.blocked[0].id, "empty");
+        assert_eq!(report.blocked[0].reason, ContextBlockReason::EmptyContent);
+        assert_eq!(report.blocked[1].id, "policy");
+        assert_eq!(report.blocked[1].reason, ContextBlockReason::UseNotAllowed);
+        assert_eq!(report.admitted.len(), 1);
+        assert_eq!(report.admitted[0].decision, ContextDecisionKind::Admit);
+        assert_eq!(
+            report.admitted_prompt(),
+            "[RepoEvidence Observed source=fixture.rs]\né雪abc\n[TRUNCATED]"
+        );
+    }
+
+    #[test]
     fn evidence_compiler_marks_supported_stale_and_unproven_claims() {
         let t = now();
         let claims = vec![
@@ -121,6 +168,57 @@ mod tests {
         let report = EvidenceCompiler.compile(&claims, &evidence, t);
         assert_eq!(report.verdicts[0].verdict, ClaimVerdictKind::Contradicted);
         assert_eq!(report.verdicts[0].evidence_ids, vec!["contradict"]);
+    }
+
+    #[test]
+    fn evidence_compiler_distinguishes_inference_from_support() {
+        let claims = [
+            Claim::new("related", "Fixture references an earlier decision"),
+            Claim::new("weak", "Fixture behaviour is verified")
+                .with_minimum_trust(TrustLevel::Verified),
+            Claim::new("supported", "Fixture was observed"),
+        ];
+        let evidence = [
+            ("related", EvidenceRelation::Related),
+            ("weak", EvidenceRelation::Supports),
+            ("supported", EvidenceRelation::Supports),
+        ]
+        .map(|(id, relation)| {
+            Evidence::new(
+                format!("{id}-evidence"),
+                id,
+                relation,
+                TrustLevel::Observed,
+                ContextSource::new("fixture", "fixture.rs"),
+                "Local observation",
+            )
+        });
+        let report = EvidenceCompiler.compile(&claims, &evidence, now());
+        for (index, (verdict, evidence_id, rationale)) in [
+            (
+                ClaimVerdictKind::Inferred,
+                "related-evidence",
+                "only has related evidence",
+            ),
+            (
+                ClaimVerdictKind::Inferred,
+                "weak-evidence",
+                "below the claim trust floor",
+            ),
+            (
+                ClaimVerdictKind::Supported,
+                "supported-evidence",
+                "supported by evidence",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let result = &report.verdicts[index];
+            assert_eq!(result.verdict, verdict);
+            assert_eq!(result.evidence_ids, [evidence_id]);
+            assert!(result.rationale.contains(rationale));
+        }
     }
 
     #[test]
@@ -219,6 +317,31 @@ mod tests {
     }
 
     #[test]
+    fn contextlattice_deep_retrieval_preserves_warnings_for_stale_unsourced_hits() {
+        let request = ContextLatticeMemoryRequest {
+            project: "fixture".into(),
+            topic_path: "surveys/estuary".into(),
+            query: "Latest survey count".into(),
+            mode: "deep".into(),
+        };
+        let stats = ContextLatticeRetrievalStats {
+            result_count: 2,
+            degraded: true,
+            source_count: 0,
+            stale_count: 2,
+            warnings: vec!["Fixture retrieval warning".into()],
+        };
+        let plan = plan_contextlattice_memory_cycle(&request, &stats);
+        assert_eq!(plan.retrieval_mode, "deep");
+        assert!(!plan.should_retry_deep);
+        assert!(plan.requires_readback);
+        assert_eq!(plan.warnings[0], "Fixture retrieval warning");
+        for detail in ["retrieval was degraded", "without source coverage", "2 ContextLattice hits are stale"] {
+            assert!(plan.warnings.iter().any(|warning| warning.contains(detail)));
+        }
+    }
+
+    #[test]
     fn research_synthesis_ranks_primary_sources_above_weak_social_leads() {
         let t = now();
         let official = ResearchSource::new(
@@ -264,6 +387,48 @@ mod tests {
     }
 
     #[test]
+    fn research_synthesis_marks_provisional_results_and_breaks_ties_by_id() {
+        let first = ResearchSource::new(
+            "vendor",
+            "Fixture vendor notes",
+            ResearchSourceKind::VendorDocs,
+            TrustLevel::Observed,
+            ContextSource::new("test", "fixture-vendor.md"),
+            "Supporting details",
+        )
+        .corroborates(["unavailable"]);
+        let weak = |id| {
+            ResearchSource::new(
+                id,
+                "Fixture news item",
+                ResearchSourceKind::News,
+                TrustLevel::Inferred,
+                ContextSource::new("test", "fixture-news.md"),
+                "A lead",
+            )
+        };
+        let plan = ResearchSynthesisEngine.plan_synthesis(&[weak("z"), first, weak("a")], now());
+        let ranks: Vec<_> = plan
+            .ranked_sources
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.tier))
+            .collect();
+        assert_eq!(
+            ranks,
+            [
+                ("vendor", SourceQualityTier::Supporting),
+                ("a", SourceQualityTier::Weak),
+                ("z", SourceQualityTier::Weak),
+            ]
+        );
+        assert_eq!(plan.warnings.len(), 1);
+        assert!(plan.warnings[0].contains("synthesis must be framed as provisional"));
+        assert!(plan.synthesis_steps[0].source_ids.is_empty());
+        assert!(plan.synthesis_steps[1].source_ids.is_empty());
+        assert_eq!(plan.synthesis_steps[2].source_ids, ["a", "z"]);
+    }
+
+    #[test]
     fn behavioral_eval_arena_scores_missing_expected_behaviors() {
         let case = BehavioralEvalCase {
             id: "repo-research".to_string(),
@@ -280,6 +445,90 @@ mod tests {
         let verdict = BehavioralEvalArena::default().evaluate(&case, &observed);
         assert!(!verdict.pass);
         assert_eq!(verdict.missing, vec!["memory checkpoint"]);
+    }
+
+    #[test]
+    fn research_planning_prioritises_primary_material_with_equal_provenance() {
+        let sources = [
+            ("unknown", ResearchSourceKind::Unknown),
+            ("community", ResearchSourceKind::Community),
+            ("data", ResearchSourceKind::PrimaryData),
+            ("repository", ResearchSourceKind::Repository),
+            ("standard", ResearchSourceKind::Standard),
+        ]
+        .map(|(id, kind)| {
+            ResearchSource::new(
+                id,
+                id,
+                kind,
+                TrustLevel::Verified,
+                ContextSource::new("fixture", id).observed_at(now()),
+                "Reference for the park survey",
+            )
+        });
+        let ranked = ResearchSynthesisEngine.rank_sources(&sources, now());
+        assert_eq!(
+            ranked.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(),
+            ["standard", "repository", "data", "community", "unknown"],
+        );
+    }
+
+    #[test]
+    fn problem_solving_requires_web_evidence_for_a_research_request() {
+        let plan = ProblemSolvingKernel.build_plan(ProblemSolvingRequest {
+            objective: "Check the publication date of the park survey".into(),
+            constraints: vec![],
+            available_tools: vec!["web_search".into()],
+            context_topic: None,
+            requires_repo_evidence: false,
+            requires_web_research: true,
+            requires_memory: false,
+        });
+        assert_eq!(plan.steps[1].kind, ProblemStepKind::ResearchWeb);
+        assert!(plan.steps[1].required);
+        assert_eq!(plan.steps[1].tool_hint.as_deref(), Some("web_search"));
+        assert_eq!(plan.steps[2].kind, ProblemStepKind::PlanToolUse);
+    }
+
+    #[test]
+    fn finalization_reports_blocked_context_and_rejects_contradicted_claims() {
+        let mut input = FinalizerInput {
+            latest_user_request: "Summarise the park survey".into(),
+            executed_actions: vec!["Read the original survey".into()],
+            verification: vec!["Checked the revision date".into()],
+            claim_verdicts: vec![ClaimVerdict {
+                claim_id: "survey-count".into(),
+                verdict: ClaimVerdictKind::Stale,
+                evidence_ids: vec!["prior-survey".into()],
+                rationale: "An updated survey is pending".into(),
+            }],
+            context_report: Some(ContextFirewallReport {
+                target_use: ContextUse::FinalAnswer,
+                admitted: vec![],
+                blocked: vec![BlockedContextItem {
+                    id: "source-note".into(),
+                    lane: ContextLane::WebEvidence,
+                    source_locator: "fixture://park-survey-note".into(),
+                    reason: ContextBlockReason::UntrustedInstruction,
+                }],
+                warnings: vec![],
+                counts_by_lane: BTreeMap::new(),
+            }),
+            residual_risks: vec!["survey-count may be stale".into()],
+        };
+        let report = SelfAuditFinalizer.audit(&input);
+        assert!(report.can_finalize);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, AuditSeverity::Warning);
+        assert!(report.findings[0].message.contains("context was blocked"));
+
+        input.claim_verdicts[0].verdict = ClaimVerdictKind::Contradicted;
+        let report = SelfAuditFinalizer.audit(&input);
+        assert!(!report.can_finalize);
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == AuditSeverity::Blocker
+                && finding.message.contains("claim survey-count is contradicted")
+        }));
     }
 
     #[test]

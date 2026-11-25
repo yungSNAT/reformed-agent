@@ -39,6 +39,16 @@
         "is_oauth": false
       },
       "expected": null
+    },
+    {
+      "id": "fast_mode_betas_native",
+      "op": "fast_mode_request_beta_list",
+      "input": { "base_url": null, "is_oauth": false },
+      "expected": [
+        "interleaved-thinking-2025-05-14",
+        "fine-grained-tool-streaming-2025-05-14",
+        "fast-mode-2026-02-01"
+      ]
     }
   ]
 }

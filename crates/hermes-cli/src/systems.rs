@@ -1426,3 +1426,7 @@ mod tests {
             .any(|command| command.contains("verify-provenance")));
     }
 }
+
+#[cfg(test)]
+#[path = "systems_coverage_gen.rs"]
+mod coverage_gen_systems;

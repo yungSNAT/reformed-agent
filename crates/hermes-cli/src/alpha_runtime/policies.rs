@@ -275,3 +275,6 @@ pub fn set_contextlattice_policy(
     Ok(updated)
 }
 
+#[cfg(test)]
+#[path = "policies_coverage_gen.rs"]
+mod coverage_gen_alpha_runtime_policies;

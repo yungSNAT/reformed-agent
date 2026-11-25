@@ -38,6 +38,71 @@ async fn test_compact_slash_command_reduces_history() {
 }
 
 #[tokio::test]
+async fn compact_preserves_recent_history_and_summarises_earlier_text() {
+    let handler = make_handler_with_auth_provider(None);
+    let session_id = create_session(&handler).await;
+    assert_eq!(
+        handler
+            .handle_slash_command("/compact", &session_id)
+            .as_deref(),
+        Some("Conversation is empty (nothing to compact).")
+    );
+    let policy = json!({"role": "system", "content": "Fixture system policy."});
+    handler
+        .session_manager
+        .set_history(&session_id, vec![policy.clone()]);
+    assert_eq!(
+        handler
+            .handle_slash_command("/compact", &session_id)
+            .as_deref(),
+        Some("Conversation is already compact (1 messages).")
+    );
+    let recent: Vec<_> = (1..=6)
+        .map(|n| json!({"role": "assistant", "content": format!("Recent fixture {n}.")}))
+        .collect();
+    let mut history = vec![
+        policy.clone(),
+        json!({"role": "user", "content": "é".repeat(150)}),
+        json!({"role": "assistant", "text": "A reply\nusing the alternative field."}),
+        json!({"role": "tool", "content": "       "}),
+    ];
+    history.extend(recent.iter().cloned());
+    handler.session_manager.set_history(&session_id, history);
+    assert_eq!(
+        handler
+            .handle_slash_command("/compact", &session_id)
+            .as_deref(),
+        Some("Context compacted: 10 -> 8 messages (compressed 4).")
+    );
+    let state = handler.session_manager.get_session(&session_id).unwrap();
+    let summary = &state.history[1];
+    assert_eq!(state.history[0], policy);
+    assert_eq!(summary["role"], "system");
+    assert_eq!(summary["meta"]["compressed_message_count"], 4);
+    let text = summary["content"].as_str().unwrap();
+    assert!(text.contains(&format!("- user: {}...", "é".repeat(140))));
+    assert!(text.contains("- assistant: A reply using the alternative field."));
+    assert!(!text.contains("- tool:"));
+    assert_eq!(&state.history[2..], recent.as_slice());
+
+    let mut contentless = vec![json!({"role": "tool"}); 3];
+    contentless.extend(recent.iter().cloned());
+    handler
+        .session_manager
+        .set_history(&session_id, contentless);
+    assert_eq!(
+        handler
+            .handle_slash_command("/compact", &session_id)
+            .as_deref(),
+        Some("Context compacted: 9 -> 7 messages (compressed 3).")
+    );
+    let state = handler.session_manager.get_session(&session_id).unwrap();
+    let summary = state.history[0]["content"].as_str().unwrap();
+    assert!(summary.contains("(no textual content in compacted segment)"));
+    assert_eq!(&state.history[1..], recent.as_slice());
+}
+
+#[tokio::test]
 async fn test_help_lists_queue_and_steer_slash_commands() {
     let handler = make_handler();
     let session_id = create_session(&handler).await;

@@ -1093,6 +1093,63 @@ mod tests {
     }
 
     #[test]
+    fn mattermost_and_matrix_env_keep_a_configured_explicit_disable() {
+        let _env = env_lock();
+        let vars = [
+            (
+                "MATTERMOST_SERVER_URL",
+                "https://mattermost.example.invalid",
+            ),
+            ("MATTERMOST_TEAM_ID", "fixture-team"),
+            ("MATTERMOST_TOKEN", "mattermost-fixture-value"),
+            ("MATRIX_HOMESERVER_URL", "https://matrix.example.invalid"),
+            ("MATRIX_USER_ID", "@fixture:example.invalid"),
+            ("MATRIX_ACCESS_TOKEN", "matrix-fixture-value"),
+            ("MATRIX_ROOM_ID", "!fixture:example.invalid"),
+        ];
+        for (name, value) in vars {
+            unsafe { std::env::set_var(name, value) };
+        }
+        let mut explicit = GatewayConfig::default();
+        for platform in ["mattermost", "matrix"] {
+            let entry = explicit.platforms.entry(platform.to_string()).or_default();
+            entry.enabled = false;
+            set_extra(entry, "_enabled_explicit", json!(true));
+        }
+        let mut implicit = GatewayConfig::default();
+        for config in [&mut explicit, &mut implicit] {
+            apply_mattermost_env(config);
+            apply_matrix_env(config);
+        }
+        for (name, _) in vars {
+            unsafe { std::env::remove_var(name) };
+        }
+
+        let mattermost = &explicit.platforms["mattermost"];
+        assert!(!mattermost.enabled);
+        assert_eq!(
+            mattermost.token.as_deref(),
+            Some("mattermost-fixture-value")
+        );
+        assert_eq!(
+            mattermost.extra["server_url"],
+            "https://mattermost.example.invalid"
+        );
+        assert_eq!(mattermost.extra["team_id"], "fixture-team");
+        let matrix = &explicit.platforms["matrix"];
+        assert!(!matrix.enabled);
+        assert_eq!(matrix.token.as_deref(), Some("matrix-fixture-value"));
+        assert_eq!(
+            matrix.extra["homeserver_url"],
+            "https://matrix.example.invalid"
+        );
+        assert_eq!(matrix.extra["user_id"], "@fixture:example.invalid");
+        assert_eq!(matrix.extra["room_id"], "!fixture:example.invalid");
+        assert!(implicit.platforms["mattermost"].enabled);
+        assert!(implicit.platforms["matrix"].enabled);
+    }
+
+    #[test]
     fn ntfy_env_sets_topic_and_auto_enables() {
         let _env = env_lock();
         unsafe {

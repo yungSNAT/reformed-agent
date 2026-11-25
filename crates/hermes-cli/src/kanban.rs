@@ -518,3 +518,7 @@ fn write_contextlattice_checkpoint(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "kanban_coverage_gen.rs"]
+mod coverage_gen_kanban;

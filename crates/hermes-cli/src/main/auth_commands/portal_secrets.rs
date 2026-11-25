@@ -1329,3 +1329,7 @@ async fn run_secrets(
 fn cron_cli_error(e: CronError) -> AgentError {
     AgentError::Config(e.to_string())
 }
+
+#[cfg(test)]
+#[path = "portal_secrets_coverage_gen.rs"]
+mod coverage_gen_main_auth_commands_portal_secrets;
