@@ -65,6 +65,53 @@ mod tests {
     }
 
     #[test]
+    fn context_firewall_audits_rejected_items_and_truncates_admitted_text_by_character() {
+        let source = ContextSource::new("local", "fixture.rs");
+        let input = [
+            ContextItem::new(
+                "empty",
+                ContextLane::WebEvidence,
+                TrustLevel::Observed,
+                "  ",
+                source.clone(),
+            ),
+            ContextItem::new(
+                "policy",
+                ContextLane::SystemPolicy,
+                TrustLevel::Verified,
+                "Local policy",
+                source.clone(),
+            ),
+            ContextItem::new(
+                "source",
+                ContextLane::RepoEvidence,
+                TrustLevel::Observed,
+                "  é雪abc followed by a long fixture description  ",
+                source,
+            ),
+        ];
+        let firewall = ContextFirewall::new(ContextFirewallConfig {
+            max_prompt_item_chars: 20,
+            ..ContextFirewallConfig::default()
+        });
+        let report = firewall.compile(&input, ContextUse::Evidence, now());
+        assert_eq!(report.target_use, ContextUse::Evidence);
+        assert_eq!(report.counts_by_lane.len(), 3);
+        assert_eq!(report.counts_by_lane[&ContextLane::RepoEvidence], 1);
+        assert_eq!(report.blocked.len(), 2);
+        assert_eq!(report.blocked[0].id, "empty");
+        assert_eq!(report.blocked[0].reason, ContextBlockReason::EmptyContent);
+        assert_eq!(report.blocked[1].id, "policy");
+        assert_eq!(report.blocked[1].reason, ContextBlockReason::UseNotAllowed);
+        assert_eq!(report.admitted.len(), 1);
+        assert_eq!(report.admitted[0].decision, ContextDecisionKind::Admit);
+        assert_eq!(
+            report.admitted_prompt(),
+            "[RepoEvidence Observed source=fixture.rs]\né雪abc\n[TRUNCATED]"
+        );
+    }
+
+    #[test]
     fn evidence_compiler_marks_supported_stale_and_unproven_claims() {
         let t = now();
         let claims = vec![
@@ -121,6 +168,57 @@ mod tests {
         let report = EvidenceCompiler.compile(&claims, &evidence, t);
         assert_eq!(report.verdicts[0].verdict, ClaimVerdictKind::Contradicted);
         assert_eq!(report.verdicts[0].evidence_ids, vec!["contradict"]);
+    }
+
+    #[test]
+    fn evidence_compiler_distinguishes_inference_from_support() {
+        let claims = [
+            Claim::new("related", "Fixture references an earlier decision"),
+            Claim::new("weak", "Fixture behaviour is verified")
+                .with_minimum_trust(TrustLevel::Verified),
+            Claim::new("supported", "Fixture was observed"),
+        ];
+        let evidence = [
+            ("related", EvidenceRelation::Related),
+            ("weak", EvidenceRelation::Supports),
+            ("supported", EvidenceRelation::Supports),
+        ]
+        .map(|(id, relation)| {
+            Evidence::new(
+                format!("{id}-evidence"),
+                id,
+                relation,
+                TrustLevel::Observed,
+                ContextSource::new("fixture", "fixture.rs"),
+                "Local observation",
+            )
+        });
+        let report = EvidenceCompiler.compile(&claims, &evidence, now());
+        for (index, (verdict, evidence_id, rationale)) in [
+            (
+                ClaimVerdictKind::Inferred,
+                "related-evidence",
+                "only has related evidence",
+            ),
+            (
+                ClaimVerdictKind::Inferred,
+                "weak-evidence",
+                "below the claim trust floor",
+            ),
+            (
+                ClaimVerdictKind::Supported,
+                "supported-evidence",
+                "supported by evidence",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let result = &report.verdicts[index];
+            assert_eq!(result.verdict, verdict);
+            assert_eq!(result.evidence_ids, [evidence_id]);
+            assert!(result.rationale.contains(rationale));
+        }
     }
 
     #[test]
@@ -261,6 +359,48 @@ mod tests {
         assert!(plan.synthesis_steps.iter().any(|step| {
             step.action.contains("weak/community/social") && step.source_ids == vec!["social"]
         }));
+    }
+
+    #[test]
+    fn research_synthesis_marks_provisional_results_and_breaks_ties_by_id() {
+        let first = ResearchSource::new(
+            "vendor",
+            "Fixture vendor notes",
+            ResearchSourceKind::VendorDocs,
+            TrustLevel::Observed,
+            ContextSource::new("test", "fixture-vendor.md"),
+            "Supporting details",
+        )
+        .corroborates(["unavailable"]);
+        let weak = |id| {
+            ResearchSource::new(
+                id,
+                "Fixture news item",
+                ResearchSourceKind::News,
+                TrustLevel::Inferred,
+                ContextSource::new("test", "fixture-news.md"),
+                "A lead",
+            )
+        };
+        let plan = ResearchSynthesisEngine.plan_synthesis(&[weak("z"), first, weak("a")], now());
+        let ranks: Vec<_> = plan
+            .ranked_sources
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.tier))
+            .collect();
+        assert_eq!(
+            ranks,
+            [
+                ("vendor", SourceQualityTier::Supporting),
+                ("a", SourceQualityTier::Weak),
+                ("z", SourceQualityTier::Weak),
+            ]
+        );
+        assert_eq!(plan.warnings.len(), 1);
+        assert!(plan.warnings[0].contains("synthesis must be framed as provisional"));
+        assert!(plan.synthesis_steps[0].source_ids.is_empty());
+        assert!(plan.synthesis_steps[1].source_ids.is_empty());
+        assert_eq!(plan.synthesis_steps[2].source_ids, ["a", "z"]);
     }
 
     #[test]
