@@ -201,4 +201,228 @@ mod rest_contract {
         ));
         server.verify().await;
     }
+
+    #[tokio::test]
+    async fn text_retries_a_missing_reply_once_then_suppresses_later_references() {
+        let server = MockServer::start().await;
+        let mut adapter = adapter_for_mock(&server, None);
+        adapter.config.reply_to_mode = "all".to_string();
+        let metadata = DiscordSendMetadata::with_thread_and_reply("thread", "original")
+            .with_non_conversational(true);
+        let starter = format!("{}\n", "x".repeat(MAX_MESSAGE_LENGTH - 1));
+        Mock::given(method("POST"))
+            .and(path("/channels/thread/messages"))
+            .and(header("Authorization", "Bot test-token"))
+            .respond_with(|request: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                if body.get("message_reference").is_some() {
+                    return ResponseTemplate::new(400).set_body_string("Unknown Message");
+                }
+                let id = if body["content"] == "follow-up" {
+                    "second"
+                } else {
+                    "first"
+                };
+                ResponseTemplate::new(200).set_body_json(json!({"id": id, "channel_id": "thread"}))
+            })
+            .expect(3)
+            .mount(&server)
+            .await;
+
+        let ids = adapter
+            .send_text_with_metadata("parent", &format!("{starter}follow-up"), Some(&metadata))
+            .await
+            .unwrap();
+        assert_eq!(ids, ["first", "second"]);
+        assert!(adapter.non_conversational_message_contains("first"));
+        assert!(adapter.non_conversational_message_contains("second"));
+        assert!(!adapter.non_conversational_message_contains("original"));
+
+        let requests = server.received_requests().await.unwrap();
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|request| serde_json::from_slice(&request.body).unwrap())
+            .collect();
+        let [initial, retry, follow_up] = bodies.as_slice() else {
+            panic!("expected one rejected reference, its retry and one follow-up");
+        };
+        assert_eq!(initial["content"], starter);
+        assert_eq!(
+            initial["message_reference"],
+            json!({"message_id": "original", "fail_if_not_exists": false}),
+        );
+        let mut expected_retry = initial.clone();
+        expected_retry
+            .as_object_mut()
+            .unwrap()
+            .remove("message_reference");
+        assert_eq!(retry, &expected_retry);
+        assert_eq!(follow_up["content"], "follow-up");
+        assert!(follow_up.get("message_reference").is_none());
+    }
+
+    #[tokio::test]
+    async fn message_edits_and_thread_renames_send_bounded_changes_and_return_api_errors() {
+        let server = MockServer::start().await;
+        let adapter = adapter_for_mock(&server, None);
+        let text = "é".repeat(MAX_MESSAGE_LENGTH);
+        let title = "🦀".repeat(48) + "...";
+        for (route, body, status) in [
+            (
+                "/channels/thread/messages/first",
+                json!({"content": text}),
+                200,
+            ),
+            (
+                "/channels/thread/messages/blocked",
+                json!({"content": "edit"}),
+                403,
+            ),
+            ("/channels/thread", json!({"name": title}), 200),
+            ("/channels/blocked", json!({"name": "Hermes"}), 403),
+        ] {
+            Mock::given(method("PATCH"))
+                .and(path(route))
+                .and(header("Authorization", "Bot test-token"))
+                .and(body_partial_json(body))
+                .respond_with(ResponseTemplate::new(status).set_body_string("fixture permission"))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        adapter
+            .edit_text("thread", "first", &(text + "extra"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            adapter.edit_text("thread", "blocked", "edit").await,
+            Err(GatewayError::SendFailed(error)) if error.contains("fixture permission")
+        ));
+        adapter
+            .rename_thread_channel(" thread ", &format!("  {}  ", "🦀".repeat(60)))
+            .await
+            .unwrap();
+        assert!(matches!(
+            adapter.rename_thread_channel("blocked", " ").await,
+            Err(GatewayError::SendFailed(error)) if error.contains("fixture permission")
+        ));
+        assert!(matches!(
+            adapter.rename_thread_channel(" ", "fixture").await,
+            Err(GatewayError::SendFailed(error)) if error.contains("requires a thread id")
+        ));
+        assert_eq!(server.received_requests().await.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn attachments_and_image_embeds_route_to_the_thread() {
+        let server = MockServer::start().await;
+        let adapter = adapter_for_mock(&server, None);
+        let metadata = DiscordSendMetadata::with_thread_id("thread").with_non_conversational(true);
+        let directory = tempfile::tempdir().unwrap();
+        let local_file = directory.path().join("fixture.txt");
+        let bytes = "café audio fixture";
+        tokio::fs::write(&local_file, bytes).await.unwrap();
+        let local_file = local_file.to_str().unwrap();
+        Mock::given(method("POST"))
+            .and(path("/channels/thread/messages"))
+            .and(header("Authorization", "Bot test-token"))
+            .respond_with(|request: &wiremock::Request| {
+                if request.headers["content-type"]
+                    .as_bytes()
+                    .starts_with(b"multipart/form-data")
+                {
+                    return ResponseTemplate::new(201)
+                        .set_body_json(json!({"id": "attachment", "channel_id": "thread"}));
+                }
+                ResponseTemplate::new(201)
+                    .set_body_json(json!({"id": "embed", "channel_id": "thread"}))
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/channels/blocked/messages"))
+            .and(header("Authorization", "Bot test-token"))
+            .respond_with(ResponseTemplate::new(413).set_body_string("fixture upload limit"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        assert_eq!(
+            adapter
+                .send_voice("parent", local_file, Some("caption"), Some(&metadata))
+                .await
+                .unwrap(),
+            "attachment",
+        );
+        assert_eq!(
+            adapter
+                .send_image_url_with_metadata(
+                    "parent",
+                    "https://example.invalid/fixture.png",
+                    Some("image caption"),
+                    Some(&metadata),
+                )
+                .await
+                .unwrap(),
+            "embed",
+        );
+        assert!(adapter.non_conversational_message_contains("attachment"));
+        assert!(adapter.non_conversational_message_contains("embed"));
+        assert!(matches!(
+            adapter.upload_file("blocked", local_file, None).await,
+            Err(GatewayError::SendFailed(error)) if error.contains("fixture upload limit")
+        ));
+        assert!(matches!(
+            adapter.upload_file("blocked", directory.path().join("missing").to_str().unwrap(), None).await,
+            Err(GatewayError::SendFailed(error)) if error.contains("Failed to read file")
+        ));
+
+        let requests = server.received_requests().await.unwrap();
+        let [attachment, embed, _rejected] = requests.as_slice() else {
+            panic!("expected two thread messages and one rejected upload");
+        };
+        let content_type = attachment.headers["content-type"].to_str().unwrap();
+        let boundary = content_type
+            .strip_prefix("multipart/form-data; boundary=")
+            .unwrap();
+        let form = std::str::from_utf8(&attachment.body).unwrap();
+        let delimiter = format!("--{boundary}");
+        let parts: Vec<_> = form
+            .split(&delimiter)
+            .filter_map(|part| part.split_once("\r\n\r\n"))
+            .collect();
+        let [(file_header, file_body), (payload_header, payload_body)] = parts.as_slice() else {
+            panic!("expected an attachment and its metadata");
+        };
+        for (headers, expected) in [
+            (
+                file_header,
+                &["name=\"files[0]\"", "filename=\"fixture.txt\""][..],
+            ),
+            (payload_header, &["name=\"payload_json\""][..]),
+        ] {
+            let disposition = headers
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("Content-Disposition"))
+                .expect("multipart part has a content disposition")
+                .1;
+            let mut fields = disposition.split(';').map(str::trim);
+            assert_eq!(fields.next(), Some("form-data"));
+            let fields: Vec<_> = fields.collect();
+            assert!(expected.iter().all(|field| fields.contains(field)));
+        }
+        assert_eq!(file_body.strip_suffix("\r\n"), Some(bytes));
+        let payload: serde_json::Value = serde_json::from_str(payload_body).unwrap();
+        assert_eq!(payload["content"], "caption");
+        assert!(payload["allowed_mentions"].is_object());
+        assert_eq!(embed.headers["content-type"], "application/json");
+        let payload: serde_json::Value = serde_json::from_slice(&embed.body).unwrap();
+        assert_eq!(payload["content"], "image caption");
+        assert_eq!(
+            payload["embeds"][0]["image"]["url"],
+            "https://example.invalid/fixture.png"
+        );
+    }
 }
