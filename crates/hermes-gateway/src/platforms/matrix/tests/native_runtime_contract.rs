@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 use std::time::Duration;
-use wiremock::matchers::{body_partial_json, header};
+use wiremock::matchers::{body_partial_json, header, path_regex};
 
 fn adapter_for_matrix_fixture(server: &MockServer) -> MatrixAdapter {
     let mut adapter = MatrixAdapter::new(MatrixConfig {
@@ -22,6 +22,168 @@ fn adapter_for_matrix_fixture(server: &MockServer) -> MatrixAdapter {
         device_id_override: None,
     });
     adapter
+}
+
+#[tokio::test]
+async fn matrix_messaging_sends_the_expected_relations_and_typing_state() {
+    let server = MockServer::start().await;
+    let adapter = adapter_for_matrix_fixture(&server);
+    Mock::given(path_regex(r"^/_matrix/client/v3/rooms/"))
+        .and(header("Authorization", "Bearer matrix-fixture"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id": "$fixture"})))
+        .expect(10)
+        .mount(&server)
+        .await;
+    let room = "!room:test";
+    let event = "$original";
+    for (text, mode) in [
+        ("Fixture", None),
+        ("<b>Fixture</b>", Some(ParseMode::Html)),
+        ("**Fixture**", Some(ParseMode::Markdown)),
+    ] {
+        assert_eq!(
+            adapter.send_text(room, text, mode).await.unwrap(),
+            "$fixture"
+        );
+    }
+    adapter
+        .edit_text(room, event, "Updated fixture")
+        .await
+        .unwrap();
+    assert_eq!(
+        adapter.send_reaction(room, event, "👍").await.unwrap(),
+        "$fixture"
+    );
+    for reason in [None, Some("Stale fixture")] {
+        assert_eq!(
+            adapter.redact_event(room, event, reason).await.unwrap(),
+            "$fixture"
+        );
+    }
+    adapter.send_read_receipt(room, event).await.unwrap();
+    adapter.send_typing(room, true, None).await.unwrap();
+    adapter.send_typing(room, false, None).await.unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 10);
+    let mut transactions = std::collections::HashSet::new();
+    for request in &requests[..7] {
+        let transaction = request.url.path_segments().unwrap().next_back().unwrap();
+        assert!(!transaction.is_empty() && transactions.insert(transaction));
+    }
+    for (request, (verb, expected_path, body)) in requests.iter().zip([
+        (
+            "PUT",
+            "send/m.room.message/",
+            json!({"msgtype":"m.text","body":"Fixture"}),
+        ),
+        (
+            "PUT",
+            "send/m.room.message/",
+            json!({
+                "msgtype":"m.text", "body":"<b>Fixture</b>", "format":"org.matrix.custom.html",
+                "formatted_body":"<b>Fixture</b>"
+            }),
+        ),
+        (
+            "PUT",
+            "send/m.room.message/",
+            json!({
+                "msgtype":"m.text", "body":"**Fixture**", "format":"org.matrix.custom.html",
+                "formatted_body":"<strong>Fixture</strong>"
+            }),
+        ),
+        (
+            "PUT",
+            "send/m.room.message/",
+            json!({
+                "msgtype":"m.text", "body":"* Updated fixture",
+                "m.new_content":{"msgtype":"m.text","body":"Updated fixture"},
+                "m.relates_to":{"rel_type":"m.replace","event_id":event}
+            }),
+        ),
+        (
+            "PUT",
+            "send/m.reaction/",
+            json!({
+                "m.relates_to":{"rel_type":"m.annotation","event_id":event,"key":"👍"}
+            }),
+        ),
+        ("PUT", "redact/$original/", json!({})),
+        (
+            "PUT",
+            "redact/$original/",
+            json!({"reason":"Stale fixture"}),
+        ),
+        ("POST", "receipt/m.read/$original", json!({})),
+        (
+            "PUT",
+            "typing/@fixture:test",
+            json!({"typing":true,"timeout":30_000}),
+        ),
+        ("PUT", "typing/@fixture:test", json!({"typing":false})),
+    ]) {
+        assert_eq!(request.method.as_str(), verb);
+        let decoded = urlencoding::decode(request.url.path()).unwrap();
+        let expected = format!("/_matrix/client/v3/rooms/{room}/{expected_path}");
+        if expected.ends_with('/') {
+            assert_eq!(
+                decoded.rsplit_once('/').unwrap().0,
+                expected.trim_end_matches('/')
+            );
+        } else {
+            assert_eq!(decoded, expected);
+        }
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&request.body).unwrap(),
+            body
+        );
+    }
+}
+
+#[tokio::test]
+async fn matrix_messaging_keeps_homeserver_errors_in_send_failures() {
+    let server = MockServer::start().await;
+    let adapter = adapter_for_matrix_fixture(&server);
+    Mock::given(path_regex(r"^/_matrix/client/v3/rooms/"))
+        .respond_with(ResponseTemplate::new(403).set_body_string("fixture denied"))
+        .expect(6)
+        .mount(&server)
+        .await;
+    let room = "!room:test";
+    let event = "$original";
+    for (result, detail) in [
+        (
+            adapter.send_text(room, "Fixture", None).await.map(drop),
+            "Matrix API error",
+        ),
+        (
+            adapter.edit_text(room, event, "Updated").await,
+            "Matrix edit API error",
+        ),
+        (
+            adapter.send_reaction(room, event, "👍").await.map(drop),
+            "Matrix reaction error",
+        ),
+        (
+            adapter.redact_event(room, event, None).await.map(drop),
+            "Matrix redact error",
+        ),
+        (
+            adapter.send_read_receipt(room, event).await,
+            "Matrix read receipt error",
+        ),
+        (
+            adapter.send_typing(room, true, Some(5_000)).await,
+            "Matrix typing error",
+        ),
+    ] {
+        assert!(matches!(
+            result,
+            Err(GatewayError::SendFailed(error))
+                if error.contains(detail) && error.contains("fixture denied")
+        ));
+    }
 }
 
 #[tokio::test]
