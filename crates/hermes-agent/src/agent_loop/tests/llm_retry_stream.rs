@@ -865,6 +865,7 @@
         CostLimit,
         UnknownTool,
         SemanticRetry,
+        FinalizerRewrite,
         EmptyStop,
         PartialInterrupt,
         RecoverOnSecondAttempt,
@@ -935,7 +936,7 @@
 
         fn chat_completion_stream(
             &self,
-            _messages: &[Message],
+            messages: &[Message],
             _tools: &[ToolSchema],
             _max_tokens: Option<u32>,
             _temperature: Option<f64>,
@@ -986,6 +987,25 @@
                     }),
                     Ok(stream_chunk_finish("length")),
                 ],
+                StreamRetryScenario::FinalizerRewrite => {
+                    let text = if attempt == 1 {
+                        "Read the [fixture details](URL)."
+                    } else {
+                        assert_eq!(attempt, 2, "the corrected answer ends the turn");
+                        assert!(messages.iter().any(|message| {
+                            message.role == MessageRole::System
+                                && message.content.as_deref().is_some_and(|content| {
+                                    content.contains("Output quality contract")
+                                        && content.contains("no unresolved placeholders")
+                                })
+                        }));
+                        "The fixture contains two records."
+                    };
+                    vec![
+                        Ok(stream_chunk_content(text)),
+                        Ok(stream_chunk_finish("stop")),
+                    ]
+                }
                 StreamRetryScenario::EmptyStop => vec![Ok(stream_chunk_finish("stop"))],
                 StreamRetryScenario::PartialInterrupt => vec![Ok(StreamChunk {
                     usage: Some(hermes_core::UsageStats {
@@ -1150,6 +1170,37 @@
         assert_eq!(notices.len(), 2);
         assert!(notices[0].starts_with("Reasoning-only response"));
         assert!(notices[1].starts_with("Empty assistant response"));
+    }
+
+    #[tokio::test]
+    async fn stream_finalizer_requests_a_rewrite_before_finishing() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::FinalizerRewrite));
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let result = agent
+            .run_stream(
+                vec![Message::user("Summarise the fixture")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(result.total_turns, 2);
+        assert_eq!(*provider.calls.lock().unwrap(), 2);
+        assert_eq!(
+            result
+                .messages
+                .last()
+                .and_then(|message| message.content.as_deref()),
+            Some("The fixture contains two records.")
+        );
     }
 
     #[tokio::test]
