@@ -43,6 +43,36 @@ const PLACEHOLDER_VALUES: &[&str] = &[
 /// What masked text shows in place of a secret value.
 pub const MASK: &str = "***";
 
+/// Masks a secret for operator display: `"(empty)"` when empty, `short_mask`
+/// when shorter than `min_chars` characters, or `<first4>***<last4>` /
+/// `***<last4>` depending on `show_prefix`.
+pub fn mask_secret_preview(
+    secret: &str,
+    show_prefix: bool,
+    min_chars: usize,
+    short_mask: &str,
+) -> String {
+    if secret.is_empty() {
+        return "(empty)".to_string();
+    }
+    if secret.chars().count() < min_chars {
+        return short_mask.to_string();
+    }
+    let tail = &secret[secret.ceil_char_boundary(secret.len().saturating_sub(4))..];
+    if show_prefix {
+        let head = &secret[..secret.floor_char_boundary(4)];
+        format!("{head}***{tail}")
+    } else {
+        format!("***{tail}")
+    }
+}
+
+/// Masks a secret showing up to 4 leading and trailing characters only when
+/// at least 20 characters long, hiding shorter values and their lengths.
+pub fn mask_secret(secret: &str) -> String {
+    mask_secret_preview(secret, true, 20, "********")
+}
+
 /// Values registered from loaded configuration, with the label each is
 /// reported under.
 static REGISTERED: LazyLock<RwLock<Vec<(String, String)>>> =

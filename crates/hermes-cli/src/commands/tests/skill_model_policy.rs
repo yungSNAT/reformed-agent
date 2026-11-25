@@ -986,9 +986,14 @@ llm_providers:
 
     #[test]
     fn mask_secret_value_hides_payload() {
-        let raw = "very-secret-value";
-        let masked = mask_secret_value(raw);
-        assert!(!masked.contains(raw));
+        let short = "very-secret-value";
+        assert_eq!(mask_secret_value(short), "********");
+
+        let long = "very-secret-value-012345";
+        let masked = mask_secret_value(long);
+        assert!(!masked.contains(long));
+        assert!(masked.starts_with("very"));
+        assert!(masked.ends_with("2345"));
         assert!(masked.contains("***"));
     }
 

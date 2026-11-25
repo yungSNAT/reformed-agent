@@ -180,7 +180,7 @@ async fn run_gateway(
                     msg.push_str(&issue);
                     msg.push('\n');
                 }
-                msg.push_str("请先执行 `hermes gateway setup` 或 `hermes auth login <provider>` 修复后再启动。");
+                msg.push_str("Run `hermes gateway setup` or `hermes auth login <provider>` to fix these issues before starting.");
                 return Err(AgentError::Config(msg));
             }
 

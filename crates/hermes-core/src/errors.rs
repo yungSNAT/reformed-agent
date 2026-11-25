@@ -301,6 +301,14 @@ impl From<std::io::Error> for GatewayError {
     }
 }
 
+/// Whether a SQLite error message indicates FTS5 support or tokenizer setup is unavailable.
+pub fn is_fts5_unavailable_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("no such module")
+        || lower.contains("unknown tokenizer")
+        || lower.contains("fts5")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -25,17 +25,7 @@ fn secret_stdout_allowed() -> bool {
 }
 
 fn mask_secret_value(secret: &str) -> String {
-    if secret.is_empty() {
-        return "(empty)".to_string();
-    }
-    if secret.len() <= 8 {
-        return "*".repeat(secret.len());
-    }
-    format!(
-        "{}***{}",
-        &secret[..secret.floor_char_boundary(4)],
-        &secret[secret.ceil_char_boundary(secret.len().saturating_sub(4))..]
-    )
+    hermes_core::secret_values::mask_secret(secret)
 }
 
 // ---------------------------------------------------------------------------

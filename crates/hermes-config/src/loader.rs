@@ -106,6 +106,13 @@ pub fn resolve_credential_link_target(path: &Path) -> std::io::Result<PathBuf> {
     Ok(target)
 }
 
+#[derive(Clone, Copy)]
+enum AtomicWriteMode {
+    PreserveExisting,
+    OwnerOnly,
+    NoFollowExisting(Option<crate::FileIdentity>),
+}
+
 /// Atomically write bytes to a path by writing a sibling temp file then renaming.
 ///
 /// A symlinked `path` keeps its link: the temp file is staged beside the
@@ -118,16 +125,151 @@ pub fn resolve_credential_link_target(path: &Path) -> std::io::Result<PathBuf> {
 /// the default mode, as before); on Windows the replacement keeps the
 /// existing file's DACL.
 pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
-    let path = resolve_symlink_target(path);
-    let path = path.as_path();
-    let parent = target_parent(path);
-    std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
+    atomic_write_bytes_with_mode(path, bytes, AtomicWriteMode::PreserveExisting)
+}
+
+/// Atomically write private bytes (`0o600` on Unix) to `path`, keeping a
+/// symlinked store linked whilst refusing a link whose target folder is missing.
+pub fn atomic_write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
+    atomic_write_bytes_with_mode(path, bytes, AtomicWriteMode::OwnerOnly)
+}
+
+/// Atomically write bytes to `path` without following a leaf symlink. When
+/// `expected_existing` is `Some`, also requires the existing regular file to
+/// keep that exact identity until replacement.
+pub fn atomic_write_bytes_no_follow(
+    path: &Path,
+    bytes: &[u8],
+    expected_existing: Option<crate::FileIdentity>,
+) -> Result<(), ConfigError> {
+    atomic_write_bytes_with_mode(
+        path,
+        bytes,
+        AtomicWriteMode::NoFollowExisting(expected_existing),
+    )
+}
+
+/// Read a regular UTF-8 file without following a leaf symlink, returning its
+/// contents and file identity for later verification.
+pub fn read_regular_file_no_follow(
+    path: &Path,
+) -> Result<(String, crate::FileIdentity), ConfigError> {
+    let (_real_parent, real_path) = verify_no_follow_target(path, None, true)?;
+    let before_id = crate::file_identity(&real_path).ok_or_else(|| {
+        ConfigError::ParseError(format!("could not read identity of {}", path.display()))
+    })?;
+    let mut file = std::fs::File::open(&real_path).map_err(io_to_config_error)?;
+    let fmeta = file.metadata().map_err(io_to_config_error)?;
+    if !fmeta.is_file() {
+        return Err(ConfigError::ParseError(format!(
+            "refusing non-regular file at {}",
+            path.display()
+        )));
+    }
+    let handle_id = crate::file_identity_from_file(&file).ok_or_else(|| {
+        ConfigError::ParseError(format!(
+            "could not read handle identity of {}",
+            path.display()
+        ))
+    })?;
+    if handle_id != before_id {
+        return Err(ConfigError::ParseError(format!(
+            "target file changed while opening {}",
+            path.display()
+        )));
+    }
+    let mut content = String::new();
+    std::io::Read::read_to_string(&mut file, &mut content).map_err(io_to_config_error)?;
+    Ok((content, handle_id))
+}
+
+fn verify_no_follow_target(
+    path: &Path,
+    expected_existing: Option<crate::FileIdentity>,
+    must_exist: bool,
+) -> Result<(PathBuf, PathBuf), ConfigError> {
+    check_no_follow_leaf(path, None, must_exist)?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| ConfigError::ParseError(format!("invalid file path: {}", path.display())))?;
+    let real_parent = std::fs::canonicalize(target_parent(path)).map_err(io_to_config_error)?;
+    let real_path = real_parent.join(file_name);
+    check_no_follow_leaf(&real_path, expected_existing, must_exist)?;
+    Ok((real_parent, real_path))
+}
+
+fn check_no_follow_leaf(
+    path: &Path,
+    expected_existing: Option<crate::FileIdentity>,
+    must_exist: bool,
+) -> Result<(), ConfigError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                return Err(ConfigError::ParseError(format!(
+                    "refusing to follow symlink at {}",
+                    path.display()
+                )));
+            }
+            if !meta.is_file() {
+                return Err(ConfigError::ParseError(format!(
+                    "refusing non-regular file at {}",
+                    path.display()
+                )));
+            }
+            if let Some(expected) = expected_existing {
+                if crate::file_identity(path) != Some(expected) {
+                    return Err(ConfigError::ParseError(format!(
+                        "target file changed concurrently at {}",
+                        path.display()
+                    )));
+                }
+            }
+            Ok(())
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && !must_exist => {
+            if expected_existing.is_some() {
+                Err(io_to_config_error(err))
+            } else {
+                Ok(())
+            }
+        }
+        Err(err) => Err(io_to_config_error(err)),
+    }
+}
+
+fn atomic_write_bytes_with_mode(
+    path: &Path,
+    bytes: &[u8],
+    mode: AtomicWriteMode,
+) -> Result<(), ConfigError> {
+    let (target_buf, expected_parent, expected_id) = match mode {
+        AtomicWriteMode::PreserveExisting => (resolve_symlink_target(path), None, None),
+        AtomicWriteMode::OwnerOnly => {
+            let resolved = resolve_credential_link_target(path).map_err(io_to_config_error)?;
+            (resolved, None, None)
+        }
+        AtomicWriteMode::NoFollowExisting(expected_id) => {
+            let (real_parent, real_path) =
+                verify_no_follow_target(path, expected_id, expected_id.is_some())?;
+            (real_path, Some(real_parent), expected_id)
+        }
+    };
+    let target = target_buf.as_path();
+    let parent = target_parent(target);
+    if !matches!(mode, AtomicWriteMode::NoFollowExisting(_)) {
+        std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
+    }
     // A name already taken, by another writer or a crashed run whose pid and
     // counter repeat (as in a container), is left alone for a fresh one.
     let mut attempts = 0;
     let (tmp_path, mut file) = loop {
-        let tmp_path = atomic_temp_path(path)?;
-        match create_temp_file(&tmp_path, path) {
+        let tmp_path = atomic_temp_path(target)?;
+        match create_temp_file(
+            &tmp_path,
+            target,
+            matches!(mode, AtomicWriteMode::OwnerOnly),
+        ) {
             Ok(file) => break (tmp_path, file),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && attempts < 15 => {
                 attempts += 1;
@@ -139,19 +281,49 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
 
     let result = (|| -> Result<(), ConfigError> {
         #[cfg(unix)]
-        if let Ok(existing) = std::fs::metadata(path) {
+        {
             use std::os::unix::fs::PermissionsExt;
-            // The umask may have cleared bits the target has.
-            let mode = existing.permissions().mode() & 0o777;
-            if let Err(err) = file.set_permissions(std::fs::Permissions::from_mode(mode)) {
-                tracing::warn!("could not keep mode {mode:o} for {}: {err}", path.display());
+            if matches!(mode, AtomicWriteMode::OwnerOnly) {
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .map_err(io_to_config_error)?;
+            } else if let Ok(existing) = std::fs::symlink_metadata(target) {
+                if !existing.file_type().is_symlink() {
+                    // The umask may have cleared bits the target has.
+                    let existing_mode = existing.permissions().mode() & 0o777;
+                    if let Err(err) =
+                        file.set_permissions(std::fs::Permissions::from_mode(existing_mode))
+                    {
+                        tracing::warn!(
+                            "could not keep mode {existing_mode:o} for {}: {err}",
+                            target.display()
+                        );
+                    }
+                }
             }
         }
         file.write_all(bytes).map_err(io_to_config_error)?;
         file.sync_all().map_err(io_to_config_error)?;
         drop(file);
         written = true;
-        replace_temp_file(&tmp_path, path)?;
+        if let Some(ref real_parent) = expected_parent {
+            if std::fs::canonicalize(target_parent(path)).ok().as_ref() != Some(real_parent) {
+                return Err(ConfigError::ParseError(format!(
+                    "parent directory changed concurrently for {}",
+                    path.display()
+                )));
+            }
+            check_no_follow_leaf(target, expected_id, expected_id.is_some())?;
+        }
+        replace_temp_file(&tmp_path, target)?;
+        #[cfg(unix)]
+        if matches!(mode, AtomicWriteMode::OwnerOnly) {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o600))
+                .map_err(io_to_config_error)?;
+        }
+        if matches!(mode, AtomicWriteMode::OwnerOnly) {
+            let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
+        }
         Ok(())
     })();
 
@@ -159,9 +331,9 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
         // A failed Windows replace can remove the target before the rename
         // fallback fails. With the target gone, the fully written temp file
         // may hold the only copy, so keep it.
-        Err(err) if written && !path.exists() => Err(ConfigError::ParseError(format!(
+        Err(err) if written && !target.exists() => Err(ConfigError::ParseError(format!(
             "{err}; {} was removed and its new content is in {}",
-            path.display(),
+            target.display(),
             tmp_path.display()
         ))),
         Err(err) => {
@@ -173,19 +345,27 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
 }
 
 /// Creates the temp file for a write to `target`. On Unix it is created with
-/// the existing target's permission bits (less the umask), so a file staged
-/// beside a linked target never starts readable by an account the target
-/// shuts out.
-fn create_temp_file(tmp_path: &Path, target: &Path) -> std::io::Result<std::fs::File> {
+/// `0o600` (when `owner_only`) or the existing target's permission bits (less
+/// the umask), so a file staged beside a linked target never starts readable
+/// by an account the target shuts out.
+fn create_temp_file(
+    tmp_path: &Path,
+    target: &Path,
+    owner_only: bool,
+) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
-    if let Ok(existing) = std::fs::metadata(target) {
+    {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        options.mode(existing.permissions().mode() & 0o777);
+        if owner_only {
+            options.mode(0o600);
+        } else if let Ok(existing) = std::fs::metadata(target) {
+            options.mode(existing.permissions().mode() & 0o777);
+        }
     }
     #[cfg(not(unix))]
-    let _ = target;
+    let _ = (target, owner_only);
     options.open(tmp_path)
 }
 

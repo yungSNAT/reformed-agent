@@ -692,7 +692,7 @@ fn atomic_temp_file_is_created_with_the_target_mode() {
     std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
     let temp = dir.path().join(".tokens.json.tmp");
 
-    let _file = create_temp_file(&temp, &target).unwrap();
+    let _file = create_temp_file(&temp, &target, false).unwrap();
 
     let mode = std::fs::metadata(&temp).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "the temp file started at {mode:o}");
@@ -849,4 +849,48 @@ fn atomic_write_skips_temp_names_left_by_an_earlier_run() {
     for stale in &left {
         assert_eq!(std::fs::read_to_string(stale).unwrap(), "stale");
     }
+}
+
+#[test]
+fn read_regular_file_and_write_no_follow_detect_concurrent_swap() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    std::fs::write(&path, "before").unwrap();
+
+    let (text, before_id) = read_regular_file_no_follow(&path).unwrap();
+    assert_eq!(text, "before");
+
+    atomic_write_bytes_no_follow(&path, b"after", Some(before_id)).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
+
+    // Replacing the file changes its identity (or removes it); reusing stale `before_id` must fail.
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, "swapped").unwrap();
+    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(before_id)).unwrap_err();
+    assert!(err.to_string().contains("changed concurrently"), "{err}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "swapped");
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_bytes_no_follow_rejects_leaf_symlink_and_allows_symlinked_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let real_dir = dir.path().join("real");
+    std::fs::create_dir_all(&real_dir).unwrap();
+    let target = real_dir.join("target.txt");
+    std::fs::write(&target, "keep").unwrap();
+
+    let leaf_link = dir.path().join("leaf.txt");
+    std::os::unix::fs::symlink(&target, &leaf_link).unwrap();
+    let err = atomic_write_bytes_no_follow(&leaf_link, b"bad", None).unwrap_err();
+    assert!(err.to_string().contains("symlink"), "{err}");
+    assert!(read_regular_file_no_follow(&leaf_link).is_err());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+
+    let dir_link = dir.path().join("dir_link");
+    std::os::unix::fs::symlink(&real_dir, &dir_link).unwrap();
+    let via_dir = dir_link.join("target.txt");
+    let (_, id) = read_regular_file_no_follow(&via_dir).unwrap();
+    atomic_write_bytes_no_follow(&via_dir, b"updated", Some(id)).unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "updated");
 }

@@ -749,15 +749,6 @@ class HindsightMemoryProvider(MemoryProvider):
             llm_key = getpass.getpass(prompt="") if sys.stdin.isatty() else sys.stdin.readline().strip()
             if llm_key:
                 env_writes["HINDSIGHT_LLM_API_KEY"] = llm_key
-            else:
-                env_path = Path(hermes_home) / ".env"
-                existing_llm_key = ""
-                if env_path.exists():
-                    for line in env_path.read_text().splitlines():
-                        if line.startswith("HINDSIGHT_LLM_API_KEY="):
-                            existing_llm_key = line.split("=", 1)[1]
-                            break
-                env_writes["HINDSIGHT_LLM_API_KEY"] = existing_llm_key
 
         # Step 4: Save everything
         provider_config.setdefault("bank_id", "hermes")
@@ -779,24 +770,13 @@ class HindsightMemoryProvider(MemoryProvider):
         self.save_config(provider_config, hermes_home)
 
         if env_writes:
-            env_path = Path(hermes_home) / ".env"
-            env_path.parent.mkdir(parents=True, exist_ok=True)
-            existing_lines = []
-            if env_path.exists():
-                existing_lines = env_path.read_text().splitlines()
-            updated_keys = set()
-            new_lines = []
-            for line in existing_lines:
-                key_match = line.split("=", 1)[0].strip() if "=" in line and not line.startswith("#") else None
-                if key_match and key_match in env_writes:
-                    new_lines.append(f"{key_match}={env_writes[key_match]}")
-                    updated_keys.add(key_match)
-                else:
-                    new_lines.append(line)
-            for k, v in env_writes.items():
-                if k not in updated_keys:
-                    new_lines.append(f"{k}={v}")
-            env_path.write_text("\n".join(new_lines) + "\n")
+            try:
+                from hermes_cli.config import save_env_value
+            except ImportError:
+                logger.warning("hindsight: hermes_cli.config unavailable — skipping .env write")
+            else:
+                for k, v in env_writes.items():
+                    save_env_value(k, v)
 
         if mode == "local_embedded":
             materialized_config = dict(provider_config)
