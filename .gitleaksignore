@@ -62,3 +62,7 @@ fd76830cc553625030df46400f012575cf905d9e:hermes_cli/copilot_auth.py:generic-api-
 
 # A fixture that the media delivery test media_delivery_blocks_home_credential_subdir_under_home_exception writes to a temporary home's .ssh/id_rsa; the test has since changed.
 2d0aa4c5ff203052df6c711b6751bf2f0a4d9d7a:crates/hermes-gateway/src/media.rs:private-key:1025
+
+# Fixture credentials ("fixture-..." values and loopback hosts) that the e2e test gateway_cli_setup_persists_platform_specific_fields writes through gateway setup and reads back from a temporary home.
+266298f8ebc6ab3314f4b7c29c370f37b3334ca1:crates/hermes-cli/tests/e2e_gateway_process.rs:generic-password:294
+266298f8ebc6ab3314f4b7c29c370f37b3334ca1:crates/hermes-cli/tests/e2e_gateway_process.rs:generic-password:303
