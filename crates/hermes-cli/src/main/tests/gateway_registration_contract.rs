@@ -27,6 +27,7 @@ async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adap
             "email",
             "sms",
             "homeassistant",
+            "ntfy",
             "webhook",
         ]
         .into_iter()
@@ -94,6 +95,60 @@ async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adap
                     "phone_number": "+15550100100",
                     "api_url": loopback,
                 },
+            }),
+        ),
+        (
+            "whatsapp",
+            "whatsapp",
+            cfg!(feature = "gateway-whatsapp"),
+            serde_json::json!({
+                "token": value,
+                "extra": {
+                    "phone_number_id": "12345",
+                    "api_base_url": loopback,
+                },
+            }),
+        ),
+        (
+            "dingtalk",
+            "dingtalk",
+            cfg!(feature = "gateway-dingtalk"),
+            serde_json::json!({
+                "extra": {
+                    "client_id": "fixture-app",
+                    "client_secret": value,
+                    "openapi_endpoint": loopback,
+                },
+            }),
+        ),
+        (
+            "sms",
+            "sms",
+            cfg!(feature = "gateway-sms"),
+            serde_json::json!({
+                "extra": {
+                    "account_sid": "fixture-account",
+                    "auth_token": value,
+                    "from_number": "+15550100100",
+                },
+            }),
+        ),
+        (
+            "homeassistant",
+            "homeassistant",
+            cfg!(feature = "gateway-homeassistant"),
+            serde_json::json!({
+                "token": value,
+                "extra": {"base_url": loopback},
+            }),
+        ),
+        (
+            "ntfy",
+            "ntfy",
+            cfg!(feature = "gateway-ntfy"),
+            serde_json::json!({
+                "token": value,
+                "extra": {"server": loopback, "topic": "fixture-topic"},
             }),
         ),
         (
@@ -197,6 +252,9 @@ async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adap
         sidecars.len(),
         usize::from(cfg!(feature = "gateway-webhook"))
             + usize::from(cfg!(feature = "gateway-api-server"))
+            + usize::from(cfg!(feature = "gateway-dingtalk"))
+            + usize::from(cfg!(feature = "gateway-homeassistant"))
+            + usize::from(cfg!(feature = "gateway-ntfy"))
     );
     for sidecar in sidecars {
         sidecar.abort();
