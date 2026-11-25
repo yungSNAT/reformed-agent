@@ -885,6 +885,45 @@ mod tests {
     }
 
     #[test]
+    fn metadata_falls_back_for_unlisted_models() {
+        assert!(supports_tools("gpt-4o-mini"));
+        assert_eq!(max_output_tokens("openai/gpt-4o-mini"), Some(16_384));
+        assert!(supports_tools("custom/fixture-engine"));
+        assert_eq!(max_output_tokens("custom/fixture-engine"), None);
+    }
+
+    #[test]
+    fn estimates_include_message_envelopes_and_optional_tool_definitions() {
+        let role_only = serde_json::json!({"role": "user"});
+        let messages = [
+            role_only.clone(),
+            serde_json::json!({"role": "user", "content": "abcd"}),
+            serde_json::json!({"role": "user", "content": ["éééé", {"count": 2}]}),
+        ];
+        // The envelope estimates are 4, 8 and 7. The array contributes 1 + 3.
+        assert_eq!(estimate_messages_tokens_rough(&messages), 23);
+
+        let tools = [serde_json::json!({"name": "search"})];
+        let messages = [role_only];
+        // The system prompt and message take 4 + 15 bytes. The tool adds 17.
+        assert_eq!(estimate_request_tokens_rough(&messages, "note", None), 5);
+        assert_eq!(
+            estimate_request_tokens_rough(&messages, "note", Some(&tools)),
+            9,
+        );
+    }
+
+    #[test]
+    fn model_switch_preflight_requires_a_target_and_an_estimate() {
+        assert!(build_model_switch_preflight_warning(None, "gpt-4o-mini", 0).is_none());
+        assert!(build_model_switch_preflight_warning(None, "  ", 300_000).is_none());
+        let warning = build_model_switch_preflight_warning(Some("  "), " gpt-4o-mini ", 64_000)
+            .expect("the threshold is inclusive");
+        assert!(warning.contains("gpt-4o-mini auto-compresses"));
+        assert!(!warning.contains("Context window shrinks"));
+    }
+
+    #[test]
     fn test_supports_vision() {
         assert!(supports_vision("gpt-4o"));
         assert!(supports_vision("claude-opus-4-6"));
