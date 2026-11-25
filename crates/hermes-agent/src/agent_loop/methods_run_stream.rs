@@ -706,7 +706,7 @@ impl AgentLoop {
                         serde_json::json!({
                             "reason": "cost_guard",
                             "total_turns": total_turns,
-                            "session_cost_usd": session_cost_usd,
+                            "session_cost_usd": session_cost_usd - spent_before_run_usd,
                         }),
                     );
                     return Ok(AgentResult {
