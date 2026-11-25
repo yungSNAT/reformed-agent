@@ -1,7 +1,9 @@
-    /// Records the tool names each request offers the model.
+    /// Records the tool names each request offers the model; each request
+    /// reports `cost_usd` when set.
     #[derive(Default)]
     struct OfferedToolsRecorder {
         offered: StdMutex<Vec<Vec<String>>>,
+        cost_usd: Option<f64>,
     }
 
     #[async_trait::async_trait]
@@ -20,7 +22,10 @@
             self.offered.lock().unwrap().push(names);
             Ok(hermes_core::LlmResponse {
                 message: hermes_core::Message::assistant("answer"),
-                usage: None,
+                usage: self.cost_usd.map(|cost| hermes_core::UsageStats {
+                    estimated_cost: Some(cost),
+                    ..Default::default()
+                }),
                 model: "recorder".into(),
                 finish_reason: Some("stop".into()),
             })
@@ -81,57 +86,15 @@
         assert_eq!(offered.last(), Some(&vec!["planned_tool".to_string()]));
     }
 
-    /// Every request costs $0.004.
-    #[derive(Default)]
-    struct FourMilliDollarProvider {
-        calls: std::sync::atomic::AtomicUsize,
-    }
-
-    #[async_trait::async_trait]
-    impl LlmProvider for FourMilliDollarProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[hermes_core::Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(hermes_core::LlmResponse {
-                message: hermes_core::Message::assistant("answer"),
-                usage: Some(hermes_core::UsageStats {
-                    prompt_tokens: 10,
-                    total_tokens: 10,
-                    estimated_cost: Some(0.004),
-                    ..Default::default()
-                }),
-                model: "priced".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[hermes_core::Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> futures::stream::BoxStream<'static, Result<hermes_core::StreamChunk, AgentError>> {
-            use futures::StreamExt;
-            futures::stream::empty().boxed()
-        }
-    }
-
     /// Runs whose results are never applied (objective continuations, quorum
     /// voters) still count towards the session's spend cap.
     #[test]
     fn runs_whose_results_are_not_applied_count_towards_the_spend_cap() {
         let mut app = build_minimal_test_app();
-        let provider = Arc::new(FourMilliDollarProvider::default());
+        let provider = Arc::new(OfferedToolsRecorder {
+            cost_usd: Some(0.004),
+            ..Default::default()
+        });
         let mut config = build_agent_config(app.config.as_ref(), "dynamic");
         config.skip_memory = true;
         config.skip_context_files = true;
@@ -168,5 +131,12 @@
         ))
         .expect("refused run");
         assert_eq!(fourth.total_turns, 0);
-        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(provider.offered.lock().unwrap().len(), 3);
+
+        // The refusal keeps its note when applied, and counts nothing.
+        app.apply_agent_result(fourth);
+        assert!(app
+            .cost_guard_note()
+            .is_some_and(|note| note.contains("before this run")));
+        assert!((app.session_cost_usd - 0.012).abs() < 1e-9, "{}", app.session_cost_usd);
     }

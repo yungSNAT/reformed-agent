@@ -612,28 +612,31 @@ impl AgentLoop {
             }
 
             if let Some(limit) = self.config.max_cost_usd {
-                let spent = spent_before_run_usd + session_cost_usd;
-                if !cost_warned && spent >= limit * self.config.cost_guard_degrade_at_ratio {
+                // The whole session's spend; the result still reports this run's.
+                let session_cost_usd = spent_before_run_usd + session_cost_usd;
+                if !cost_warned
+                    && session_cost_usd >= limit * self.config.cost_guard_degrade_at_ratio
+                {
                     cost_warned = true;
                     if forced_runtime_route.is_none() {
                         if let Some(model) = self.resolve_cost_degrade_model() {
                             forced_runtime_route = Some(self.turn_route_cost_guard(model.clone()));
                             ctx.add_message(Message::system(format!(
                                 "Cost guard: session spend is now ${:.4}/${:.4}. Switching to cheaper model `{}`.",
-                                spent, limit, model
+                                session_cost_usd, limit, model
                             )));
                         } else {
                             ctx.add_message(Message::system(format!(
                                 "Cost guard warning: session spend is now ${:.4}/${:.4}.",
-                                spent, limit
+                                session_cost_usd, limit
                             )));
                         }
                     }
                 }
-                if spent >= limit {
+                if session_cost_usd >= limit {
                     ctx.add_message(Message::system(format!(
                         "Cost guard tripped: session spend ${:.4} exceeded max_cost_usd ${:.4}. Stopping loop.",
-                        spent, limit
+                        session_cost_usd, limit
                     )));
                     self.memory_on_session_end(ctx.get_messages());
                     return Ok(AgentResult {
@@ -647,7 +650,7 @@ impl AgentLoop {
                         tool_errors,
                         usage: accumulated_usage,
                         interrupted: false,
-                        session_cost_usd: Some(session_cost_usd),
+                        session_cost_usd: Some(session_cost_usd - spent_before_run_usd),
                         session_started_hooks_fired,
                         compressed_transcripts: ctx.take_compressed_transcripts(),
                     });

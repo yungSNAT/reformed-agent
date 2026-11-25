@@ -1139,6 +1139,24 @@ mod tests {
     }
 
     #[test]
+    fn build_agent_config_maps_only_a_usable_session_spend_cap() {
+        let mut config = GatewayConfig::default();
+        config.agent.max_session_cost_usd = Some(2.5);
+        assert_eq!(
+            build_agent_config(&config, "openai:dynamic").max_cost_usd,
+            Some(2.5)
+        );
+        for unusable in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            config.agent.max_session_cost_usd = Some(unusable);
+            assert_eq!(
+                build_agent_config(&config, "openai:dynamic").max_cost_usd,
+                None,
+                "{unusable} is not a cap"
+            );
+        }
+    }
+
+    #[test]
     fn rpc_harness_autonomy_exposes_dashboard_surface() {
         let payload = rpc_harness_autonomy_payload(&serde_json::json!({})).expect("autonomy");
         let rendered = serde_json::to_string(&payload).expect("render");
