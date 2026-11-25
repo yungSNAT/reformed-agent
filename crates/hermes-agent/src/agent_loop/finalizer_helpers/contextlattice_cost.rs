@@ -229,6 +229,10 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
     let anthropic = hermes_intelligence::usage_pricing::anthropic_pricing_for_prompt(
         model, usage.prompt_tokens,
     );
+    let listed = match anthropic {
+        Some(_) => None,
+        None => listed_pricing(model, config.provider.as_deref()),
+    };
     let base_input = anthropic.as_ref().and_then(|entry| entry.input_cost_per_million);
     let base_output = anthropic.as_ref().and_then(|entry| entry.output_cost_per_million);
     let (input, output) = match (
@@ -236,7 +240,13 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
         config.completion_cost_per_million_usd,
     ) {
         (Some(i), Some(o)) => (i, o),
-        _ => base_input.zip(base_output).or_else(|| default_model_cost_per_million(model))?,
+        _ => base_input
+            .zip(base_output)
+            .or_else(|| {
+                let entry = listed.as_ref()?;
+                entry.input_cost_per_million.zip(entry.output_cost_per_million)
+            })
+            .or_else(|| default_model_cost_per_million(model))?,
     };
     let cache_tokens = usage.cache_read_tokens.saturating_add(usage.cache_write_tokens);
     let uncached = usage.prompt_tokens.saturating_sub(cache_tokens);
@@ -251,32 +261,34 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
                 hermes_intelligence::usage_pricing::ANTHROPIC_STANDARD_CACHE_RATIOS;
             (input * read, input * write)
         } else {
-            non_anthropic_cache_rates(model, config.provider.as_deref(), input)
+            // The model's own listed cache prices, scaled to `input`; an unlisted one is
+            // charged at full input, so an unknown discount never makes the estimate low.
+            let scaled = |pick: fn(&PricingEntry) -> Option<f64>| {
+                let entry = listed.as_ref()?;
+                let base = entry.input_cost_per_million.filter(|base| *base > 0.0)?;
+                Some(pick(entry)? * input / base)
+            };
+            (
+                scaled(|e| e.cache_read_cost_per_million).unwrap_or(input),
+                scaled(|e| e.cache_write_cost_per_million).unwrap_or(input),
+            )
         };
         cost += read * usage.cache_read_tokens as f64 + write * usage.cache_write_tokens as f64;
     }
     Some(cost / 1_000_000.0)
 }
 
-/// Cache read and write prices per million tokens for a model priced at `input`: the
-/// official table's cache rates scaled to `input`, else full input price, so an unknown
-/// discount never makes the estimate low.
-fn non_anthropic_cache_rates(model: &str, provider: Option<&str>, input: f64) -> (f64, f64) {
-    use hermes_intelligence::usage_pricing::{get_pricing_entry, PricingEntry};
+use hermes_intelligence::usage_pricing::PricingEntry;
+
+/// The official price table's entry for `model` (`provider:model`, or the configured
+/// provider). None for a model or provider the table does not list; its cached tokens are
+/// then charged at full input.
+fn listed_pricing(model: &str, provider: Option<&str>) -> Option<PricingEntry> {
     let (prefix, bare) = match model.split_once(':') {
         Some((prefix, bare)) => (Some(prefix), bare),
         None => (None, model),
     };
-    let entry = get_pricing_entry(bare, provider.or(prefix), None);
-    let rate = |pick: fn(&PricingEntry) -> Option<f64>| {
-        let entry = entry.as_ref()?;
-        let base = entry.input_cost_per_million.filter(|base| *base > 0.0)?;
-        Some(pick(entry)? * input / base)
-    };
-    (
-        rate(|e| e.cache_read_cost_per_million).unwrap_or(input),
-        rate(|e| e.cache_write_cost_per_million).unwrap_or(input),
-    )
+    hermes_intelligence::usage_pricing::get_pricing_entry(bare, provider.or(prefix), None)
 }
 
 #[cfg(test)]
@@ -294,6 +306,53 @@ mod non_anthropic_cache_pricing_tests {
         };
         let cost = estimate_usage_cost_usd(&usage, "openai:gpt-4o", &AgentConfig::default());
         assert!((cost.unwrap() - 0.1475).abs() < 1e-9, "{cost:?}");
+    }
+
+    #[test]
+    fn gpt_4_1_is_priced_from_its_listed_rates() {
+        // gpt-4.1: $2 input, $0.50 cached input, $8 output per million.
+        let usage = UsageStats {
+            prompt_tokens: 100_000,
+            completion_tokens: 1_000,
+            cache_read_tokens: 90_000,
+            ..UsageStats::default()
+        };
+        let cost = estimate_usage_cost_usd(&usage, "openai:gpt-4.1", &AgentConfig::default());
+        assert!((cost.unwrap() - 0.073).abs() < 1e-9, "{cost:?}");
+    }
+
+    /// What the cost guard and the session cap are given is never below the list price
+    /// of a listed model, cached or not.
+    #[test]
+    fn the_spend_guards_never_see_less_than_list_price() {
+        let usage = UsageStats {
+            prompt_tokens: 100_000,
+            completion_tokens: 1_000,
+            cache_read_tokens: 90_000,
+            ..UsageStats::default()
+        };
+        for model in [
+            "openai:gpt-4o",
+            "openai:gpt-4o-mini",
+            "openai:gpt-4.1",
+            "openai:gpt-4.1-mini",
+            "openai:gpt-4.1-nano",
+            "openai:o3",
+            "openai:o3-mini",
+            "deepseek:deepseek-chat",
+            "deepseek:deepseek-reasoner",
+            "deepseek:deepseek-v4-pro",
+        ] {
+            let entry = listed_pricing(model, None).expect(model);
+            let input = entry.input_cost_per_million.unwrap();
+            let read = entry.cache_read_cost_per_million.unwrap_or(input);
+            let list = (10_000.0 * input
+                + 90_000.0 * read
+                + 1_000.0 * entry.output_cost_per_million.unwrap())
+                / 1_000_000.0;
+            let cost = estimate_usage_cost_usd(&usage, model, &AgentConfig::default());
+            assert!(cost.unwrap() >= list - 1e-12, "{model}: {cost:?} < {list}");
+        }
     }
 
     #[test]
