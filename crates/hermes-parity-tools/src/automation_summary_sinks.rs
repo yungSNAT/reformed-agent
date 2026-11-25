@@ -2,14 +2,23 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-
-use serde_json::{Map, Value};
 
 use crate::automation_summary::{parse_sink_order, AutomationSummaryArgs};
 use crate::py::{self, Py};
+
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+struct HeaderConfigGuard(PathBuf);
+
+impl Drop for HeaderConfigGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
 
 pub(crate) fn bounded_timeout_secs(raw: f64) -> Duration {
     let clamped = if raw.is_finite() {
@@ -20,46 +29,131 @@ pub(crate) fn bounded_timeout_secs(raw: f64) -> Duration {
     Duration::from_secs_f64(clamped)
 }
 
+fn validate_endpoint(raw: &str) -> Result<&str, String> {
+    let url = raw.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("error=ValueError:invalid ContextLattice URL scheme".to_string());
+    }
+    if url
+        .bytes()
+        .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+    {
+        return Err("error=ValueError:invalid whitespace or control char in URL".to_string());
+    }
+    Ok(url)
+}
+
+fn write_auth_config(api_key: &str) -> Result<HeaderConfigGuard, String> {
+    let trimmed = api_key.trim();
+    if trimmed.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0) {
+        return Err("error=ValueError:invalid control character in API key".to_string());
+    }
+    let escaped = trimmed.replace('\\', "\\\\").replace('"', "\\\"");
+    let pid = std::process::id();
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("hermes-summary-curl-{pid}-{seq}.cfg"));
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts
+        .open(&path)
+        .map_err(|e| format!("error=OSError:failed creating curl config: {e}"))?;
+    let guard = HeaderConfigGuard(path);
+    writeln!(file, "header = \"Authorization: Bearer {escaped}\"")
+        .map_err(|e| format!("error=OSError:failed writing curl config: {e}"))?;
+    Ok(guard)
+}
+
+fn spawn_curl_post(
+    url: &str,
+    auth_guard: Option<&HeaderConfigGuard>,
+    timeout: Duration,
+    body: &Py,
+) -> Result<std::process::Output, String> {
+    let max_time = format!("{:.3}", timeout.as_secs_f64());
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-sS",
+        "--max-time",
+        &max_time,
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        "Accept: application/json",
+    ]);
+    if let Some(guard) = auth_guard {
+        cmd.arg("-K").arg(&guard.0);
+    }
+    cmd.args(["--data-binary", "@-", "-w", "\n%{http_code}", "--", url])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("error=CurlError:{e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let json_body = py::dumps(body, None, false);
+        let _ = stdin.write_all(json_body.as_bytes());
+    }
+    child
+        .wait_with_output()
+        .map_err(|e| format!("error=CurlError:{e}"))
+}
+
+fn parse_curl_status(out: std::process::Output) -> (bool, String) {
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let detail = if err.is_empty() {
+            format!("curl_exit_{}", out.status.code().unwrap_or(1))
+        } else {
+            err
+        };
+        return (false, format!("error=RequestError:{detail}"));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let code = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .and_then(|line| line.trim().parse::<u16>().ok());
+    match code {
+        Some(c) => ((200..300).contains(&c), format!("http_status={c}")),
+        None => (false, "error=CurlError:missing_http_status".to_string()),
+    }
+}
+
 fn post_contextlattice_json(
     endpoint: &str,
     api_key: &str,
     timeout: Duration,
-    body: &Map<String, Value>,
+    body: &Py,
 ) -> (bool, String) {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
-        return (
-            false,
-            "error=RuntimeError:failed to initialize tokio runtime".to_string(),
-        );
+    let url = match validate_endpoint(endpoint) {
+        Ok(u) => u,
+        Err(err) => return (false, err),
     };
-    rt.block_on(async {
-        let client = match reqwest::Client::builder().timeout(timeout).build() {
-            Ok(c) => c,
-            Err(e) => return (false, format!("error=ClientError:{e}")),
-        };
-        let mut req = client
-            .post(endpoint)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(body);
-        if !api_key.trim().is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", api_key.trim()));
+    let _auth_guard = if api_key.trim().is_empty() {
+        None
+    } else {
+        match write_auth_config(api_key) {
+            Ok(g) => Some(g),
+            Err(err) => return (false, err),
         }
-        match req.send().await {
-            Ok(resp) => {
-                let code = resp.status().as_u16();
-                (code < 300, format!("http_status={code}"))
-            }
-            Err(e) => (false, format!("error=RequestError:{e}")),
-        }
-    })
+    };
+    match spawn_curl_post(url, _auth_guard.as_ref(), timeout, body) {
+        Ok(out) => parse_curl_status(out),
+        Err(err) => (false, err),
+    }
 }
 
 fn write_contextlattice(
     args: &AutomationSummaryArgs,
+    api_key: &str,
     project: &str,
     content: &str,
 ) -> (bool, String) {
@@ -67,21 +161,16 @@ fn write_contextlattice(
         "{}/memory/write",
         args.contextlattice_url.trim_end_matches('/')
     );
-    let mut body = Map::new();
-    body.insert("projectName".into(), Value::String(project.to_string()));
-    body.insert(
-        "fileName".into(),
-        Value::String(args.context_file_name.clone()),
-    );
-    body.insert("content".into(), Value::String(content.to_string()));
+    let mut body = Py::dict([
+        ("projectName", Py::from(project)),
+        ("fileName", Py::from(args.context_file_name.as_str())),
+        ("content", Py::from(content)),
+    ]);
     if !args.context_topic_path.is_empty() {
-        body.insert(
-            "topicPath".into(),
-            Value::String(args.context_topic_path.clone()),
-        );
+        body.set("topicPath", Py::from(args.context_topic_path.as_str()));
     }
     let timeout = bounded_timeout_secs(args.context_timeout_secs);
-    post_contextlattice_json(&endpoint, &args.context_api_key, timeout, &body)
+    post_contextlattice_json(&endpoint, api_key, timeout, &body)
 }
 
 fn comment_github_issue(repo_root: &Path, issue: i64, content: &str) -> (bool, String) {
@@ -124,7 +213,7 @@ fn comment_github_issue(repo_root: &Path, issue: i64, content: &str) -> (bool, S
 }
 
 fn append_local_log(path: &Path, content: &str) -> (bool, String) {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         if let Err(e) = fs::create_dir_all(parent) {
             return (false, format!("error=OSError:{e}"));
         }
@@ -150,14 +239,18 @@ pub(crate) fn try_sinks(
     local_path: &Path,
     markdown: &str,
 ) -> (bool, String, Vec<Py>) {
+    let api_key = args.resolved_api_key();
     let mut attempts = Vec::new();
     for sink in parse_sink_order(&args.sink_order) {
         let (ok, detail) = match sink.as_str() {
-            "contextlattice" => write_contextlattice(args, project, markdown),
+            "contextlattice" => write_contextlattice(args, &api_key, project, markdown),
             "github" => comment_github_issue(repo_root, args.github_issue, markdown),
             "local" => append_local_log(local_path, markdown),
             "stdout" => {
-                println!("{markdown}");
+                // Keep JSON stdout uncorrupted when --json is active.
+                if !args.json {
+                    println!("{markdown}");
+                }
                 (true, "printed_stdout".to_string())
             }
             _ => (false, "unsupported_sink".to_string()),

@@ -20,48 +20,56 @@ pub struct EliteSyncGateArgs {
     /// Red-team gate command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate --max-severity-allowed none"
     )]
     redteam_cmd: String,
     /// Adapter chaos harness command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-adapter-chaos-harness"
     )]
     chaos_cmd: String,
     /// Zero-copy hot path benchmark command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-zero-copy-hotpath-bench"
     )]
     hotpath_cmd: String,
     /// Differential parity command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-differential-parity-gate --max-commits-behind 0"
     )]
     parity_diff_cmd: String,
     /// Required upstream surface coverage command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --upstream-ref upstream/main"
     )]
     surface_coverage_cmd: String,
     /// Eval trend gate command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-eval-trend-gate --allow-missing-baseline"
     )]
     eval_trend_cmd: String,
     /// Release secret-scan gate command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root . --report .sync-reports/security-release-gate-v2.json"
     )]
     release_security_cmd: String,
     /// Performance autopilot command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- run-performance-autopilot --repo-root . --strict"
     )]
     performance_autopilot_cmd: String,
@@ -71,6 +79,7 @@ pub struct EliteSyncGateArgs {
     /// Chaos compare command
     #[arg(
         long,
+        allow_hyphen_values = true,
         default_value = "cargo run --locked -q -p hermes-parity-tools -- compare-adapter-chaos-reports"
     )]
     chaos_compare_cmd: String,
@@ -78,7 +87,7 @@ pub struct EliteSyncGateArgs {
     #[arg(long, default_value = "")]
     report_path: String,
     /// Optional rollback command to execute when gate fails
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "", allow_hyphen_values = true)]
     rollback_cmd: String,
     /// Print JSON report
     #[arg(long)]
@@ -240,6 +249,9 @@ pub fn run(args: EliteSyncGateArgs) -> Result<i32, String> {
     let repo_root = resolve_repo_root(&args.repo_root)?;
     require_existing_dir(&repo_root, "repo root")?;
     let report_path = resolve_report_path(&repo_root, &args.report_path, "elite-sync-gate")?;
+    if let Some(parent) = report_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
     let collected = collect_gate_sections(&args, &repo_root, &report_path)?;
     let (gate_ok, passed, total, mut report) =
         build_gate_report(&args, &repo_root, collected.sections, &collected.passed)?;

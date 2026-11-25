@@ -23,6 +23,7 @@ mod fork_carry;
 mod git;
 mod global_proof;
 mod golden_parity;
+mod golden_parity_upstream;
 mod gpar_closure;
 mod harness_hardening;
 mod hotpath_bench;

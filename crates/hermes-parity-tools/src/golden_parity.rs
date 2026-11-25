@@ -9,12 +9,12 @@ use std::process::Command;
 use clap::Args;
 use regex::Regex;
 
+use crate::golden_parity_upstream::parse_upstream_commands;
 use crate::py::{self, Py};
 use crate::report_io::resolve_argument;
 use crate::script_helpers::{
     default_sync_report_path, read_rust_surface, resolve_repo_root, write_json_pretty,
 };
-use crate::slash_gate::extract_upstream_slash_commands;
 
 const TITLE_PREFIX: &str = "[Parity] Golden Harness Drift";
 
@@ -48,7 +48,7 @@ pub struct GoldenParityArgs {
     #[arg(long, default_value = "")]
     report: String,
     /// Maximum allowed missing upstream commands before failing
-    #[arg(long, default_value_t = -1)]
+    #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
     allow_missing: i64,
     /// Optional baseline JSON with max_missing_commands field
     #[arg(long, default_value = "docs/parity/golden-harness-baseline.json")]
@@ -80,28 +80,15 @@ pub fn parse_local_command_descriptions(
         .collect())
 }
 
-pub fn parse_upstream_commands(upstream_root: &Path) -> Result<BTreeSet<String>, String> {
-    let commands_py = upstream_root.join("hermes_cli/commands.py");
-    let raw = fs::read_to_string(&commands_py)
-        .map_err(|e| format!("failed to read upstream {}: {e}", commands_py.display()))?;
-    let mut cmds = extract_upstream_slash_commands(&raw);
-    let dict_re = Regex::new(r#""(/[a-zA-Z0-9_-]+)"\s*:"#).expect("valid regex");
-    for cap in dict_re.captures_iter(&raw) {
-        cmds.insert(cap[1].trim().to_string());
-    }
-    if cmds.is_empty() {
-        return Err(format!(
-            "failed to extract any COMMANDS from {}",
-            commands_py.display()
-        ));
-    }
-    Ok(cmds)
-}
-
 const TUI_FN_PATTERN: &str = r"fn\s+([a-zA-Z0-9_]+)\s*\(";
 
 pub fn parse_tui_tests(tui_rs: &Path) -> Result<BTreeSet<String>, String> {
-    let raw = read_rust_surface(tui_rs)?;
+    let mut raw = read_rust_surface(tui_rs)?;
+    let tui_dir = tui_rs.with_extension("");
+    if tui_dir.is_dir() {
+        raw.push('\n');
+        raw.push_str(&read_rust_surface(&tui_dir)?);
+    }
     let re = Regex::new(TUI_FN_PATTERN).expect("valid regex");
     Ok(re.captures_iter(&raw).map(|c| c[1].to_string()).collect())
 }
@@ -123,7 +110,7 @@ pub fn load_allow_missing(allow_missing: i64, baseline: &str, repo_root: &Path) 
         return 0;
     };
     match parsed.get("max_missing_commands") {
-        Some(Py::Int(n)) if *n >= 0 => *n as i64,
+        Some(Py::Int(n)) if *n >= 0 => i64::try_from(*n).unwrap_or(0),
         _ => 0,
     }
 }

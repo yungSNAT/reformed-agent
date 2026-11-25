@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -66,7 +67,6 @@ def publish_summary(
         "--preformatted-markdown", "-",
         "--contextlattice-url", str(contextlattice_url),
         "--context-timeout-secs", str(context_timeout_secs),
-        "--context-api-key", str(context_api_key),
         "--context-project", str(context_project),
         "--context-file-name", str(context_file_name),
         "--context-topic-path", str(context_topic_path),
@@ -74,15 +74,24 @@ def publish_summary(
         "--local-path", str(local_path),
         "--json",
     ]
-    proc = subprocess.run(cmd, input=summary_markdown, capture_output=True, text=True, check=False)
+    env = dict(os.environ)
+    env["AUTOMATION_SUMMARY_CONTEXT_API_KEY"] = str(context_api_key)
+    if not str(context_api_key):
+        env.pop("CONTEXTLATTICE_API_KEY", None)
+    proc = subprocess.run(cmd, input=summary_markdown, capture_output=True, text=True, env=env, check=False)
     try:
         parsed = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        parsed = {}
+    except json.JSONDecodeError as exc:
+        err_tail = (proc.stderr or "").strip()[-400:]
+        detail = f"exit={proc.returncode} json_err={exc}" + (f" stderr={err_tail}" if err_tail else "")
+        return {"ok": False, "primary_sink": "", "attempts": [{"sink": "cli", "ok": "false", "detail": detail}]}
+    attempts = list(parsed.get("attempts", []))
+    if not parsed.get("ok") and not attempts and proc.stderr:
+        attempts = [{"sink": "cli", "ok": "false", "detail": proc.stderr.strip()[-400:]}]
     return {
         "ok": bool(parsed.get("ok")),
         "primary_sink": str(parsed.get("primary_sink", "")),
-        "attempts": list(parsed.get("attempts", [])),
+        "attempts": attempts,
     }
 
 
