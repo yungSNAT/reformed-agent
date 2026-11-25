@@ -464,6 +464,56 @@ mod tests {
     }
 
     #[test]
+    fn formatters_report_filtered_activity_and_limit_tool_rows_by_audience() {
+        let report = InsightsReport {
+            days: 7,
+            source_filter: Some("telegram".into()),
+            platforms: vec![PlatformBreakdownRow {
+                platform: "telegram".into(),
+                sessions: 4,
+                messages: 24,
+                ..Default::default()
+            }],
+            activity: ActivityPatterns {
+                by_day: vec![DayCount {
+                    day: "Mon".into(),
+                    count: 3,
+                }],
+                by_hour: vec![HourCount { hour: 12, count: 3 }],
+                busiest_day: Some(DayCount {
+                    day: "Mon".into(),
+                    count: 3,
+                }),
+                busiest_hour: Some(HourCount { hour: 12, count: 3 }),
+                active_days: 2,
+                max_streak: 2,
+            },
+            tools: (1..=18)
+                .map(|i| ToolBreakdownRow {
+                    tool: format!("fixture-tool-{i:02}"),
+                    count: 25 - i,
+                    percentage: 2.5,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let terminal = format_terminal(&report);
+        assert!(terminal.contains("Last 7 days (telegram)"));
+        assert!(terminal.contains("📱 Platforms"));
+        assert!(terminal.contains("Peak hours: 12PM (3)"));
+        assert!(terminal.contains("Best streak: 2 consecutive days"));
+        assert!(terminal.contains("fixture-tool-15"));
+        assert!(!terminal.contains("fixture-tool-16"));
+        assert!(terminal.contains("... and 3 more tools"));
+
+        let gateway = format_gateway(&report);
+        assert!(gateway.contains("Busiest:** Mons (3 sessions), 12PM (3 sessions)"));
+        assert!(gateway.contains("**Best streak:** 2 consecutive days"));
+        assert!(gateway.contains("fixture-tool-08"));
+        assert!(!gateway.contains("fixture-tool-09"));
+    }
+
+    #[test]
     fn format_gateway_uses_markdown_and_caps_lists() {
         let data = data_with_two_sessions();
         let engine = SessionInsightsEngine::new(&data);
