@@ -45,7 +45,7 @@ future upstream commits cannot create new drift.
 | Deep problem-solving diff | Ratio `1.0`, no regressions, gaps, or unverified cases | `cargo run --locked -q -p hermes-parity-tools -- generate-deep-problem-solving-diff --check` |
 | Runtime placeholder discipline | Clean | `scripts/check-runtime-placeholders.sh` |
 | Rust workspace health | Build/test locally | `cargo build --workspace`, `cargo test --workspace` |
-| Cargo build surface | Track compile invalidation roots before crate splits | `scripts/audit-cargo-build-surface.sh` |
+| Cargo build surface | Track compile invalidation roots before crate splits | `cargo run --locked -q -p hermes-parity-tools -- audit-cargo-build-surface` |
 
 ## Current Implementation Direction
 

@@ -1949,7 +1949,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     worker.add_argument(
         "--redteam-cmd",
-        default=os.environ.get("UPSTREAM_SYNC_REDTEAM_CMD", "python3 scripts/run-redteam-gate.py"),
+        default=os.environ.get(
+            "UPSTREAM_SYNC_REDTEAM_CMD",
+            "cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate",
+        ),
         help="Command used for adversarial red-team gate.",
     )
     worker.add_argument(

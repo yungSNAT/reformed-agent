@@ -89,7 +89,7 @@ jobs:
           # Missing upstream commands are drift; the local TUI test and command contract checks still gate.
           jq -e '.missing_tui_tests == [] and .command_contract_failures == []' "$report" > /dev/null
       - name: Behavioral parity suite
-        run: python3 scripts/run-behavioral-parity-suite.py --repo-root . --report .sync-reports/behavioral-parity.json
+        run: cargo run --locked -q -p hermes-parity-tools -- run-behavioral-parity-suite --repo-root . --report .sync-reports/behavioral-parity.json
       - name: Bind report artifacts to the audit revisions
         shell: bash
         run: |
