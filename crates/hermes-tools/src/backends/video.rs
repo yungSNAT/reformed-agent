@@ -214,6 +214,10 @@ impl VideoBackend for VisionFrameSamplingVideoBackend {
     }
 }
 
+#[cfg(all(test, unix))]
+#[path = "video_sampling_tests.rs"]
+mod sampling_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
