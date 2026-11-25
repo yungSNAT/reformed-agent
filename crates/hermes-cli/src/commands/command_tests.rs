@@ -1246,6 +1246,8 @@ note the fixtures"));
     mod triage_contract;
     #[cfg(unix)]
     mod readiness_walkthrough_contract;
+    #[cfg(unix)]
+    mod graph_journey_contract;
     mod runtime_parity_ops;
     mod skill_model_policy;
 
