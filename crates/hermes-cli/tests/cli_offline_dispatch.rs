@@ -6,6 +6,61 @@ use std::time::Duration;
 use support::isolated_hermes;
 
 #[tokio::test]
+async fn offline_tool_toggles_persist_without_duplicate_config_entries() {
+    let root = tempfile::tempdir().unwrap();
+    let config_path = root.path().join("hermes/config.yaml");
+    for (args, expected) in [
+        (&["tools", "list", "--summary"][..], "enabled: (none)"),
+        (&["tools", "disable", "todo"], "Disabled tool 'todo'"),
+        (&["tools", "disable", "todo"], "Disabled tool 'todo'"),
+        (&["tools", "list"], "todo [disabled]"),
+        (
+            &["tools", "list", "--platform", "telegram", "--summary"],
+            "Tool summary (platform=telegram)",
+        ),
+        (&["tools", "enable", "todo"], "Enabled tool 'todo'"),
+        (&["tools", "enable", "todo"], "Enabled tool 'todo'"),
+        (&["tools", "list"], "todo [enabled]"),
+    ] {
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            isolated_hermes(root.path()).args(args).output(),
+        )
+        .await
+        .expect("tool configuration command timed out")
+        .unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(expected), "{args:?}: {stdout}");
+        if args.get(1) == Some(&"disable") {
+            let config = hermes_config::load_user_config_file(&config_path).unwrap();
+            assert_eq!(config.tools_config.disabled, ["todo"]);
+            assert!(config.tools_config.enabled.is_empty());
+        }
+        if args.get(1) == Some(&"enable") {
+            let config = hermes_config::load_user_config_file(&config_path).unwrap();
+            assert_eq!(config.tools_config.enabled, ["todo"]);
+            assert!(config.tools_config.disabled.is_empty());
+        }
+    }
+    let saved = std::fs::read(&config_path).unwrap();
+    for action in ["disable", "enable"] {
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            isolated_hermes(root.path())
+                .args(["tools", action])
+                .output(),
+        )
+        .await
+        .expect("missing tool name timed out")
+        .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(&format!("tools {action}: usage")));
+        assert_eq!(std::fs::read(&config_path).unwrap(), saved);
+    }
+}
+
+#[tokio::test]
 async fn offline_session_eval_applies_the_cli_limit_and_reports_write_errors() {
     let root = tempfile::tempdir().unwrap();
     let sessions = root.path().join("sample-sessions");
