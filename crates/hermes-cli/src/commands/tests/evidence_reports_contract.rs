@@ -3,6 +3,120 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
+async fn about_reports_gate_results_and_the_latest_local_sync_evidence() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::evidence_reports_contract::about_reports_gate_results_and_the_latest_local_sync_evidence",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    let source = home.join("fixture-source");
+    let parity = source.join("docs/parity");
+    let reports = source.join(".sync-reports");
+    std::fs::create_dir_all(&parity).unwrap();
+    std::env::set_var("HERMES_REPO_ROOT", &source);
+    let empty = command_output(&mut app, "/about", &[]).await;
+    assert!(empty.contains("Gate status (release/ci): unknown/unknown"));
+    assert!(empty.contains("Latest sync report: none"));
+
+    for (name, value) in [
+        (
+            "workstream-status.json",
+            json!({"upstream_ref":"fixture-ref", "upstream_sha":"fixture-upstream", "generated_at_utc":"fixture-generated"}),
+        ),
+        (
+            "upstream-missing-queue.json",
+            json!({"summary":{"by_disposition":{"pending":2, "ported":4, "superseded":1}}}),
+        ),
+        (
+            "global-parity-proof.json",
+            json!({"release_gate":{"pass":true}, "ci_gate":{"pass":false}}),
+        ),
+    ] {
+        std::fs::write(parity.join(name), value.to_string()).unwrap();
+    }
+    std::fs::create_dir_all(&reports).unwrap();
+    std::fs::write(reports.join("upstream-sync-01.txt"), "origin_sha: obsolete").unwrap();
+    std::fs::write(reports.join("upstream-sync-zz.json"), "irrelevant").unwrap();
+    std::fs::write(
+        reports.join("upstream-sync-02.txt"),
+        "origin_sha: fixture-origin\nupstream_sha: fixture-target\ntimestamp_utc: fixture-timestamp\n\n## Pending Upstream Commits\n\n```\na fixture one\n\nb fixture two\n```\nignored",
+    )
+    .unwrap();
+    let about = command_output(&mut app, "/about", &[]).await;
+    for expected in [
+        "Upstream ref: fixture-ref",
+        "Upstream sha: fixture-upstream",
+        "Workstream report generated_at: fixture-generated",
+        "Queue (pending/ported/superseded): 2/4/1",
+        "Gate status (release/ci): yes/no",
+        "Latest sync report: upstream-sync-02.txt",
+        "Latest sync timestamp_utc: fixture-timestamp",
+        "Latest report origin_sha: fixture-origin",
+        "Latest report upstream_sha: fixture-target",
+        "Pending upstream commits in latest report: 2",
+    ] {
+        assert!(about.contains(expected), "{about}");
+    }
+}
+
+#[tokio::test]
+async fn session_usage_and_compaction_commands_report_runtime_state() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::evidence_reports_contract::session_usage_and_compaction_commands_report_runtime_state",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    app.messages = vec![
+        hermes_core::Message::user("question"),
+        hermes_core::Message::assistant("response"),
+    ];
+    let usage = command_output(&mut app, "/usage", &[]).await;
+    assert!(usage.contains("provider usage metadata unavailable"));
+    assert!(usage.contains("unavailable until a provider returns usage metadata"));
+    app.last_usage = Some(hermes_core::UsageStats {
+        prompt_tokens: 11,
+        completion_tokens: 7,
+        total_tokens: 18,
+        ..Default::default()
+    });
+    app.session_usage = Some(hermes_core::UsageStats {
+        prompt_tokens: 30,
+        completion_tokens: 20,
+        total_tokens: 50,
+        ..Default::default()
+    });
+    let usage = command_output(&mut app, "/usage", &[]).await;
+    assert!(usage.contains("Last response: 11 prompt / 7 completion / 18 total tokens"));
+    assert!(usage.contains("Actual session: 30 prompt / 20 completion / 50 total tokens"));
+    let status = command_output(&mut app, "/status", &[]).await;
+    for (label, value) in [("Turns", "1"), ("Messages", "2"), ("Est. tokens", "~4")] {
+        assert!(status.lines().any(|line| {
+            line.split_once(':')
+                .is_some_and(|(key, field)| key.trim() == label && field.trim() == value)
+        }));
+    }
+    for (args, expected) in [
+        (&[][..], "ContextLattice governance: advisory."),
+        (&["governance"], "Usage: `/autocompact governance"),
+        (&["governance", "STRICT"], "mode set to `enforce`"),
+        (&["status"], "ContextLattice governance: enforce."),
+        (&["governance", "typo"], "Unknown governance mode 'typo'"),
+        (&["governance", "off"], "mode set to `off`"),
+        (&["show"], "ContextLattice governance: off."),
+        (&["now"], "Context too small to compress (2 messages)."),
+        (&["help"], "run immediate compaction pass"),
+        (&["typo"], "Unknown /autocompact action 'typo'"),
+    ] {
+        let output = command_output(&mut app, "/autocompact", args).await;
+        assert!(output.contains(expected), "{args:?}: {output}");
+    }
+}
+
+#[tokio::test]
 async fn studio_verifies_replay_logs_and_diffs_export_hash_sets() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::evidence_reports_contract::studio_verifies_replay_logs_and_diffs_export_hash_sets",
