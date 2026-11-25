@@ -437,6 +437,35 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn model_remediation_uses_the_offline_catalogue_for_not_found_errors() {
+        if !crate::isolated_test_profile::enter(
+            "app::tests::model_remediation_uses_the_offline_catalogue_for_not_found_errors",
+        ) {
+            return;
+        }
+        let mut app = build_minimal_test_app_with_state_root(hermes_home_dir());
+        let rejected_model = format!("{MOA_PROVIDER}:retired-fixture");
+        let replacement_model = format!("{MOA_PROVIDER}:{MOA_DEFAULT_PRESET}");
+        app.current_model = rejected_model.clone();
+        let unavailable = AgentError::LlmApi("Requested model does not exist".into());
+
+        let (target, notice) = app.model_auto_remediation_target(&unavailable).await.unwrap();
+        assert_eq!(target, replacement_model);
+        assert!(notice.contains(&rejected_model));
+        assert!(notice.contains(&replacement_model));
+        assert_eq!(app.current_model, rejected_model);
+        assert!(app
+            .model_auto_remediation_target(&AgentError::LlmApi("Request timed out".into()))
+            .await
+            .is_none());
+
+        for current in [replacement_model.as_str(), ":fixture", "unknown-fixture:retired"] {
+            app.current_model = current.to_string();
+            assert!(app.model_auto_remediation_target(&unavailable).await.is_none());
+        }
+    }
+
     #[test]
     fn model_switch_preflight_warning_is_ui_only_and_keeps_messages_clean() {
         let mut app = build_minimal_test_app();
