@@ -20,44 +20,39 @@ fn assert_exit(output: Output, code: i32, context: &str) {
     );
 }
 
-#[test]
-fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
-    let fixture = tempfile::tempdir().unwrap();
-    let root = fixture.path();
-    let isolate = |command: &mut Command| {
-        command
-            .env_clear()
-            .env("HOME", root)
-            .env("USERPROFILE", root)
-            .env("GIT_CONFIG_GLOBAL", root.join("gitconfig"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_ATTR_NOSYSTEM", "1")
-            .env("GIT_ALLOW_PROTOCOL", "file")
-            .current_dir(root);
-        for key in ["PATH", "SystemRoot", "LLVM_PROFILE_FILE"] {
-            if let Some(value) = std::env::var_os(key) {
-                command.env(key, value);
-            }
+fn isolate_git(command: &mut Command, root: &Path) {
+    command
+        .env_clear()
+        .env("HOME", root)
+        .env("USERPROFILE", root)
+        .env("GIT_CONFIG_GLOBAL", root.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env("GIT_ALLOW_PROTOCOL", "file")
+        .current_dir(root);
+    for key in ["PATH", "SystemRoot", "LLVM_PROFILE_FILE"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
         }
-    };
-    let git = |args: &[&str]| {
-        let mut command = Command::new("git");
-        isolate(&mut command);
-        let output = command.args(args).output().unwrap();
-        let stdout = std::str::from_utf8(&output.stdout)
-            .unwrap()
-            .trim()
-            .to_owned();
-        assert_exit(output, 0, &format!("fixture git {args:?}"));
-        stdout
-    };
-    let write = |name: &str, content: &str| {
-        let path = root.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, content).unwrap();
-    };
-    let commit = |message: &str| {
-        git(&[
+    }
+}
+
+fn fixture_git(root: &Path, args: &[&str]) -> String {
+    let mut command = Command::new("git");
+    isolate_git(&mut command, root);
+    let output = command.args(args).output().unwrap();
+    let stdout = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    assert_exit(output, 0, &format!("fixture git {args:?}"));
+    stdout
+}
+
+fn fixture_commit(root: &Path, message: &str) {
+    fixture_git(
+        root,
+        &[
             "-c",
             "user.name=Fixture",
             "-c",
@@ -67,7 +62,19 @@ fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
             "commit",
             "-qm",
             message,
-        ]);
+        ],
+    );
+}
+
+#[test]
+fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let git = |args: &[&str]| fixture_git(root, args);
+    let write = |name: &str, content: &str| {
+        let path = root.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
     };
     git(&["init", "--quiet", "--template="]);
     write("skills/fixture/SKILL.md", "Synthetic skill");
@@ -76,11 +83,11 @@ fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
         "Synthetic optional skill",
     );
     git(&["add", "--", "skills", "optional-skills"]);
-    commit("Fixture upstream");
+    fixture_commit(root, "Fixture upstream");
     let upstream = git(&["rev-parse", "HEAD"]);
     write("skills/local/SKILL.md", "Synthetic local skill");
     git(&["add", "--", "skills/local"]);
-    commit("Fixture local");
+    fixture_commit(root, "Fixture local");
     let local = git(&["rev-parse", "HEAD"]);
     assert_ne!(local, upstream);
 
@@ -129,7 +136,7 @@ fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
     }
 
     let mut command = parity_tool(root, "generate-workstream-status");
-    isolate(&mut command);
+    isolate_git(&mut command, root);
     assert_exit(
         command
             .args(["--no-fetch", "--upstream-ref", "HEAD^", "--upstream-url"])
@@ -172,6 +179,129 @@ fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
     assert!(markdown.contains(&format!("- Upstream: `HEAD^` (`{upstream}`)")));
     assert!(markdown.contains("| `WS4` | Skills parity | **in_progress** |"));
     assert!(markdown.contains("rows are deferred or not rechecked"));
+}
+
+#[test]
+fn divergence_gate_reports_local_paths_and_distinguishes_warnings_from_errors() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    fixture_git(root, &["init", "--quiet", "--template="]);
+    fs::write(root.join("sample.rs"), "// fixture").unwrap();
+    fixture_git(root, &["add", "--", "sample.rs"]);
+    fixture_commit(root, "Fixture paths");
+
+    let registry = root.join("registry.json");
+    let report_path = root.join("reports/divergence.json");
+    let invoke = |flags: &[&str]| {
+        let mut command = parity_tool(root, "validate-intentional-divergence");
+        isolate_git(&mut command, root);
+        command
+            .args(["--no-fetch", "--upstream-ref", "HEAD", "--upstream-url"])
+            .arg(root)
+            .args(["--divergence-file", "registry.json", "--output-json"])
+            .arg(&report_path)
+            .args(flags)
+            .output()
+            .unwrap()
+    };
+    let reviewed = json!({
+        "id": "active",
+        "status": "approved",
+        "workstream": "fixture",
+        "summary": "A tracked path",
+        "owner": " Fixture ",
+        "ticket": 1,
+        "last_reviewed": "2000-01-01",
+        "review_date": "9999-12-31",
+        "rationale": "Synthetic divergence evidence",
+        "path_prefixes": ["sample.rs"]
+    });
+    let mut overdue = reviewed.clone();
+    overdue["id"] = json!("overdue");
+    overdue["review_date"] = json!("2000-01-01");
+    overdue["path_prefixes"] = json!(["missing"]);
+    fs::write(&registry, json!({"items": [reviewed, overdue]}).to_string()).unwrap();
+    assert_exit(invoke(&["--check"]), 1, "warnings fail strict check");
+    assert_exit(
+        invoke(&["--check", "--allow-warnings"]),
+        0,
+        "warning allowance",
+    );
+    let report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    assert_eq!(report["divergence_file"], "registry.json");
+    assert_eq!(
+        report["summary"],
+        json!({
+            "items": 2, "errors": 0, "warnings": 2, "unowned": 0,
+            "review_overdue": 1, "local_paths": 1, "upstream_paths": 1
+        })
+    );
+    assert_eq!(report["items"][0]["owner"], "Fixture");
+    assert_eq!(report["items"][0]["matched_sample"], json!(["sample.rs"]));
+    assert_eq!(report["items"][1]["overdue"], true);
+
+    fs::write(&registry, r#"{"items":[{"owner":""}]}"#).unwrap();
+    assert_exit(
+        invoke(&["--check", "--allow-warnings"]),
+        1,
+        "warning allowance still rejects errors",
+    );
+    let report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    assert_eq!(report["summary"]["unowned"], 1);
+    assert!(report["summary"]["errors"].as_u64().unwrap() > 0);
+
+    let previous = fs::read(&report_path).unwrap();
+    for (input, diagnostic) in [
+        ("{", "invalid JSON"),
+        ("[]", "invalid items payload"),
+        (r#"{"items":0}"#, "invalid items payload"),
+        (r#"{"items":[null]}"#, "registry item is not an object"),
+    ] {
+        fs::write(&registry, input).unwrap();
+        let output = invoke(&["--check"]);
+        assert!(String::from_utf8_lossy(&output.stderr).contains(diagnostic));
+        assert_exit(output, 1, diagnostic);
+        assert_eq!(fs::read(&report_path).unwrap(), previous);
+    }
+}
+
+#[test]
+fn test_intent_report_marks_mapped_and_missing_evidence_in_both_formats() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let evidence = "crates/hermes-gateway/src/platforms/fixture.rs";
+    let path = root.join(evidence);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, "// fixture adapter").unwrap();
+    assert_exit(
+        parity_tool(root, "generate-test-intent-mapping")
+            .args([
+                "--out-json",
+                "report/mapping.json",
+                "--out-md",
+                "report/mapping.md",
+            ])
+            .output()
+            .unwrap(),
+        0,
+        "render test intent mapping reports",
+    );
+    let report: Value =
+        serde_json::from_slice(&fs::read(root.join("report/mapping.json")).unwrap()).unwrap();
+    let intents = report["intents"].as_array().unwrap();
+    let row = |id: &str| intents.iter().find(|entry| entry["id"] == id).unwrap();
+    let mapped = row("gateway-platform-behavior");
+    assert_eq!(mapped["mapped"], true);
+    assert_eq!(mapped["evidence_count"], 1);
+    assert_eq!(mapped["evidence_sample"], json!([evidence]));
+    let missing = row("tool-runtime-behavior");
+    assert_eq!(missing["mapped"], false);
+    assert_eq!(missing["evidence_sample"], json!([]));
+    assert_eq!(report["summary"]["mapped_intents"], 1);
+    assert_eq!(report["summary"]["unmapped_intents"], intents.len() - 1);
+    let markdown = fs::read_to_string(root.join("report/mapping.md")).unwrap();
+    assert!(markdown.contains("| `gateway-platform-behavior` | yes | 1 |"));
+    assert!(markdown.contains("| `tool-runtime-behavior` | no | 0 |"));
 }
 
 #[test]
