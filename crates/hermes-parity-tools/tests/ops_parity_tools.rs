@@ -623,3 +623,113 @@ fn cargo_surface_and_rustsec_gates_use_toolchain_cleanly() {
     let bad_out = run_cli(root, &["refresh-rustsec-patches", "check", "nonexistent"]);
     assert_eq!(bad_out.status.code(), Some(2));
 }
+
+#[test]
+fn rustsec_refresh_prunes_the_local_archive_and_check_reports_drift() {
+    let sandbox = tempfile::tempdir().expect("temporary repository");
+    let root = sandbox.path();
+    let patches = root.join("third_party/rustsec-patches");
+    let configured = patches.join("tungstenite-0.29.0");
+    for dir in ["patches", "tungstenite-0.29.0"] {
+        fs::create_dir_all(patches.join(dir)).expect("create patch directory");
+    }
+    fs::write(configured.join("stale.txt"), "previous vendored contents").unwrap();
+    fs::write(
+        patches.join("patches/tungstenite-0.29.0-use-getrandom.patch"),
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub const FIXTURE: u8 = 1;\n+pub const FIXTURE: u8 = 2;\n",
+    )
+    .unwrap();
+    let archives = root.join("archives");
+    let scratch = root.join("scratch");
+    let mock_bin = root.join("mock-bin");
+    for dir in [&archives, &scratch, &mock_bin] {
+        fs::create_dir(dir).unwrap();
+    }
+    for version in ["0.29.0", "0.30.0"] {
+        let name = format!("tungstenite-{version}");
+        let package = archives.join(&name);
+        fs::create_dir_all(package.join("src/snapshots")).unwrap();
+        fs::create_dir(package.join("examples")).unwrap();
+        for (path, body) in [
+            ("src/lib.rs", "pub const FIXTURE: u8 = 1;\n"),
+            ("src/snapshots/demo.snap", "snapshot"),
+            ("examples/demo.rs", "fn main() {}\n"),
+            ("Cargo.lock", ""),
+            ("Cargo.toml", "[package]\nname = \"tungstenite\"\n"),
+        ] {
+            fs::write(package.join(path), body).unwrap();
+        }
+        let archive = Command::new("tar")
+            .args(["-czf", &format!("{version}.crate"), &name])
+            .current_dir(&archives)
+            .output()
+            .expect("create local crate archive");
+        assert!(archive.status.success(), "{archive:?}");
+    }
+    let downloads = root.join("downloads");
+    write_executable(
+        &mock_bin.join("curl"),
+        r#"#!/bin/sh
+set -eu
+test "$#" -eq 8
+test "$7" = "-o"
+case "$6" in
+  https://crates.io/api/v1/crates/tungstenite/0.29.0/download) version=0.29.0 ;;
+  https://crates.io/api/v1/crates/tungstenite/0.30.0/download) version=0.30.0 ;;
+  *) exit 2 ;;
+esac
+printf '%s\n' "$version" >> "$FIXTURE_DOWNLOADS"
+cp "$FIXTURE_ARCHIVES/$version.crate" "$8"
+"#,
+    );
+    let fixture_path = path_with(&mock_bin);
+    let run = |args: &[&str]| {
+        Command::new(bin())
+            .args(["refresh-rustsec-patches", "--repo-root", "."])
+            .args(args)
+            .current_dir(root)
+            .env("PATH", &fixture_path)
+            .env("TMPDIR", &scratch)
+            .env("FIXTURE_ARCHIVES", &archives)
+            .env("FIXTURE_DOWNLOADS", &downloads)
+            .output()
+            .expect("run patch refresh CLI")
+    };
+
+    let refresh = run(&["refresh", "tungstenite"]);
+    assert!(refresh.status.success(), "{refresh:?}");
+    assert!(String::from_utf8_lossy(&refresh.stdout).contains("refreshed tungstenite 0.29.0"));
+    assert_eq!(
+        fs::read_to_string(configured.join("src/lib.rs")).unwrap(),
+        "pub const FIXTURE: u8 = 2;\n"
+    );
+    assert!(configured.join("Cargo.toml").is_file());
+    for path in ["Cargo.lock", "examples", "src/snapshots", "stale.txt"] {
+        assert!(!configured.join(path).exists(), "{path}");
+    }
+    let check = run(&["check", "all"]);
+    assert!(check.status.success(), "{check:?}");
+    assert_eq!(check.stdout, b"ok tungstenite 0.29.0\n");
+
+    let drifted = configured.join("src/lib.rs");
+    fs::write(&drifted, "local drift\n").unwrap();
+    let check = run(&["check", "tungstenite"]);
+    assert!(!check.status.success(), "{check:?}");
+    assert!(String::from_utf8_lossy(&check.stderr).contains("diff mismatch in src/lib.rs"));
+    assert_eq!(fs::read_to_string(&drifted).unwrap(), "local drift\n");
+
+    let refresh = run(&["refresh", "tungstenite", "0.30.0"]);
+    assert!(refresh.status.success(), "{refresh:?}");
+    assert!(String::from_utf8_lossy(&refresh.stdout)
+        .contains("from tungstenite-0.29.0 to tungstenite-0.30.0"));
+    assert_eq!(
+        fs::read_to_string(patches.join("tungstenite-0.30.0/src/lib.rs")).unwrap(),
+        "pub const FIXTURE: u8 = 2;\n"
+    );
+    assert_eq!(fs::read_to_string(&drifted).unwrap(), "local drift\n");
+    assert_eq!(
+        fs::read_to_string(downloads).unwrap(),
+        "0.29.0\n0.29.0\n0.29.0\n0.30.0\n"
+    );
+    assert!(fs::read_dir(scratch).unwrap().next().is_none());
+}
