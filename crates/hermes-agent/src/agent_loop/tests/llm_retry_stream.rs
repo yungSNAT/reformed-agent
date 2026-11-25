@@ -872,6 +872,7 @@
         AlwaysFailMidToolCall,
         TextOnlyDrop,
         MemoryContextLeak,
+        BufferedContextTail { text: &'static str, finish: bool },
         MalformedToolArgs,
         TruncatedToolArguments,
         InvalidArgumentBatch,
@@ -1074,6 +1075,13 @@
                     Ok(stream_chunk_content("</memory-context> world")),
                     Ok(stream_chunk_finish("stop")),
                 ],
+                StreamRetryScenario::BufferedContextTail { text, finish } => {
+                    let mut events = vec![Ok(stream_chunk_content(text))];
+                    if finish {
+                        events.push(Ok(stream_chunk_finish("stop")));
+                    }
+                    events
+                }
                 StreamRetryScenario::MalformedToolArgs => vec![
                     Ok(stream_chunk_tool_name(0, "call_repair", "terminal")),
                     Ok(stream_chunk_tool_args(
@@ -1994,4 +2002,69 @@
         assert_eq!(joined, "Hello\n world");
         assert!(!joined.contains("secret"));
         assert!(!joined.contains("memory-context"));
+    }
+
+    #[tokio::test]
+    async fn stream_flushes_visible_context_prefixes_and_discards_unclosed_blocks() {
+        for finish in [false, true] {
+            for (text, expected, deltas) in [
+                (
+                    "visible <memory-con",
+                    "visible <memory-con",
+                    &["visible ", "<memory-con"][..],
+                ),
+                (
+                    "visible\n<memory-context>\nprivate fixture",
+                    "visible\n",
+                    &["visible\n"][..],
+                ),
+            ] {
+                let mut config = AgentConfig::default();
+                let _home = isolate_route_learning_home(&mut config);
+                let provider = Arc::new(StreamRetryProvider::new(
+                    StreamRetryScenario::BufferedContextTail { text, finish },
+                ));
+                let callbacks = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let captured = callbacks.clone();
+                let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone())
+                    .with_callbacks(AgentCallbacks {
+                        on_stream_delta: Some(Box::new(move |delta: &str| {
+                            captured.lock().unwrap().push(delta.to_string());
+                        })),
+                        ..AgentCallbacks::default()
+                    });
+                let mut ctx = ContextManager::default_budget();
+                ctx.add_message(Message::user("fixture request"));
+                let chunks = std::sync::Mutex::new(Vec::new());
+                let result = agent
+                    .collect_stream_llm_response(
+                        &ctx,
+                        &[],
+                        None,
+                        "fixture-model",
+                        None,
+                        &|chunk| chunks.lock().unwrap().push(chunk),
+                    )
+                    .await
+                    .unwrap();
+                let StreamCollectOutcome::Complete(response) = result else {
+                    panic!("expected completed stream");
+                };
+                assert_eq!(response.message.content.as_deref(), Some(expected));
+                assert_eq!(response.finish_reason.as_deref(), finish.then_some("stop"));
+                assert_eq!(*callbacks.lock().unwrap(), deltas);
+                assert_eq!(*provider.calls.lock().unwrap(), 1);
+                let chunks = chunks.into_inner().unwrap();
+                assert_eq!(chunks.len(), deltas.len() + usize::from(finish));
+                for (chunk, expected) in chunks.iter().zip(deltas) {
+                    assert_eq!(
+                        chunk.delta.as_ref().and_then(|delta| delta.content.as_deref()),
+                        Some(*expected)
+                    );
+                }
+                if finish {
+                    assert_eq!(chunks.last().unwrap().finish_reason.as_deref(), Some("stop"));
+                }
+            }
+        }
     }
