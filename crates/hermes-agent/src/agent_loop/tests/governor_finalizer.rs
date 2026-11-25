@@ -207,6 +207,80 @@ fn test_replay_recorder_adds_hash_chain_metadata() {
     assert_ne!(first["event_hash"], second["event_hash"]);
 }
 
+#[tokio::test]
+async fn replay_recorder_respects_explicit_home_and_unavailable_log_directory() {
+    const CHILD: &str = "REFORMED_TEST_REPLAY_HOME";
+    if std::env::var_os(CHILD).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = std::env::current_dir()
+            .unwrap()
+            .join(std::env::args_os().next().unwrap());
+        let mut command = tokio::process::Command::new(executable);
+        let (_, test_module) = module_path!().split_once("::").unwrap();
+        let test_name = format!(
+            "{test_module}::replay_recorder_respects_explicit_home_and_unavailable_log_directory"
+        );
+        command
+            .env_clear()
+            .env(CHILD, "1")
+            .env("HERMES_REPLAY_ENABLED", " Yes ")
+            .env("HERMES_HOME", root.path().join("environment"))
+            .current_dir(root.path())
+            .kill_on_drop(true)
+            .args(["--exact", &test_name]);
+        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
+                .await
+                .expect("isolated replay test timed out")
+                .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let root = std::env::current_dir().unwrap();
+    let config_home = root.join("profile");
+    let config = AgentConfig {
+        hermes_home: Some(config_home.to_string_lossy().into_owned()),
+        ..AgentConfig::default()
+    };
+    let recorder = ReplayRecorder::for_session(&config, "Draft review #1");
+    let path = config_home.join("logs/replay/Draft_review__1.jsonl");
+    assert_eq!(recorder.path.as_deref(), Some(path.as_path()));
+    recorder.record("turn_start", json!({"purpose": "draft review"}));
+    let entry: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(entry["seq"], 1);
+    assert_eq!(entry["prev_hash"], short_sha256_hex("session:Draft_review__1:v1"));
+    assert_eq!(entry["payload"]["purpose"], "draft review");
+    assert!(!root.join("environment").exists());
+
+    let fallback = ReplayRecorder::for_session(&AgentConfig::default(), " ");
+    let fallback_path = fallback.path.unwrap();
+    assert_eq!(fallback_path.parent(), Some(root.join("environment/logs/replay").as_path()));
+    let fallback_name = fallback_path.file_name().unwrap().to_str().unwrap();
+    assert!(fallback_name.starts_with("session-") && fallback_name.ends_with(".jsonl"));
+
+    let blocked = root.join("blocked");
+    std::fs::write(&blocked, "ordinary file").unwrap();
+    let config = AgentConfig {
+        hermes_home: Some(blocked.to_string_lossy().into_owned()),
+        ..AgentConfig::default()
+    };
+    let recorder = ReplayRecorder::for_session(&config, "draft");
+    assert!(recorder.path.is_none() && recorder.state.is_none());
+    recorder.record("turn_start", json!({"purpose": "draft review"}));
+    assert_eq!(std::fs::read_to_string(blocked).unwrap(), "ordinary file");
+}
+
 #[test]
 fn test_detect_contextlattice_connect_intent() {
     let msgs = vec![Message::user(
