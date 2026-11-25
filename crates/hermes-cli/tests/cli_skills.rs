@@ -80,6 +80,41 @@ fn skills_cli_lists_inspects_and_checks_local_skills() {
 }
 
 #[test]
+fn skills_cli_resets_only_the_named_local_skill() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let installed = root.join("skills");
+    let original = installed.join("heron-notes");
+    let sibling = installed.join("wren-notes");
+    write_skill(&original, "# Heron notes");
+    fs::write(original.join("notes.md"), "Old fixture notes").unwrap();
+    write_skill(&sibling, "# Wren notes");
+
+    let missing = skills(root, &["reset"]).assert().failure();
+    assert!(String::from_utf8_lossy(&missing.get_output().stderr)
+        .contains("Missing skill name. Usage: hermes skills reset <name>"));
+    assert!(original.join("notes.md").exists());
+
+    for name in ["heron-notes", "plover-notes"] {
+        let output = success_text(skills(root, &["reset", name]).assert());
+        assert!(
+            output.contains(&format!("Skill '{name}' reset at ")),
+            "{output}"
+        );
+        let manifest = fs::read_to_string(installed.join(name).join("SKILL.md")).unwrap();
+        assert_eq!(
+            manifest,
+            format!("# {name}\n\nReset by CLI. Replace with canonical skill contents.\n")
+        );
+    }
+    assert!(!original.join("notes.md").exists());
+    assert_eq!(
+        fs::read_to_string(sibling.join("SKILL.md")).unwrap(),
+        "# Wren notes"
+    );
+}
+
+#[test]
 fn skills_cli_sync_and_opt_out_preserve_local_edits() {
     let home = tempfile::tempdir().unwrap();
     let root = home.path();
