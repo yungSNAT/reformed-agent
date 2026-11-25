@@ -5,6 +5,63 @@ use std::time::Duration;
 
 use support::isolated_hermes;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn offline_legacy_migration_preserves_existing_files_and_allows_cleanup_to_be_cancelled() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let source = sandbox.path().join(".openclaw");
+    let target = sandbox.path().join("hermes");
+    let profile = sandbox.path().join(".bashrc");
+    let shell_config = "alias openclaw='echo fixture'\n";
+    std::fs::create_dir_all(source.join("skills/fixture")).unwrap();
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(source.join("USER.md"), "Legacy user fixture\n").unwrap();
+    std::fs::write(source.join("SOUL.md"), "Legacy personality\n").unwrap();
+    std::fs::write(source.join("skills/fixture/SKILL.md"), "A fixture skill\n").unwrap();
+    std::fs::write(target.join("SOUL.md"), "Current personality\n").unwrap();
+    std::fs::write(&profile, shell_config).unwrap();
+
+    for (action, expected) in [
+        ("status", "Shell config references found:"),
+        ("migrate", "Migration complete:"),
+        ("cleanup", "Cleanup cancelled."),
+    ] {
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            isolated_hermes(sandbox.path())
+                .args(["claw", action])
+                .stdin(std::process::Stdio::null())
+                .output(),
+        )
+        .await
+        .expect("legacy command timed out")
+        .unwrap();
+        assert!(output.status.success(), "{action}: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(expected), "{action}: {stdout}");
+        if action == "cleanup" {
+            assert!(stdout.contains("~3 file(s)"), "{stdout}");
+        }
+    }
+    assert_eq!(std::fs::read_to_string(profile).unwrap(), shell_config);
+    assert_eq!(
+        std::fs::read_to_string(source.join("USER.md")).unwrap(),
+        "Legacy user fixture\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("USER.md")).unwrap(),
+        "Legacy user fixture\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("SOUL.md")).unwrap(),
+        "Current personality\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("skills/openclaw-imports/fixture/SKILL.md")).unwrap(),
+        "A fixture skill\n"
+    );
+}
+
 #[tokio::test]
 async fn offline_tool_toggles_persist_without_duplicate_config_entries() {
     let root = tempfile::tempdir().unwrap();
