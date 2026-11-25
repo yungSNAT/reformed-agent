@@ -423,6 +423,90 @@ mod tests {
     }
 
     #[test]
+    fn research_planning_prioritises_primary_material_with_equal_provenance() {
+        let sources = [
+            ("unknown", ResearchSourceKind::Unknown),
+            ("community", ResearchSourceKind::Community),
+            ("data", ResearchSourceKind::PrimaryData),
+            ("repository", ResearchSourceKind::Repository),
+            ("standard", ResearchSourceKind::Standard),
+        ]
+        .map(|(id, kind)| {
+            ResearchSource::new(
+                id,
+                id,
+                kind,
+                TrustLevel::Verified,
+                ContextSource::new("fixture", id).observed_at(now()),
+                "Reference for the park survey",
+            )
+        });
+        let ranked = ResearchSynthesisEngine.rank_sources(&sources, now());
+        assert_eq!(
+            ranked.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(),
+            ["standard", "repository", "data", "community", "unknown"],
+        );
+    }
+
+    #[test]
+    fn problem_solving_requires_web_evidence_for_a_research_request() {
+        let plan = ProblemSolvingKernel.build_plan(ProblemSolvingRequest {
+            objective: "Check the publication date of the park survey".into(),
+            constraints: vec![],
+            available_tools: vec!["web_search".into()],
+            context_topic: None,
+            requires_repo_evidence: false,
+            requires_web_research: true,
+            requires_memory: false,
+        });
+        assert_eq!(plan.steps[1].kind, ProblemStepKind::ResearchWeb);
+        assert!(plan.steps[1].required);
+        assert_eq!(plan.steps[1].tool_hint.as_deref(), Some("web_search"));
+        assert_eq!(plan.steps[2].kind, ProblemStepKind::PlanToolUse);
+    }
+
+    #[test]
+    fn finalization_reports_blocked_context_and_rejects_contradicted_claims() {
+        let mut input = FinalizerInput {
+            latest_user_request: "Summarise the park survey".into(),
+            executed_actions: vec!["Read the original survey".into()],
+            verification: vec!["Checked the revision date".into()],
+            claim_verdicts: vec![ClaimVerdict {
+                claim_id: "survey-count".into(),
+                verdict: ClaimVerdictKind::Stale,
+                evidence_ids: vec!["prior-survey".into()],
+                rationale: "An updated survey is pending".into(),
+            }],
+            context_report: Some(ContextFirewallReport {
+                target_use: ContextUse::FinalAnswer,
+                admitted: vec![],
+                blocked: vec![BlockedContextItem {
+                    id: "source-note".into(),
+                    lane: ContextLane::WebEvidence,
+                    source_locator: "fixture://park-survey-note".into(),
+                    reason: ContextBlockReason::UntrustedInstruction,
+                }],
+                warnings: vec![],
+                counts_by_lane: BTreeMap::new(),
+            }),
+            residual_risks: vec!["survey-count may be stale".into()],
+        };
+        let report = SelfAuditFinalizer.audit(&input);
+        assert!(report.can_finalize);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, AuditSeverity::Warning);
+        assert!(report.findings[0].message.contains("context was blocked"));
+
+        input.claim_verdicts[0].verdict = ClaimVerdictKind::Contradicted;
+        let report = SelfAuditFinalizer.audit(&input);
+        assert!(!report.can_finalize);
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == AuditSeverity::Blocker
+                && finding.message.contains("claim survey-count is contradicted")
+        }));
+    }
+
+    #[test]
     fn self_audit_finalizer_blocks_unverified_claims_and_memory_leaks() {
         let context_report = ContextFirewallReport {
             target_use: ContextUse::FinalAnswer,
