@@ -194,9 +194,10 @@ fn render_highlighted_code_line(
             spans.push(Span::styled(ch.to_string(), punctuation_style));
         }
     }
-    flush_token(&mut spans, &mut token, keyword_style, keywords);
-    if in_string && !token.is_empty() {
+    if in_string {
         spans.push(Span::styled(token, string_style));
+    } else {
+        flush_token(&mut spans, &mut token, keyword_style, keywords);
     }
     Line::from(spans)
 }

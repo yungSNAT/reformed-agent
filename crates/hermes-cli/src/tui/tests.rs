@@ -1549,6 +1549,62 @@ mod tests {
     }
 
     #[test]
+    fn assistant_code_fence_styles_a_partially_streamed_string() {
+        let theme = Theme::default_theme();
+        let colors = theme.colors.to_ratatui_colors();
+        let styles = theme.resolved_styles();
+        let code = "let note = \"draft";
+        let lines = render_assistant_markdown_lines(&format!("~~~rust\n{code}"), &styles, &colors);
+
+        assert_eq!(lines[1].to_string(), format!("    │ {code}"));
+        let string = lines[1].spans.last().unwrap();
+        assert_eq!(string.content, "\"draft");
+        assert_eq!(
+            string.style.fg,
+            Some(colors.status_bar_warn),
+            "partial code string foreground"
+        );
+    }
+
+    #[test]
+    fn assistant_markdown_renders_headings_quotes_lists_and_tables() {
+        if !crate::isolated_test_profile::enter(
+            "tui::tests::assistant_markdown_renders_headings_quotes_lists_and_tables",
+        ) {
+            return;
+        }
+        std::env::set_var("HERMES_TUI_STRICT_DEFAULT_LANGUAGE", "off");
+        let theme = Theme::default_theme();
+        let colors = theme.colors.to_ratatui_colors();
+        let styles = theme.resolved_styles();
+        let content = concat!(
+            "## Checks\n",
+            "> Read `report.log`\n",
+            "- Confirm inputs\n",
+            "| Check | Outcome |\n",
+            "| :--- | ---: |\n",
+            "| Report | Ready |\n",
+            "1. Continue\n",
+            "2) Finish",
+        );
+        let lines = render_assistant_markdown_lines(content, &styles, &colors);
+        let text: Vec<_> = lines.iter().map(Line::to_string).collect();
+        assert_eq!(text.len(), 8, "{text:?}");
+        assert_eq!(text[0], "    ## Checks");
+        assert_eq!(lines[0].spans[1].style.fg, Some(colors.status_bar_strong));
+        assert_eq!(text[1], "    ▎ Read report.log");
+        let inline = lines[1].spans.last().unwrap();
+        assert_eq!(inline.content, "report.log");
+        assert_eq!(inline.style.fg, Some(colors.accent));
+        assert_eq!(text[2], "    • Confirm inputs");
+        assert_eq!(text[3], "    │ Check │ Outcome │");
+        assert!(text[4].starts_with("    ├─") && text[4].ends_with('┤'));
+        assert_eq!(text[5], "    │ Report │ Ready │");
+        assert_eq!(text[6], "    1. Continue");
+        assert_eq!(text[7], "    2) Finish");
+    }
+
+    #[test]
     fn test_scaffold_detector_matches_embedded_tool_tags() {
         let line = "random prefix <tool_use><name>terminal</name></tool_use> suffix";
         assert!(looks_like_internal_scaffold_line(line));
