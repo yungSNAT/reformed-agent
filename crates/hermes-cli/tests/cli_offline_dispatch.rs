@@ -5,6 +5,43 @@ use std::time::Duration;
 
 use support::isolated_hermes;
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn offline_up_explains_linux_service_fallback_and_dry_run() {
+    for (args, expected) in [
+        (
+            &["up", "--dry-run", "--force"][..],
+            [
+                "service install/start is not implemented for this platform",
+                "Dry-run: would ensure the gateway service is installed",
+            ],
+        ),
+        (
+            &["up"][..],
+            [
+                "use `hermes-ultra gateway start` for foreground runtime",
+                "Use `hermes-ultra logs --follow` for runtime logs.",
+            ],
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            isolated_hermes(root.path()).args(args).output(),
+        )
+        .await
+        .expect("up command timed out")
+        .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("Reformed Agent up"), "{stdout}");
+        for line in expected {
+            assert!(stdout.contains(line), "{stdout}");
+        }
+        assert!(!root.path().join("hermes/gateway.lock").exists());
+    }
+}
+
 #[tokio::test]
 async fn offline_plugin_toggle_persists_general_and_provider_choices() {
     use std::process::Stdio;
