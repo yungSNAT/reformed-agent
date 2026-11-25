@@ -2402,3 +2402,4 @@
 
     include!("tests/coding_route_learning.rs");
     include!("tests/session_end_flush.rs");
+    include!("tests/isolated_config.rs");
