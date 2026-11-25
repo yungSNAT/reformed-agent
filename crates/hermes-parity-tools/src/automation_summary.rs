@@ -28,6 +28,11 @@ fn env_or(keys: &[&str], default: &str) -> String {
     default.to_string()
 }
 
+/// `os.environ.get(key, default)`: a variable set to the empty string stays empty.
+fn env_get(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
 fn default_issue() -> i64 {
     env_or(&["AUTOMATION_SUMMARY_GITHUB_ISSUE"], "0")
         .trim()
@@ -48,13 +53,13 @@ pub struct AutomationSummaryArgs {
     #[arg(long, default_value = ".")]
     repo_root: String,
     /// Summary kind label
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_KIND"], "automation"))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_KIND", "automation"))]
     summary_kind: String,
     /// Run status label
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_STATUS"], "unknown"))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_STATUS", "unknown"))]
     status: String,
     /// Optional summary title
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_TITLE"], ""), allow_hyphen_values = true)]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_TITLE", ""), allow_hyphen_values = true)]
     title: String,
     /// Inline summary markdown/text body
     #[arg(long, default_value = "", allow_hyphen_values = true)]
@@ -72,22 +77,22 @@ pub struct AutomationSummaryArgs {
     #[arg(long, default_value = "")]
     metadata_file: String,
     /// Comma-separated sink order: contextlattice,github,local,stdout
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_SINK_ORDER"], DEFAULT_SINK_ORDER))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_SINK_ORDER", DEFAULT_SINK_ORDER))]
     pub(crate) sink_order: String,
     /// ContextLattice orchestrator base URL
     #[arg(long, default_value_t = env_or(&["CONTEXTLATTICE_ORCHESTRATOR_URL", "MEMMCP_ORCHESTRATOR_URL"], DEFAULT_CONTEXTLATTICE_URL))]
     pub(crate) contextlattice_url: String,
     /// ContextLattice project name (default: repo dir name)
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_CONTEXT_PROJECT"], ""))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_CONTEXT_PROJECT", ""))]
     context_project: String,
     /// ContextLattice topic path for writes
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_CONTEXT_TOPIC_PATH"], "ops/automation-summary"))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_CONTEXT_TOPIC_PATH", "ops/automation-summary"))]
     pub(crate) context_topic_path: String,
     /// ContextLattice file key for writes
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_CONTEXT_FILE_NAME"], "ops/automation-summary.md"))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_CONTEXT_FILE_NAME", "ops/automation-summary.md"))]
     pub(crate) context_file_name: String,
     /// Agent id recorded in summary metadata
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_CONTEXT_AGENT_ID"], "hermes_ultra_automation"))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_CONTEXT_AGENT_ID", "hermes_ultra_automation"))]
     context_agent_id: String,
     /// ContextLattice write timeout seconds
     #[arg(long, default_value_t = default_timeout_secs(), allow_negative_numbers = true)]
@@ -99,7 +104,7 @@ pub struct AutomationSummaryArgs {
     #[arg(long, default_value_t = default_issue(), allow_negative_numbers = true)]
     pub(crate) github_issue: i64,
     /// Fallback local file path
-    #[arg(long, default_value_t = env_or(&["AUTOMATION_SUMMARY_LOCAL_PATH"], ""))]
+    #[arg(long, default_value_t = env_get("AUTOMATION_SUMMARY_LOCAL_PATH", ""))]
     local_path: String,
     /// Emit result as JSON
     #[arg(long)]

@@ -61,6 +61,36 @@ fn publish_automation_summary_writes_local_fallback_from_stdin() {
 }
 
 #[test]
+fn publish_automation_summary_keeps_empty_env_defaults_empty() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let out = Command::new(bin())
+        .args([
+            "publish-automation-summary",
+            "--repo-root",
+            root.to_str().expect("utf8 root"),
+            "--json",
+        ])
+        .env("AUTOMATION_SUMMARY_SINK_ORDER", "")
+        .env("AUTOMATION_SUMMARY_CONTEXT_TOPIC_PATH", "")
+        .env("AUTOMATION_SUMMARY_KIND", "")
+        .output()
+        .expect("run");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: Value = serde_json::from_slice(&out.stdout).expect("json");
+    // An empty sink order falls back to the local sink alone.
+    assert_eq!(parsed["attempts"].as_array().map(Vec::len), Some(1));
+    assert_eq!(parsed["primary_sink"], "local");
+    assert_eq!(parsed["context"]["topic_path"], "");
+    assert_eq!(parsed["metadata"]["summary_kind"], "");
+}
+
+#[test]
 fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
