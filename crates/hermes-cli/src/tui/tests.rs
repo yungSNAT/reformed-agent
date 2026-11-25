@@ -658,6 +658,8 @@ mod tests {
 
     #[cfg(unix)]
     include!("streaming_tests.rs");
+    #[cfg(unix)]
+    include!("tests/modal_runtime_contract.rs");
 
     #[test]
     fn test_animated_processing_bar_width_and_motion() {
