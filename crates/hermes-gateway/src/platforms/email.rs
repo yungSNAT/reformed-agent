@@ -992,7 +992,7 @@ fn base64_encode_lines(data: &[u8]) -> String {
 }
 
 #[cfg(test)]
-#[path = "email/smtp_contract.rs"]
+#[path = "email/tests/smtp_contract.rs"]
 mod smtp_contract;
 
 #[cfg(test)]
