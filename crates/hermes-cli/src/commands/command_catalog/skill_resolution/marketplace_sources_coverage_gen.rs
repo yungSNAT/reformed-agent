@@ -101,3 +101,82 @@ async fn resolve_skills_sh_source_empty_identifier_errors() {
     let msg = config_message(err);
     assert_eq!(msg, "Missing skills.sh skill identifier.");
 }
+
+#[tokio::test]
+async fn skills_sh_search_filters_and_preserves_the_first_result_for_each_identifier() {
+    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    let search_url = format!("{}/api/search", server.uri());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    Mock::given(method("GET"))
+        .and(path("/api/search"))
+        .and(query_param("q", "bird survey"))
+        .and(query_param("limit", "50"))
+        .and(header("accept", "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "skills": [
+                {"id": " ", "name": "Missing identifier"},
+                {"id": " field/notes/birds ", "name": " Bird notes "},
+                {"id": "field/notes/birds", "name": "Duplicate"},
+                {"id": "field/notes/weather", "name": " "},
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let hits = search_skills_sh_registry(&client, &search_url, "bird survey", 99)
+        .await
+        .unwrap();
+    assert_eq!(
+        hits,
+        [
+            (
+                "Bird notes".to_owned(),
+                "skills.sh/field/notes/birds".to_owned()
+            ),
+            (
+                "field/notes/weather".to_owned(),
+                "skills.sh/field/notes/weather".to_owned()
+            )
+        ]
+    );
+}
+
+#[tokio::test]
+async fn skills_sh_search_reports_http_and_payload_errors() {
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    let search_url = format!("{}/api/search", server.uri());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for (query, response, expected) in [
+        (
+            "offline",
+            ResponseTemplate::new(503).set_body_string("catalogue unavailable"),
+            "skills.sh search failed (503 Service Unavailable): catalogue unavailable",
+        ),
+        (
+            "malformed",
+            ResponseTemplate::new(200).set_body_string("invalid JSON"),
+            "Invalid skills.sh payload:",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/api/search"))
+            .and(query_param("q", query))
+            .and(query_param("limit", "1"))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = search_skills_sh_registry(&client, &search_url, query, 0)
+            .await
+            .unwrap_err();
+        assert!(config_message(error).starts_with(expected));
+    }
+}

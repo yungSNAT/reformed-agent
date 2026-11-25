@@ -218,27 +218,7 @@ async fn resolve_skills_sh_source(
         }
     }
 
-    let search_resp = client
-        .get(SKILLS_SH_SEARCH_URL)
-        .query(&[("q", req), ("limit", "20")])
-        .header("Accept", "application/json")
-        .header("User-Agent", "hermes-agent-ultra")
-        .timeout(std::time::Duration::from_secs(20))
-        .send()
-        .await
-        .map_err(|e| AgentError::Config(format!("skills.sh search request failed: {}", e)))?;
-    if !search_resp.status().is_success() {
-        let status = search_resp.status();
-        let body = search_resp.text().await.unwrap_or_default();
-        return Err(AgentError::Config(format!(
-            "skills.sh search failed ({}): {}",
-            status, body
-        )));
-    }
-    let payload = search_resp
-        .json::<SkillsShSearchResponse>()
-        .await
-        .map_err(|e| AgentError::Config(format!("Invalid skills.sh payload: {}", e)))?;
+    let payload = fetch_skills_sh_search_results(client, SKILLS_SH_SEARCH_URL, req, 20).await?;
     let req_l = req.to_ascii_lowercase();
     for hit in payload.skills {
         let source = hit.source.trim();
@@ -273,14 +253,15 @@ async fn resolve_skills_sh_source(
     )))
 }
 
-async fn search_skills_sh_registry(
+async fn fetch_skills_sh_search_results(
     client: &reqwest::Client,
+    search_url: &str,
     query: &str,
     limit: usize,
-) -> Result<Vec<(String, String)>, AgentError> {
+) -> Result<SkillsShSearchResponse, AgentError> {
     let capped_limit = limit.clamp(1, 50).to_string();
     let search_resp = client
-        .get(SKILLS_SH_SEARCH_URL)
+        .get(search_url)
         .query(&[("q", query), ("limit", capped_limit.as_str())])
         .header("Accept", "application/json")
         .header("User-Agent", "hermes-agent-ultra")
@@ -296,10 +277,19 @@ async fn search_skills_sh_registry(
             status, body
         )));
     }
-    let payload = search_resp
+    search_resp
         .json::<SkillsShSearchResponse>()
         .await
-        .map_err(|e| AgentError::Config(format!("Invalid skills.sh payload: {}", e)))?;
+        .map_err(|e| AgentError::Config(format!("Invalid skills.sh payload: {}", e)))
+}
+
+async fn search_skills_sh_registry(
+    client: &reqwest::Client,
+    search_url: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<(String, String)>, AgentError> {
+    let payload = fetch_skills_sh_search_results(client, search_url, query, limit).await?;
 
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();

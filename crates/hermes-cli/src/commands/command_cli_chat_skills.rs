@@ -612,7 +612,9 @@ pub async fn handle_cli_skills(
                 }
             }
             if !displayed_results {
-                if let Ok(skills_sh_hits) = search_skills_sh_registry(&client, &query, 20).await {
+                if let Ok(skills_sh_hits) =
+                    search_skills_sh_registry(&client, SKILLS_SH_SEARCH_URL, &query, 20).await
+                {
                     if !skills_sh_hits.is_empty() {
                         displayed_results = true;
                         println!("\nSkills.sh fallback matches:");
