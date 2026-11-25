@@ -385,6 +385,85 @@ async fn krea_poll_reports_terminal_jobs_and_keeps_an_unavailable_image_url() {
 }
 
 #[tokio::test]
+async fn managed_image_generation_normalises_images_and_reports_rejected_responses() {
+    let server = MockServer::start().await;
+    let image_url = format!("{}/fixture-artifact.png", server.uri());
+    let provider = FalImageGenBackend {
+        client: Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap(),
+        transport: FalTransport::Managed {
+            gateway_origin: server.uri(),
+            nous_token: "fixture-managed-image".into(),
+        },
+        model_path: DEFAULT_FAL_MODEL_PATH.into(),
+    };
+    let endpoint = format!("/run/{DEFAULT_FAL_MODEL_PATH}");
+    for (prompt, response, expected_error) in [
+        (
+            "fixture image",
+            ResponseTemplate::new(200).set_body_json(json!({
+                "images": [{"url": &image_url, "width": 512, "height": 384}, {}]
+            })),
+            None,
+        ),
+        (
+            "fixture empty",
+            ResponseTemplate::new(200).set_body_json(json!({})),
+            None,
+        ),
+        (
+            "fixture bad body",
+            ResponseTemplate::new(200).set_body_string("fixture is not JSON"),
+            Some("Failed to parse"),
+        ),
+        (
+            "fixture rejected",
+            ResponseTemplate::new(422).set_body_string("fixture was rejected"),
+            Some("fixture was rejected"),
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(endpoint.as_str()))
+            .and(header("authorization", "Bearer fixture-managed-image"))
+            .and(body_partial_json(json!({"prompt": prompt})))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let result = provider.generate(request(prompt)).await;
+        if let Some(expected) = expected_error {
+            assert!(matches!(
+                result, Err(ToolError::ExecutionFailed(message)) if message.contains(expected)
+            ));
+            continue;
+        }
+        let result: Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["transport"], "managed");
+        assert_eq!(result["modality"], "text");
+        assert_eq!(result["endpoint"], DEFAULT_FAL_MODEL_PATH);
+        assert_eq!(result["source_images"], 0);
+        if prompt == "fixture image" {
+            assert_eq!(result["image"], image_url);
+            assert_eq!(
+                result["images"],
+                json!([{"url": &image_url, "width": 512, "height": 384},
+                       {"url": "", "width": 0, "height": 0}])
+            );
+        } else {
+            assert!(result["image"].is_null());
+            assert_eq!(result["images"], json!([]));
+        }
+    }
+    server.verify().await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
+}
+
+#[tokio::test]
 async fn malformed_provider_responses_do_not_create_an_image() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
