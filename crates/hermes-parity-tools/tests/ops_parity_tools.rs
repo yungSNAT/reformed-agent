@@ -733,3 +733,135 @@ cp "$FIXTURE_ARCHIVES/$version.crate" "$8"
     );
     assert!(fs::read_dir(scratch).unwrap().next().is_none());
 }
+
+#[test]
+fn cargo_surface_gate_checks_registrations_and_stops_after_a_failed_replay() {
+    let sandbox = tempfile::tempdir().expect("temporary fixture workspace");
+    let root = sandbox.path().join("repo");
+    let mock_bin = sandbox.path().join("mock-bin");
+    let commands = root.join("crates/hermes-cli/src/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::create_dir(&mock_bin).unwrap();
+    let calls = sandbox.path().join("cargo-calls");
+    write_executable(
+        &mock_bin.join("cargo"),
+        r#"#!/bin/sh
+set -eu
+test "$(pwd -P)" = "$FIXTURE_REPOSITORY"
+printf '%s\n' "$*" >> "$FIXTURE_CARGO_CALLS"
+if [ "${5:-}" = "$FIXTURE_FAILED_TEST" ]; then
+  exit 7
+fi
+"#,
+    );
+    let fixture_path = path_with(&mock_bin);
+    let repository = root.canonicalize().unwrap();
+    let run = |subcommand: &str, fail_test: &str| {
+        Command::new(bin())
+            .args([subcommand, "--repo-root"])
+            .arg(&repository)
+            .current_dir(sandbox.path())
+            .env("PATH", &fixture_path)
+            .env("FIXTURE_REPOSITORY", &repository)
+            .env("FIXTURE_CARGO_CALLS", &calls)
+            .env("FIXTURE_FAILED_TEST", fail_test)
+            .output()
+            .expect("run surface gate")
+    };
+    let registrations = [
+        "/commands",
+        "/boot",
+        "/walkthrough",
+        "/triage",
+        "/subconscious",
+        "/integrations",
+    ];
+    let tests = [
+        "test_p0_p1_surface_commands_registered_and_completable",
+        "p0_walkthrough_and_integrations_commands_emit_expected_sections",
+        "p0_compress_rules_set_and_apply_updates_runtime_env",
+        "p1_trigger_triage_escalates_high_severity_events",
+        "test_format_tool_message_lines_truncates_large_payload",
+    ];
+    let write_registry = |omitted| {
+        let entries: String = registrations
+            .iter()
+            .copied()
+            .filter(|name| Some(*name) != omitted)
+            .map(|name| format!("\"{name}\","))
+            .collect();
+        fs::write(
+            commands.join("registry.rs"),
+            format!("const COMMANDS: &[&str] = &[{entries}];\n"),
+        )
+        .unwrap();
+    };
+    let write_tests = |omitted| {
+        let definitions: String = tests
+            .iter()
+            .copied()
+            .filter(|name| Some(*name) != omitted)
+            .map(|name| format!("#[test]\nfn {name}() {{}}\n"))
+            .collect();
+        fs::write(root.join("crates/hermes-cli/src/tui.rs"), definitions).unwrap();
+    };
+    let gate = "run-openhuman-p0-p1-gate";
+    write_tests(None);
+    for registration in registrations {
+        write_registry(Some(registration));
+        let missing = run(gate, "none");
+        assert_eq!(missing.status.code(), Some(1), "{missing:?}");
+        assert!(
+            String::from_utf8_lossy(&missing.stderr).contains(&format!(
+                "missing slash command registration: {registration}"
+            )),
+            "{missing:?}"
+        );
+        assert!(!calls.exists());
+    }
+    write_registry(None);
+    for required_test in tests {
+        write_tests(Some(required_test));
+        let missing = run(gate, "none");
+        assert_eq!(missing.status.code(), Some(1), "{missing:?}");
+        assert!(
+            String::from_utf8_lossy(&missing.stderr)
+                .contains(&format!("missing required test: {required_test}")),
+            "{missing:?}"
+        );
+        assert!(!calls.exists());
+    }
+
+    write_tests(None);
+    let expected: Vec<_> = tests
+        .iter()
+        .map(|name| format!("test -p hermes-cli --lib {name}"))
+        .collect();
+    let failure = run(gate, tests[2]);
+    assert_eq!(failure.status.code(), Some(7), "{failure:?}");
+    assert_eq!(
+        fs::read_to_string(&calls)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        expected[..3]
+    );
+    fs::write(&calls, "").unwrap();
+    let success = run(gate, "none");
+    assert!(success.status.success(), "{success:?}");
+    assert_eq!(
+        fs::read_to_string(&calls)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        expected
+    );
+
+    fs::write(&calls, "").unwrap();
+    let replay = run("run-deterministic-replay-suite", "e2e_replay_suite");
+    assert_eq!(replay.status.code(), Some(7), "{replay:?}");
+    assert_eq!(
+        fs::read_to_string(calls).unwrap(),
+        "test -p hermes-cli --test e2e_replay_suite -- --nocapture\n"
+    );
+}
