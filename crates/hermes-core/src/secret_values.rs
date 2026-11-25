@@ -492,4 +492,18 @@ mod tests {
         assert_eq!(mask("x made-up-outer-made-up-inner-1 y"), "x *** y");
         assert_eq!(mask("x made-up-inner-1 y"), "x *** y");
     }
+
+    #[test]
+    fn mask_secret_and_preview_handle_empty_short_long_and_multibyte() {
+        assert_eq!(mask_secret(""), "(empty)");
+        assert_eq!(mask_secret("short-secret"), "********");
+        assert_eq!(mask_secret("ééééééééééééééééééé"), "********");
+        assert_eq!(mask_secret("sk-1234567890abcdefwxyz"), "sk-1***wxyz");
+        assert_eq!(mask_secret("αβγδεζηθικλμνξοπρστυ"), "αβ***τυ");
+
+        assert_eq!(mask_secret_preview("", false, 5, "***"), "(empty)");
+        assert_eq!(mask_secret_preview("abcd", false, 5, "***"), "***");
+        assert_eq!(mask_secret_preview("abcde", false, 5, "***"), "***bcde");
+        assert_eq!(mask_secret_preview("αβγδεζ", false, 5, "***"), "***εζ");
+    }
 }

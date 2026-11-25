@@ -863,9 +863,11 @@ fn read_regular_file_and_write_no_follow_detect_concurrent_swap() {
     atomic_write_bytes_no_follow(&path, b"after", Some(before_id)).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
 
-    // Replacing the file changes its identity (or removes it); reusing stale `before_id` must fail.
-    std::fs::remove_file(&path).unwrap();
-    std::fs::write(&path, "swapped").unwrap();
+    // Write the replacement before replacing `path` so the kernel cannot reuse
+    // `before_id`'s freed inode for the swapped file.
+    let swapped = dir.path().join("swapped.txt");
+    std::fs::write(&swapped, "swapped").unwrap();
+    std::fs::rename(&swapped, &path).unwrap();
     let err = atomic_write_bytes_no_follow(&path, b"stale", Some(before_id)).unwrap_err();
     assert!(err.to_string().contains("changed concurrently"), "{err}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "swapped");

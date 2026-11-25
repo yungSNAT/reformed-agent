@@ -32,6 +32,17 @@ pub fn file_identity_from_file(file: &std::fs::File) -> Option<FileIdentity> {
     Some(file_identity_from_metadata(&meta))
 }
 
+/// The identity of a regular non-symlink file at `path`, without following a
+/// leaf symlink or blocking on special files.
+#[cfg(unix)]
+pub(crate) fn file_identity_no_follow(path: &Path) -> Option<FileIdentity> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return None;
+    }
+    Some(file_identity_from_metadata(&meta))
+}
+
 #[cfg(unix)]
 fn file_identity_from_metadata(meta: &std::fs::Metadata) -> FileIdentity {
     use std::os::unix::fs::MetadataExt;
@@ -61,20 +72,48 @@ pub fn file_identity(path: &Path) -> Option<FileIdentity> {
 /// The identity of an already-opened file handle.
 #[cfg(windows)]
 pub fn file_identity_from_file(file: &std::fs::File) -> Option<FileIdentity> {
+    file_identity_and_reparse_from_file(file).map(|(id, _)| id)
+}
+
+#[cfg(windows)]
+pub(crate) fn file_identity_and_reparse_from_file(
+    file: &std::fs::File,
+) -> Option<(FileIdentity, bool)> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
+        FILE_ATTRIBUTE_REPARSE_POINT,
     };
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: the handle is open for the call and `info` is a valid out pointer.
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
         return None;
     }
-    Some(FileIdentity {
+    let is_reparse_or_dir =
+        (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) != 0;
+    let id = FileIdentity {
         volume: u64::from(info.dwVolumeSerialNumber),
         file: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
         links: u64::from(info.nNumberOfLinks),
-    })
+    };
+    Some((id, is_reparse_or_dir))
+}
+
+/// The identity of a regular non-reparse file at `path`, without following a
+/// leaf symlink or junction.
+#[cfg(windows)]
+pub(crate) fn file_identity_no_follow(path: &Path) -> Option<FileIdentity> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+    let file = std::fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .ok()?;
+    let (id, is_reparse_or_dir) = file_identity_and_reparse_from_file(&file)?;
+    (!is_reparse_or_dir).then_some(id)
 }
 
 #[cfg(test)]

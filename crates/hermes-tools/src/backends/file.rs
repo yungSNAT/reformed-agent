@@ -453,18 +453,17 @@ impl PatchBackend for LocalPatchBackend {
         new_string: &str,
         replace_all: bool,
     ) -> Result<String, ToolError> {
-        let target_path = std::path::Path::new(path);
-        let edit_lock = file_edit_lock(target_path).await;
+        let target_path = crate::credential_guard::local_write_path(std::path::Path::new(path))
+            .unwrap_or_else(|| std::path::PathBuf::from(path));
+        let edit_lock = file_edit_lock(&target_path).await;
         let _turn = edit_lock.lock().await;
-        hermes_config::tool_guard::check_write(target_path)
+        hermes_config::tool_guard::check_write(&target_path)
             .await
             .map_err(ToolError::ExecutionFailed)?;
-        let guard_path = crate::credential_guard::local_write_path(target_path)
-            .unwrap_or_else(|| target_path.to_path_buf());
         crate::credential_guard::CredentialGuard::new()
-            .check_write_access(&guard_path, new_string)?;
+            .check_write_access(&target_path, new_string)?;
 
-        let target_read = target_path.to_path_buf();
+        let target_read = target_path.clone();
         let (content, before_id) = tokio::task::spawn_blocking(move || {
             hermes_config::read_regular_file_no_follow(&target_read)
         })
@@ -528,15 +527,15 @@ impl PatchBackend for LocalPatchBackend {
             )
         };
 
-        if crate::credential_guard::detect_secrets(&content).is_none() {
-            if let Some(detection) = crate::credential_guard::detect_secrets(&new_content) {
-                return Err(ToolError::ExecutionFailed(format!(
-                    "Write denied: content contains detected secret ({detection})"
-                )));
-            }
+        if let Some(detection) =
+            crate::credential_guard::detect_added_secret(&content, &new_content)
+        {
+            return Err(ToolError::ExecutionFailed(format!(
+                "Write denied: content contains detected secret ({detection})"
+            )));
         }
 
-        let target_write = target_path.to_path_buf();
+        let target_write = target_path;
         tokio::task::spawn_blocking(move || {
             hermes_config::atomic_write_bytes_no_follow(
                 &target_write,
@@ -1345,5 +1344,21 @@ mod tests {
             std::fs::read_to_string(&code).unwrap(),
             "key = sk-1234567890__SPLIT__"
         );
+
+        let mixed = tmp.path().join("mixed.py");
+        let original = "def login(password = \"placeholder\"):\n    return \"hello\"\nkey = sk-1234567890__SPLIT__\n";
+        std::fs::write(&mixed, original).expect("write mixed");
+        LocalPatchBackend::new()
+            .patch_file(mixed.to_str().unwrap(), "\"hello\"", "\"world\"", false)
+            .await
+            .expect("unrelated edit alongside routine password field should succeed");
+        let err = LocalPatchBackend::new()
+            .patch_file(mixed.to_str().unwrap(), "__SPLIT__", "abcdefghij", false)
+            .await
+            .expect_err("pre-existing password line must not mask split secret");
+        assert!(err.to_string().contains("detected secret"), "{err}");
+        assert!(std::fs::read_to_string(&mixed)
+            .unwrap()
+            .contains("key = sk-1234567890__SPLIT__"));
     }
 }

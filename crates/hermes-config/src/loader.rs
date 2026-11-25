@@ -155,32 +155,79 @@ pub fn read_regular_file_no_follow(
     path: &Path,
 ) -> Result<(String, crate::FileIdentity), ConfigError> {
     let (_real_parent, real_path) = verify_no_follow_target(path, None, true)?;
-    let before_id = crate::file_identity(&real_path).ok_or_else(|| {
-        ConfigError::ParseError(format!("could not read identity of {}", path.display()))
-    })?;
-    let mut file = std::fs::File::open(&real_path).map_err(io_to_config_error)?;
-    let fmeta = file.metadata().map_err(io_to_config_error)?;
-    if !fmeta.is_file() {
-        return Err(ConfigError::ParseError(format!(
-            "refusing non-regular file at {}",
-            path.display()
-        )));
-    }
-    let handle_id = crate::file_identity_from_file(&file).ok_or_else(|| {
-        ConfigError::ParseError(format!(
-            "could not read handle identity of {}",
-            path.display()
-        ))
-    })?;
-    if handle_id != before_id {
-        return Err(ConfigError::ParseError(format!(
-            "target file changed while opening {}",
-            path.display()
-        )));
-    }
+    let (mut file, handle_id) = open_regular_file_no_follow(&real_path, path)?;
     let mut content = String::new();
     std::io::Read::read_to_string(&mut file, &mut content).map_err(io_to_config_error)?;
     Ok((content, handle_id))
+}
+
+fn open_regular_file_no_follow(
+    open_path: &Path,
+    display_path: &Path,
+) -> Result<(std::fs::File, crate::FileIdentity), ConfigError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(open_path).map_err(|err| {
+        #[cfg(unix)]
+        if matches!(err.raw_os_error(), Some(libc::ELOOP) | Some(libc::EMLINK)) {
+            return ConfigError::ParseError(format!(
+                "refusing to follow symlink at {}",
+                display_path.display()
+            ));
+        }
+        io_to_config_error(err)
+    })?;
+    #[cfg(windows)]
+    {
+        let (handle_id, is_reparse_or_dir) =
+            crate::file_identity::file_identity_and_reparse_from_file(&file).ok_or_else(|| {
+                ConfigError::ParseError(format!(
+                    "could not read handle identity of {}",
+                    display_path.display()
+                ))
+            })?;
+        if is_reparse_or_dir {
+            return Err(ConfigError::ParseError(format!(
+                "refusing to follow symlink at {}",
+                display_path.display()
+            )));
+        }
+        if !file.metadata().map_err(io_to_config_error)?.is_file() {
+            return Err(ConfigError::ParseError(format!(
+                "refusing non-regular file at {}",
+                display_path.display()
+            )));
+        }
+        Ok((file, handle_id))
+    }
+    #[cfg(unix)]
+    {
+        let fmeta = file.metadata().map_err(io_to_config_error)?;
+        if fmeta.file_type().is_symlink() || !fmeta.is_file() {
+            return Err(ConfigError::ParseError(format!(
+                "refusing non-regular file at {}",
+                display_path.display()
+            )));
+        }
+        let handle_id = crate::file_identity_from_file(&file).ok_or_else(|| {
+            ConfigError::ParseError(format!(
+                "could not read handle identity of {}",
+                display_path.display()
+            ))
+        })?;
+        Ok((file, handle_id))
+    }
 }
 
 fn verify_no_follow_target(
@@ -218,7 +265,7 @@ fn check_no_follow_leaf(
                 )));
             }
             if let Some(expected) = expected_existing {
-                if crate::file_identity(path) != Some(expected) {
+                if crate::file_identity::file_identity_no_follow(path) != Some(expected) {
                     return Err(ConfigError::ParseError(format!(
                         "target file changed concurrently at {}",
                         path.display()
@@ -314,7 +361,11 @@ fn atomic_write_bytes_with_mode(
             }
             check_no_follow_leaf(target, expected_id, expected_id.is_some())?;
         }
-        replace_temp_file(&tmp_path, target)?;
+        replace_temp_file(
+            &tmp_path,
+            target,
+            matches!(mode, AtomicWriteMode::NoFollowExisting(_)),
+        )?;
         #[cfg(unix)]
         if matches!(mode, AtomicWriteMode::OwnerOnly) {
             use std::os::unix::fs::PermissionsExt;
@@ -369,14 +420,18 @@ fn create_temp_file(
     options.open(tmp_path)
 }
 
-fn replace_temp_file(tmp_path: &Path, path: &Path) -> Result<(), ConfigError> {
+fn replace_temp_file(tmp_path: &Path, path: &Path, no_follow: bool) -> Result<(), ConfigError> {
     #[cfg(windows)]
-    if path.is_file() && replace_file_keeping_acl(tmp_path, path) {
+    if !no_follow
+        && std::fs::symlink_metadata(path)
+            .is_ok_and(|meta| !meta.file_type().is_symlink() && meta.is_file())
+        && replace_file_keeping_acl(tmp_path, path)
+    {
         return Ok(());
     }
     match std::fs::rename(tmp_path, path) {
         Ok(()) => Ok(()),
-        Err(err) if is_cross_device_rename_error(&err) => {
+        Err(err) if !no_follow && is_cross_device_rename_error(&err) => {
             std::fs::copy(tmp_path, path).map_err(io_to_config_error)?;
             let _ = std::fs::remove_file(tmp_path);
             Ok(())
