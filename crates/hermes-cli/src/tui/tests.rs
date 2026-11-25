@@ -1211,6 +1211,70 @@ mod tests {
     }
 
     #[test]
+    fn transcript_density_and_tool_expansion_preserve_the_turn() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let _guard = env_test_lock();
+        let theme = Theme::default_theme();
+        let styles = theme.resolved_styles();
+        let colors = theme.colors.to_ratatui_colors();
+        let mut assistant = Message::assistant_with_tool_calls(
+            Some("I checked the fixture.".into()),
+            vec![hermes_core::ToolCall {
+                id: "fixture-call".into(),
+                function: hermes_core::FunctionCall {
+                    name: "read_file".into(),
+                    arguments: r#"{"path":"fixture.txt"}"#.into(),
+                },
+                extra_content: None,
+            }],
+        );
+        assistant.reasoning_content = Some("Checking the fixture contents.  ".into());
+        let messages = [
+            assistant,
+            Message::tool_result("fixture-call", "one\ntwo\nthree\nfour\nfive\nsix"),
+        ];
+        let render = |state: &mut TuiState| {
+            build_transcript_lines(&messages, state, &styles, &colors, 80)
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let mut state = TuiState {
+            view_density: ViewDensity::Detailed,
+            ..TuiState::default()
+        };
+        let collapsed = render(&mut state);
+        assert!(collapsed.contains("I checked the fixture."));
+        assert!(collapsed.contains("Checking the fixture contents.\n"));
+        assert!(collapsed.contains("read_file"));
+        assert!(collapsed.contains("fixture.txt"));
+        assert!(collapsed.contains("tool card: collapsed | 6 lines"));
+        assert!(collapsed.contains("… 2 more lines"));
+        assert!(!collapsed.contains("    six"));
+
+        let toggle_card = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(state.handle_insert_control_chord(toggle_card));
+        let expanded = render(&mut state);
+        assert!(expanded.contains("tool card: expanded | 6 lines"));
+        assert!(expanded.contains("    six"));
+        assert!(!expanded.contains("more lines"));
+
+        assert!(state
+            .handle_insert_control_chord(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)));
+        let compact = render(&mut state);
+        assert!(compact.contains("I checked the fixture."));
+        assert!(compact.contains("    six"));
+        assert!(!compact.contains("Checking the fixture contents."));
+
+        assert!(state.handle_insert_control_chord(toggle_card));
+        let collapsed_again = render(&mut state);
+        assert!(collapsed_again.contains("tool card: collapsed | 6 lines"));
+        assert!(!collapsed_again.contains("    six"));
+    }
+
+    #[test]
     fn test_transcript_placeholder_shows_when_empty() {
         let theme = Theme::default_theme();
         let colors = theme.colors.to_ratatui_colors();
