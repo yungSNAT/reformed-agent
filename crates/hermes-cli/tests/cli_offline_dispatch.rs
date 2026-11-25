@@ -5,6 +5,65 @@ use std::time::Duration;
 
 use support::isolated_hermes;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn offline_backup_and_import_round_trip_a_disposable_profile() {
+    let source = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    let source_home = source.path().join("hermes");
+    let target_home = target.path().join("hermes");
+    let relative = std::path::Path::new("notes").join("fixture.txt");
+    let contents = b"Local backup fixture\n";
+    std::fs::create_dir_all(source_home.join("notes")).unwrap();
+    std::fs::write(source_home.join(&relative), contents).unwrap();
+
+    let archive = source.path().join("profile.tar.gz");
+    let backup = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes(source.path())
+            .arg("backup")
+            .arg(&archive)
+            .output(),
+    )
+    .await
+    .expect("backup timed out")
+    .unwrap();
+    assert!(backup.status.success(), "{backup:?}");
+    assert!(String::from_utf8_lossy(&backup.stdout).contains("Backup complete"));
+    assert!(archive.is_file());
+
+    let restored = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes(target.path())
+            .arg("import")
+            .arg(&archive)
+            .output(),
+    )
+    .await
+    .expect("import timed out")
+    .unwrap();
+    assert!(restored.status.success(), "{restored:?}");
+    assert!(String::from_utf8_lossy(&restored.stdout).contains("Import complete"));
+    assert_eq!(
+        std::fs::read(target_home.join(&relative)).unwrap(),
+        contents
+    );
+
+    let missing = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes(target.path())
+            .arg("import")
+            .arg(target.path().join("missing.tar.gz"))
+            .output(),
+    )
+    .await
+    .expect("missing archive check timed out")
+    .unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("Backup archive not found"));
+    assert_eq!(std::fs::read(target_home.join(relative)).unwrap(), contents);
+}
+
 #[tokio::test]
 async fn offline_status_reports_route_health_and_local_state() {
     let sandbox = tempfile::tempdir().unwrap();
