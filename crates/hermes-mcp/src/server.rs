@@ -867,4 +867,82 @@ mod tests {
             .unwrap_or("");
         assert_eq!(text, "file content");
     }
+
+    #[tokio::test]
+    async fn resources_read_uses_the_http_type_and_reports_service_errors() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let mut server = McpServer::new(Arc::new(ToolRegistry::new()));
+        for name in ["notes", "untagged", "unavailable"] {
+            server.add_resource(ResourceInfo {
+                uri: format!("{origin}/{name}"),
+                name: name.into(),
+                description: None,
+                mime_type: Some("text/plain".into()),
+            });
+        }
+
+        let replies = async {
+            for (name, status, content_type, text) in [
+                (
+                    "notes",
+                    "200 OK",
+                    "Content-Type: text/markdown\r\n",
+                    "# Survey",
+                ),
+                ("untagged", "200 OK", "", "Survey notes"),
+                ("unavailable", "503 Service Unavailable", "", ""),
+            ] {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut socket = BufReader::new(socket);
+                let mut line = String::new();
+                socket.read_line(&mut line).await.unwrap();
+                assert_eq!(line.trim_end(), format!("GET /{name} HTTP/1.1"));
+                while line != "\r\n" {
+                    line.clear();
+                    assert_ne!(socket.read_line(&mut line).await.unwrap(), 0);
+                }
+                let response = format!(
+                    "HTTP/1.1 {status}\r\n{content_type}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                    text.len()
+                );
+                socket
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+            }
+        };
+        let reads = async {
+            for (name, mime_type, text) in [
+                ("notes", "text/markdown", "# Survey"),
+                ("untagged", "text/plain", "Survey notes"),
+            ] {
+                let uri = format!("{origin}/{name}");
+                let result = server
+                    .handle_request("resources/read", json!({"uri": uri}))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    result["contents"],
+                    json!([{"uri": uri, "mimeType": mime_type, "text": text}])
+                );
+            }
+            let error = server
+                .handle_request(
+                    "resources/read",
+                    json!({"uri": format!("{origin}/unavailable")}),
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(error, crate::McpError::Protocol { code: 503, .. }));
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(replies, reads);
+        })
+        .await
+        .expect("registered loopback resource requests complete");
+    }
 }
