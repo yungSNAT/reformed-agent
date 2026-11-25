@@ -254,6 +254,25 @@ fn atomic_write_cleans_staged_file_if_directory_blocks_replacement() {
     assert_eq!(entries, [std::ffi::OsString::from("config.yaml")]);
 }
 
+#[cfg(unix)]
+#[test]
+fn failed_atomic_replacement_retains_staged_data_when_target_is_absent() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("config.yaml/");
+    let data = b"staged configuration fixture";
+
+    let error = atomic_write_bytes(&target, data).unwrap_err().to_string();
+
+    assert!(!directory.path().join("config.yaml").exists());
+    let staged: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(staged.len(), 1);
+    assert_eq!(std::fs::read(&staged[0]).unwrap(), data);
+    assert!(error.contains(&staged[0].display().to_string()));
+}
+
 #[test]
 fn cross_device_rename_detection_matches_platform_error_code() {
     #[cfg(unix)]
