@@ -349,8 +349,10 @@ mod tests {
             TerminalBackendType::Ssh,
             #[cfg(feature = "singularity")]
             TerminalBackendType::Singularity,
-            TerminalBackendType::Local,
-        ] {
+        ]
+        .into_iter()
+        .chain([TerminalBackendType::Local])
+        {
             let previous = manager.terminal_backend();
             manager.switch_backend(backend).unwrap();
             assert_eq!(manager.backend_type(), backend);
