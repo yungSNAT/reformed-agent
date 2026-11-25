@@ -312,6 +312,89 @@ impl PlatformAdapter for BlueBubblesAdapter {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn local_bridge_sends_attachments_and_reports_rejected_messages() {
+        use wiremock::matchers::{body_json, body_string_contains, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        for (message, status) in [("Attachment caption", 200), ("Rejected draft", 422)] {
+            Mock::given(method("POST"))
+                .and(path("/api/v1/message/text"))
+                .and(query_param("password", "fixture-only"))
+                .and(body_json(serde_json::json!({
+                    "chatGuid": "fixture-chat",
+                    "message": message,
+                    "method": "private-api"
+                })))
+                .respond_with(ResponseTemplate::new(status).set_body_string("fixture response"))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("POST"))
+            .and(path("/api/v1/message/attachment"))
+            .and(query_param("password", "fixture-only"))
+            .and(body_string_contains("name=\"chatGuid\""))
+            .and(body_string_contains("fixture-chat"))
+            .and(body_string_contains(
+                "name=\"attachment\"; filename=\"note.txt\"",
+            ))
+            .and(body_string_contains("local attachment contents"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut adapter = BlueBubblesAdapter::new(BlueBubblesConfig {
+            server_url: server.uri(),
+            password: "fixture-only".into(),
+            proxy: AdapterProxyConfig::default(),
+        })
+        .unwrap();
+        adapter.client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        assert_eq!(adapter.config().server_url, server.uri());
+        assert_eq!(adapter.platform_name(), "bluebubbles");
+        assert!(!adapter.is_running());
+        adapter.start().await.unwrap();
+        assert!(adapter.is_running());
+
+        let temp = tempfile::tempdir().unwrap();
+        let note = temp.path().join("note.txt");
+        tokio::fs::write(&note, "local attachment contents")
+            .await
+            .unwrap();
+        adapter
+            .send_file(
+                "fixture-chat",
+                note.to_str().unwrap(),
+                Some("Attachment caption"),
+            )
+            .await
+            .unwrap();
+        let rejected = adapter
+            .send_message("fixture-chat", "Rejected draft", Some(ParseMode::Plain))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(rejected, GatewayError::SendFailed(message) if message.contains("fixture response"))
+        );
+        let missing = temp.path().join("missing.txt");
+        let missing = adapter
+            .send_file("fixture-chat", missing.to_str().unwrap(), None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(missing, GatewayError::SendFailed(message) if message.starts_with("Failed to read file"))
+        );
+        adapter.stop().await.unwrap();
+        assert!(!adapter.is_running());
+    }
+
     #[test]
     fn remote_image_file_name_keeps_extension() {
         let file_name = remote_image_file_name(
