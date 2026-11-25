@@ -804,6 +804,116 @@
     }
 
     #[test]
+    fn memory_callbacks_only_receive_committed_writes_and_successful_delegations() {
+        #[derive(Default)]
+        struct EventRecorder(Mutex<Vec<Value>>);
+
+        impl crate::memory_manager::MemoryProviderPlugin for EventRecorder {
+            fn name(&self) -> &str {
+                "fixture-recorder"
+            }
+
+            fn on_memory_write(&self, action: &str, target: &str, content: &str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::json!([action, target, content]));
+            }
+
+            fn on_delegation(&self, task: &str, child_id: &str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::json!([task, child_id]));
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let recorder = Arc::new(EventRecorder::default());
+        let mut manager = MemoryManager::new();
+        manager.add_provider(recorder.clone());
+        let model = Arc::new(RecordingProvider::default());
+        let mut agent = AgentLoop::new(
+            AgentConfig {
+                hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                code_index_enabled: false,
+                ..AgentConfig::default()
+            },
+            Default::default(),
+            model.clone(),
+        )
+        .with_memory(Arc::new(Mutex::new(manager)));
+        let calls = [
+            (
+                "write",
+                "memory",
+                r#"{"action":" Replace ","target":" ","content":" local fixture "}"#,
+            ),
+            (
+                "staged",
+                "memory",
+                r#"{"action":"add","content":"staged fixture"}"#,
+            ),
+            (
+                "failed-write",
+                "memory",
+                r#"{"action":"add","content":"failed fixture"}"#,
+            ),
+            ("list", "memory", r#"{"action":"list"}"#),
+            (
+                "delegate",
+                "delegate_task",
+                r#"{"task":" Summarise fixture notes "}"#,
+            ),
+            (
+                "no-child-id",
+                "delegate_task",
+                r#"{"task":"Index fixture notes"}"#,
+            ),
+            (
+                "failed-delegate",
+                "delegate_task",
+                r#"{"task":"Copy fixture notes"}"#,
+            ),
+            ("blank-task", "delegate_task", r#"{"task":" "}"#),
+        ]
+        .map(|(id, name, arguments)| ToolCall {
+            id: id.into(),
+            function: hermes_core::FunctionCall {
+                name: name.into(),
+                arguments: arguments.into(),
+            },
+            extra_content: None,
+        });
+        let committed = r#"{"success":true}"#;
+        let results = [
+            ToolResult::ok("write", committed),
+            ToolResult::ok("staged", r#"{"success":true,"staged":true}"#),
+            ToolResult::err("failed-write", committed),
+            ToolResult::ok("list", committed),
+            ToolResult::ok("delegate", r#"{"sub_agent_id":" fixture-child "}"#),
+            ToolResult::ok("no-child-id", "no structured child identifier"),
+            ToolResult::err("failed-delegate", r#"{"sub_agent_id":"failed-child"}"#),
+            ToolResult::ok("blank-task", r#"{"sub_agent_id":"blank-task-child"}"#),
+            ToolResult::ok("unmatched", committed),
+        ];
+        agent.notify_memory_writes(&calls, &results);
+        agent.notify_delegations(&calls, &results);
+        let expected = [
+            serde_json::json!(["replace", "memory", "local fixture"]),
+            serde_json::json!(["Summarise fixture notes", "fixture-child"]),
+            serde_json::json!(["Index fixture notes", ""]),
+        ];
+        assert_eq!(recorder.0.lock().unwrap().as_slice(), expected);
+
+        agent.config.skip_memory = true;
+        agent.notify_memory_writes(&calls, &results);
+        agent.notify_delegations(&calls, &results);
+        assert_eq!(recorder.0.lock().unwrap().as_slice(), expected);
+        assert!(model.seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn test_hydrate_session_search_args_injects_current_session_id() {
         use futures::stream::BoxStream;
         struct DummyProvider;
