@@ -795,6 +795,108 @@ fn performance_autopilot_reports_degraded_profiles_and_actions() {
 }
 
 #[test]
+fn self_evolution_loop_combines_gate_reports_and_honours_skip_flags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::write(
+        root.join("golden.json"),
+        r#"{"ok":false,"missing_commands":["inspect"],"unrelated":"omit from excerpt"}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("eval.json"),
+        r#"{"ok":true,"summary":{"passed":2}}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("elite.json"),
+        r#"{"ok":"unknown","sections":{"some_gate":{"ok":false}}}"#,
+    )
+    .unwrap();
+
+    let failed = run_cli(
+        root,
+        &[
+            "run-self-evolution-loop",
+            "--objective",
+            "  Fixture objective  ",
+            "--golden-cmd",
+            "printf '[fixture] Report: golden.json\\n'; exit 3",
+            "--eval-cmd",
+            r#"printf '{"report_path":"eval.json"}'"#,
+            "--elite-cmd",
+            "printf 'report=elite.json' >&2; exit 7",
+            "--report-path",
+            "loop.json",
+            "--json",
+        ],
+    );
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    let report: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["objective"], "Fixture objective");
+    assert_eq!(
+        report["summary"],
+        serde_json::json!({
+            "total_sections":3,"passed_sections":1,"failed_sections":2,"intelligence_index":33.33
+        })
+    );
+    let sections = &report["sections"];
+    assert_eq!(sections["golden_parity"]["exit_code"], 3);
+    assert_eq!(sections["golden_parity"]["report_ok"], false);
+    assert_eq!(
+        sections["golden_parity"]["report_excerpt"],
+        serde_json::json!({"missing_commands":["inspect"]})
+    );
+    assert_eq!(sections["eval_trend"]["report_ok"], true);
+    assert_eq!(
+        sections["eval_trend"]["report_excerpt"]["summary"]["passed"],
+        2
+    );
+    assert_eq!(sections["elite_sync"]["exit_code"], 7);
+    assert!(sections["elite_sync"]["report_ok"].is_null());
+    assert_eq!(
+        sections["elite_sync"]["report_excerpt"]["sections"]["some_gate"]["ok"],
+        false
+    );
+    let recommendations = report["recommendations"].as_array().unwrap();
+    assert_eq!(recommendations.len(), 2);
+    assert_eq!(recommendations[0]["id"], "PARITY_DRIFT");
+    assert_eq!(recommendations[1]["id"], "ELITE_GATE_FAIL");
+    assert!(recommendations[0]["reason"]
+        .as_str()
+        .unwrap()
+        .ends_with("Objective: Fixture objective."));
+
+    let forbidden = "touch unexpectedly-ran";
+    let skipped = run_cli(
+        root,
+        &[
+            "run-self-evolution-loop",
+            "--golden-cmd",
+            forbidden,
+            "--eval-cmd",
+            forbidden,
+            "--elite-cmd",
+            forbidden,
+            "--skip-golden",
+            "--skip-eval",
+            "--skip-elite",
+            "--report-path",
+            "skipped.json",
+        ],
+    );
+    assert_eq!(skipped.status.code(), Some(0), "{skipped:?}");
+    assert!(String::from_utf8_lossy(&skipped.stdout).contains("PASSED (passed=0/0"));
+    assert!(!root.join("unexpectedly-ran").exists());
+    let saved: Value =
+        serde_json::from_slice(&fs::read(root.join("skipped.json")).unwrap()).unwrap();
+    assert_eq!(saved["sections"], serde_json::json!({}));
+    assert_eq!(saved["summary"]["intelligence_index"], 100.0);
+    assert_eq!(saved["recommendations"][0]["id"], "PROMOTE_BASELINE");
+}
+
+#[test]
 fn performance_autopilot_and_self_evolution_loop_compute_reports() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
