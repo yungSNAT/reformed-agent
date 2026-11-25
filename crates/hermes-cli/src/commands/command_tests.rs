@@ -899,6 +899,47 @@ note the fixtures"));
     }
 
     #[tokio::test]
+    async fn rewind_restores_the_prompt_and_reset_keeps_the_session_id() {
+        use hermes_core::Message;
+
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let session_id = app.session_id.clone();
+        app.messages = vec![
+            Message::user("First question"),
+            Message::assistant("First answer"),
+            Message::user("Second question"),
+            Message::assistant("Second answer"),
+            Message::user("Third question"),
+        ];
+
+        handle_slash_command(&mut app, "/undo", &["0"]).await.unwrap();
+        assert!(latest_ui_assistant_text(&app).starts_with("Usage: /undo"));
+        assert_eq!(app.messages.len(), 5);
+        assert_eq!(app.take_pending_input_prefill(), None);
+
+        handle_slash_command(&mut app, "/rewind", &["2"]).await.unwrap();
+        assert!(latest_ui_assistant_text(&app).contains("Undid 2 user turns"));
+        assert_eq!(app.messages.len(), 2);
+        assert_eq!(app.messages[1].content.as_deref(), Some("First answer"));
+        assert_eq!(app.take_pending_input_prefill().as_deref(), Some("Second question"));
+
+        handle_slash_command(&mut app, "/reset", &[]).await.unwrap();
+        assert_eq!(app.session_id, session_id);
+        assert!(app.messages.is_empty());
+        assert_eq!(latest_ui_assistant_text(&app), "[Session reset]");
+        handle_slash_command(&mut app, "/undo", &[]).await.unwrap();
+        assert_eq!(latest_ui_assistant_text(&app), "[No user turns to undo]");
+
+        handle_slash_command(&mut app, "/new", &[]).await.unwrap();
+        assert_ne!(app.session_id, session_id);
+        assert!(app.messages.is_empty());
+        assert_eq!(latest_ui_assistant_text(&app), format!("[New session started: {}]", app.session_id));
+    }
+
+    #[tokio::test]
     async fn harness_command_reports_the_requested_workspace_and_action() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
