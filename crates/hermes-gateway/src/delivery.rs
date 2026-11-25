@@ -1233,6 +1233,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delivery_queues_local_items_and_text_for_unregistered_adapters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = DeadTargetRegistry::with_path(tmp.path().join("dead_targets.json"));
+        let router = DeliveryRouter::with_dead_target_registry(registry);
+        router
+            .register_adapter(
+                "test",
+                Arc::new(FileRecordingAdapter {
+                    files: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )
+            .await;
+        assert_eq!(router.registered_adapters().await, ["test"]);
+        assert!(router.unregister_adapter("test").await);
+        assert!(!router.unregister_adapter("test").await);
+        assert!(router.registered_adapters().await.is_empty());
+
+        let local = DeliveryTarget::local();
+        router
+            .route_delivery(&local, "local text", None, None)
+            .await
+            .unwrap();
+        router
+            .route_file_delivery(&local, "report.pdf", Some("Summary"), None, None)
+            .await
+            .unwrap();
+        let target = DeliveryTarget::platform_chat("test", "room-7");
+        let error = router
+            .route_delivery(&target, "queued text", None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            GatewayError::SendFailed(message) if message == "No adapter registered for platform 'test'"
+        ));
+
+        for (platform, chat, text) in [
+            ("local", "local", "local text"),
+            ("local", "local", "[file:report.pdf] Summary"),
+            ("test", "room-7", "queued text"),
+        ] {
+            let item = router.fallback_queue().dequeue().unwrap();
+            assert_eq!(item.platform, platform);
+            assert_eq!(item.chat_id, chat);
+            assert_eq!(item.text, text);
+        }
+        assert!(router.fallback_queue().is_empty());
+    }
+
+    #[tokio::test]
     async fn route_delivery_preserves_explicit_ntfy_topic() {
         let router = DeliveryRouter::new();
         let messages = Arc::new(Mutex::new(Vec::new()));
