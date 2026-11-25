@@ -607,8 +607,14 @@ fn with_login_profile_sources(
             auto_source_bashrc,
             subprocess_home,
         ));
-        let bash_command = shell_single_quote(&format!("{bash_prelude}{cleanup}{command}"));
-        let zsh_command = shell_single_quote(&format!("{zsh_prelude}{cleanup}{command}"));
+        // The command goes into the script once, as a variable each branch
+        // appends: Linux caps one argument at 128 KiB, and a copy per shell
+        // branch reached that cap with a third of the command.
+        let command_var = shell_single_quote(command);
+        let bash_setup = shell_single_quote(&format!("{bash_prelude}{cleanup}"));
+        let zsh_setup = shell_single_quote(&format!("{zsh_prelude}{cleanup}"));
+        let bash_command = format!("{bash_setup}\"$__hermes_command\"");
+        let zsh_command = format!("{zsh_setup}\"$__hermes_command\"");
         let preferred_shell = std::env::var("SHELL")
             .ok()
             .and_then(|raw| {
@@ -628,7 +634,7 @@ fn with_login_profile_sources(
             _ => String::new(),
         };
         format!(
-            "{preferred_branch}if command -v bash >/dev/null 2>&1; then exec bash -lc {bash_command}; \
+            "__hermes_command={command_var}; {preferred_branch}if command -v bash >/dev/null 2>&1; then exec bash -lc {bash_command}; \
 elif command -v zsh >/dev/null 2>&1; then exec zsh -lc {zsh_command}; \
 else printf '%s\n' \"Hermes could not find bash or zsh in PATH. Run 'exec zsh -l' or set your default shell where env vars are available.\" >&2; exit 127; fi"
         )
