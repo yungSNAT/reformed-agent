@@ -319,7 +319,29 @@ fn an_embedded_agent_runs_no_claim_verifier_unless_the_host_turns_isolation_off(
         provider.everything_sent()
     };
 
-    assert!(!ask(true).contains(contract));
+    assert!(!ask(true).contains(contract), "the claim verifier ran");
+    assert!(ask(false).contains(contract), "the control saw no contract");
+}
+
+#[test]
+fn an_embedded_agent_runs_no_repo_research_check_unless_the_host_turns_isolation_off() {
+    let mut env = EnvGuard::new();
+    let state = user_state();
+    env.enter(&state);
+    let contract = "Repo research planning contract failed";
+    let ask = |isolated: bool| {
+        let provider = Arc::new(Scripted::answering("src/lib.rs fails because of a typo."));
+        let agent = Agent::builder(provider.clone())
+            .model("scripted")
+            .tool(add_schema(), add)
+            .configure(|c| c.isolated = isolated)
+            .build()
+            .unwrap();
+        block_on(agent.ask("Audit src/lib.rs and explain why it fails.")).unwrap();
+        provider.everything_sent()
+    };
+
+    assert!(!ask(true).contains(contract), "the repo research check ran");
     assert!(ask(false).contains(contract), "the control saw no contract");
 }
 
@@ -387,7 +409,8 @@ fn building_needs_a_model_and_at_least_one_turn() {
 
 #[test]
 fn a_run_cut_short_by_its_turn_limit_says_so() {
-    let _env = EnvGuard::new();
+    let mut env = EnvGuard::new();
+    env.set("HERMES_MAX_TURNS_UNLIMITED", "1");
     let agent = Agent::builder(Arc::new(Scripted::default()))
         .model("scripted")
         .max_turns(1)
@@ -398,4 +421,8 @@ fn a_run_cut_short_by_its_turn_limit_says_so() {
     let reply = block_on(agent.ask("What is 2 + 3?")).unwrap();
 
     assert_eq!(reply.ending, Ending::MaxTurns);
+    assert_eq!(
+        reply.result.total_turns, 1,
+        "the environment lifted the cap"
+    );
 }

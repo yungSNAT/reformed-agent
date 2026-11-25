@@ -38,6 +38,12 @@
         let _key = EnvVarGuard::remove("CONTEXTLATTICE_API_KEY");
         let _mode = EnvVarGuard::set("HERMES_CONTEXTLATTICE_COMPACTION_GOVERNANCE", "advisory");
         let _timeout = EnvVarGuard::set("HERMES_CONTEXTLATTICE_TIMEOUT_SECS", "1");
+        let _proxies: Vec<_> = [
+            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
+        ]
+        .into_iter()
+        .map(EnvVarGuard::remove)
+        .collect();
         let connections = |isolated: bool| {
             let agent = AgentLoop::new(
                 AgentConfig {
