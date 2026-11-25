@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
+mod manager_contract;
+
 struct FakeTransport {
     responses: VecDeque<serde_json::Value>,
     closed: Arc<AtomicBool>,
