@@ -558,6 +558,83 @@ fn case_proofs_reject_superior_cases_when_required_evidence_is_missing() {
 }
 
 #[test]
+fn deep_proof_reports_missing_references_and_unmet_thresholds() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let source = "tests/fixture.rs";
+    fs::create_dir(root.join("tests")).unwrap();
+    fs::write(root.join(source), "#[test]\nfn actual_test() {}\n").unwrap();
+    let reference = json!({"file": source, "name": "absent_test"});
+    fs::write(
+        root.join("cases.json"),
+        json!({"cases": [{
+            "id": "fixture-case",
+            "domain": "fixture",
+            "classification": "invalid",
+            "upstream_behavior": "Synthetic input.",
+            "ultra_behavior": "Synthetic output.",
+            "why": "Exercise proof validation.",
+            "source_artifacts": [source, "notes/absent.txt"],
+            "rust_tests": [reference.clone()]
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    let run = |check: bool| {
+        let mut tool = parity_tool(root, "generate-deep-problem-solving-diff");
+        tool.current_dir(root).args([
+            "--cases",
+            "cases.json",
+            "--out-json",
+            "reports/result.json",
+            "--out-md",
+            "reports/result.md",
+            "--min-total-cases",
+            "2",
+            "--min-superiority-cases",
+            "1",
+        ]);
+        if check {
+            tool.arg("--check");
+        }
+        tool.output().unwrap()
+    };
+
+    assert_exit(run(true), 1, "check rejects incomplete proof");
+    assert!(!root.join("reports").exists());
+    assert_exit(run(false), 0, "generate diagnostics for incomplete proof");
+    let output = fs::read(root.join("reports/result.json")).unwrap();
+    let report: Value = serde_json::from_slice(&output).unwrap();
+    let case = &report["cases"][0];
+    assert_eq!(case["verified"], false);
+    assert_eq!(case["missing_rust_test_refs"], json!([reference]));
+    assert_eq!(
+        case["missing_source_artifacts"],
+        json!(["notes/absent.txt"])
+    );
+    assert_eq!(case["issues"][0]["kind"], "schema");
+    assert_eq!(report["gate"]["pass"], false);
+    let failures: Vec<_> = report["gate_failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|failure| failure["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        failures,
+        [
+            "total_cases",
+            "deep_problem_solving_ratio",
+            "superiority_cases",
+            "unverified",
+            "missing_rust_test_refs",
+            "missing_source_artifacts",
+        ]
+    );
+    assert!(root.join("reports/result.md").is_file());
+}
+
+#[test]
 fn gpar_closure_check_exits_for_pending_work_without_writing_reports() {
     let root = tempfile::tempdir().unwrap();
     let parity = root.path().join("docs/parity");
