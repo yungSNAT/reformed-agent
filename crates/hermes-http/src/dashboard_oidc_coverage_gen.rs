@@ -389,3 +389,4 @@ async fn configured_status_and_login_use_signed_cookies() {
 }
 
 include!("dashboard_oidc_part2_coverage_gen.rs");
+include!("dashboard_oidc_loopback.rs");
