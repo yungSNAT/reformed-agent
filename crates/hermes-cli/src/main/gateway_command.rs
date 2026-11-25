@@ -1366,7 +1366,9 @@ async fn configure_platform_basic_prompts(
             let agent_id = prompt_line("WeCom callback agent_id: ").await?;
             set_extra_string_if_nonempty(p, "agent_id", &agent_id);
             let token = prompt_line("WeCom callback token: ").await?;
-            set_extra_string_if_nonempty(p, "token", &token);
+            if !token.trim().is_empty() {
+                p.token = Some(token.trim().to_string());
+            }
             let aes = prompt_line("WeCom callback encoding_aes_key: ").await?;
             set_extra_string_if_nonempty(p, "encoding_aes_key", &aes);
             let host = prompt_line("WeCom callback host (default 0.0.0.0): ").await?;

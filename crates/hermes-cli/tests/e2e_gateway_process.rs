@@ -215,4 +215,205 @@ mod unix {
             2
         );
     }
+
+    #[test]
+    fn gateway_cli_setup_persists_platform_specific_fields() {
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let menu = isolated_gateway_cli(home, &["gateway", "setup"])
+            .write_stdin("\n")
+            .assert()
+            .success();
+        let stdout = String::from_utf8_lossy(&menu.get_output().stdout);
+        let choices: std::collections::HashMap<_, _> = stdout
+            .lines()
+            .filter_map(|line| {
+                let (number, label) = line.trim().strip_prefix("[ ]")?.split_once('.')?;
+                let label = label.trim().strip_suffix("disabled")?.trim_end();
+                Some((label, number.trim()))
+            })
+            .collect();
+        let mut selections = [
+            "BlueBubbles",
+            "DingTalk",
+            "Discord",
+            "Email",
+            "Feishu",
+            "HomeAssistant",
+            "Matrix",
+            "Mattermost",
+            "ntfy",
+            "QQBot",
+            "Signal",
+            "Slack",
+            "SMS",
+            "WeCom",
+            "WeCom Callback",
+            "WhatsApp",
+        ]
+        .map(|label| {
+            *choices
+                .get(label)
+                .unwrap_or_else(|| panic!("missing {label}"))
+        })
+        .join("\n");
+        selections.push_str("\n\n");
+        let answers = concat!(
+            "http://127.0.0.1:8014\nfixture-bluebubbles\n",
+            "fixture-dingtalk-id\nfixture-dingtalk-secret\n",
+            " fixture-discord \nfixture-application\n first, ,second \nfixture-discord-room\n",
+            "fixture@example.invalid\nfixture-email\n127.0.0.1\n127.0.0.1\n1993\n1587\n",
+            "fixture-feishu-id\nfixture-feishu-secret\nfixture-verification\nfixture-encryption\n",
+            "http://127.0.0.1:8123\nfixture-homeassistant\nfixture-hook\n",
+            "http://127.0.0.1:8448\n@fixture:example.invalid\nfixture-matrix\n!fixture:example.invalid\n",
+            "http://127.0.0.1:8065\nfixture-mattermost\nfixture-team\nfixture-mattermost-room\n",
+            "fixture-subscribe\nhttp://127.0.0.1:8085\nfixture-publish\nfixture-ntfy\n",
+            "fixture-qqbot-id\nfixture-qqbot-secret\nYeS\n",
+            "+12025550101\nhttp://127.0.0.1:8080\n",
+            "fixture-slack\nfixture-slack-app\nno\n",
+            "fixture-twilio-id\nfixture-twilio-auth\n+12025550102\n",
+            "fixture-wecom-id\n42\nfixture-wecom-secret\n",
+            "fixture-callback-id\nfixture-callback-secret\n43\nfixture-callback-token\n",
+            "fixture-encoding-key\n127.0.0.1\n18645\n/fixture-callback\n",
+            "fixture-whatsapp\nfixture-phone-id\nfixture-verify\nfixture-whatsapp-room\n",
+        );
+
+        isolated_gateway_cli(home, &["gateway", "setup"])
+            .write_stdin(format!("{selections}{answers}"))
+            .assert()
+            .success();
+
+        let config_path = home.join("config.yaml");
+        let raw = fs::read_to_string(&config_path).unwrap();
+        let config: hermes_config::GatewayConfig = serde_yaml::from_str(&raw).unwrap();
+        let expected = [
+            (
+                "bluebubbles",
+                json!({"server_url": "http://127.0.0.1:8014", "password": "fixture-bluebubbles"}),
+            ),
+            (
+                "dingtalk",
+                json!({"client_id": "fixture-dingtalk-id", "client_secret": "fixture-dingtalk-secret"}),
+            ),
+            ("discord", json!({"application_id": "fixture-application"})),
+            (
+                "email",
+                json!({"username": "fixture@example.invalid", "password": "fixture-email", "imap_host": "127.0.0.1", "smtp_host": "127.0.0.1", "imap_port": 1993, "smtp_port": 1587}),
+            ),
+            (
+                "feishu",
+                json!({"app_id": "fixture-feishu-id", "app_secret": "fixture-feishu-secret", "verification_token": "fixture-verification", "encrypt_key": "fixture-encryption"}),
+            ),
+            (
+                "homeassistant",
+                json!({"base_url": "http://127.0.0.1:8123", "webhook_id": "fixture-hook"}),
+            ),
+            (
+                "matrix",
+                json!({"homeserver_url": "http://127.0.0.1:8448", "user_id": "@fixture:example.invalid", "room_id": "!fixture:example.invalid"}),
+            ),
+            (
+                "mattermost",
+                json!({"server_url": "http://127.0.0.1:8065", "team_id": "fixture-team"}),
+            ),
+            (
+                "ntfy",
+                json!({"topic": "fixture-subscribe", "server": "http://127.0.0.1:8085", "publish_topic": "fixture-publish"}),
+            ),
+            (
+                "qqbot",
+                json!({"app_id": "fixture-qqbot-id", "client_secret": "fixture-qqbot-secret", "markdown_support": true}),
+            ),
+            (
+                "signal",
+                json!({"phone_number": "+12025550101", "api_url": "http://127.0.0.1:8080"}),
+            ),
+            (
+                "slack",
+                json!({"app_token": "fixture-slack-app", "socket_mode": false}),
+            ),
+            (
+                "sms",
+                json!({"account_sid": "fixture-twilio-id", "auth_token": "fixture-twilio-auth", "from_number": "+12025550102"}),
+            ),
+            (
+                "wecom",
+                json!({"corp_id": "fixture-wecom-id", "agent_id": "42", "secret": "fixture-wecom-secret"}),
+            ),
+            (
+                "wecom_callback",
+                json!({"corp_id": "fixture-callback-id", "corp_secret": "fixture-callback-secret", "agent_id": "43", "encoding_aes_key": "fixture-encoding-key", "host": "127.0.0.1", "port": 18645, "path": "/fixture-callback"}),
+            ),
+            (
+                "whatsapp",
+                json!({"phone_number_id": "fixture-phone-id", "verify_token": "fixture-verify"}),
+            ),
+        ];
+        assert_eq!(config.platforms.len(), expected.len());
+        for (name, extra) in expected {
+            let platform = &config.platforms[name];
+            assert!(platform.enabled, "{name}");
+            assert_eq!(json!(platform.extra), extra, "{name}");
+        }
+        for (name, token) in [
+            ("discord", "fixture-discord"),
+            ("homeassistant", "fixture-homeassistant"),
+            ("matrix", "fixture-matrix"),
+            ("mattermost", "fixture-mattermost"),
+            ("ntfy", "fixture-ntfy"),
+            ("slack", "fixture-slack"),
+            ("wecom_callback", "fixture-callback-token"),
+            ("whatsapp", "fixture-whatsapp"),
+        ] {
+            assert_eq!(
+                config.platforms[name].token.as_deref(),
+                Some(token),
+                "{name}"
+            );
+        }
+        for (name, channel) in [
+            ("discord", "fixture-discord-room"),
+            ("mattermost", "fixture-mattermost-room"),
+            ("whatsapp", "fixture-whatsapp-room"),
+        ] {
+            assert_eq!(
+                config.platforms[name].home_channel.as_deref(),
+                Some(channel),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            config.platforms["discord"].allowed_users,
+            ["first", "second"]
+        );
+    }
+
+    #[test]
+    fn gateway_cli_setup_replaces_existing_wecom_callback_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let config = home.join("config.yaml");
+        fs::write(
+            &config,
+            "platforms:\n  wecom_callback:\n    enabled: true\n    token: fixture-old\n",
+        )
+        .unwrap();
+        // Confirm the existing selection and leave every other prompt blank.
+        for stdin in ["\n\n\n\n fixture-new \n\n\n\n\n", "\n\n\n\n\n\n\n\n\n"] {
+            let result = isolated_gateway_cli(home, &["gateway", "setup"])
+                .write_stdin(stdin)
+                .assert()
+                .success();
+            let stdout = String::from_utf8_lossy(&result.get_output().stdout);
+            assert!(stdout.contains("Gateway setup complete."), "{stdout}");
+            let parsed: hermes_config::GatewayConfig =
+                serde_yaml::from_str(&fs::read_to_string(&config).unwrap())
+                    .expect("callback configuration has a single token field");
+            let callback = &parsed.platforms["wecom_callback"];
+            assert!(callback.enabled);
+            assert_eq!(callback.token.as_deref(), Some("fixture-new"));
+        }
+    }
 }
