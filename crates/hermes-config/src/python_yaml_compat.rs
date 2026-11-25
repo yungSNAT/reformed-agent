@@ -619,6 +619,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_empty_providers_preserve_native_settings_and_lift_agent_limits() {
+        let raw = r#"
+agent: {max_turns: 17}
+tools: terminal
+toolsets: [web]
+custom_providers: []
+providers: {}
+llm_providers:
+  office: {base_url: 'https://office.invalid/v1'}
+discord: {enabled: false}
+platforms:
+  discord: {enabled: true, require_mention: true}
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+
+        assert_eq!(root[key("max_turns")].as_u64(), Some(17));
+        assert_eq!(root[key("tools")].as_str(), Some("terminal"));
+        assert!(!root.contains_key(key("custom_providers")));
+        assert!(!root.contains_key(key("providers")));
+        let providers = root[key("llm_providers")].as_mapping().unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(
+            providers[key("office")]["base_url"].as_str(),
+            Some("https://office.invalid/v1")
+        );
+        let platforms = root[key("platforms")].as_mapping().unwrap();
+        assert_eq!(platforms[key("discord")]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            platforms[key("discord")]["require_mention"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn legacy_unknown_reset_mode_and_model_value_survive_normalisation() {
+        let raw = r#"
+model: true
+session_reset: {mode: future}
+session: {max_context_messages: 40}
+"#;
+        let expected: Mapping = serde_yaml::from_str(raw).unwrap();
+        let mut root = expected.clone();
+        normalize_config_yaml_root(&mut root);
+
+        assert_eq!(root, expected);
+    }
+
+    #[test]
     fn python_provider_only_model_preserves_scalar_switch_value() {
         let raw = r#"
 model:
