@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[path = "support/isolated_hermes.rs"]
@@ -144,6 +144,115 @@ async fn weixin_login_restores_a_saved_account_after_local_logout() {
         Some(fixture_token)
     );
     assert_eq!(config.platforms["weixin"].extra["account_id"], account);
+}
+
+#[tokio::test]
+async fn weixin_qr_login_refreshes_an_expired_code_and_saves_the_confirmed_account() {
+    use serde_json::{json, Value};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    let base_url = server.uri();
+    let config_path = sandbox.path().join("hermes/config.yaml");
+    std::fs::create_dir(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "platforms:\n  weixin:\n    enabled: false\n    base_url: {base_url}\n    qr_start_endpoint: /start\n    qr_poll_endpoint: /poll\n"
+        ),
+    )
+    .unwrap();
+
+    let starts = AtomicUsize::new(0);
+    let display_url = format!("{base_url}/fixture-display");
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .and(query_param("bot_type", "3"))
+        .respond_with(move |_: &wiremock::Request| {
+            let reply = match starts.fetch_add(1, Ordering::Relaxed) {
+                0 => json!({"qrcode": "expired-fixture"}),
+                1 => json!({"qrcode": "renewed-fixture", "qrcode_img_content": display_url}),
+                _ => return ResponseTemplate::new(500),
+            };
+            ResponseTemplate::new(200).set_body_json(reply)
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/poll"))
+        .and(query_param("qrcode", "expired-fixture"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "expired"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let fixture_token = "hermes-weixin-qr-fixture";
+    let polls = AtomicUsize::new(0);
+    Mock::given(method("GET"))
+        .and(path("/poll"))
+        .and(query_param("qrcode", "renewed-fixture"))
+        .respond_with(move |_: &wiremock::Request| {
+            let reply = match polls.fetch_add(1, Ordering::Relaxed) {
+                0 => json!({"status": "scaned"}),
+                1 => json!({
+                    "status": "confirmed",
+                    "ilink_bot_id": "qr-account-fixture",
+                    "bot_token": fixture_token,
+                    "ilink_user_id": "qr-user-fixture"
+                }),
+                _ => return ResponseTemplate::new(500),
+            };
+            ResponseTemplate::new(200).set_body_json(reply)
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes(sandbox.path())
+            .env("WEIXIN_BASE_URL", &base_url)
+            .args(["auth", "login", "weixin", "--qr"])
+            .stdin(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .expect("fixture QR login timed out")
+    .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("account_id/token saved and platform enabled"));
+    assert!(!stdout.contains(fixture_token));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(fixture_token));
+    let config = hermes_config::load_user_config_file(&config_path).unwrap();
+    let platform = &config.platforms["weixin"];
+    assert!(platform.enabled);
+    assert_eq!(platform.extra["account_id"], "qr-account-fixture");
+    assert_eq!(platform.token.as_deref(), Some(fixture_token));
+    let saved = sandbox
+        .path()
+        .join("hermes/weixin/accounts/qr-account-fixture.json");
+    let saved: Value = serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+    assert_eq!(saved["token"], fixture_token);
+    assert_eq!(saved["user_id"], "qr-user-fixture");
+    assert_eq!(saved["base_url"], base_url);
+    server.verify().await;
+    let requests = server.received_requests().await.unwrap();
+    let path_and_query: Vec<_> = requests
+        .iter()
+        .map(|request| (request.url.path(), request.url.query().unwrap_or_default()))
+        .collect();
+    assert_eq!(
+        path_and_query,
+        [
+            ("/start", "bot_type=3"),
+            ("/poll", "qrcode=expired-fixture"),
+            ("/start", "bot_type=3"),
+            ("/poll", "qrcode=renewed-fixture"),
+            ("/poll", "qrcode=renewed-fixture"),
+        ]
+    );
 }
 
 #[tokio::test]
