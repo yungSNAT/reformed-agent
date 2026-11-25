@@ -991,6 +991,151 @@ note the fixtures"));
     }
 
     #[tokio::test]
+    async fn tools_slash_commands_list_availability_and_sort_trust_scores() {
+        use hermes_core::{JsonSchema, ToolError, ToolHandler, ToolSchema};
+
+        struct DisplayOnlyTool(ToolSchema);
+
+        #[async_trait::async_trait]
+        impl ToolHandler for DisplayOnlyTool {
+            async fn execute(&self, _: serde_json::Value) -> Result<String, ToolError> {
+                panic!("tool scorecards must never run a tool");
+            }
+
+            fn schema(&self) -> ToolSchema {
+                self.0.clone()
+            }
+        }
+
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        app.tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
+
+        let result = handle_slash_command(&mut app, "/tools", &[]).await.unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        assert_eq!(latest_ui_assistant_text(&app), "No tools registered.");
+
+        for (name, toolset, env_deps) in [
+            ("markdown_preview", "fixture", vec![]),
+            ("document_preview", "fixture", vec![]),
+            ("terminal", "fixture", vec![]),
+            (
+                "http_token_helper",
+                "Network",
+                vec!["FIXTURE_DEPENDENCY".into()],
+            ),
+        ] {
+            let description = format!("Fixture {name}");
+            let schema = ToolSchema::new(name, &description, JsonSchema::new("object"));
+            app.tool_registry.register(
+                name,
+                toolset,
+                schema.clone(),
+                Arc::new(DisplayOnlyTool(schema)),
+                Arc::new(|| true),
+                env_deps,
+                false,
+                description,
+                "",
+                None,
+            );
+        }
+        Arc::make_mut(&mut app.config).tools_config.disabled = vec!["terminal".into()];
+        let result = handle_slash_command(&mut app, "/tools", &["list"])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let list = latest_ui_assistant_text(&app);
+        assert!(list.contains("Registered tools (4)"));
+        assert!(list.contains("`document_preview` [enabled]"));
+        assert!(list.contains("`terminal` [disabled]"));
+
+        let result = handle_slash_command(&mut app, "/tools", &["trust"])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let trust = latest_ui_assistant_text(&app);
+        assert!(trust.contains("registered_tools=4"));
+        assert!(trust.contains("policy_counters: allow=0 deny=0"));
+        let rows: Vec<_> = trust
+            .lines()
+            .filter_map(|line| line.strip_prefix("- "))
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                vec!["document_preview", "score=100", "tier=low-risk"],
+                vec!["markdown_preview", "score=100", "tier=low-risk"],
+                vec!["terminal", "score=", "65", "tier=moderate-risk"],
+                vec!["http_token_helper", "score=", "40", "tier=high-risk"],
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn config_slash_commands_report_changes_and_reject_invalid_updates() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        {
+            let config = Arc::make_mut(&mut app.config);
+            config.model = Some("fixture-model".into());
+            config.system_prompt = Some("Synthetic system prompt.".into());
+        }
+        for (args, expected) in [
+            (&["get", "model"][..], "model = fixture-model"),
+            (
+                &["get", "system_prompt"],
+                "system_prompt = Synthetic system prompt.",
+            ),
+            (
+                &["get", "unused"],
+                "Key 'unused' not found in configuration.",
+            ),
+            (&["get"], "Usage: /config get <key>"),
+            (&["set", "personality"], "Usage: /config set <key> <value>"),
+            (
+                &["set", "personality", "concise"],
+                "Set personality = concise",
+            ),
+            (&["get", "personality"], "personality = concise"),
+            (&["set", "max_turns", "42"], "Set max_turns = 42"),
+            (
+                &["set", "max_turns", "invalid"],
+                "Unknown configuration key: max_turns",
+            ),
+            (&["get", "max_turns"], "max_turns = 42"),
+            (
+                &["set", "unused", "value"],
+                "Unknown configuration key: unused",
+            ),
+            (
+                &["unknown"],
+                "Unknown config action 'unknown'. Use 'get' or 'set'.",
+            ),
+        ] {
+            let before = app.ui_messages.len();
+            let result = handle_slash_command(&mut app, "/config", args)
+                .await
+                .unwrap();
+            assert_eq!(result, CommandResult::Handled);
+            assert_eq!(app.ui_messages.len(), before + 1);
+            assert_eq!(latest_ui_assistant_text(&app), expected);
+        }
+        assert_eq!(app.current_personality.as_deref(), Some("concise"));
+        assert_eq!(app.config.max_turns, 42);
+        assert_eq!(app.config.model.as_deref(), Some("fixture-model"));
+        assert_eq!(
+            app.config.system_prompt.as_deref(),
+            Some("Synthetic system prompt.")
+        );
+    }
+
+    #[tokio::test]
     async fn app_contextual_autocomplete_and_tools_toggle_use_runtime_state() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
