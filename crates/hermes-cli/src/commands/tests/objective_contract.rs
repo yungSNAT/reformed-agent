@@ -2,7 +2,7 @@ use super::*;
 use crate::alpha_runtime::{
     append_objective_eval_sample, load_contextlattice_policy, load_objective_contract,
     load_objective_dag, load_objective_ensemble_policy, load_objective_learning_ledger,
-    load_objective_simulation_policy,
+    load_objective_profile, load_objective_simulation_policy,
 };
 
 async fn assert_objective_output(app: &mut App, args: &[&str], expected: &str) {
@@ -74,6 +74,51 @@ async fn objective_lifecycle_persists_state_and_controls_prompt_injection() {
     assert_objective_output(&mut app, &["off"], "Session objective cleared.").await;
     assert!(load_objective_contract().unwrap().is_none());
     assert!(app.session_objective.is_none());
+}
+
+#[tokio::test]
+async fn objective_profile_changes_persist_and_reset_to_general_defaults() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::objective_contract::objective_profile_changes_persist_and_reset_to_general_defaults",
+    ) {
+        return;
+    }
+    let _guard = test_env_lock::lock_async().await;
+    let home = tempdir().expect("create temporary home");
+    let _home = TempHomeGuard::new(home.path());
+    let mut app = build_test_app_with_stream(home.path()).await;
+
+    assert_objective_output(&mut app, &["profile"], "profile_id: repo-general").await;
+    assert_objective_output(&mut app, &["profile", "list"], "- operator-custom:").await;
+    assert_objective_output(&mut app, &["profile", "set"], "Usage: /objective profile set").await;
+    assert_eq!(load_objective_profile().unwrap().profile_id, "repo-general");
+
+    assert_objective_output(
+        &mut app,
+        &["profile", "set", "Fixture Operator"],
+        "profile_id=operator-custom",
+    )
+    .await;
+    assert_eq!(
+        load_objective_profile().unwrap().operator_hint,
+        "Fixture Operator"
+    );
+    assert_objective_output(
+        &mut app,
+        &["profile", "unknown"],
+        "Usage: /objective profile",
+    )
+    .await;
+    assert_objective_output(&mut app, &["profile", "show"], "operator_hint: Fixture Operator").await;
+
+    assert_objective_output(&mut app, &["profile", "me"], "shell=zsh").await;
+    assert_eq!(
+        load_objective_profile().unwrap().memory_backend,
+        "contextlattice-primary"
+    );
+    assert_objective_output(&mut app, &["profile", "show"], "preferred_languages:\n- rust").await;
+    assert_objective_output(&mut app, &["profile", "reset"], "profile_id=repo-general").await;
+    assert_eq!(load_objective_profile().unwrap().profile_id, "repo-general");
 }
 
 #[tokio::test]
