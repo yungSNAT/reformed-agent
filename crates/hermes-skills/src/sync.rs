@@ -1065,6 +1065,47 @@ mod tests {
     }
 
     #[test]
+    fn remove_pristine_bundled_skills_keeps_entries_without_a_verifiable_origin() {
+        let dir = tempdir().unwrap();
+        let bundled = setup_bundled(dir.path());
+        let cfg = config(dir.path(), bundled);
+        sync_skills(&cfg, true).unwrap();
+        let mut manifest = read_manifest(&cfg.manifest_file);
+        manifest.get_mut("new-skill").unwrap().clear();
+        write_manifest(&cfg.manifest_file, &manifest).unwrap();
+        fs::rename(
+            cfg.bundled_dir.join("old-skill"),
+            dir.path().join("retired-bundle"),
+        )
+        .unwrap();
+
+        for dry_run in [true, false] {
+            let report = remove_pristine_bundled_skills(&cfg, dry_run).unwrap();
+            assert!(report.removed.is_empty());
+            assert_eq!(
+                report
+                    .skipped
+                    .iter()
+                    .map(|skip| (skip.name.as_str(), skip.reason.as_str()))
+                    .collect::<Vec<_>>(),
+                [
+                    ("new-skill", "legacy manifest without origin hash (kept)"),
+                    ("old-skill", "no bundled source (removed upstream)")
+                ]
+            );
+            assert_eq!(read_manifest(&cfg.manifest_file), manifest);
+            assert_eq!(
+                fs::read_to_string(cfg.skills_dir.join("category/new-skill/SKILL.md")).unwrap(),
+                "# New"
+            );
+            assert_eq!(
+                fs::read_to_string(cfg.skills_dir.join("old-skill/SKILL.md")).unwrap(),
+                "# Old"
+            );
+        }
+    }
+
+    #[test]
     fn remove_pristine_bundled_skills_cleans_missing_manifest_entries() {
         let dir = tempdir().unwrap();
         let bundled = setup_bundled(dir.path());
