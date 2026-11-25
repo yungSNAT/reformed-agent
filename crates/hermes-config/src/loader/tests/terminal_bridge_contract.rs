@@ -185,6 +185,51 @@ terminal:
 }
 
 #[test]
+fn runtime_env_applies_limits_and_base_url_precedence() {
+    if !enter_bridge_fixture(
+        "loader::tests::terminal_bridge_contract::runtime_env_applies_limits_and_base_url_precedence",
+    ) {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for (key, value) in [
+        ("HERMES_MAX_TURNS", "24"),
+        ("HERMES_BUDGET_MAX_RESULT_CHARS", "3072"),
+        ("HERMES_BUDGET_MAX_AGGREGATE_CHARS", "12288"),
+        ("HERMES_AGENT_API_MAX_RETRIES", "invalid"),
+        ("VLLM_BASE_URL", "https://vllm.invalid/v1"),
+        ("TGI_BASE_URL", " "),
+        ("HERMES_BASE_URL", " "),
+    ] {
+        set_test_env(key, value);
+    }
+    let mut config = GatewayConfig::default();
+    config.agent.api_max_retries = Some(2);
+    apply_env_overrides(&mut config);
+    assert_eq!(config.max_turns, 24);
+    assert_eq!(config.budget.max_result_size_chars, 3072);
+    assert_eq!(config.budget.max_aggregate_chars, 12288);
+    assert_eq!(config.agent.api_max_retries, Some(2));
+    assert_eq!(
+        config.llm_providers["vllm"].base_url.as_deref(),
+        Some("https://vllm.invalid/v1")
+    );
+    assert!(config
+        .llm_providers
+        .get("tgi")
+        .is_none_or(|provider| provider.base_url.is_none()));
+
+    let global_url = "https://common.invalid/v1";
+    set_test_env("HERMES_BASE_URL", global_url);
+    apply_env_overrides(&mut config);
+    assert!(!config.llm_providers.is_empty());
+    assert!(config
+        .llm_providers
+        .values()
+        .all(|provider| provider.base_url.as_deref() == Some(global_url)));
+}
+
+#[test]
 fn config_validation_identifies_the_invalid_provider_or_delegation_setting() {
     use crate::config::LlmProviderConfig;
 
