@@ -458,4 +458,32 @@ mod tests {
             .expect_err("a missing source cannot upload");
         assert!(error.to_string().contains("Failed to read local file"));
     }
+
+    #[tokio::test]
+    async fn download_fails_cleanly_when_a_local_parent_is_a_file() {
+        let root = tempfile::tempdir().unwrap();
+        let blocked = root.path().join("notes");
+        tokio::fs::write(&blocked, "existing notes").await.unwrap();
+        let relative = PathBuf::from("notes").join("summary.txt");
+        let remote_name = relative.to_string_lossy().into_owned();
+        let sync = FileSync::new(
+            root.path().to_path_buf(),
+            Arc::new(MockBackend {
+                files: HashMap::from([(remote_name, "synthetic summary".to_string())]),
+                writes: None,
+            }),
+        );
+
+        let error = sync.sync_from_remote(&[relative]).await.unwrap_err();
+        assert!(matches!(
+            error,
+            AgentError::Io(message)
+                if message.starts_with("Failed to create directory") && message.contains("notes")
+        ));
+        assert_eq!(
+            tokio::fs::read_to_string(&blocked).await.unwrap(),
+            "existing notes"
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
 }
