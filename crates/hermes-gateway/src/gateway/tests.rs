@@ -1216,4 +1216,5 @@ include!("tests/status_profiles.rs");
 include!("tests/reply_recovery.rs");
 
 mod hook_lifecycle;
+mod routing_contract;
 mod runtime_controls;
