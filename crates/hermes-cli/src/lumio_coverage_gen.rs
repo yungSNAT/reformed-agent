@@ -288,3 +288,153 @@ fn invalid_endpoint_urls_return_errors_without_connecting() {
         .unwrap_err()
         .is_empty());
 }
+
+fn begin_local_login(
+    test: &str,
+    case: &str,
+    root: &Path,
+    service: &wiremock::MockServer,
+) -> (TestChild, reqwest::Url) {
+    let base_url = service.uri();
+    let mut command = isolated_command(test, case, root);
+    command.env("LUMIO_BASE_URL", &base_url);
+    let mut child = TestChild::start(&mut command);
+    let query = child.read_prefixed(&format!("{base_url}/api/oauth2/authorize?"));
+    let params = parse_query(&query);
+    assert_eq!(params["client_id"], CLIENT_ID);
+    assert_eq!(params["response_type"], "code");
+    assert_eq!(params["scope"], "read");
+    let mut callback = reqwest::Url::parse(&params["redirect_uri"]).unwrap();
+    assert_eq!(callback.scheme(), "http");
+    assert_eq!(callback.host_str(), Some("localhost"));
+    assert_eq!(callback.path(), "/callback");
+    assert!(callback.port().is_some());
+    callback.set_host(Some("127.0.0.1")).unwrap();
+    callback
+        .query_pairs_mut()
+        .append_pair("state", &params["state"]);
+    (child, callback)
+}
+
+async fn local_login() -> LoginResult {
+    let endpoint = reqwest::Url::parse(&lumio_base_url()).unwrap();
+    assert_eq!(endpoint.scheme(), "http");
+    assert_eq!(endpoint.host_str(), Some("127.0.0.1"));
+    assert!(endpoint.port().is_some());
+    login(false).await
+}
+
+fn callback_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(WAIT)
+        .build()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interactive_login_uses_the_loopback_callback_and_loads_the_account_name() {
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    if env::var_os(CHILD_CASE).is_some() {
+        let result = local_login().await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.token.as_deref(), Some("fixture-account-value"));
+        assert_eq!(result.username.as_deref(), Some("Fixture & Colleague"));
+        assert!(result.error.is_none());
+        assert!(!token_path().exists());
+        println!("\n{DONE}");
+        return;
+    }
+
+    let home = tempfile::tempdir().unwrap();
+    let service = MockServer::start().await;
+    let (child, mut callback) = begin_local_login(
+        "interactive_login_uses_the_loopback_callback_and_loads_the_account_name",
+        "authorised",
+        home.path(),
+        &service,
+    );
+    let redirect_uri = format!("http://localhost:{}/callback", callback.port().unwrap());
+    Mock::given(method("POST"))
+        .and(path("/api/oauth2/token"))
+        .and(body_json(serde_json::json!({
+            "client_id": CLIENT_ID,
+            "grant_type": "authorization_code",
+            "code": "fixture-code",
+            "redirect_uri": redirect_uri,
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "fixture-account-value",
+        })))
+        .expect(1)
+        .mount(&service)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/oauth2/userinfo"))
+        .and(header("authorization", "Bearer fixture-account-value"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "username": "Fixture & Colleague",
+        })))
+        .expect(1)
+        .mount(&service)
+        .await;
+
+    callback
+        .query_pairs_mut()
+        .append_pair("code", "fixture-code");
+    let response = callback_client().get(callback).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert!(response
+        .text()
+        .await
+        .unwrap()
+        .contains("Fixture &amp; Colleague"));
+    child.finish();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interactive_login_reports_denial_unavailability_and_missing_codes() {
+    use wiremock::MockServer;
+
+    if let Ok(case) = env::var(CHILD_CASE) {
+        let result = local_login().await;
+        assert!(!result.success);
+        assert!(result.token.is_none());
+        assert!(result.username.is_none());
+        let expected = match case.as_str() {
+            "access_denied" => "Authorization was denied",
+            "temporarily_unavailable" => "The authorization service is unavailable, please retry",
+            "missing-code" => "No authorization code",
+            _ => unreachable!("only declared fixture cases are passed to the child"),
+        };
+        assert_eq!(result.error.as_deref(), Some(expected));
+        println!("\n{DONE}");
+        return;
+    }
+
+    let client = callback_client();
+    let service = MockServer::start().await;
+    for (case, status) in [
+        ("access_denied", reqwest::StatusCode::OK),
+        ("temporarily_unavailable", reqwest::StatusCode::OK),
+        ("missing-code", reqwest::StatusCode::BAD_REQUEST),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let (child, mut callback) = begin_local_login(
+            "interactive_login_reports_denial_unavailability_and_missing_codes",
+            case,
+            home.path(),
+            &service,
+        );
+        if case != "missing-code" {
+            callback.query_pairs_mut().append_pair("error", case);
+        }
+        let response = client.get(callback).send().await.unwrap();
+        assert_eq!(response.status(), status);
+        child.finish();
+    }
+    assert!(service.received_requests().await.unwrap().is_empty());
+}
