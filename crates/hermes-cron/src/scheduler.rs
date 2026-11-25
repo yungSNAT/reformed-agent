@@ -1169,6 +1169,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn job_lifecycle_validates_transitions_and_persists_the_schedule() {
+        let executor = Arc::new(BlockingTestExecutor::default());
+        executor.release.add_permits(1);
+        let (scheduler, _dir) = make_executor_scheduler(executor.clone());
+        let mut job = CronJob::new("0 9 * * *", "Summarise the fixture");
+        job.id.clear();
+        let id = scheduler.create_job(job).await.unwrap();
+        assert!(!id.is_empty());
+        let created = scheduler.get_job(&id).await.unwrap();
+        assert!(created.next_run.is_some());
+        assert!(matches!(
+            scheduler.create_job(created.clone()).await,
+            Err(CronError::JobAlreadyExists(existing)) if existing == id
+        ));
+        assert!(scheduler.resume_job(&id).await.is_err());
+
+        scheduler.pause_job(&id).await.unwrap();
+        assert!(matches!(
+            scheduler.pause_job(&id).await,
+            Err(CronError::JobPaused(paused)) if paused == id
+        ));
+        assert!(!scheduler.fire_managed_job(&id, None).await.unwrap());
+        assert_eq!(
+            scheduler.persistence.load_jobs().await.unwrap()[0].status,
+            JobStatus::Paused
+        );
+
+        scheduler.resume_job(&id).await.unwrap();
+        let mut revised = scheduler.get_job(&id).await.unwrap();
+        assert_eq!(revised.status, JobStatus::Active);
+        assert!(revised.next_run.is_some());
+        revised.schedule = "0 12 * * *".into();
+        revised.next_run = None;
+        scheduler.update_job(&id, revised).await.unwrap();
+        let mut scheduled = scheduler.get_job(&id).await.unwrap();
+        assert_eq!(scheduled.schedule, "0 12 * * *");
+        assert!(scheduled.next_run.is_some());
+        assert_ne!(scheduled.next_run, created.next_run);
+        assert_eq!(
+            scheduler.persistence.load_jobs().await.unwrap(),
+            [scheduled.clone()]
+        );
+
+        scheduled.status = JobStatus::Completed;
+        scheduled.next_run = None;
+        scheduler.update_job(&id, scheduled).await.unwrap();
+        assert!(matches!(
+            scheduler.pause_job(&id).await,
+            Err(CronError::JobCompleted(completed)) if completed == id
+        ));
+        assert!(matches!(
+            scheduler.run_job(&id).await,
+            Err(CronError::JobCompleted(completed)) if completed == id
+        ));
+        assert_eq!(executor.started.load(Ordering::SeqCst), 0);
+        scheduler.remove_job(&id).await.unwrap();
+        assert!(scheduler.get_job(&id).await.is_none());
+        assert!(scheduler.persistence.load_jobs().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn tick_due_jobs_dispatches_without_waiting_for_completion() {
         let executor = Arc::new(BlockingTestExecutor::default());
         let (sched, _dir) = make_executor_scheduler(executor.clone());
