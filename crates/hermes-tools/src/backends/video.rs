@@ -218,6 +218,47 @@ impl VideoBackend for VisionFrameSamplingVideoBackend {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn video_source_validation_accepts_supported_files_and_reports_invalid_paths() {
+        struct UnusedVision;
+
+        #[async_trait]
+        impl VisionBackend for UnusedVision {
+            async fn analyze(
+                &self,
+                _image_url: &str,
+                _question: &str,
+            ) -> Result<String, ToolError> {
+                panic!("source validation must finish before vision analysis");
+            }
+        }
+
+        let work_dir = tempfile::tempdir().unwrap();
+        let backend = VisionFrameSamplingVideoBackend::new(Arc::new(UnusedVision));
+        let local = work_dir.path().join("fixture.MP4");
+        let unsupported = work_dir.path().join("fixture.txt");
+        let missing = work_dir.path().join("missing.mp4");
+        std::fs::write(&local, [0_u8, 1, 2, 3]).unwrap();
+        std::fs::write(&unsupported, b"unsupported format").unwrap();
+        assert_eq!(
+            backend
+                .materialize_source(local.to_str().unwrap(), work_dir.path())
+                .await
+                .unwrap(),
+            local
+        );
+        for (source, message) in [
+            (&unsupported, "unsupported video format"),
+            (&missing, "video path does not exist"),
+        ] {
+            let error = backend
+                .analyze_video(source.to_str().unwrap(), "Fixture question", 1)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains(message), "{error}");
+        }
+    }
+
     #[test]
     fn detect_video_mime_type_matches_upstream_extension_table() {
         assert_eq!(
