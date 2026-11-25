@@ -1499,3 +1499,7 @@ mod tests {
         assert!(cached_provider_catalog_status("OpenAI").is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "model_switch_coverage_gen.rs"]
+mod coverage_gen_model_switch;

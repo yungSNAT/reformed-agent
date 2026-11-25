@@ -205,3 +205,6 @@ fn effective_skill_taps(
     merged
 }
 
+#[cfg(test)]
+#[path = "tap_storage_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog_skill_resolution_tap_storage;

@@ -34,6 +34,8 @@ pub struct QqBotAdapter {
     base: BasePlatformAdapter,
     config: QqBotConfig,
     client: Client,
+    token_url: String,
+    api_base: String,
     stop_signal: Arc<Notify>,
     access_token: RwLock<Option<(String, Instant)>>,
 }
@@ -58,6 +60,8 @@ impl QqBotAdapter {
             base,
             config,
             client,
+            token_url: QQ_TOKEN_URL.to_string(),
+            api_base: QQ_API_BASE.to_string(),
             stop_signal: Arc::new(Notify::new()),
             access_token: RwLock::new(None),
         })
@@ -76,7 +80,7 @@ impl QqBotAdapter {
         });
         let resp = self
             .client
-            .post(QQ_TOKEN_URL)
+            .post(&self.token_url)
             .json(&body)
             .send()
             .await
@@ -115,7 +119,7 @@ impl QqBotAdapter {
 
     async fn send_text(&self, chat_id: &str, text: &str) -> Result<(), GatewayError> {
         let token = self.get_access_token().await?;
-        let endpoint = Self::message_endpoint(chat_id);
+        let endpoint = self.chat_endpoint(chat_id, "messages");
         let body = if self.config.markdown_support {
             serde_json::json!({
                 "msg_type": 2,
@@ -145,20 +149,13 @@ impl QqBotAdapter {
         Ok(())
     }
 
-    fn message_endpoint(chat_id: &str) -> String {
-        if Self::looks_like_group_chat(chat_id) {
-            format!("{QQ_API_BASE}/v2/groups/{chat_id}/messages")
+    fn chat_endpoint(&self, chat_id: &str, resource: &str) -> String {
+        let scope = if Self::looks_like_group_chat(chat_id) {
+            "groups"
         } else {
-            format!("{QQ_API_BASE}/v2/users/{chat_id}/messages")
-        }
-    }
-
-    fn file_endpoint(chat_id: &str) -> String {
-        if Self::looks_like_group_chat(chat_id) {
-            format!("{QQ_API_BASE}/v2/groups/{chat_id}/files")
-        } else {
-            format!("{QQ_API_BASE}/v2/users/{chat_id}/files")
-        }
+            "users"
+        };
+        format!("{}/v2/{scope}/{chat_id}/{resource}", self.api_base)
     }
 
     fn image_fallback_text(image_url: &str, caption: Option<&str>) -> String {
@@ -181,7 +178,7 @@ impl QqBotAdapter {
         image_url: &str,
     ) -> Result<serde_json::Value, GatewayError> {
         let token = self.get_access_token().await?;
-        let endpoint = Self::file_endpoint(chat_id);
+        let endpoint = self.chat_endpoint(chat_id, "files");
         let body = serde_json::json!({
             "file_type": QQ_FILE_TYPE_IMAGE,
             "srv_send_msg": false,
@@ -215,7 +212,7 @@ impl QqBotAdapter {
         file_path: &str,
     ) -> Result<serde_json::Value, GatewayError> {
         let token = self.get_access_token().await?;
-        let endpoint = Self::file_endpoint(chat_id);
+        let endpoint = self.chat_endpoint(chat_id, "files");
         let data = tokio::fs::read(file_path).await.map_err(|e| {
             GatewayError::SendFailed(format!("QQBot local image read failed ({file_path}): {e}"))
         })?;
@@ -259,7 +256,7 @@ impl QqBotAdapter {
         caption: Option<&str>,
     ) -> Result<(), GatewayError> {
         let token = self.get_access_token().await?;
-        let endpoint = Self::message_endpoint(chat_id);
+        let endpoint = self.chat_endpoint(chat_id, "messages");
         let mut body = serde_json::json!({
             "msg_type": QQ_MSG_TYPE_MEDIA,
             "media": { "file_info": file_info },
@@ -388,6 +385,10 @@ impl PlatformAdapter for QqBotAdapter {
         "qqbot"
     }
 }
+
+#[cfg(test)]
+#[path = "qqbot_http_contract.rs"]
+mod http_contract;
 
 #[cfg(test)]
 mod tests {

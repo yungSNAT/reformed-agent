@@ -972,3 +972,7 @@ fn handle_branch_command(app: &mut App, args: &[&str]) -> Result<CommandResult, 
 }
 
 include!("session_ops.rs");
+
+#[cfg(test)]
+#[path = "session_steering_coverage_gen.rs"]
+mod coverage_gen_commands_command_agentic_workflows_session_steering;

@@ -680,6 +680,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forced_catalogue_refresh_keeps_usable_data_when_http_or_disk_fails() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("blocked");
+        std::fs::write(&blocked, "ordinary file").unwrap();
+        let cached = json!({"fixture": {"models": {"old": {}}}});
+        let fresh = json!({"fixture": {"models": {"fresh": {}}}});
+        for (status, payload, expected) in [
+            ("200 OK", fresh.to_string(), &fresh),
+            ("503 Service Unavailable", fresh.to_string(), &cached),
+            ("200 OK", "not JSON".to_string(), &cached),
+            ("200 OK", "[]".to_string(), &cached),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut client = ModelsDevClient::new(
+                format!("http://{}/api.json", listener.local_addr().unwrap()),
+                blocked.join("catalogue.json"),
+            );
+            client.http = reqwest::Client::builder().no_proxy().build().unwrap();
+            client.seed_cache(cached.clone());
+
+            let serve = async {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut connection = BufReader::new(stream);
+                let mut line = String::new();
+                connection.read_line(&mut line).await.unwrap();
+                assert_eq!(line, "GET /api.json HTTP/1.1\r\n");
+                loop {
+                    line.clear();
+                    assert_ne!(connection.read_line(&mut line).await.unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    payload.len()
+                );
+                connection
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+            };
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+                tokio::join!(client.fetch(true), serve)
+            })
+            .await
+            .unwrap();
+            assert_eq!(&result, expected, "{status}: {payload}");
+            assert_eq!(&client.snapshot(), expected);
+        }
+        assert_eq!(std::fs::read_to_string(blocked).unwrap(), "ordinary file");
+    }
+
+    #[test]
+    fn catalogue_search_prefers_the_closest_typo_match_and_honours_a_zero_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let client =
+            ModelsDevClient::new("http://127.0.0.1:0/api.json", dir.path().join("cache.json"));
+        client.seed_cache(fixture());
+        let hits = client.search("claude-sonet-4-5", Some("anthropic"), 1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].provider, "anthropic");
+        assert_eq!(hits[0].model_id, "claude-sonnet-4-5");
+        assert!(client
+            .search("claude-sonet-4-5", Some("anthropic"), 0)
+            .is_empty());
+    }
+
+    #[tokio::test]
     async fn fetch_falls_back_to_disk_when_network_fails() {
         let dir = tempfile::tempdir().unwrap();
         let cache_path = dir.path().join("c.json");

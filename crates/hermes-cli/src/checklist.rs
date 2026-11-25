@@ -6,7 +6,7 @@
 //! numbered text fallback for non-TTY terminals.
 
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
@@ -135,11 +135,9 @@ pub fn curses_select_embedded(title: &str, items: &[String], initial_index: usiz
     }
 }
 
-/// Check if stdin is a TTY (best-effort).
+/// Check that the prompt has interactive input and output.
 fn atty_is_tty() -> bool {
-    // crossterm's is_raw_mode_enabled is not what we want;
-    // use a simple heuristic: try to get terminal size
-    terminal::size().is_ok()
+    io::stdin().is_terminal() && io::stdout().is_terminal() && terminal::size().is_ok()
 }
 
 fn truncate_for_terminal(text: &str, max_chars: usize) -> String {
@@ -554,51 +552,9 @@ fn pressed_key(event: Event) -> Option<KeyCode> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "checklist_tests.rs"]
+mod tests;
 
-    #[test]
-    fn a_key_release_is_not_a_key_press() {
-        let key = |kind| {
-            Event::Key(KeyEvent::new_with_kind(
-                KeyCode::Down,
-                crossterm::event::KeyModifiers::NONE,
-                kind,
-            ))
-        };
-        assert_eq!(pressed_key(key(KeyEventKind::Press)), Some(KeyCode::Down));
-        assert_eq!(pressed_key(key(KeyEventKind::Repeat)), Some(KeyCode::Down));
-        assert_eq!(pressed_key(key(KeyEventKind::Release)), None);
-    }
-
-    #[test]
-    fn test_checklist_result_default() {
-        let result = ChecklistResult {
-            selected: HashSet::new(),
-            confirmed: true,
-        };
-        assert!(result.confirmed);
-        assert!(result.selected.is_empty());
-    }
-
-    #[test]
-    fn test_numbered_fallback_empty_items() {
-        // With empty items, curses_checklist returns immediately
-        let result = curses_checklist("Test", &[], &HashSet::new(), None);
-        assert!(result.confirmed);
-    }
-
-    #[test]
-    fn test_curses_select_empty_items() {
-        let result = curses_select("Select", &[], 0);
-        assert!(!result.confirmed);
-        assert_eq!(result.index, 0);
-    }
-
-    #[test]
-    fn sanitize_display_text_flattens_multiline_labels() {
-        let raw = "line1\nline2\tline3\rline4";
-        let clean = sanitize_display_text(raw);
-        assert_eq!(clean, "line1 line2 line3 line4");
-    }
-}
+#[cfg(test)]
+#[path = "checklist_coverage_gen.rs"]
+mod coverage_gen_checklist;

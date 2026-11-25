@@ -387,3 +387,7 @@ async fn abort_and_join_task(task: &mut Option<JoinHandle<()>>) {
         let _ = handle.await;
     }
 }
+
+#[cfg(test)]
+#[path = "core_coverage_gen.rs"]
+mod coverage_gen_tui_core;

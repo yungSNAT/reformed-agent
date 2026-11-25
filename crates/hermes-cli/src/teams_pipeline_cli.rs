@@ -668,3 +668,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "teams_pipeline_cli_coverage_gen.rs"]
+mod coverage_gen_teams_pipeline_cli;

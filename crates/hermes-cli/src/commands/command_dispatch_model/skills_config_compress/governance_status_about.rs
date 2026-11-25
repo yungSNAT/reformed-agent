@@ -532,3 +532,7 @@ fn handle_about_command(app: &mut App) -> Result<CommandResult, AgentError> {
     emit_command_output(app, out.trim_end());
     Ok(CommandResult::Handled)
 }
+
+#[cfg(test)]
+#[path = "governance_status_about_coverage_gen.rs"]
+mod coverage_gen_commands_command_dispatch_model_skills_config_compress_governance_status_about;

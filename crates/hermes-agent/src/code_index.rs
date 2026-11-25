@@ -565,4 +565,50 @@ const VERSION: &str = "1";
         assert!(refs.iter().any(|r| r.line == 1));
         assert!(refs.iter().any(|r| r.line == 2));
     }
+
+    #[test]
+    fn incremental_refresh_indexes_go_and_evicts_files_over_the_size_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let path = root.join("catalog.go");
+        let source = "type Item struct {}\nfunc (item Item) Name() string { return DefaultName }\nconst DefaultName = \"sample\"\n";
+        fs::write(&path, source).unwrap();
+        fs::create_dir(root.join("target")).unwrap();
+        fs::write(root.join("target/generated.go"), "func Generated() {}").unwrap();
+        let mut index = CodeIndex::new(
+            root,
+            CodeIndexConfig {
+                max_file_bytes: 128,
+                ..CodeIndexConfig::default()
+            },
+        );
+        assert_eq!(index.workspace_root(), root);
+        assert!(index.enabled());
+        assert_eq!(
+            index.ensure_fresh(),
+            IndexStats {
+                files_scanned: 1,
+                files_indexed: 1,
+                symbols_indexed: 3,
+            }
+        );
+        let map = index.render_repo_map(None, None);
+        assert!(map.contains("catalog.go (go)"));
+        assert!(map.contains("type Item (line 1)"));
+        assert!(map.contains("fn Name (line 2)"));
+        assert!(map.contains("const DefaultName (line 3)"));
+        assert!(!map.contains("Generated"));
+
+        let references = index.find_references("DefaultName", 1);
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].path, path);
+        assert_eq!(references[0].line, 2);
+        assert!(index.find_references("Item::Name", 10).is_empty());
+
+        fs::write(&path, source.repeat(2)).unwrap();
+        let relative = PathBuf::from("catalog.go");
+        index.refresh_paths([relative.clone()]);
+        assert!(index.list_file_symbols(&relative, 8).is_empty());
+        assert!(index.render_repo_map(None, None).is_empty());
+    }
 }

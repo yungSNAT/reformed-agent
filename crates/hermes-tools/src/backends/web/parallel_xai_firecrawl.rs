@@ -1204,3 +1204,7 @@ impl WebExtractBackend for FirecrawlExtractBackend {
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to serialize result: {}", e)))
     }
 }
+
+#[cfg(test)]
+#[path = "parallel_xai_firecrawl_coverage_gen.rs"]
+mod coverage_gen_backends_web_parallel_xai_firecrawl;

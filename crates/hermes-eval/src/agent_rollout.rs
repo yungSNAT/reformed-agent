@@ -91,3 +91,7 @@ impl TaskRollout for AgentLoopRollout {
         Self::summarize_result(&result, &task.task_id, self.full_state)
     }
 }
+
+#[cfg(test)]
+#[path = "agent_rollout_coverage_gen.rs"]
+mod coverage_gen;

@@ -191,4 +191,3 @@ fn tool_policy_remediation_from_payload(
     }
     Some(rows)
 }
-

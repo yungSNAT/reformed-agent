@@ -483,6 +483,86 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn ambiguous_memory_edits_report_previews_and_preserve_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = FileMemoryBackend::with_dir(temp.path().to_path_buf());
+        let first = format!("Orchard {}", "é".repeat(100));
+        let second = "Orchard packing list";
+        backend.add("memory", &first).await.unwrap();
+        backend.add("memory", second).await.unwrap();
+
+        for error in [
+            backend
+                .replace("memory", "Orchard", "Updated")
+                .await
+                .unwrap_err(),
+            backend.remove("memory", "Orchard").await.unwrap_err(),
+        ] {
+            let message = error.to_string();
+            assert!(message.contains("Multiple entries matched 'Orchard'"));
+            assert!(message.contains(&format!("Orchard {}...", "é".repeat(72))));
+            assert!(message.contains(second));
+            assert!(!message.contains(&first));
+        }
+        let path = temp.path().join("MEMORY.md");
+        assert_eq!(
+            tokio::fs::read_to_string(path).await.unwrap(),
+            format!("{first}{ENTRY_DELIMITER}{second}")
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_memory_edits_and_size_limits_leave_user_notes_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = FileMemoryBackend::with_dir(temp.path().to_path_buf());
+        backend.add("user", "Saved note").await.unwrap();
+        let oversized = "é".repeat(USER_CHAR_LIMIT + 1);
+
+        for (result, expected) in [
+            (backend.add("other", "Note").await, "Invalid target 'other'"),
+            (backend.add("user", "  ").await, "Content cannot be empty"),
+            (
+                backend.replace("user", "  ", "New note").await,
+                "old_text cannot be empty",
+            ),
+            (
+                backend.replace("user", "Saved", "  ").await,
+                "content cannot be empty",
+            ),
+            (
+                backend.remove("user", "  ").await,
+                "old_text cannot be empty",
+            ),
+            (
+                backend.remove("user", "Absent").await,
+                "No entry matched 'Absent'",
+            ),
+            (
+                backend.replace("user", "Absent", "New note").await,
+                "No entry matched 'Absent'",
+            ),
+            (
+                backend.add("user", &oversized).await,
+                "would exceed the limit",
+            ),
+            (
+                backend.replace("user", "Saved", &oversized).await,
+                "Replacement would put memory",
+            ),
+        ] {
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains(expected), "{error}");
+        }
+        assert_eq!(
+            tokio::fs::read_to_string(temp.path().join("USER.md"))
+                .await
+                .unwrap(),
+            "Saved note"
+        );
+        assert!(!temp.path().join("MEMORY.md").exists());
+    }
+
+    #[tokio::test]
     async fn add_refuses_external_memory_drift_and_preserves_file() {
         let temp = tempfile::tempdir().unwrap();
         let backend = FileMemoryBackend::with_dir(temp.path().to_path_buf());

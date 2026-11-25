@@ -24,6 +24,72 @@
     }
 
     #[tokio::test]
+    async fn local_slash_memory_reports_backend_status_without_mutating_it() {
+        if !crate::isolated_test_profile::enter(
+            "commands::tests::local_slash_memory_reports_backend_status_without_mutating_it",
+        ) {
+            return;
+        }
+        let home = hermes_config::hermes_home();
+        let mut app = build_test_app_with_stream(&home).await;
+        assert!(app.state_root.starts_with(&home));
+
+        assert_eq!(
+            handle_slash_command(&mut app, "/memory", &[]).await.unwrap(),
+            CommandResult::Handled
+        );
+        let pending = latest_ui_assistant_text(&app);
+        assert!(pending.contains("No pending memory writes."));
+        assert!(pending.contains("Memory provider: not configured"));
+
+        let legacy = app.state_root.join("memory.db");
+        std::fs::write(&legacy, "legacy fixture").unwrap();
+        handle_slash_command(&mut app, "/memory", &["status"])
+            .await
+            .unwrap();
+        assert!(latest_ui_assistant_text(&app).contains("legacy sqlite artifact only"));
+
+        let marker = app.state_root.join(".memory_disabled");
+        std::fs::write(&marker, "").unwrap();
+        handle_slash_command(&mut app, "/memory", &["status"])
+            .await
+            .unwrap();
+        assert!(latest_ui_assistant_text(&app).contains("Memory provider: disabled"));
+        handle_slash_command(&mut app, "/memory", &["reset"])
+            .await
+            .unwrap();
+        assert!(latest_ui_assistant_text(&app).contains("Use `hermes memory status|setup|off|reset`"));
+        assert!(marker.is_file());
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), "legacy fixture");
+    }
+
+    #[tokio::test]
+    async fn local_slash_cron_reports_the_persisted_job_count() {
+        if !crate::isolated_test_profile::enter(
+            "commands::tests::local_slash_cron_reports_the_persisted_job_count",
+        ) {
+            return;
+        }
+        let home = hermes_config::hermes_home();
+        let mut app = build_test_app_with_stream(&home).await;
+        let cron_dir = home.join("cron");
+        std::fs::create_dir_all(&cron_dir).unwrap();
+        let jobs = cron_dir.join("jobs.json");
+
+        let result = handle_slash_command(&mut app, "/cron", &[]).await.unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).contains("Persisted jobs: 0"));
+
+        let data = r#"[{"name":"fixture-a"},{"name":"fixture-b"}]"#;
+        std::fs::write(&jobs, data).unwrap();
+        handle_slash_command(&mut app, "/cron", &[]).await.unwrap();
+        let output = latest_ui_assistant_text(&app);
+        assert!(output.contains("Persisted jobs: 2"));
+        assert!(output.contains(&cron_dir.display().to_string()));
+        assert_eq!(std::fs::read_to_string(&jobs).unwrap(), data);
+    }
+
+    #[tokio::test]
     async fn promoted_snapshot_command_lists_snapshots() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");

@@ -1489,3 +1489,7 @@ mod tests {
         assert_eq!(plan["plan"]["ready"].as_array().unwrap().len(), 1);
     }
 }
+
+#[cfg(test)]
+#[path = "ultra_autonomy_coverage_gen.rs"]
+mod coverage_gen;

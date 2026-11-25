@@ -1,4 +1,48 @@
 #[test]
+fn google_workspace_finaliser_checks_probe_evidence_before_accepting_the_answer() {
+    let request = Message::user("Summarise recent Gmail messages.");
+    let terminal_call = |id: &str, command: &str| {
+        Message::assistant_with_tool_calls(
+            None,
+            vec![ToolCall {
+                id: id.into(),
+                function: hermes_core::FunctionCall {
+                    name: "terminal".into(),
+                    arguments: json!({"command": command}).to_string(),
+                },
+                extra_content: None,
+            }],
+        )
+    };
+
+    let setup = "google-workspace/setup.py --check";
+    let blocked = format!(
+        "GOOGLE_WORKSPACE_USED: no\nGmail is blocked.\ncommand={setup}\nNot authenticated."
+    );
+    let mut setup_history = vec![request.clone()];
+    assert!(finalizer_google_workspace_requires_retry(&setup_history, &blocked, 0));
+    setup_history.push(terminal_call("fixture-setup", setup));
+    assert!(finalizer_google_workspace_requires_retry(&setup_history, &blocked, 0));
+    setup_history.push(Message::tool_result_with_name(
+        "fixture-setup",
+        "terminal",
+        "Not authenticated.",
+    ));
+    assert!(!finalizer_google_workspace_requires_retry(&setup_history, &blocked, 0));
+
+    let success = "GOOGLE_WORKSPACE_USED: yes\nGmail search and reading were successful.";
+    let mut read_history = vec![request];
+    assert!(finalizer_google_workspace_requires_retry(&read_history, success, 0));
+    read_history.push(terminal_call("fixture-read", "google_api.py gmail list"));
+    read_history.push(Message::tool_result_with_name(
+        "fixture-read",
+        "terminal",
+        r#"{"messages":[{"id":"fixture-message","subject":"Weekly summary"}]}"#,
+    ));
+    assert!(!finalizer_google_workspace_requires_retry(&read_history, success, 0));
+}
+
+#[test]
 fn memory_sync_keeps_the_words_of_an_acp_image_prompt() {
     let parts = json!([
         {"type": "text", "text": "What does this chart show?"},
@@ -161,6 +205,80 @@ fn test_replay_recorder_adds_hash_chain_metadata() {
     assert_eq!(first["payload"]["token"], "[redacted]");
     assert_eq!(second["prev_hash"], first["event_hash"]);
     assert_ne!(first["event_hash"], second["event_hash"]);
+}
+
+#[tokio::test]
+async fn replay_recorder_respects_explicit_home_and_unavailable_log_directory() {
+    const CHILD: &str = "REFORMED_TEST_REPLAY_HOME";
+    if std::env::var_os(CHILD).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = std::env::current_dir()
+            .unwrap()
+            .join(std::env::args_os().next().unwrap());
+        let mut command = tokio::process::Command::new(executable);
+        let (_, test_module) = module_path!().split_once("::").unwrap();
+        let test_name = format!(
+            "{test_module}::replay_recorder_respects_explicit_home_and_unavailable_log_directory"
+        );
+        command
+            .env_clear()
+            .env(CHILD, "1")
+            .env("HERMES_REPLAY_ENABLED", " Yes ")
+            .env("HERMES_HOME", root.path().join("environment"))
+            .current_dir(root.path())
+            .kill_on_drop(true)
+            .args(["--exact", &test_name]);
+        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
+                .await
+                .expect("isolated replay test timed out")
+                .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let root = std::env::current_dir().unwrap();
+    let config_home = root.join("profile");
+    let config = AgentConfig {
+        hermes_home: Some(config_home.to_string_lossy().into_owned()),
+        ..AgentConfig::default()
+    };
+    let recorder = ReplayRecorder::for_session(&config, "Draft review #1");
+    let path = config_home.join("logs/replay/Draft_review__1.jsonl");
+    assert_eq!(recorder.path.as_deref(), Some(path.as_path()));
+    recorder.record("turn_start", json!({"purpose": "draft review"}));
+    let entry: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(entry["seq"], 1);
+    assert_eq!(entry["prev_hash"], short_sha256_hex("session:Draft_review__1:v1"));
+    assert_eq!(entry["payload"]["purpose"], "draft review");
+    assert!(!root.join("environment").exists());
+
+    let fallback = ReplayRecorder::for_session(&AgentConfig::default(), " ");
+    let fallback_path = fallback.path.unwrap();
+    assert_eq!(fallback_path.parent(), Some(root.join("environment/logs/replay").as_path()));
+    let fallback_name = fallback_path.file_name().unwrap().to_str().unwrap();
+    assert!(fallback_name.starts_with("session-") && fallback_name.ends_with(".jsonl"));
+
+    let blocked = root.join("blocked");
+    std::fs::write(&blocked, "ordinary file").unwrap();
+    let config = AgentConfig {
+        hermes_home: Some(blocked.to_string_lossy().into_owned()),
+        ..AgentConfig::default()
+    };
+    let recorder = ReplayRecorder::for_session(&config, "draft");
+    assert!(recorder.path.is_none() && recorder.state.is_none());
+    recorder.record("turn_start", json!({"purpose": "draft review"}));
+    assert_eq!(std::fs::read_to_string(blocked).unwrap(), "ordinary file");
 }
 
 #[test]
@@ -891,6 +1009,64 @@ fn test_extract_marker_values_collects_unique_paths_and_cmds() {
     assert_eq!(cmds, vec!["rg".to_string(), "cargo".to_string()]);
 }
 
+struct FinalizerReplyProvider {
+    calls: Arc<std::sync::atomic::AtomicU32>,
+    first_reply: Option<&'static str>,
+    reply: String,
+}
+
+impl FinalizerReplyProvider {
+    fn next_reply(&self) -> &str {
+        let attempt = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let (0, Some(reply)) = (attempt, self.first_reply) {
+            reply
+        } else {
+            &self.reply
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for FinalizerReplyProvider {
+    async fn chat_completion(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&serde_json::Value>,
+    ) -> Result<hermes_core::LlmResponse, AgentError> {
+        Ok(hermes_core::LlmResponse {
+            message: Message::assistant(self.next_reply()),
+            usage: None,
+            model: "dummy".into(),
+            finish_reason: Some("stop".into()),
+        })
+    }
+
+    fn chat_completion_stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&serde_json::Value>,
+    ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+        let chunk = StreamChunk {
+            delta: Some(hermes_core::StreamDelta {
+                content: Some(self.next_reply().to_owned()),
+                tool_calls: None,
+                extra: None,
+            }),
+            finish_reason: Some("stop".into()),
+            usage: None,
+        };
+        futures::stream::iter(vec![Ok(chunk)]).boxed()
+    }
+}
+
 /// A reply that drops the user's explicit anchor (`U1-abc`) is re-asked only when the turn
 /// offers tools to gather evidence; without tools the first answer stands, on both loops. The
 /// output-quality rewrite (a placeholder reply) needs no tools and is re-asked either way.
@@ -898,60 +1074,13 @@ fn test_extract_marker_values_collects_unique_paths_and_cmds() {
 fn test_finalizer_retries_need_tools() {
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    struct AnchorlessProvider {
-        calls: Arc<AtomicU32>,
-        reply: &'static str,
-    }
-
-    #[async_trait::async_trait]
-    impl LlmProvider for AnchorlessProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant(self.reply),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let chunk = StreamChunk {
-                delta: Some(hermes_core::StreamDelta {
-                    content: Some(self.reply.into()),
-                    tool_calls: None,
-                    extra: None,
-                }),
-                finish_reason: Some("stop".into()),
-                usage: None,
-            };
-            futures::stream::iter(vec![Ok(chunk)]).boxed()
-        }
-    }
-
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let calls_for = |reply: &'static str, tools: Vec<ToolSchema>, stream: bool| {
         let calls = Arc::new(AtomicU32::new(0));
-        let provider = Arc::new(AnchorlessProvider {
+        let provider = Arc::new(FinalizerReplyProvider {
             calls: calls.clone(),
-            reply,
+            first_reply: None,
+            reply: reply.to_owned(),
         });
         let agent = AgentLoop::new(
             AgentConfig::default(),
@@ -973,5 +1102,160 @@ fn test_finalizer_retries_need_tools() {
         assert_eq!(calls_for("remote hello", Vec::new(), stream), 1);
         assert!(calls_for("remote hello", echo(), stream) > 1);
         assert!(calls_for("U1-abc: see [URL](URL)", Vec::new(), stream) > 1);
+    }
+}
+
+#[tokio::test]
+async fn stream_reissues_final_answers_with_the_required_contract() {
+    let cases = [
+        (
+            "Verify the fixture session is ready.",
+            "I will check the fixture session shortly.",
+            "Execution contract",
+            "BLOCKED: read_fixture is unavailable. Next probe: check the fixture registry.",
+        ),
+        (
+            "Search the web for the estuary water level and cite sources.",
+            "The estuary is calm.",
+            "Web research contract failed",
+            "WEB_SEARCH_USED: no\nBLOCKED: web search is unavailable.",
+        ),
+        (
+            "Research the missing repo path /fixtures/missing-notes and report blockers.",
+            "The repo path /fixtures/missing-notes needs further review.",
+            "Repo research planning contract failed",
+            "REPO_RESEARCH_PLAN: blocked\nblocker=path missing\ncmd=list /fixtures/missing-notes",
+        ),
+    ];
+    for (prompt, first_reply, contract, reply) in cases {
+        let mut config = AgentConfig {
+            skip_context_files: true,
+            skip_memory: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(FinalizerReplyProvider {
+                calls: calls.clone(),
+                first_reply: Some(first_reply),
+                reply: reply.to_owned(),
+            }),
+        );
+        let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
+        let result = agent
+            .run_stream(vec![Message::user(prompt)], Some(vec![schema]), None)
+            .await
+            .expect("stream finalizer completes the fixture turn");
+        assert!(result.finished_naturally, "{prompt}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2, "{prompt}");
+        assert!(result.messages.iter().any(|message| {
+            message.role == MessageRole::System
+                && message.content.as_deref().is_some_and(|text| text.contains(contract))
+        }), "missing retry contract for {prompt}");
+        assert_eq!(
+            result.messages.last().and_then(|message| message.content.as_deref()),
+            Some(reply),
+            "{prompt}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
+    use serde_json::json;
+
+    let home = tempfile::tempdir().unwrap();
+    let alpha = home.path().join("alpha");
+    std::fs::create_dir(&alpha).unwrap();
+    let trend = alpha.join("objective_eval_trend.json");
+    let ledger = alpha.join("objective_runtime_ledger.jsonl");
+    std::fs::write(&trend, r#"{"samples":false}"#).unwrap();
+    let objective_id = "obj-c39e3c1ce183";
+    let config = AgentConfig {
+        hermes_home: Some(home.path().display().to_string()),
+        stored_system_prompt: Some(format!("{SESSION_OBJECTIVE_PREFIX}Review fixture progress")),
+        skip_context_files: true,
+        skip_memory: true,
+        ..AgentConfig::default()
+    };
+    let cases = [
+        (false, "advancing", "promote", 1.0, 2),
+        (true, "regressing", "investigate", 0.0, 2),
+        (false, "unproven", "collect-more-evidence", 0.25, 1),
+        (true, "flat", "monitor", 0.5, 1),
+    ];
+    let mut expected_entries = Vec::new();
+    let mut expected_samples = Vec::new();
+    for (stream, state, decision, score, turns) in cases {
+        let reply = format!(
+            "PATCH_VERIFIED:\npath=fixture.md exists_now=true\nANALYTICS_VERIFIED:\nobjective_state={state}\ncmd=fixture-check"
+        );
+        let first_reply = (turns == 2).then_some("The fixture shows progress.");
+        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let agent = AgentLoop::new(
+            config.clone(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(FinalizerReplyProvider {
+                calls: calls.clone(),
+                first_reply,
+                reply,
+            }),
+        );
+        let messages = vec![Message::user("What does the fixture show?")];
+        let result = if stream {
+            agent.run_stream(messages, Some(Vec::new()), None).await
+        } else {
+            agent.run(messages, Some(Vec::new())).await
+        }
+        .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), turns);
+        assert_eq!(result.total_turns, turns);
+        if turns == 2 {
+            assert!(result.messages.iter().any(|message| {
+                message.role == MessageRole::System
+                    && message
+                        .content
+                        .as_deref()
+                        .is_some_and(|text| text.contains("Objective guard check failed"))
+            }));
+        }
+
+        expected_entries.push((state, decision, turns));
+        let text = std::fs::read_to_string(&ledger).unwrap();
+        let records: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), expected_entries.len());
+        for (record, (state, decision, turns)) in records.iter().zip(&expected_entries) {
+            assert_eq!(record["objective_id"], objective_id);
+            assert_eq!(record["objective_state"], *state);
+            assert_eq!(record["decision"], *decision);
+            assert_eq!(record["turns"], *turns);
+            assert_eq!(record["evidence_files"], json!(["fixture.md"]));
+            assert_eq!(record["evidence_commands"], json!(["fixture-check"]));
+        }
+
+        let mut data: Value = serde_json::from_slice(&std::fs::read(&trend).unwrap()).unwrap();
+        let samples = data["samples"].as_array().unwrap();
+        let sample = samples.last().unwrap();
+        assert_eq!(sample["objective_id"], objective_id);
+        assert_eq!(sample["objective_state"], state);
+        assert_eq!(sample["score"], score);
+        assert_eq!(sample["note"], format!("decision={decision} turns={turns}"));
+        expected_samples.push(sample.clone());
+        if expected_samples.len() > 512 {
+            expected_samples.remove(0);
+        }
+        assert_eq!(*samples, expected_samples);
+        if state == "advancing" {
+            expected_samples.splice(0..0, (0..511).map(|index| json!({"objective_id": index})));
+            data["samples"] = json!(expected_samples);
+            std::fs::write(&trend, data.to_string()).unwrap();
+        }
     }
 }

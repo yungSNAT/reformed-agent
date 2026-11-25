@@ -553,13 +553,60 @@ pub fn run_ultra_feature_benchmarks(args: RepoRootOnlyArgs) -> Result<i32, Strin
 
 #[cfg(test)]
 mod tests {
-    use super::ClippyWarningGateArgs;
+    use super::{parse_clippy_warning_entries, ClippyWarningGateArgs};
     use clap::Parser;
 
     #[derive(Parser)]
     struct GateWrapper {
         #[command(flatten)]
         args: ClippyWarningGateArgs,
+    }
+
+    #[test]
+    fn clippy_warning_parser_deduplicates_lints_and_uses_diagnostic_fallbacks() {
+        let warning = serde_json::json!({
+            "reason": "compiler-message",
+            "target": {"name": "fixture"},
+            "message": {"level": "warning", "code": {"code": "clippy::redundant_clone"}, "spans": [
+                {"file_name": "src/secondary.rs", "is_primary": false},
+                {"file_name": "src/primary.rs", "is_primary": true}
+            ]}
+        });
+        let text = [
+            "  ".to_string(),
+            "cargo status text".to_string(),
+            serde_json::json!({"reason": "compiler-artifact"}).to_string(),
+            serde_json::json!({"reason": "compiler-message"}).to_string(),
+            serde_json::json!({
+                "reason": "compiler-message",
+                "message": {"level": "error", "message": "Ignore non-warning"}
+            })
+            .to_string(),
+            warning.to_string(),
+            warning.to_string(),
+            serde_json::json!({
+                "reason": "compiler-message",
+                "message": {"level": "warning", "message": "discarded value: details", "spans": [
+                    {"file_name": "src/fallback.rs"}
+                ]}
+            })
+            .to_string(),
+            serde_json::json!({
+                "reason": "compiler-message",
+                "message": {"level": "warning", "message": "unscoped warning"}
+            })
+            .to_string(),
+        ]
+        .join("\n");
+        let entries: Vec<_> = parse_clippy_warning_entries(&text).into_iter().collect();
+        assert_eq!(
+            entries,
+            [
+                "fixture|clippy::redundant_clone|src/primary.rs",
+                "unknown_target|rustc:discarded value|src/fallback.rs",
+                "unknown_target|rustc:unscoped warning|unknown_file",
+            ],
+        );
     }
 
     #[test]

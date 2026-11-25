@@ -539,3 +539,7 @@ fn handle_compress_command(app: &mut App, args: &[&str]) -> Result<CommandResult
     );
     Ok(CommandResult::Handled)
 }
+
+#[cfg(test)]
+#[path = "compression_rules_coverage_gen.rs"]
+mod coverage_gen_commands_command_dispatch_model_skills_config_compress_compression_rules;

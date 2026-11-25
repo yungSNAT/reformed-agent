@@ -1280,3 +1280,7 @@ fn hindsight_retain(client: &Client, request: HindsightRetainRequest<'_>) -> Res
 }
 
 include!("hindsight/tests.rs");
+
+#[cfg(test)]
+#[path = "hindsight_coverage_gen.rs"]
+mod coverage_gen;

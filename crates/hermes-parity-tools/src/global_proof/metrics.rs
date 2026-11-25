@@ -288,3 +288,7 @@ pub(super) fn calculate(root: &Path, reports: &Reports) -> Result<Metrics, Strin
         ("max_queue_pending_commits", value(dispositions, "pending")?),
     ])
 }
+
+#[cfg(test)]
+#[path = "metrics_coverage_gen.rs"]
+mod coverage_gen;

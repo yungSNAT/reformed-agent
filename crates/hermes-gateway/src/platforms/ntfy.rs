@@ -341,21 +341,24 @@ impl NtfyAdapter {
         }
 
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
         while let Some(chunk) = stream.next().await {
             if !inner.base.is_running() {
                 break;
             }
             let chunk =
                 chunk.map_err(|e| GatewayError::ConnectionFailed(format!("ntfy stream: {e}")))?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(pos) = buffer.find('\n') {
-                let line = buffer[..pos].trim().to_string();
-                buffer = buffer[pos + 1..].to_string();
+            // A response chunk can end inside a UTF-8 character.
+            buffer.extend_from_slice(&chunk);
+            let mut remaining = buffer.as_slice();
+            while let Some(pos) = remaining.iter().position(|&byte| byte == b'\n') {
+                let line = String::from_utf8_lossy(&remaining[..pos]);
+                remaining = &remaining[pos + 1..];
+                let line = line.trim();
                 if line.is_empty() {
                     continue;
                 }
-                match serde_json::from_str::<NtfyEvent>(&line) {
+                match serde_json::from_str::<NtfyEvent>(line) {
                     Ok(event) => {
                         if let Err(e) = Self::process_event(inner.clone(), event).await {
                             warn!("ntfy event dispatch failed: {}", e);
@@ -364,6 +367,8 @@ impl NtfyAdapter {
                     Err(e) => debug!("ntfy ignored malformed event line: {}", e),
                 }
             }
+            let consumed = buffer.len() - remaining.len();
+            buffer.drain(..consumed);
         }
         Ok(())
     }
@@ -714,4 +719,6 @@ mod tests {
             .await
             .unwrap();
     }
+
+    include!("ntfy_stream_tests.rs");
 }
