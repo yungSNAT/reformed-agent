@@ -84,7 +84,7 @@ PLIST_PATH="${AGENTS_DIR}/${LABEL}.plist"
 RUNNER="${REPO_ROOT}/scripts/run-nightly-elite-gate.sh"
 
 mkdir -p "${AGENTS_DIR}" "${LOG_DIR}" "${LOG_DIR}/elite-gate"
-chmod +x "${RUNNER}" "${REPO_ROOT}/scripts/run-deterministic-replay-suite.sh"
+chmod +x "${RUNNER}"
 
 cat > "${PLIST_PATH}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

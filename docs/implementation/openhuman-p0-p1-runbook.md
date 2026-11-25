@@ -92,7 +92,7 @@ What it does:
 Run:
 
 ```bash
-scripts/run-openhuman-p0-p1-gate.sh
+cargo run --locked -q -p hermes-parity-tools -- run-openhuman-p0-p1-gate
 ```
 
 This validates:

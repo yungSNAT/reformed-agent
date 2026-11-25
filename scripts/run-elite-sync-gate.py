@@ -20,22 +20,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", default=".", help="Repository root")
     parser.add_argument(
         "--redteam-cmd",
-        default="python3 scripts/run-redteam-gate.py --max-severity-allowed none",
+        default="cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate --max-severity-allowed none",
         help="Red-team gate command",
     )
     parser.add_argument(
         "--chaos-cmd",
-        default="python3 scripts/run-adapter-chaos-harness.py",
+        default="cargo run --locked -q -p hermes-parity-tools -- run-adapter-chaos-harness",
         help="Adapter chaos harness command",
     )
     parser.add_argument(
         "--hotpath-cmd",
-        default="python3 scripts/run-zero-copy-hotpath-bench.py",
+        default="cargo run --locked -q -p hermes-parity-tools -- run-zero-copy-hotpath-bench",
         help="Zero-copy hot path benchmark command",
     )
     parser.add_argument(
         "--parity-diff-cmd",
-        default="python3 scripts/run-differential-parity-gate.py --max-commits-behind 0",
+        default="cargo run --locked -q -p hermes-parity-tools -- run-differential-parity-gate --max-commits-behind 0",
         help="Differential parity command",
     )
     parser.add_argument(
@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--eval-trend-cmd",
-        default="python3 scripts/run-eval-trend-gate.py --allow-missing-baseline",
+        default="cargo run --locked -q -p hermes-parity-tools -- run-eval-trend-gate --allow-missing-baseline",
         help="Eval trend gate command",
     )
     parser.add_argument(
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--performance-autopilot-cmd",
-        default="python3 scripts/run-performance-autopilot.py --repo-root . --strict",
+        default="cargo run --locked -q -p hermes-parity-tools -- run-performance-autopilot --repo-root . --strict",
         help="Performance autopilot command",
     )
     parser.add_argument(
@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--chaos-compare-cmd",
-        default="python3 scripts/compare-adapter-chaos-reports.py",
+        default="cargo run --locked -q -p hermes-parity-tools -- compare-adapter-chaos-reports",
         help="Chaos compare command",
     )
     parser.add_argument("--report-path", default="", help="Optional explicit report path")

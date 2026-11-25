@@ -18,19 +18,19 @@ Verify the checked-in patched files still match a fresh crates.io download plus
 our patch files:
 
 ```bash
-scripts/refresh-rustsec-patches.sh check
+cargo run --locked -q -p hermes-parity-tools -- refresh-rustsec-patches check
 ```
 
 Refresh one current patch directory from crates.io:
 
 ```bash
-scripts/refresh-rustsec-patches.sh refresh tungstenite
+cargo run --locked -q -p hermes-parity-tools -- refresh-rustsec-patches refresh tungstenite
 ```
 
 Trial a newer upstream crate release:
 
 ```bash
-scripts/refresh-rustsec-patches.sh refresh tungstenite 0.30.0
+cargo run --locked -q -p hermes-parity-tools -- refresh-rustsec-patches refresh tungstenite 0.30.0
 ```
 
 When trialing a new version, update the root `Cargo.toml` `[patch.crates-io]`

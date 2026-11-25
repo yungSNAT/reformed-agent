@@ -19,7 +19,7 @@ This ledger maps the 15 requested competitive "illegal-seeming" outcomes to firs
 | 13 | Persistent eval kernel | `ultra-feature-13` | Implemented | JS/TS/shell session history with Hermes file read/search helpers; Python intentionally unsupported |
 | 14 | Output minimizer | `ultra-feature-14` | Implemented | Error/warning/failure/changed-file/tail extraction |
 | 15 | First-run inheritance | `ultra-feature-15` | Implemented | Scans/imports Codex, Claude, Cursor, Windsurf, Gemini, Cline, Copilot, VS Code rules |
-| 16 | Public ultra-feature proof | `ultra-feature-16`, `scripts/run-ultra-feature-benchmarks.sh` | Implemented | Deterministic smoke suite and cargo test runner |
+| 16 | Public ultra-feature proof | `ultra-feature-16`, `hermes-parity-tools run-ultra-feature-benchmarks` | Implemented | Deterministic smoke suite and cargo test runner |
 
 ## Architecture Notes
 
@@ -33,5 +33,5 @@ This ledger maps the 15 requested competitive "illegal-seeming" outcomes to firs
 Run:
 
 ```sh
-CARGO_TARGET_DIR=/Volumes/wd_black/hermes-agent-ultra/target scripts/run-ultra-feature-benchmarks.sh
+CARGO_TARGET_DIR=/Volumes/wd_black/hermes-agent-ultra/target cargo run --locked -q -p hermes-parity-tools -- run-ultra-feature-benchmarks
 ```

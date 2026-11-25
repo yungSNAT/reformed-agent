@@ -26,20 +26,25 @@ impl Gateway {
             .await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
+        let pending_reply = self.reply_begin(incoming, session_key).await?;
         let context_handler = self.message_handler_with_context.read().await.clone();
         let response_result = if let Some(handler) = context_handler {
             handler(messages, runtime_context).await
         } else {
             let handler = self.message_handler.read().await;
-            let handler = handler
-                .as_ref()
-                .ok_or_else(|| GatewayError::Platform("No message handler configured".into()))?;
+            let Some(handler) = handler.as_ref() else {
+                self.reply_finish(pending_reply).await;
+                return Err(GatewayError::Platform(
+                    "No message handler configured".into(),
+                ));
+            };
             let messages = self.inject_runtime_hints(session_key, messages).await;
             handler(messages).await
         };
         let response = match response_result {
             Ok(text) => text,
             Err(e) => {
+                self.reply_finish(pending_reply).await;
                 self.emit_hook_event(
                     "agent:end",
                     serde_json::json!({
@@ -70,6 +75,8 @@ impl Gateway {
         }
 
         // Send response back to the platform
+        self.reply_begin_send(pending_reply.as_ref(), &response)
+            .await?;
         let reply_thread_id = Self::reply_thread_id(incoming);
         self.send_notify_message_threaded(
             &incoming.platform,
@@ -79,6 +86,7 @@ impl Gateway {
             reply_thread_id,
         )
         .await?;
+        self.reply_finish(pending_reply).await;
         self.flush_post_delivery_messages(
             &incoming.platform,
             &incoming.chat_id,
@@ -139,14 +147,20 @@ impl Gateway {
         // Send an initial streaming anchor message. The anchor and the partial
         // stream sends below preview the reply; the final send is the reply.
         let reply_thread_id = Self::reply_thread_id(incoming).map(str::to_string);
-        self.send_message_with_options(
-            &incoming.platform,
-            &incoming.chat_id,
-            "...",
-            None,
-            SendMessageOptions::non_conversational_threaded(reply_thread_id.as_deref()),
-        )
-        .await?;
+        let pending_reply = self.reply_begin(incoming, session_key).await?;
+        if let Err(e) = self
+            .send_message_with_options(
+                &incoming.platform,
+                &incoming.chat_id,
+                "...",
+                None,
+                SendMessageOptions::non_conversational_threaded(reply_thread_id.as_deref()),
+            )
+            .await
+        {
+            self.reply_finish(pending_reply).await;
+            return Err(e);
+        }
 
         let stream_handle = self
             .stream_manager
@@ -210,6 +224,7 @@ impl Gateway {
         let response = match response_result {
             Ok(text) => text,
             Err(e) => {
+                self.reply_finish(pending_reply).await;
                 self.emit_hook_event(
                     "agent:end",
                     serde_json::json!({
@@ -239,6 +254,8 @@ impl Gateway {
             self.bump_output_usage(session_key, response.chars().count()).await;
         }
         if !response.trim().is_empty() {
+            self.reply_begin_send(pending_reply.as_ref(), &response)
+                .await?;
             self.send_notify_message_threaded(
                 &incoming.platform,
                 &incoming.chat_id,
@@ -248,6 +265,7 @@ impl Gateway {
             )
             .await?;
         }
+        self.reply_finish(pending_reply).await;
         self.flush_post_delivery_messages(
             &incoming.platform,
             &incoming.chat_id,

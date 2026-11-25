@@ -105,7 +105,7 @@ run_gate() {
 
   FAILED_STEP="deterministic_replay"
   echo "[elite-gate] running deterministic replay suite"
-  "${REPO_ROOT}/scripts/run-deterministic-replay-suite.sh" || return $?
+  (cd "${REPO_ROOT}" && cargo run --locked -q -p hermes-parity-tools -- run-deterministic-replay-suite --repo-root "${REPO_ROOT}") || return $?
 
   FAILED_STEP="security_release_gate_v2"
   echo "[elite-gate] running security release gate v2"
@@ -113,7 +113,7 @@ run_gate() {
 
   FAILED_STEP="performance_autopilot"
   echo "[elite-gate] running performance autopilot"
-  python3 "${REPO_ROOT}/scripts/run-performance-autopilot.py" --repo-root "${REPO_ROOT}" || return $?
+  (cd "${REPO_ROOT}" && cargo run --locked -q -p hermes-parity-tools -- run-performance-autopilot --repo-root "${REPO_ROOT}") || return $?
 
   FAILED_STEP="upstream_surface_coverage"
   echo "[elite-gate] running upstream surface coverage gate"
@@ -121,7 +121,7 @@ run_gate() {
 
   FAILED_STEP="background_queue_audit"
   echo "[elite-gate] auditing background queue health"
-  python3 "${REPO_ROOT}/scripts/audit_background_queue.py" || return $?
+  (cd "${REPO_ROOT}" && cargo run --locked -q -p hermes-parity-tools -- audit-background-queue) || return $?
 
   FAILED_STEP="write_summary"
   local head_sha
@@ -135,11 +135,11 @@ run_gate() {
   "log_path": "${LOG_PATH}",
   "checks": [
     "cargo test -p hermes-cli",
-    "scripts/run-deterministic-replay-suite.sh",
+    "crates/hermes-parity-tools (run-deterministic-replay-suite)",
     "crates/hermes-parity-tools (run-security-release-gate-v2)",
-    "scripts/run-performance-autopilot.py",
+    "crates/hermes-parity-tools (run-performance-autopilot)",
     "crates/hermes-parity-tools (run-upstream-surface-coverage-gate)",
-    "scripts/audit_background_queue.py"
+    "crates/hermes-parity-tools (audit-background-queue)"
   ]
 }
 EOF
@@ -168,11 +168,11 @@ if [[ "${RUN_RC}" -ne 0 ]]; then
   "exit_code": ${RUN_RC},
   "checks": [
     "cargo test -p hermes-cli",
-    "scripts/run-deterministic-replay-suite.sh",
+    "crates/hermes-parity-tools (run-deterministic-replay-suite)",
     "crates/hermes-parity-tools (run-security-release-gate-v2)",
-    "scripts/run-performance-autopilot.py",
+    "crates/hermes-parity-tools (run-performance-autopilot)",
     "crates/hermes-parity-tools (run-upstream-surface-coverage-gate)",
-    "scripts/audit_background_queue.py"
+    "crates/hermes-parity-tools (audit-background-queue)"
   ]
 }
 EOF
@@ -187,11 +187,11 @@ Nightly elite gate completed.
 - log_path: \`${LOG_PATH}\`
 - checks:
   - \`cargo test -p hermes-cli\`
-  - \`scripts/run-deterministic-replay-suite.sh\`
+  - \`crates/hermes-parity-tools\` (\`run-deterministic-replay-suite\`)
   - \`crates/hermes-parity-tools\` (\`run-security-release-gate-v2\`)
-  - \`scripts/run-performance-autopilot.py\`
+  - \`crates/hermes-parity-tools\` (\`run-performance-autopilot\`)
   - \`crates/hermes-parity-tools\` (\`run-upstream-surface-coverage-gate\`)
-  - \`scripts/audit_background_queue.py\`
+  - \`crates/hermes-parity-tools\` (\`audit-background-queue\`)
 EOF
 
 cat > "${SUMMARY_META_PATH}" <<EOF
@@ -203,11 +203,11 @@ cat > "${SUMMARY_META_PATH}" <<EOF
   "failed_step": "${FAILED_STEP}",
   "checks": [
     "cargo test -p hermes-cli",
-    "scripts/run-deterministic-replay-suite.sh",
+    "crates/hermes-parity-tools (run-deterministic-replay-suite)",
     "crates/hermes-parity-tools (run-security-release-gate-v2)",
-    "scripts/run-performance-autopilot.py",
+    "crates/hermes-parity-tools (run-performance-autopilot)",
     "crates/hermes-parity-tools (run-upstream-surface-coverage-gate)",
-    "scripts/audit_background_queue.py"
+    "crates/hermes-parity-tools (audit-background-queue)"
   ]
 }
 EOF
