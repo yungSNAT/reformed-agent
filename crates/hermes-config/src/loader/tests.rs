@@ -857,18 +857,31 @@ fn read_regular_file_and_write_no_follow_detect_concurrent_swap() {
     let path = dir.path().join("notes.txt");
     std::fs::write(&path, "before").unwrap();
 
-    let (text, before_id) = read_regular_file_no_follow(&path).unwrap();
-    assert_eq!(text, "before");
+    let read = read_regular_file_no_follow(&path).unwrap();
+    assert_eq!(read.content, "before");
 
-    atomic_write_bytes_no_follow(&path, b"after", Some(before_id)).unwrap();
+    atomic_write_bytes_no_follow(&path, b"after", Some(&read)).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
 
-    // Write the replacement before replacing `path` so the kernel cannot reuse
-    // `before_id`'s freed inode for the swapped file.
-    let swapped = dir.path().join("swapped.txt");
-    std::fs::write(&swapped, "swapped").unwrap();
-    std::fs::rename(&swapped, &path).unwrap();
-    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(before_id)).unwrap_err();
+    // The file this read opened has since been replaced.
+    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(&read)).unwrap_err();
+    assert!(err.to_string().contains("changed concurrently"), "{err}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
+}
+
+/// ext4 hands a freed inode number to the next new file, so a file deleted and
+/// recreated after the read must not pass for the file read.
+#[test]
+fn write_no_follow_refuses_a_file_recreated_after_the_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    std::fs::write(&path, "before").unwrap();
+
+    let read = read_regular_file_no_follow(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, "swapped").unwrap();
+
+    let err = atomic_write_bytes_no_follow(&path, b"stale", Some(&read)).unwrap_err();
     assert!(err.to_string().contains("changed concurrently"), "{err}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "swapped");
 }
@@ -892,7 +905,7 @@ fn atomic_write_bytes_no_follow_rejects_leaf_symlink_and_allows_symlinked_dir() 
     let dir_link = dir.path().join("dir_link");
     std::os::unix::fs::symlink(&real_dir, &dir_link).unwrap();
     let via_dir = dir_link.join("target.txt");
-    let (_, id) = read_regular_file_no_follow(&via_dir).unwrap();
-    atomic_write_bytes_no_follow(&via_dir, b"updated", Some(id)).unwrap();
+    let read = read_regular_file_no_follow(&via_dir).unwrap();
+    atomic_write_bytes_no_follow(&via_dir, b"updated", Some(&read)).unwrap();
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "updated");
 }

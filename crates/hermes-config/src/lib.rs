@@ -41,7 +41,7 @@ pub use loader::{
     load_prefill_messages_file, load_user_config_file, managed_scope_dir,
     read_regular_file_no_follow, resolve_credential_link_target, resolve_prefill_messages_file,
     resolve_prefill_messages_path, resolve_symlink_target, save_config_yaml, set_user_config_value,
-    user_config_field_display, validate_config, ConfigError, ConfigSetResult,
+    user_config_field_display, validate_config, ConfigError, ConfigSetResult, NoFollowRead,
 };
 pub use managed_gateway::{
     build_vendor_gateway_url, coerce_modal_mode, env_var_enabled, get_tool_gateway_scheme,

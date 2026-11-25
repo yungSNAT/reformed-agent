@@ -464,12 +464,13 @@ impl PatchBackend for LocalPatchBackend {
             .check_write_access(&target_path, new_string)?;
 
         let target_read = target_path.clone();
-        let (content, before_id) = tokio::task::spawn_blocking(move || {
+        let read = tokio::task::spawn_blocking(move || {
             hermes_config::read_regular_file_no_follow(&target_read)
         })
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?
         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
+        let content = read.content.as_str();
 
         if old_string == new_string {
             return Err(ToolError::InvalidParams(
@@ -511,7 +512,7 @@ impl PatchBackend for LocalPatchBackend {
                     "Found {exact_count} matches for the specified text in '{path}'. Use replace_all=true to replace all occurrences."
                 )));
             }
-            let Some(found) = Self::fuzzy_find(&content, old_string) else {
+            let Some(found) = Self::fuzzy_find(content, old_string) else {
                 return Err(ToolError::ExecutionFailed(format!(
                     "Could not find a match for the specified text in '{}'",
                     path
@@ -527,8 +528,7 @@ impl PatchBackend for LocalPatchBackend {
             )
         };
 
-        if let Some(detection) =
-            crate::credential_guard::detect_added_secret(&content, &new_content)
+        if let Some(detection) = crate::credential_guard::detect_added_secret(content, &new_content)
         {
             return Err(ToolError::ExecutionFailed(format!(
                 "Write denied: content contains detected secret ({detection})"
@@ -540,7 +540,7 @@ impl PatchBackend for LocalPatchBackend {
             hermes_config::atomic_write_bytes_no_follow(
                 &target_write,
                 new_content.as_bytes(),
-                Some(before_id),
+                Some(&read),
             )
         })
         .await

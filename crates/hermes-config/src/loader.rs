@@ -135,30 +135,47 @@ pub fn atomic_write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), ConfigEr
 }
 
 /// Atomically write bytes to `path` without following a leaf symlink. When
-/// `expected_existing` is `Some`, also requires the existing regular file to
-/// keep that exact identity until replacement.
+/// `expected_existing` is `Some`, also requires the file at `path` to still be
+/// the one that read opened, until replacement.
 pub fn atomic_write_bytes_no_follow(
     path: &Path,
     bytes: &[u8],
-    expected_existing: Option<crate::FileIdentity>,
+    expected_existing: Option<&NoFollowRead>,
 ) -> Result<(), ConfigError> {
     atomic_write_bytes_with_mode(
         path,
         bytes,
-        AtomicWriteMode::NoFollowExisting(expected_existing),
+        AtomicWriteMode::NoFollowExisting(expected_existing.map(|read| read.identity)),
     )
 }
 
-/// Read a regular UTF-8 file without following a leaf symlink, returning its
-/// contents and file identity for later verification.
-pub fn read_regular_file_no_follow(
-    path: &Path,
-) -> Result<(String, crate::FileIdentity), ConfigError> {
+/// A regular file read by [`read_regular_file_no_follow`].
+///
+/// On Unix it keeps the file open: a freed inode number can go straight to the
+/// next new file (ext4 does this), so a file swapped in after the read could
+/// otherwise carry the read file's identity. NTFS file IDs carry a reuse
+/// sequence number, so Windows needs no open handle.
+#[derive(Debug)]
+pub struct NoFollowRead {
+    pub content: String,
+    identity: crate::FileIdentity,
+    #[cfg(unix)]
+    _open: std::fs::File,
+}
+
+/// Read a regular UTF-8 file without following a leaf symlink. Pass the result
+/// to [`atomic_write_bytes_no_follow`] to refuse a write over a swapped file.
+pub fn read_regular_file_no_follow(path: &Path) -> Result<NoFollowRead, ConfigError> {
     let (_real_parent, real_path) = verify_no_follow_target(path, None, true)?;
-    let (mut file, handle_id) = open_regular_file_no_follow(&real_path, path)?;
+    let (mut file, identity) = open_regular_file_no_follow(&real_path, path)?;
     let mut content = String::new();
     std::io::Read::read_to_string(&mut file, &mut content).map_err(io_to_config_error)?;
-    Ok((content, handle_id))
+    Ok(NoFollowRead {
+        content,
+        identity,
+        #[cfg(unix)]
+        _open: file,
+    })
 }
 
 fn open_regular_file_no_follow(
