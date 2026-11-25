@@ -774,3 +774,7 @@ mod tests {
         assert!(!stat_only.contains("+0"), "{stat_only}");
     }
 }
+
+#[cfg(test)]
+#[path = "diff_command_coverage_gen.rs"]
+mod coverage_gen_commands_diff_command;

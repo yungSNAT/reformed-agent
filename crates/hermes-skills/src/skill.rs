@@ -369,6 +369,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_task_skill_persists_feedback_and_corrections() {
+        let dir = tempdir().unwrap();
+        let manager = make_manager(dir.path());
+        let name = "meeting-summary";
+        let skill = manager
+            .auto_create_from_task(
+                name,
+                "Summarise meeting notes.",
+                &["Read the notes".into(), "List decisions".into()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(skill.category.as_deref(), Some("auto-generated"));
+        assert!(skill
+            .content
+            .contains("1. Read the notes\n2. List decisions"));
+
+        let improved = manager
+            .self_improve(
+                name,
+                "Keep the summary short.",
+                &["Group related decisions".into()],
+            )
+            .await
+            .unwrap();
+        assert!(improved
+            .content
+            .contains("## Feedback\nKeep the summary short."));
+        assert!(improved
+            .content
+            .contains("## Corrections\n- Group related decisions"));
+        let loaded = make_manager(dir.path())
+            .get_skill(name)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.content, improved.content);
+        assert_eq!(loaded.category, skill.category);
+
+        let missing = manager
+            .self_improve("missing", "Add context.", &[])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(missing, AgentError::Config(message) if message == "Skill not found: missing")
+        );
+        assert_eq!(manager.sync_with_hub().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn local_builtin_install_preserves_an_existing_skill() {
+        let dir = tempdir().unwrap();
+        let manager = make_manager(dir.path());
+        let template = "# Planning\nUse the project checklist.";
+        manager
+            .create_skill("planning", template, Some("local"))
+            .await
+            .unwrap();
+        assert_eq!(
+            manager.install_builtin_skills().await.unwrap(),
+            SkillManager::BUILTIN_SKILLS.len() - 1
+        );
+        assert_eq!(manager.install_builtin_skills().await.unwrap(), 0);
+        assert_eq!(
+            manager.list_skills().await.unwrap().len(),
+            SkillManager::BUILTIN_SKILLS.len()
+        );
+        let existing = manager.get_skill("planning").await.unwrap().unwrap();
+        assert_eq!(existing.content, template);
+        assert_eq!(existing.category.as_deref(), Some("local"));
+    }
+
+    #[tokio::test]
     async fn test_list_skills() {
         let dir = tempdir().unwrap();
         let mgr = make_manager(dir.path());

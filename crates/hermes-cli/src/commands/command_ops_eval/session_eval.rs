@@ -680,3 +680,7 @@ fn tail_chars(input: &str, max_chars: usize) -> String {
     }
     input.chars().skip(len.saturating_sub(max_chars)).collect()
 }
+
+#[cfg(test)]
+#[path = "session_eval_coverage_gen.rs"]
+mod coverage_gen_commands_command_ops_eval_session_eval;

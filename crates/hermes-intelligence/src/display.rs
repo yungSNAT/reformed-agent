@@ -1198,3 +1198,7 @@ mod tests {
         assert_eq!(preview, Some("updating 2 task(s)".to_string()));
     }
 }
+
+#[cfg(test)]
+#[path = "display_coverage_gen.rs"]
+mod coverage_gen;

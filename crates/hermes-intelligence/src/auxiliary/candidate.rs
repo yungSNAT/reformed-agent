@@ -252,6 +252,28 @@ mod tests {
     }
 
     #[test]
+    fn extending_and_removing_candidates_preserves_order_and_first_model() {
+        let mut chain = ProviderChain::new();
+        assert!(chain.is_empty());
+        chain.extend([
+            cand(AuxiliarySource::Nous, "first-model").with_supports_vision(false),
+            cand(AuxiliarySource::Nous, "duplicate-model"),
+            cand(AuxiliarySource::Anthropic, "second-model"),
+        ]);
+        let expected = vec![
+            ("nous".to_string(), "first-model".to_string(), false),
+            ("anthropic".to_string(), "second-model".to_string(), true),
+        ];
+        chain.drop_label("unknown");
+        assert_eq!(chain.entries(), expected);
+
+        chain.drop_label("nous");
+        assert_eq!(chain.entries(), expected[1..]);
+        chain.drop_label("anthropic");
+        assert!(chain.is_empty());
+    }
+
+    #[test]
     fn vision_only_filters() {
         let mut chain = ProviderChain::new();
         chain.push(cand(AuxiliarySource::OpenRouter, "or"));

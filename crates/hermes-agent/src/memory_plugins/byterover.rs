@@ -532,3 +532,7 @@ mod tests {
         assert!(keys.contains(&"auto_extract"));
     }
 }
+
+#[cfg(test)]
+#[path = "byterover_coverage_gen.rs"]
+mod coverage_gen;

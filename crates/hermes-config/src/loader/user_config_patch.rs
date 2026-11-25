@@ -703,3 +703,7 @@ pub fn user_config_field_display(config: &GatewayConfig, key: &str) -> Result<St
         ))),
     }
 }
+
+#[cfg(test)]
+#[path = "user_config_patch_coverage_gen.rs"]
+mod coverage_gen;

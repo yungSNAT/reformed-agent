@@ -485,6 +485,64 @@ mod tests {
     }
 
     #[test]
+    fn legacy_suggestions_keep_pending_reference_order_and_default_delivery() {
+        let (store, _dir) = temp_store();
+        std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        std::fs::write(store.path(), " \r\n").unwrap();
+        assert!(store.list_pending().unwrap().is_empty());
+        let legacy: Vec<_> = [
+            ("first", "First Draft", "pending"),
+            ("dismissed", "Old Draft", "dismissed"),
+            ("second", "Second Draft", "pending"),
+        ]
+        .into_iter()
+        .map(|(id, title, status)| {
+            serde_json::json!({
+                "id": id, "title": title, "status": status, "description": "",
+                "source": "usage", "dedup_key": id, "created_at": "2026-01-01T00:00:00Z",
+                "job_spec": {"schedule": "0 9 * * *", "prompt": "Review the draft", "name": title}
+            })
+        })
+        .collect();
+        std::fs::write(store.path(), serde_json::to_string(&legacy).unwrap()).unwrap();
+
+        assert!(store.get_pending(" ").unwrap().is_none());
+        assert!(store.get_pending("0").unwrap().is_none());
+        let second = store.get_pending("2").unwrap().unwrap();
+        assert_eq!(second.id, "second");
+        assert_eq!(second.job_spec.deliver, "origin");
+        assert!(store.dismiss_suggestion(" second draft ").unwrap());
+        assert!(!store.dismiss_suggestion("second").unwrap());
+        assert!(!store.dismiss_suggestion("unknown").unwrap());
+        assert!(!store.mark_accepted("unknown").unwrap());
+        assert!(!store.mark_accepted("dismissed").unwrap());
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "first");
+        assert_eq!(store.clear_resolved().unwrap(), 0);
+        assert_eq!(store.load_suggestions().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn failed_suggestion_replacement_removes_its_staged_file() {
+        let (store, _dir) = temp_store();
+        std::fs::create_dir_all(store.path()).unwrap();
+        let existing = store.path().join("note.txt");
+        std::fs::write(&existing, "Existing fixture").unwrap();
+
+        assert!(matches!(
+            store.save_suggestions_unlocked(&[]),
+            Err(SuggestionError::Io(_))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(existing).unwrap(),
+            "Existing fixture"
+        );
+        let parent = store.path().parent().unwrap();
+        assert_eq!(std::fs::read_dir(parent).unwrap().count(), 1);
+    }
+
+    #[test]
     fn catalog_seed_lists_pending_and_is_idempotent() {
         let (store, _dir) = temp_store();
         let created = store

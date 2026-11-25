@@ -263,3 +263,6 @@ pub async fn get_qwen_auth_status() -> QwenAuthStatus {
     }
 }
 
+#[cfg(test)]
+#[path = "qwen_coverage_gen.rs"]
+mod coverage_gen_auth_provider_oauth_qwen;

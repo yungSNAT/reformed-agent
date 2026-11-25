@@ -817,3 +817,7 @@ fn run_config(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "tools_config_coverage_gen.rs"]
+mod coverage_gen_main_tools_config;

@@ -1,0 +1,351 @@
+use super::*;
+use std::collections::HashMap;
+use std::fs;
+use std::process::Command;
+
+fn approx(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
+
+fn spec_for(id: &str, path: &std::path::Path) -> TradingProjectSpec {
+    TradingProjectSpec {
+        id: id.to_string(),
+        path: path.display().to_string(),
+        enabled: true,
+    }
+}
+
+#[test]
+fn expand_home_handles_tilde_and_plain_paths() {
+    assert_eq!(expand_home("/abs/path"), "/abs/path");
+    let expanded = expand_home("~/some/dir");
+    match std::env::var_os("HOME") {
+        Some(home) => {
+            let expected = std::path::PathBuf::from(home).join("some/dir");
+            assert_eq!(expanded, expected.to_string_lossy().to_string());
+        }
+        None => assert_eq!(expanded, "~/some/dir"),
+    }
+}
+
+#[test]
+fn discover_recent_json_files_filters_sorts_and_truncates() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    assert!(discover_recent_json_files(dir.path(), 5).is_empty());
+
+    let logs = dir.path().join("logs").join("run_context");
+    fs::create_dir_all(&logs).expect("mkdir");
+    fs::write(logs.join("a.json"), "{}").expect("write");
+    fs::write(logs.join("b.json"), "{}").expect("write");
+    fs::write(logs.join("notes.txt"), "x").expect("write");
+
+    let all = discover_recent_json_files(dir.path(), 10);
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0], logs.join("b.json"));
+    assert_eq!(all[1], logs.join("a.json"));
+
+    let limited = discover_recent_json_files(dir.path(), 0);
+    assert_eq!(limited, vec![logs.join("b.json")]);
+}
+
+#[test]
+fn find_numeric_hint_walks_nested_values() {
+    let v = serde_json::json!({
+        "outer": [
+            {"pnl_sol": "not-a-number"},
+            {"inner": {"PNL_SOL": 3}}
+        ]
+    });
+    assert_eq!(find_numeric_hint(&v, &["pnl_sol"]), Some(3.0));
+
+    let v2 = serde_json::json!({"Wallet_Balance_SOL": 2.5});
+    assert_eq!(find_numeric_hint(&v2, &["wallet_balance_sol"]), Some(2.5));
+
+    let v3 = serde_json::json!({"other": [1, 2, {"x": true}]});
+    assert_eq!(find_numeric_hint(&v3, &["pnl_sol"]), None);
+
+    let v4 = serde_json::json!("pnl_sol");
+    assert_eq!(find_numeric_hint(&v4, &["pnl_sol"]), None);
+
+    let v5 = serde_json::json!([{"a": 1}, {"pnl_sol": -4.0}]);
+    assert_eq!(find_numeric_hint(&v5, &["pnl_sol"]), Some(-4.0));
+}
+
+#[test]
+fn compute_regime_covers_all_branches() {
+    assert_eq!(compute_regime(0.5, 1.0, 0.2), "execution-stressed");
+    assert_eq!(compute_regime(1.5, 0.0, 0.0), "high-vol-trending");
+    assert_eq!(compute_regime(1.5, -1.0, 0.0), "high-vol-adverse");
+    assert_eq!(compute_regime(0.1, 0.0, 0.0), "low-vol-range");
+    assert_eq!(compute_regime(0.8, 0.0, 0.0), "neutral");
+}
+
+#[test]
+fn compute_incident_class_covers_all_branches() {
+    assert_eq!(compute_incident_class(0.0, 0.0, 0.9), "critical-anomaly");
+    assert_eq!(compute_incident_class(0.1, 0.0, 0.1), "order-reject-spike");
+    assert_eq!(
+        compute_incident_class(0.0, 2000.0, 0.1),
+        "latency-degradation"
+    );
+    assert_eq!(compute_incident_class(0.0, 100.0, 0.1), "none");
+}
+
+#[test]
+fn analyze_project_missing_path_is_unproven() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing = dir.path().join("does-not-exist");
+    let r = analyze_project(&spec_for("gone", &missing));
+    assert!(!r.exists);
+    assert_eq!(r.objective_state, "unproven");
+    assert_eq!(r.incident_class, "missing-project-path");
+    assert_eq!(r.patch_recommendations.len(), 2);
+}
+
+#[test]
+fn analyze_project_parses_run_context_metrics() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let logs = dir.path().join("logs").join("run_context");
+    fs::create_dir_all(&logs).expect("mkdir");
+    fs::write(
+        logs.join("a.json"),
+        r#"{"wallet_sol": 10.0, "pnl_sol": 1.0, "latency_ms": 100}"#,
+    )
+    .expect("write");
+    fs::write(
+        logs.join("b.json"),
+        r#"{"wallet_sol": 5.0, "pnl_sol": -1.0, "latency_ms": 2000, "reject_rate": 0.2,
+            "slippage_bps": -80.0, "impact_bps": 10, "fee_sol": 0.01, "funding_sol": 0.02}"#,
+    )
+    .expect("write");
+    fs::write(logs.join("notes.txt"), "ignored").expect("write");
+
+    let r = analyze_project(&spec_for("p1", dir.path()));
+    assert!(r.exists);
+    assert_eq!(r.id, "p1");
+    assert_eq!(r.run_context_files, 2);
+    assert!(approx(r.latest_wallet_sol, 5.0));
+    assert!(approx(r.latest_pnl_sol, -1.0));
+    assert!(approx(r.drawdown_pct, 0.5));
+    assert!(approx(r.volatility_score, 1.0));
+    assert!(approx(r.latency_p95_ms, 2000.0));
+    assert!(approx(r.latency_p50_ms, 2000.0));
+    assert!(approx(r.reject_rate, 0.2));
+    assert!(approx(r.slippage_bps, 80.0));
+    assert!(approx(r.impact_bps, 10.0));
+    assert!(approx(r.fee_drag_sol, 0.01));
+    assert!(approx(r.funding_drag_sol, 0.02));
+    assert!(approx(r.anomaly_score, 0.575));
+    assert_eq!(r.regime, "execution-stressed");
+    assert_eq!(r.incident_class, "order-reject-spike");
+    assert_eq!(r.objective_state, "regressing");
+    assert_eq!(r.patch_recommendations.len(), 3);
+    assert!(r.patch_recommendations[0].contains("slippage"));
+    assert!(r.patch_recommendations[1].contains("retry backoff"));
+    assert!(r.patch_recommendations[2].contains("drawdown"));
+}
+
+#[test]
+fn analyze_project_with_positive_pnl_is_advancing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let logs = dir.path().join("logs").join("run_context");
+    fs::create_dir_all(&logs).expect("mkdir");
+    fs::write(
+        logs.join("a.json"),
+        r#"{"wallet_sol": 2.0, "pnl_sol": 0.5}"#,
+    )
+    .expect("write");
+    fs::write(logs.join("b.json"), "not json").expect("write");
+
+    let r = analyze_project(&spec_for("adv", dir.path()));
+    assert_eq!(r.run_context_files, 2);
+    assert!(approx(r.latest_pnl_sol, 0.5));
+    assert!(approx(r.drawdown_pct, 0.0));
+    assert_eq!(r.objective_state, "advancing");
+    assert_eq!(r.regime, "low-vol-range");
+    assert_eq!(r.incident_class, "none");
+    assert_eq!(
+        r.patch_recommendations,
+        vec!["maintain current controls; continue telemetry burn-in".to_string()]
+    );
+}
+
+#[test]
+fn analyze_project_without_files_is_flat() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let r = analyze_project(&spec_for("flat", dir.path()));
+    assert!(r.exists);
+    assert_eq!(r.run_context_files, 0);
+    assert_eq!(r.objective_state, "flat");
+    assert!(approx(r.latency_p50_ms, 0.0));
+}
+
+#[test]
+fn derive_hypotheses_produces_sorted_entries() {
+    let report = TradingAlphaReport {
+        projects: vec![
+            TradingProjectReport {
+                id: "p".to_string(),
+                slippage_bps: 100.0,
+                reject_rate: 0.1,
+                drawdown_pct: 0.5,
+                ..TradingProjectReport::default()
+            },
+            TradingProjectReport {
+                id: "calm".to_string(),
+                ..TradingProjectReport::default()
+            },
+        ],
+        ..TradingAlphaReport::default()
+    };
+    let hyps = derive_hypotheses(&report);
+    assert_eq!(hyps.len(), 3);
+    assert_eq!(hyps[0].id, "hyp-p-rejects");
+    assert!(approx(hyps[0].novelty_score, 0.8));
+    assert!(approx(hyps[0].expected_gain_sol, 0.06));
+    assert_eq!(hyps[1].id, "hyp-p-slippage");
+    assert!(approx(hyps[1].novelty_score, 0.5));
+    assert!(approx(hyps[1].expected_gain_sol, 0.1));
+    assert_eq!(hyps[2].id, "hyp-p-drawdown");
+    assert!(approx(hyps[2].expected_gain_sol, 0.2));
+    assert!(hyps[2].statement.starts_with("p: drawdown profile"));
+}
+
+#[test]
+fn experiment_specs_and_backtest_matrix_are_formatted() {
+    let hyps = vec![
+        StrategyHypothesis {
+            id: "h1".to_string(),
+            expected_gain_sol: 0.1,
+            ..StrategyHypothesis::default()
+        },
+        StrategyHypothesis {
+            id: "h2".to_string(),
+            expected_gain_sol: 0.0,
+            ..StrategyHypothesis::default()
+        },
+    ];
+    let specs = compile_experiment_specs(&hyps);
+    assert_eq!(specs.len(), 2);
+    assert_eq!(specs[0].id, "exp-1");
+    assert_eq!(specs[0].hypothesis_id, "h1");
+    assert_eq!(specs[0].metric, "net_pnl_after_costs_sol");
+    assert_eq!(specs[0].control, "current_config");
+    assert_eq!(specs[0].treatment, "treatment_from_h1");
+    assert_eq!(specs[0].pass_criterion, "delta_sol > 0.0350");
+    assert_eq!(specs[1].pass_criterion, "delta_sol > 0.0005");
+
+    let matrix = build_backtest_matrix(&specs);
+    assert_eq!(
+        matrix[0],
+        "exp-1 | metric=net_pnl_after_costs_sol | control=current_config | treatment=treatment_from_h1 | pass=delta_sol > 0.0350"
+    );
+    assert_eq!(matrix.len(), 2);
+}
+
+#[test]
+fn collect_repo_drift_on_plain_directory_is_not_git() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let drift = collect_repo_drift(
+        &spec_for("plain", dir.path()),
+        &TradingDriftBaseline::default(),
+    );
+    assert_eq!(drift.project_id, "plain");
+    assert!(drift.git_head.is_empty());
+    assert_eq!(drift.drift_state, "not-a-git-repo");
+    assert!(!drift.changed_since_baseline);
+}
+
+#[test]
+fn collect_repo_drift_detects_head_change() {
+    const CHILD: &str = "HERMES_TEST_TRADING_DRIFT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let home = tempfile::tempdir().expect("isolated Git home");
+        let (_, module) = module_path!().split_once("::").expect("test module");
+        let test = format!("{module}::collect_repo_drift_detects_head_change");
+        // Execute only this test binary, with fresh Git configuration.
+        let executable = std::env::current_exe().expect("test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
+        let mut child = Command::new(executable);
+        child
+            .env_clear()
+            .args(["--exact", &test])
+            .env(CHILD, "1")
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"));
+        for key in ["PATH", "SystemRoot", "PATHEXT", "LLVM_PROFILE_FILE"] {
+            if let Some(value) = std::env::var_os(key) {
+                child.env(key, value);
+            }
+        }
+        let output = assert_cmd::Command::from_std(child)
+            .timeout(std::time::Duration::from_secs(20))
+            .output()
+            .expect("run the trading drift test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "trading drift child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let init = Command::new("git")
+        .args(["init", "--template="])
+        .arg("-q")
+        .arg(dir.path())
+        .output()
+        .expect("initialise fixture repository");
+    assert!(
+        init.status.success(),
+        "initialise fixture repository: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let commit = Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "init",
+        ])
+        .output()
+        .expect("commit fixture repository");
+    assert!(
+        commit.status.success(),
+        "commit fixture repository: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+    let mut baseline = TradingDriftBaseline::default();
+    baseline
+        .heads
+        .insert("repo".to_string(), "0000000".to_string());
+    let spec = spec_for("repo", dir.path());
+    let drift = collect_repo_drift(&spec, &baseline);
+    assert!(!drift.git_head.is_empty(), "expected a committed HEAD");
+    assert_eq!(drift.dirty_files, 0, "fixture repository should be clean");
+    assert_eq!(drift.baseline_head, "0000000");
+    assert!(drift.changed_since_baseline);
+    assert_eq!(drift.drift_state, "head-changed");
+
+    let mut same = TradingDriftBaseline::default();
+    same.heads
+        .insert("repo".to_string(), drift.git_head.clone());
+    let stable = collect_repo_drift(&spec, &same);
+    assert_eq!(stable.drift_state, "stable");
+    assert!(!stable.changed_since_baseline);
+}
+
+include!("trading_part2_coverage_gen.rs");

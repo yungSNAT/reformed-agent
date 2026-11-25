@@ -83,7 +83,7 @@ fn append_security_headers(response: &mut String) {
 
 fn http_response(status: HttpStatus, content_type: &str, body: &str) -> String {
     let mut response = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nConnection: close\r\n",
         status.code, status.reason, content_type
     );
     append_security_headers(&mut response);
@@ -107,7 +107,7 @@ fn api_error(message: impl Into<String>, error_type: &str, code: u16) -> serde_j
 }
 
 fn sse_http_header() -> String {
-    let mut response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n".to_string();
+    let mut response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n".to_string();
     append_security_headers(&mut response);
     response.push_str("\r\n");
     response

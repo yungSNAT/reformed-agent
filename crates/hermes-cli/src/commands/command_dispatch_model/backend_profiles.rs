@@ -277,3 +277,7 @@ fn model_current_provider_and_id(model: &str) -> (String, String) {
         ("openai".to_string(), model.trim().to_string())
     }
 }
+
+#[cfg(test)]
+#[path = "backend_profiles_coverage_gen.rs"]
+mod coverage_gen_commands_command_dispatch_model_backend_profiles;

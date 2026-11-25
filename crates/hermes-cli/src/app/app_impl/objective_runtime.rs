@@ -354,3 +354,7 @@ impl App {
     }
 
 }
+
+#[cfg(test)]
+#[path = "objective_runtime_coverage_gen.rs"]
+mod coverage_gen_app_app_impl_objective_runtime;

@@ -619,3 +619,6 @@ fn fal_model_spec(model_path: &str) -> Option<FalModelSpec> {
     }
 }
 
+#[cfg(test)]
+#[path = "fal_payloads_coverage_gen.rs"]
+mod coverage_gen;

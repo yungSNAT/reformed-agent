@@ -1410,3 +1410,7 @@ fn handle_yolo_command(app: &mut App) -> Result<CommandResult, AgentError> {
     }
     Ok(CommandResult::Handled)
 }
+
+#[cfg(test)]
+#[path = "triage_background_coverage_gen.rs"]
+mod coverage_gen_commands_command_background_browser_triage_background;

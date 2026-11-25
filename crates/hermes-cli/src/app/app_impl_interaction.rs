@@ -979,3 +979,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "app_impl_interaction_coverage_gen.rs"]
+mod coverage_gen_app_app_impl_interaction;

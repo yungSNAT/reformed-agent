@@ -891,4 +891,124 @@ mod tests {
         assert!(msg.starts_with("💻 terminal:\n```json"));
         assert!(msg.contains("\"command\""));
     }
+
+    #[test]
+    fn terminal_summary_handles_assignments_redirections_and_fallbacks() {
+        let cases = [
+            ("", ""),
+            ("printf foo > log.txt", "printf foo"),
+            ("> log.txt", "> log.txt"),
+            (
+                "MODE_2=short printf foo > log.txt || echo 'previous=$?' || printf bar",
+                "MODE_2=short printf foo + 1 command",
+            ),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(summarize_shell_command(command), expected, "{command}");
+        }
+        assert!(!is_shell_boundary_echo(
+            "echo 'Reading the Croft Manor catalogue'"
+        ));
+    }
+
+    #[test]
+    fn read_file_preview_labels_only_positive_offsets() {
+        for (offset, expected) in [
+            (0, "chapter.txt"),
+            (-1, "chapter.txt"),
+            (8, "chapter.txt L8"),
+        ] {
+            assert_eq!(
+                build_tool_preview_from_value(
+                    "read_file",
+                    &json!({"filepath":"notes/chapter.txt", "offset":offset, "limit":1}),
+                    80,
+                )
+                .as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            read_file_preview(json!({"path":"  "}).as_object().unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn scalar_previews_handle_empty_and_mixed_tool_arguments() {
+        assert_eq!(
+            build_tool_preview_from_value("process", &json!({}), 80),
+            None
+        );
+        assert_eq!(
+            build_tool_preview_from_value("todo", &json!({}), 80).as_deref(),
+            Some("reading task list")
+        );
+        assert_eq!(
+            build_tool_preview_from_value(
+                "todo",
+                &json!({"merge":true,"todos":[{"text":"one"}]}),
+                80
+            )
+            .as_deref(),
+            Some("updating 1 task(s)")
+        );
+        assert_eq!(
+            build_tool_preview_from_value(
+                "web_extract",
+                &json!({"urls":["https://example.test"]}),
+                80
+            )
+            .as_deref(),
+            Some("https://example.test")
+        );
+        assert_eq!(
+            build_tool_preview_from_value(
+                "custom",
+                &json!({"query":null,"text":[],"name":true}),
+                80
+            )
+            .as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            build_tool_preview_from_value("custom", &json!({"query":"  "}), 80),
+            None
+        );
+    }
+
+    #[test]
+    fn gateway_progress_honours_disabled_verbose_and_empty_preview_modes() {
+        let args = json!({"query":"catalogue"});
+        assert_eq!(
+            build_gateway_tool_progress_message("sms", "web_search", &args, "off", 80),
+            None
+        );
+        assert_eq!(
+            build_gateway_tool_progress_message("sms", "web_search", &args, "verbose", 80)
+                .as_deref(),
+            Some("🔍 web_search: {\n  \"query\": \"catalogue\"\n}")
+        );
+        assert_eq!(
+            build_gateway_tool_progress_message_with_labels(
+                "sms",
+                "web_search",
+                &json!({}),
+                "all",
+                80,
+                false
+            )
+            .as_deref(),
+            Some("🔍 web_search")
+        );
+        assert_eq!(
+            build_gateway_tool_progress_message("sms", "web_search", &json!({}), "all", 80)
+                .as_deref(),
+            Some("🔍 Searching the web")
+        );
+        assert_eq!(
+            build_gateway_tool_progress_message("sms", "unknown", &json!({}), "all", 80).as_deref(),
+            Some("⚙️ unknown")
+        );
+    }
 }

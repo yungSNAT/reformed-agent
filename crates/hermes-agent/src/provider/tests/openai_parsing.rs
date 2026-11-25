@@ -235,3 +235,95 @@ fn test_parse_sse_chunk_finish() {
     assert_eq!(chunk.finish_reason.as_deref(), Some("stop"));
     assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 150);
 }
+
+#[tokio::test]
+async fn loopback_provider_bounds_and_validates_completion_responses() {
+    use serde_json::json;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let success = ResponseTemplate::new(200).set_body_json(json!({
+        "choices": [{"message": {"role": "assistant", "content": "Fixture response"}, "finish_reason": "stop"}]
+    }));
+    let cases = [
+        ("normal", success),
+        ("large", ResponseTemplate::new(200).set_body_string("x".repeat(1024))),
+        ("invalid", ResponseTemplate::new(200).set_body_string("not JSON")),
+        ("unavailable", ResponseTemplate::new(503).set_body_string("fixture diagnostic")),
+    ];
+    for (model, response) in cases {
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({"model": model})))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let provider = GenericProvider::new(server.uri(), "fixture-only", "normal")
+        .with_direct_endpoint()
+        .unwrap()
+        .with_completion_response_limit(256);
+    let messages = [Message::user("Summarise the fixture")];
+    let success = provider
+        .chat_completion(&messages, &[], None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(success.message.content.as_deref(), Some("Fixture response"));
+    for (model, expected) in [
+        ("large", "Completion response exceeded its size limit."),
+        ("invalid", "Completion response was not valid JSON."),
+        ("unavailable", "API error 503 Service Unavailable"),
+    ] {
+        let error = provider
+            .chat_completion(&messages, &[], None, None, Some(model), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AgentError::LlmApi(message) if message == expected));
+    }
+}
+
+#[tokio::test]
+async fn loopback_provider_limits_chunked_completion_without_content_length() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = BufReader::new(socket);
+        let mut content_length = 0;
+        loop {
+            let mut line = String::new();
+            assert_ne!(socket.read_line(&mut line).await.unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((_, value)) = line
+                .split_once(':')
+                .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            {
+                content_length = value.trim().parse::<usize>().unwrap();
+            }
+        }
+        let mut request_body = [0; 1024];
+        socket.read_exact(&mut request_body[..content_length]).await.unwrap();
+        let part = "x".repeat(160);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\na0\r\n{part}\r\na0\r\n{part}\r\n0\r\n\r\n"
+        );
+        socket.get_mut().write_all(response.as_bytes()).await.unwrap();
+    });
+    let provider = GenericProvider::new(format!("http://{address}"), "fixture-only", "fixture")
+        .with_optional_request_timeout_seconds(Some(10.0))
+        .with_direct_endpoint()
+        .unwrap()
+        .with_completion_response_limit(256);
+    let error = provider
+        .chat_completion(&[Message::user("Summarise the fixture")], &[], None, None, None, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::LlmApi(message) if message == "Completion response exceeded its size limit."));
+    server.await.unwrap();
+}

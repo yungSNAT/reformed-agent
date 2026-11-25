@@ -394,3 +394,7 @@ pub fn run(args: HarnessHardeningArgs) -> Result<i32, String> {
     }
     Ok(0)
 }
+
+#[cfg(test)]
+#[path = "harness_hardening_coverage_gen.rs"]
+mod coverage_gen;

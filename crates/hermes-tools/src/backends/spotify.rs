@@ -422,6 +422,86 @@ mod tests {
         assert!(err.contains("Run `hermes auth spotify` again"));
     }
 
+    #[tokio::test]
+    async fn spotify_http_backend_sends_requests_and_interprets_provider_replies() {
+        use wiremock::matchers::{body_json, header, method as http_method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        assert!(server.address().ip().is_loopback());
+        let backend = SpotifyWebApiBackend {
+            client: Client::builder().no_proxy().build().unwrap(),
+            credentials: Some(SpotifyRuntimeCredentials {
+                access_token: "synthetic-spotify-fixture".into(),
+                base_url: format!("{}/v1/", server.uri()),
+                source: "fixture".into(),
+            }),
+        };
+
+        let catalogue = json!({"tracks": {"items": [{"name": "Bird and rain"}]}});
+        Mock::given(http_method("GET"))
+            .and(path("/v1/search"))
+            .and(header("authorization", "Bearer synthetic-spotify-fixture"))
+            .and(query_param("q", "Bird & rain"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&catalogue))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut search = SpotifyApiRequest::new(SpotifyHttpMethod::Get, "/search");
+        search.query.push(("q".into(), "Bird & rain".into()));
+        assert_eq!(backend.call(search).await.unwrap(), catalogue);
+
+        let body = json!({"uris": ["spotify:track:synthetic-fixture"]});
+        Mock::given(http_method("PUT"))
+            .and(path("/v1/me/player/play"))
+            .and(body_json(&body))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut play = SpotifyApiRequest::new(SpotifyHttpMethod::Put, "/me/player/play");
+        play.body = Some(body);
+        assert_eq!(
+            backend.call(play).await.unwrap(),
+            json!({"success": true, "status_code": 204, "empty": true})
+        );
+
+        Mock::given(http_method("GET"))
+            .and(path("/v1/me/player"))
+            .respond_with(
+                ResponseTemplate::new(404).set_body_json(json!({"error": {"message": "inactive"}})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = backend
+            .call(SpotifyApiRequest::new(SpotifyHttpMethod::Get, "/me/player"))
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("could not find an active playback device"));
+
+        Mock::given(http_method("POST"))
+            .and(path("/v1/me/playlists"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "7")
+                    .set_body_string("request limit"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = backend
+            .call(SpotifyApiRequest::new(
+                SpotifyHttpMethod::Post,
+                "/me/playlists",
+            ))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Retry after 7 seconds."));
+    }
+
     #[test]
     fn friendly_errors_match_upstream_messages() {
         assert_eq!(

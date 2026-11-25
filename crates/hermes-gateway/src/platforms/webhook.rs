@@ -1489,11 +1489,7 @@ mod tests {
     }
 
     /// What `handle_webhook_request` replies to a raw `request`.
-    async fn request_reply(
-        config: &WebhookConfig,
-        outbound_queue: Arc<RwLock<VecDeque<OutboundMessage>>>,
-        request: &str,
-    ) -> String {
+    async fn request_reply(adapter: &WebhookAdapter, request: &str) -> String {
         use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
@@ -1501,14 +1497,15 @@ mod tests {
             .unwrap();
         let (server, peer) = listener.accept().await.unwrap();
         client.write_all(request.as_bytes()).await.unwrap();
+        client.shutdown().await.unwrap();
         handle_webhook_request(
             server,
             peer,
-            config.clone(),
-            outbound_queue,
-            Arc::new(RwLock::new(None)),
-            Arc::new(RwLock::new(HashMap::new())),
-            Arc::new(RwLock::new(HashMap::new())),
+            adapter.config.clone(),
+            adapter.outbound_queue.clone(),
+            adapter.inbound_tx.clone(),
+            adapter.seen_deliveries.clone(),
+            adapter.rate_windows.clone(),
         )
         .await
         .unwrap();
@@ -1517,12 +1514,115 @@ mod tests {
         reply
     }
 
-    fn queue_of_one() -> Arc<RwLock<VecDeque<OutboundMessage>>> {
-        Arc::new(RwLock::new(VecDeque::from([OutboundMessage {
-            platform: None,
-            chat_id: "chat-1".into(),
-            text: "reply".into(),
-        }])))
+    fn signed_post(path: &str, secret: &str, body: &str, headers: &str) -> String {
+        format!(
+            "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nX-Webhook-Signature: {}\r\n{headers}\r\n{body}",
+            body.len(),
+            sign(secret, body.as_bytes()),
+        )
+    }
+
+    #[tokio::test]
+    async fn signed_simple_requests_forward_only_valid_payloads_within_the_body_limit() {
+        let mut config = config_with_route_secret("127.0.0.1", "route-secret");
+        config.max_body_bytes = 128;
+        let adapter = WebhookAdapter::new(config);
+        let (sender, mut received) = tokio::sync::mpsc::channel(8);
+        adapter.set_inbound_sender(sender).await;
+        let body = r#"{"chat_id":"fixture-chat","user_id":"fixture-user","text":"hello","metadata":{"count":2}}"#;
+        let oversized_body = serde_json::json!({
+            "chat_id": "fixture-chat",
+            "text": "x".repeat(128)
+        })
+        .to_string();
+        for (path, request_body, signing_secret, status, expected_body) in [
+            (
+                "/webhook",
+                body,
+                "route-secret",
+                403,
+                r#"{"error":"bad signature"}"#,
+            ),
+            ("/webhook", "{}", "global-secret", 400, "invalid payload"),
+            (
+                "/webhook",
+                oversized_body.as_str(),
+                "global-secret",
+                413,
+                r#"{"error":"body too large"}"#,
+            ),
+            ("/other", body, "global-secret", 404, ""),
+            ("/webhook", body, "global-secret", 200, r#"{"status":"ok"}"#),
+        ] {
+            let request = signed_post(path, signing_secret, request_body, "");
+            let reply = request_reply(&adapter, &request).await;
+            assert!(reply.starts_with(&format!("HTTP/1.1 {status} ")), "{reply}");
+            let (_, response_body) = reply.split_once("\r\n\r\n").expect("HTTP response body");
+            if status == 400 {
+                assert!(response_body.contains(expected_body), "{reply}");
+            } else {
+                assert_eq!(response_body, expected_body);
+            }
+            if status != 200 {
+                assert!(matches!(
+                    received.try_recv(),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                ));
+            }
+        }
+        let payload = received.try_recv().expect("accepted payload");
+        assert_eq!(payload.chat_id, "fixture-chat");
+        assert_eq!(payload.user_id.as_deref(), Some("fixture-user"));
+        assert_eq!(payload.text, "hello");
+        assert_eq!(payload.metadata, serde_json::json!({"count": 2}));
+        assert!(matches!(
+            received.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn signed_route_requests_filter_events_deduplicate_and_share_the_rate_limit() {
+        let mut config = config_with_route_secret("127.0.0.1", "route-secret");
+        let route = config.routes.get_mut("open").expect("fixture route");
+        route.prompt = Some("received {event} for {ticket.label}".into());
+        route.event_types = vec!["created".into()];
+        route.chat_id = Some("{ticket.id}".into());
+        route.user_id = Some("{actor}".into());
+        route.idempotency_header = Some("X-Fixture-Id".into());
+        route.rate_limit = Some(1);
+        let adapter = WebhookAdapter::new(config);
+        let (sender, mut received) = tokio::sync::mpsc::channel(8);
+        adapter.set_inbound_sender(sender).await;
+        let body =
+            r#"{"event":"created","ticket":{"id":41,"label":"fixtures"},"actor":"reviewer"}"#;
+        for (event, delivery_id, status, response_body) in [
+            ("updated", "event-1", 202, r#"{"status":"ignored"}"#),
+            ("CREATED", "event-1", 202, r#"{"status":"accepted"}"#),
+            ("CREATED", "event-1", 202, r#"{"status":"duplicate"}"#),
+            ("CREATED", "event-2", 429, r#"{"error":"rate limit"}"#),
+        ] {
+            let headers = format!("X-Webhook-Event: {event}\r\nX-Fixture-Id: {delivery_id}\r\n");
+            let request = signed_post("/webhook/open", "route-secret", body, &headers);
+            let reply = request_reply(&adapter, &request).await;
+            assert!(reply.starts_with(&format!("HTTP/1.1 {status} ")), "{reply}");
+            assert_eq!(
+                reply.split_once("\r\n\r\n").expect("HTTP response body").1,
+                response_body
+            );
+        }
+        let payload = received.try_recv().expect("accepted event");
+        assert_eq!(payload.chat_id, "41");
+        assert_eq!(payload.user_id.as_deref(), Some("reviewer"));
+        assert_eq!(payload.text, "received CREATED for fixtures");
+        assert_eq!(
+            payload.metadata,
+            serde_json::from_str::<serde_json::Value>(body).expect("fixture metadata")
+        );
+        assert!(matches!(
+            received.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
     }
 
     fn poll(headers: &str) -> String {
@@ -1534,25 +1634,26 @@ mod tests {
     async fn outbound_poll_needs_the_global_secret() {
         for host in ["0.0.0.0", "127.0.0.1"] {
             let config = config_with_route_secret(host, "route-secret");
-            let queue = queue_of_one();
+            let adapter = WebhookAdapter::new(config);
+            adapter.send_message("chat-1", "reply", None).await.unwrap();
             for headers in [
                 String::new(),
                 "X-Webhook-Signature: 00\r\n".to_string(),
                 format!("X-Webhook-Signature: {}\r\n", sign("route-secret", b"")),
             ] {
-                let reply = request_reply(&config, queue.clone(), &poll(&headers)).await;
+                let reply = request_reply(&adapter, &poll(&headers)).await;
                 assert!(
                     reply.starts_with("HTTP/1.1 403"),
                     "{host} {headers}: {reply}"
                 );
-                assert_eq!(queue.read().await.len(), 1, "{host} {headers}: queue kept");
+                assert_eq!(adapter.outbound_queue.read().await.len(), 1);
             }
 
             let signed = format!("X-Webhook-Signature: {}\r\n", sign("global-secret", b""));
-            let reply = request_reply(&config, queue.clone(), &poll(&signed)).await;
+            let reply = request_reply(&adapter, &poll(&signed)).await;
             assert!(reply.starts_with("HTTP/1.1 200"), "{host}: {reply}");
             assert!(reply.contains(r#""text":"reply""#), "{host}: {reply}");
-            assert!(queue.read().await.is_empty(), "{host}");
+            assert!(adapter.drain_outbound().await.is_empty(), "{host}");
         }
     }
 
@@ -1562,10 +1663,12 @@ mod tests {
         let mut config = config_with_route_secret("127.0.0.1", "route-secret");
         config.secret = INSECURE_NO_AUTH.into();
         validate(&config).unwrap();
-        let queue = queue_of_one();
-        let reply = request_reply(&config, queue.clone(), &poll("")).await;
+        let adapter = WebhookAdapter::new(config);
+        adapter.send_message("chat-1", "reply", None).await.unwrap();
+        let reply = request_reply(&adapter, &poll("")).await;
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
-        assert!(queue.read().await.is_empty());
+        assert!(reply.contains(r#""text":"reply""#), "{reply}");
+        assert!(adapter.drain_outbound().await.is_empty());
     }
 
     #[test]

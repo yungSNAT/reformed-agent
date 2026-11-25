@@ -3,6 +3,8 @@ use std::collections::HashMap;
 // The crate's one lock for tests that change environment variables.
 use crate::managed_gateway::test_lock::ENV_LOCK;
 
+mod terminal_bridge_contract;
+
 fn clear_terminal_env_bridge_vars() {
     for (_, env_key) in terminal_config_env_bridge_pairs() {
         // SAFETY: tests serialize env mutation with ENV_LOCK.
@@ -216,7 +218,7 @@ fn env_overrides_model() {
 }
 
 #[test]
-fn atomic_json_write_roundtrips_and_cleans_temp() {
+fn atomic_json_writes_roundtrip_and_clean_temporary_files() {
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -227,11 +229,59 @@ fn atomic_json_write_roundtrips_and_cleans_temp() {
     let loaded: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(loaded, json!({"key": "value", "nested": {"a": 1}}));
+
+    let replacement = json!({"nested": {"items": ["first", "second"]}});
+    atomic_json_write_pretty(&path, &replacement).unwrap();
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents
+        .lines()
+        .any(|line| line.starts_with("  \"nested\":")));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&contents).unwrap(),
+        replacement
+    );
     assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| entry
         .unwrap()
         .file_name()
         .to_string_lossy()
         .contains(".tmp.")));
+}
+
+#[test]
+fn atomic_write_cleans_staged_file_if_directory_blocks_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("config.yaml");
+    std::fs::create_dir(&target).unwrap();
+    let sentinel = target.join("fixture");
+    std::fs::write(&sentinel, b"preserved fixture").unwrap();
+
+    assert!(atomic_write_bytes(&target, b"new synthetic data").is_err());
+    assert!(target.is_dir());
+    assert_eq!(std::fs::read(sentinel).unwrap(), b"preserved fixture");
+    let entries: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, [std::ffi::OsString::from("config.yaml")]);
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_atomic_replacement_retains_staged_data_when_target_is_absent() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("config.yaml/");
+    let data = b"staged configuration fixture";
+
+    let error = atomic_write_bytes(&target, data).unwrap_err().to_string();
+
+    assert!(!directory.path().join("config.yaml").exists());
+    let staged: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(staged.len(), 1);
+    assert_eq!(std::fs::read(&staged[0]).unwrap(), data);
+    assert!(error.contains(&staged[0].display().to_string()));
 }
 
 #[test]

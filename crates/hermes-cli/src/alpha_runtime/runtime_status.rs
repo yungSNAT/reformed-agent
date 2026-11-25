@@ -579,3 +579,7 @@ pub fn utility_terms_from_contract() -> Result<HashMap<String, f64>, AgentError>
         .map(|term| (term.name.clone(), term.weight))
         .collect())
 }
+
+#[cfg(test)]
+#[path = "runtime_status_coverage_gen.rs"]
+mod coverage_gen_alpha_runtime_runtime_status;
