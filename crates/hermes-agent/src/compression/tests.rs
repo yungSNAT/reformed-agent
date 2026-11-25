@@ -59,25 +59,25 @@ mod tests {
     }
 
     /// LLM provider that returns a canned summary regardless of input.
+    #[derive(Default)]
     struct CannedSummaryProvider {
-        canned: String,
+        canned: Option<String>,
         calls: Mutex<usize>,
-        prompts: Mutex<Vec<String>>,
+        prompts: Mutex<Vec<Vec<Message>>>,
     }
 
     impl CannedSummaryProvider {
         fn new(canned: impl Into<String>) -> Arc<Self> {
             Arc::new(Self {
-                canned: canned.into(),
-                calls: Mutex::new(0),
-                prompts: Mutex::new(Vec::new()),
+                canned: Some(canned.into()),
+                ..Self::default()
             })
         }
         fn call_count(&self) -> usize {
             *self.calls.lock().unwrap()
         }
         fn last_prompt(&self) -> Option<String> {
-            self.prompts.lock().unwrap().last().cloned()
+            self.prompts.lock().unwrap().last()?.first()?.content.clone()
         }
     }
 
@@ -93,16 +93,11 @@ mod tests {
             _extra_body: Option<&serde_json::Value>,
         ) -> Result<LlmResponse, AgentError> {
             *self.calls.lock().unwrap() += 1;
-            self.prompts.lock().unwrap().push(
-                messages
-                    .first()
-                    .and_then(|message| message.content.clone())
-                    .unwrap_or_default(),
-            );
+            self.prompts.lock().unwrap().push(messages.to_vec());
             Ok(LlmResponse {
                 message: Message {
                     role: MessageRole::Assistant,
-                    content: Some(self.canned.clone()),
+                    content: self.canned.clone(),
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
@@ -168,6 +163,43 @@ mod tests {
         assert!(provider.active_credential().is_none());
         assert!(!provider.replace_credential("replacement fixture"));
         assert!(provider.active_credential().is_none());
+    }
+
+    #[tokio::test]
+    async fn one_shot_summary_preserves_message_order() {
+        let provider = CannedSummaryProvider::new("The draft is awaiting review.");
+        let conversation = [
+            Message::user("Prepare the draft."),
+            msg(MessageRole::Assistant, "Ready for review."),
+        ];
+        let summary = summarize_messages_with_llm(provider.as_ref(), &conversation, Some("fixture"))
+            .await
+            .unwrap();
+        assert_eq!(summary, "The draft is awaiting review.");
+        let prompts = provider.prompts.lock().unwrap();
+        let [instructions, request, user, assistant] = prompts[0].as_slice() else {
+            panic!("expected two instructions followed by the source exchange");
+        };
+        assert_eq!(instructions.role, MessageRole::System);
+        assert!(instructions.content.as_deref().unwrap().contains("Preserve facts"));
+        assert_eq!(request.role, MessageRole::User);
+        assert!(request.content.as_deref().unwrap().contains("under 3000 characters"));
+        assert_eq!(user.role, conversation[0].role);
+        assert_eq!(user.content, conversation[0].content);
+        assert_eq!(assistant.role, conversation[1].role);
+        assert_eq!(assistant.content, conversation[1].content);
+    }
+
+    #[tokio::test]
+    async fn one_shot_summary_distinguishes_absent_content_from_provider_error() {
+        let response = summarize_messages_with_llm(&CannedSummaryProvider::default(), &[], None)
+            .await
+            .unwrap();
+        assert_eq!(response, "[summary unavailable]");
+        let error = summarize_messages_with_llm(&FailingProvider, &[], None)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AgentError::LlmApi(message) if message.contains("HTTP 402")));
     }
 
     /// LLM provider that returns a scripted sequence of outcomes.
@@ -427,6 +459,31 @@ mod tests {
         let block = compressor.serialize_for_summary(&turns);
         assert!(block.contains("...[truncated]..."));
         assert!(block.len() < huge.len());
+    }
+
+    #[test]
+    fn summary_serialization_truncates_unicode_at_complete_character_boundaries() {
+        let compressor = ContextCompressor::new(
+            quiet_config(),
+            aux_with_provider(CannedSummaryProvider::new("fixture")),
+        );
+        let content = format!("draft: {} for review", "🧩".repeat(2_600));
+        let args = serde_json::json!({"draft": content}).to_string();
+        let turns = [
+            msg(MessageRole::User, &content),
+            assistant_with_tool_call("draft-1", "check_draft", &args),
+        ];
+
+        let summary = compressor.serialize_for_summary(&turns);
+        let (body, tool) = summary.split_once("\n[ASSISTANT]:").unwrap();
+        let (head, tail) = body.split_once("\n...[truncated]...\n").unwrap();
+        assert_eq!(head, format!("[USER]: draft: {}", "🧩".repeat(999)));
+        assert_eq!(tail.trim_end(), format!("{} for review", "🧩".repeat(373)));
+        assert!(tool.contains(&format!(
+            r#"check_draft({{"draft":"draft: {}...)"#,
+            "🧩".repeat(295)
+        )));
+        assert!(!tool.contains("for review"));
     }
 
     // ---------- generate_summary ----------
