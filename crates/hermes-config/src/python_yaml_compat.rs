@@ -1065,6 +1065,55 @@ platform_toolsets:
     }
 
     #[test]
+    fn legacy_route_lists_skip_empty_entries_and_keep_explicit_model_prefixes() {
+        let raw = r#"
+model: { provider: fixture }
+custom_providers:
+  - ignored
+  - { base_url: "https://unused.invalid/v1" }
+  - { name: fixture, base_url: " https://first.invalid/v1/ " }
+fallback_models:
+  - "primary:stable"
+  - "  "
+fallback_providers:
+  - - { provider: fixture, model: "secondary:routed", base_url: "https://second.invalid/v1/" }
+    - { provider: ignored }
+    - { model: "standalone" }
+    - false
+  - "PRIMARY:STABLE"
+fallback_model: "legacy:final"
+platform_toolsets:
+  " ": discarded
+  " cli ": [" tools ", "", null, { invalid: true }]
+  cron: { invalid: true }
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+        let cfg: crate::config::GatewayConfig =
+            serde_yaml::from_value(Value::Mapping(root)).unwrap();
+
+        assert_eq!(cfg.model.as_deref(), Some("fixture:"));
+        assert_eq!(
+            cfg.fallback_models,
+            [
+                "primary:stable",
+                "secondary:routed",
+                "standalone",
+                "legacy:final"
+            ]
+        );
+        assert_eq!(cfg.fallback_model.as_deref(), Some("primary:stable"));
+        assert_eq!(
+            cfg.llm_providers["fixture"].base_url.as_deref(),
+            Some("https://second.invalid/v1")
+        );
+        assert!(!cfg.llm_providers.contains_key("ignored"));
+        assert_eq!(cfg.platform_toolsets["cli"], ["tools"]);
+        assert!(cfg.platform_toolsets["cron"].is_empty());
+        assert!(!cfg.platform_toolsets.contains_key(" "));
+    }
+
+    #[test]
     fn fallback_providers_and_legacy_model_are_merged() {
         let raw = r#"
 fallback_providers:
