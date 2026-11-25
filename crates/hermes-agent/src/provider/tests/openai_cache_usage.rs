@@ -90,5 +90,8 @@ fn openrouter_cache_writes_are_counted_beside_reads() {
         }
     });
     let usage = parse_sse_chunk(&chunk).unwrap().usage.unwrap();
-    assert_eq!((usage.cache_read_tokens, usage.cache_write_tokens), (80, 20));
+    assert_eq!(
+        (usage.cache_read_tokens, usage.cache_write_tokens),
+        (80, 20)
+    );
 }
