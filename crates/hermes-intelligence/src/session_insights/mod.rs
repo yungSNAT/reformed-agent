@@ -171,6 +171,37 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_session_retains_unknown_model_and_zero_usage() {
+        let started_at = ts(1.0, 0.0);
+        let mut data = InMemorySessionData::new();
+        data.add_session(SessionRow {
+            id: "sample".into(),
+            model: Some(String::new()),
+            started_at: Some(started_at),
+            ..SessionRow::default()
+        })
+        .add_tool_message("sample", None, "read_draft", 0);
+
+        let report = SessionInsightsEngine::new(&data).generate(7, None, FIXED_NOW);
+        assert!(!report.empty);
+        assert_eq!(report.overview.total_sessions, 1);
+        assert_eq!(report.overview.total_hours, 0.0);
+        assert_eq!(report.overview.avg_session_duration, 0.0);
+        assert_eq!(report.overview.total_tokens, 0);
+        assert_eq!(report.overview.date_range_start, Some(started_at));
+        assert_eq!(report.overview.models_without_pricing, ["unknown"]);
+        assert_eq!(report.overview.unknown_cost_sessions, 1);
+        assert_eq!(report.models.len(), 1);
+        assert_eq!(report.models[0].model, "unknown");
+        assert_eq!(report.models[0].cost_status, "unknown");
+        assert_eq!(report.tools.len(), 1);
+        assert_eq!(report.tools[0].tool, "read_draft");
+        assert_eq!(report.tools[0].count, 0);
+        assert_eq!(report.tools[0].percentage, 0.0);
+        assert!(report.top_sessions.is_empty());
+    }
+
+    #[test]
     fn overview_categorises_models_by_pricing_availability() {
         let mut data = InMemorySessionData::new();
         data.add_session(session(
