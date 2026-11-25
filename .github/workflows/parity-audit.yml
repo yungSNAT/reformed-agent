@@ -74,7 +74,7 @@ jobs:
       # core dependencies. Upstream's uv.lock applies its dependency overrides,
       # which pip cannot, and the venv keeps them off the system Python.
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
       - name: Install upstream dependencies for the golden harness
         run: uv sync --frozen --no-dev --no-install-project --no-build --project ../hermes-agent
       - name: Golden parity harness
