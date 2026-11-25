@@ -1,23 +1,35 @@
 use super::*;
 
+fn enter_bridge_fixture(test: &str) -> bool {
+    const CHILD: &str = "HERMES_CONFIG_BRIDGE_FIXTURE_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(test) {
+        return true;
+    }
+    let working_dir = tempfile::tempdir().unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .current_dir(working_dir.path())
+        .env_clear()
+        .env(CHILD, test)
+        .args(["--exact", test]);
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    let output = command.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains(&format!("test {test} ... ok")),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
+}
+
 #[test]
 fn terminal_and_display_settings_round_trip() {
-    const CHILD: &str = "HERMES_CONFIG_BRIDGE_FIXTURE_CHILD";
-    const TEST: &str =
-        "loader::tests::terminal_bridge_contract::terminal_and_display_settings_round_trip";
-    if std::env::var(CHILD).as_deref() != Ok("1") {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command.env_clear().env(CHILD, "1").args(["--exact", TEST]);
-        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
-            command.env("LLVM_PROFILE_FILE", profile);
-        }
-        let output = command.output().unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            output.status.success() && stdout.contains(&format!("test {TEST} ... ok")),
-            "{stdout}\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    if !enter_bridge_fixture(
+        "loader::tests::terminal_bridge_contract::terminal_and_display_settings_round_trip",
+    ) {
         return;
     }
 
@@ -98,6 +110,78 @@ fn terminal_and_display_settings_round_trip() {
     );
     apply_env_overrides(&mut config);
     assert_eq!(config.terminal, terminal);
+}
+
+#[test]
+fn managed_settings_override_inherited_values_in_config_and_env() {
+    if !enter_bridge_fixture(
+        "loader::tests::terminal_bridge_contract::managed_settings_override_inherited_values_in_config_and_env",
+    ) {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let managed = tempfile::tempdir().unwrap();
+    std::fs::write(
+        managed.path().join("config.yaml"),
+        r#"
+personality: managed persona
+system_prompt: managed system prompt
+kanban:
+  dispatch_in_gateway: false
+security:
+  allow_private_urls: false
+terminal:
+  timeout: 37
+  docker_forward_env: [FIXTURE_FIRST, FIXTURE_SECOND]
+"#,
+    )
+    .unwrap();
+    set_test_env("HERMES_HOME", home.path());
+    set_test_env("HERMES_MANAGED_DIR", managed.path());
+    for (key, value) in [
+        ("HERMES_PERSONALITY", "inherited persona"),
+        ("HERMES_SYSTEM_PROMPT", "inherited prompt"),
+        ("HERMES_KANBAN_DISPATCH_IN_GATEWAY", "true"),
+        ("HERMES_ALLOW_PRIVATE_URLS", "true"),
+        ("TERMINAL_TIMEOUT", "71"),
+        ("TERMINAL_DOCKER_FORWARD_ENV", "FIXTURE_INHERITED"),
+        ("TERMINAL_DOCKER_IMAGE", "fixture-image"),
+    ] {
+        set_test_env(key, value);
+    }
+
+    let config = load_config(Some(home.path().to_str().unwrap())).unwrap();
+    assert_eq!(config.personality.as_deref(), Some("managed persona"));
+    assert_eq!(
+        config.system_prompt.as_deref(),
+        Some("managed system prompt")
+    );
+    assert!(!config.kanban.dispatch_in_gateway);
+    assert!(!config.security.allow_private_urls);
+    assert_eq!(config.terminal.timeout, 37);
+    assert_eq!(
+        config.terminal.docker_forward_env,
+        ["FIXTURE_FIRST", "FIXTURE_SECOND"]
+    );
+    assert_eq!(
+        config.terminal.docker_image.as_deref(),
+        Some("fixture-image")
+    );
+    for (key, value) in [
+        ("HERMES_PERSONALITY", "managed persona"),
+        ("HERMES_SYSTEM_PROMPT", "managed system prompt"),
+        ("HERMES_KANBAN_DISPATCH_IN_GATEWAY", "false"),
+        ("HERMES_ALLOW_PRIVATE_URLS", "false"),
+        ("TERMINAL_TIMEOUT", "37"),
+        (
+            "TERMINAL_DOCKER_FORWARD_ENV",
+            "FIXTURE_FIRST,FIXTURE_SECOND",
+        ),
+        ("TERMINAL_DOCKER_IMAGE", "fixture-image"),
+    ] {
+        assert_eq!(std::env::var(key).as_deref(), Ok(value), "{key}");
+    }
 }
 
 #[test]
