@@ -233,3 +233,80 @@ async fn manager_operations_report_the_unknown_server_by_name() {
     assert!(manager.sampling_metrics(name).is_none());
     assert!(manager.get_status().is_empty());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn manager_reconnects_legacy_stdio_and_retries_an_interrupted_read() {
+    let dir = TempDir::new().unwrap();
+    let calls = dir.path().join("survey-reads");
+    let script = r#"
+import json
+import sys
+from pathlib import Path
+
+calls = Path(sys.argv[1])
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request["method"]
+    if method == "notifications/initialized":
+        continue
+    response = {"jsonrpc": "2.0", "id": request["id"]}
+    if method == "server/discover":
+        response["error"] = {"code": -32601, "message": "Method not found"}
+    elif method == "initialize":
+        response["result"] = {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "survey-fixture", "version": "1"},
+        }
+    elif method == "tools/list":
+        secondary = "read_summary" if calls.exists() else "read_draft"
+        response["result"] = {
+            "tools": [{"name": name, "inputSchema": {"type": "object"}}
+                      for name in ("read_survey", secondary)]
+        }
+    elif method == "tools/call":
+        assert request["params"]["name"] == "read_survey"
+        assert request["params"]["arguments"] == {"site": "estuary"}
+        if not calls.exists():
+            calls.write_text("interrupted\n")
+            break
+        with calls.open("a") as record:
+            record.write("delivered\n")
+        response["result"] = {"content": [{"type": "text", "text": "Survey complete"}]}
+    else:
+        raise AssertionError(method)
+    print(json.dumps(response), flush=True)
+"#;
+    let mut config = McpServerConfig::stdio(
+        "python3",
+        vec![
+            "-c".into(),
+            script.into(),
+            calls.to_string_lossy().into_owned(),
+        ],
+    );
+    config.stdio_mode = Some(McpStdioMode::StandardStdio);
+    let registry = Arc::new(hermes_tools::ToolRegistry::new());
+    let mut manager = McpManager::new(Arc::clone(&registry));
+    manager.connect("survey", config).await.unwrap();
+    assert!(registry.get_tool("mcp_survey_read_draft").is_some());
+    assert!(registry.get_tool("mcp_survey_read_summary").is_none());
+
+    let value = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        manager.call_tool("survey", "read_survey", json!({"site":"estuary"})),
+    )
+    .await
+    .expect("the legacy server should reconnect promptly")
+    .unwrap();
+    assert_eq!(value, "Survey complete");
+    assert!(manager.is_connected("survey"));
+    assert!(registry.get_tool("mcp_survey_read_draft").is_none());
+    assert!(registry.get_tool("mcp_survey_read_summary").is_some());
+    assert_eq!(
+        std::fs::read_to_string(calls).unwrap(),
+        "interrupted\ndelivered\n"
+    );
+    manager.disconnect("survey").await.unwrap();
+}
