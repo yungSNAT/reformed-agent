@@ -1,6 +1,146 @@
 use super::*;
 
 #[tokio::test]
+async fn operator_cockpit_combines_home_reports_and_mission_status() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::policy_context_contract::operator_cockpit_combines_home_reports_and_mission_status",
+    ) {
+        return;
+    }
+
+    let home = hermes_config::hermes_home();
+    std::env::set_var("AWS_SHARED_CREDENTIALS_FILE", home.join("unused-credentials"));
+    std::env::set_var("AWS_CONFIG_FILE", home.join("unused-aws-config"));
+    hermes_intelligence::models_dev::default_client().seed_cache(serde_json::json!({
+        "fixture": {"models": {}}
+    }));
+    std::env::set_var("HERMES_HF_CATALOG_DISABLE_LIVE", "1");
+    let memory = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&memory)
+        .await;
+    std::env::set_var("CONTEXTLATTICE_ORCHESTRATOR_URL", memory.uri());
+
+    std::fs::create_dir_all(home.join("sessions")).unwrap();
+    std::fs::write(home.join("sessions/fixture.json"), "{}").unwrap();
+    std::fs::write(home.join("sessions/ignored.txt"), "").unwrap();
+    std::fs::write(
+        home.join("route-health.json"),
+        r#"{"overall":"degraded","summary":{"health_score":0.7},"generated_at":"fixture-time"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("route-learning.json"),
+        r#"{"entries":[{"model":"fixture-a"},{"model":"fixture-b"}]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join("eval-reports")).unwrap();
+    std::fs::write(
+        home.join("eval-reports/session-eval-harness-01.json"),
+        r#"{"ok":false}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("eval-reports/session-eval-harness-02.json"),
+        r#"{"ok":true,"generated_at":"fixture-time"}"#,
+    )
+    .unwrap();
+
+    let mut app = build_test_app_with_stream(&home).await;
+    app.session_objective = Some("Review the local fixture".into());
+    let output = command_output(&mut app, "/ops", &["cockpit"]).await;
+    assert!(output.starts_with("Ops Cockpit\n"), "{output}");
+    for expected in [
+        "qos: route_health=degraded score=0.70 @ fixture-time | learning_entries=2 | snapshots=1",
+        "eval: eval=pass @ fixture-time (session-eval-harness-02.json)",
+        "Mission Control",
+        "session_objective: Review the local fixture",
+        "contextlattice: healthy",
+    ] {
+        assert!(output.contains(expected), "{expected}: {output}");
+    }
+    memory.verify().await;
+}
+
+#[tokio::test]
+async fn context_summary_service_receives_removed_messages_and_falls_back_on_failure() {
+    use hermes_intelligence::context_engine::{ContextEngine, DefaultContextEngine};
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::policy_context_contract::context_summary_service_receives_removed_messages_and_falls_back_on_failure",
+    ) {
+        return;
+    }
+    let messages = [
+        serde_json::json!({"role":"user","content":"Original goals"}),
+        serde_json::json!({"role":"assistant","content":"Original decision"}),
+        serde_json::json!({"role":"user","content":"Recent question"}),
+        serde_json::json!({"role":"assistant","content":"Recent answer"}),
+    ];
+    let payload = serde_json::json!({
+        "messages": messages[..2],
+        "removed_count": 2,
+        "removed_tokens": 9,
+        "format": "concise-bullets",
+    });
+    let server = MockServer::start().await;
+    let mut engine = DefaultContextEngine::new();
+    engine.use_llm_summary = true;
+    let fallback = concat!(
+        "[Context compressed: 2 earlier messages (~9 tokens) summarized. 2 messages retained.]\n",
+        "User goals:\n- Original goals\n",
+        "Assistant trajectory:\n- Original decision"
+    );
+    for (endpoint, reply, expected) in [
+        (
+            "/summary",
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"summary":"  Fixture summary  "})),
+            "Fixture summary",
+        ),
+        (
+            "/unavailable",
+            ResponseTemplate::new(503)
+                .set_body_json(serde_json::json!({"summary":"Do not use this failed response"})),
+            fallback,
+        ),
+        (
+            "/empty",
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"summary":"  "})),
+            fallback,
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .and(body_json(&payload))
+            .respond_with(reply)
+            .expect(1)
+            .mount(&server)
+            .await;
+        std::env::set_var(
+            "HERMES_CONTEXT_SUMMARY_URL",
+            format!("{}{endpoint}", server.uri()),
+        );
+        let compressed = engine.compress(&messages, 1).await.unwrap();
+        assert_eq!(
+            compressed[0],
+            serde_json::json!({"role":"system","content":expected})
+        );
+        assert_eq!(compressed[1..], messages[2..]);
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn pet_command_validates_changes_and_reloads_saved_preferences() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::policy_context_contract::pet_command_validates_changes_and_reloads_saved_preferences",
