@@ -494,6 +494,81 @@ mod unix {
         server.verify().await;
     }
 
+    #[tokio::test]
+    async fn whatsapp_setup_retains_other_platforms_when_api_is_unavailable() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let proxy = MockServer::start().await;
+        Mock::given(method("CONNECT"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(2)
+            .mount(&proxy)
+            .await;
+        let origin = proxy.uri();
+        tokio::task::spawn_blocking(move || {
+            let directory = tempfile::tempdir().unwrap();
+            let home = directory.path();
+            let config = home.join("config.yaml");
+            let original = "platforms:\n  telegram:\n    enabled: false\n";
+            fs::write(&config, original).unwrap();
+            let cli = |action| {
+                let mut command = isolated_gateway_cli(home, &["whatsapp", action]);
+                command
+                    .env("HTTP_PROXY", &origin)
+                    .env("HTTPS_PROXY", &origin)
+                    .env("ALL_PROXY", &origin);
+                command
+            };
+
+            for (answers, missing) in [
+                ("\n", "phone number ID"),
+                ("fixture-phone\n\n", "business account ID"),
+                ("fixture-phone\nfixture-business\n\n", "access token"),
+            ] {
+                let result = cli("setup").write_stdin(answers).assert().success();
+                let stdout = String::from_utf8_lossy(&result.get_output().stdout);
+                assert!(stdout.contains(&format!("Aborted: {missing} is required.")));
+                assert_eq!(fs::read_to_string(&config).unwrap(), original);
+            }
+
+            let access = "synthetic-whatsapp-setup";
+            let result = cli("setup")
+                .write_stdin(format!(" fixture-phone \n fixture-business \n {access} \n"))
+                .assert()
+                .success();
+            let stdout = String::from_utf8_lossy(&result.get_output().stdout);
+            assert!(stdout.contains("Saving config anyway"));
+            assert!(stdout.contains("WhatsApp configuration saved"));
+            assert!(!stdout.contains(access));
+
+            let yaml: serde_yaml::Value =
+                serde_yaml::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+            assert_eq!(
+                yaml["platforms"]["telegram"]["enabled"].as_bool(),
+                Some(false)
+            );
+            let whatsapp = &yaml["platforms"]["whatsapp"];
+            assert_eq!(whatsapp["enabled"].as_bool(), Some(true));
+            assert_eq!(whatsapp["phone_number_id"].as_str(), Some("fixture-phone"));
+            assert_eq!(
+                whatsapp["business_account_id"].as_str(),
+                Some("fixture-business")
+            );
+            assert_eq!(whatsapp["access_token"].as_str(), Some(access));
+
+            let result = cli("status").assert().success();
+            let stdout = String::from_utf8_lossy(&result.get_output().stdout);
+            assert!(stdout.contains("Phone Number ID: fixture-phone"));
+            assert!(stdout.contains("Access Token:   present"));
+            assert!(stdout.contains("API Connectivity: unreachable"));
+            assert!(!stdout.contains(access));
+        })
+        .await
+        .unwrap();
+        proxy.verify().await;
+    }
+
     #[test]
     fn gateway_cli_setup_replaces_existing_wecom_callback_token() {
         let dir = tempfile::tempdir().unwrap();
