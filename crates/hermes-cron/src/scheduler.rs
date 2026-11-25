@@ -1004,6 +1004,7 @@ mod tests {
     struct RecordingManagedProvider {
         reconciles: StdMutex<Vec<Vec<String>>>,
         cancels: StdMutex<Vec<String>>,
+        reject_requests: bool,
     }
 
     #[async_trait::async_trait]
@@ -1020,6 +1021,11 @@ mod tests {
             let mut ids = jobs.into_iter().map(|job| job.id).collect::<Vec<_>>();
             ids.sort();
             self.reconciles.lock().expect("reconciles").push(ids);
+            if self.reject_requests {
+                return Err(CronError::Scheduler(
+                    "fixture provider failed to respond".into(),
+                ));
+            }
             Ok(())
         }
 
@@ -1028,6 +1034,11 @@ mod tests {
                 .lock()
                 .expect("cancels")
                 .push(job_id.to_string());
+            if self.reject_requests {
+                return Err(CronError::Scheduler(
+                    "fixture provider failed to respond".into(),
+                ));
+            }
             Ok(())
         }
     }
@@ -1415,6 +1426,81 @@ mod tests {
         let stored = sched.get_job(&id).await.expect("stored");
         assert_ne!(stored.next_run, Some(fire_at));
         assert_eq!(stored.run_count, 1);
+    }
+
+    #[tokio::test]
+    async fn managed_provider_errors_keep_local_cron_mutations() {
+        let executor = Arc::new(BlockingTestExecutor::default());
+        let (mut sched, dir) = make_executor_scheduler(executor);
+        let provider = Arc::new(RecordingManagedProvider {
+            reject_requests: true,
+            ..RecordingManagedProvider::default()
+        });
+        sched.set_managed_provider(provider.clone());
+        let persistence = FileJobPersistence::with_dir(dir.path().to_path_buf());
+
+        let id = sched
+            .create_job(CronJob::new("0 * * * *", "collect local digest"))
+            .await
+            .expect("local creation and persistence should succeed");
+        assert_eq!(provider.reconcile_count(), 1);
+        assert!(matches!(persistence.load_jobs().await.unwrap().as_slice(), [job] if job.id == id));
+
+        sched
+            .remove_job(&id)
+            .await
+            .expect("local removal should succeed");
+        assert_eq!(provider.cancels(), vec![id.clone()]);
+        assert!(sched.get_job(&id).await.is_none());
+        assert!(persistence.load_jobs().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn cron_context_clips_unicode_and_skips_unavailable_digests() {
+        let digest = "é".repeat(MAX_CONTEXT_CHARS);
+        let source = CronJob {
+            last_output: Some(format!("  {digest}excess  ")),
+            ..CronJob::new("0 * * * *", "collect")
+        };
+        let blank = CronJob {
+            last_output: Some("   ".into()),
+            ..CronJob::new("0 * * * *", "collect other digest")
+        };
+        let target = CronJob {
+            context_from: Some(vec![
+                "missing-digest".into(),
+                blank.id.clone(),
+                source.id.clone(),
+            ]),
+            ..CronJob::new("0 * * * *", "summarize")
+        };
+        let source_id = source.id.clone();
+        let jobs = HashMap::from([(source.id.clone(), source), (blank.id.clone(), blank)]);
+
+        let context = build_context_prefix_for_job(&target, &jobs).expect("one digest");
+        assert!(context.starts_with(&format!("## Output from job '{source_id}'")));
+        assert_eq!(context.matches("## Output").count(), 1);
+        let clipped = format!("```\n{digest}…\n\n[... output truncated ...]\n```");
+        assert!(context.ends_with(&clipped));
+    }
+
+    #[test]
+    fn latest_cron_output_uses_the_last_nonblank_assistant_reply() {
+        let result = AgentResult {
+            messages: vec![
+                Message::assistant("first draft"),
+                Message::assistant("  final digest \n"),
+                Message::assistant_with_tool_calls(None, vec![]),
+                Message::assistant(" \t "),
+                Message::user("thanks"),
+            ],
+            ..AgentResult::default()
+        };
+        assert_eq!(
+            latest_assistant_output(&result).as_deref(),
+            Some("final digest")
+        );
+        assert_eq!(latest_assistant_output(&AgentResult::default()), None);
     }
 
     #[test]
