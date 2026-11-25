@@ -213,18 +213,7 @@ async fn heatmap_counts_git_files_and_ranks_transcript_and_ledger_evidence() {
     std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
     std::env::set_var("GIT_ATTR_NOSYSTEM", "1");
     std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
-    let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .current_dir(&repo)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
+    let git = |args: &[&str]| run_git(&repo, args);
     git(&["init", "-q", "--template="]);
     for file in [
         "covered.rs",
@@ -284,5 +273,18 @@ async fn heatmap_counts_git_files_and_ranks_transcript_and_ledger_evidence() {
             "- hits=2    exists=false path=absent.rs",
             "- hits=1    exists=true path=also-covered.rs",
         ]
+    );
+}
+
+fn run_git(repo: &std::path::Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

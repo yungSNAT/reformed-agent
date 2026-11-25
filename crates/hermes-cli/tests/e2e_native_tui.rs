@@ -17,15 +17,15 @@ use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn terminal_flags(terminal: &File) -> libc::tcflag_t {
-    let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
+    // termios holds only integers and arrays, so all-zero bytes are a valid value.
+    let mut attributes: libc::termios = unsafe { std::mem::zeroed() };
     assert_eq!(
-        unsafe { libc::tcgetattr(terminal.as_raw_fd(), attributes.as_mut_ptr()) },
+        unsafe { libc::tcgetattr(terminal.as_raw_fd(), &mut attributes) },
         0,
         "{}",
         io::Error::last_os_error()
     );
-    // tcgetattr initialises the termios when it succeeds.
-    unsafe { attributes.assume_init().c_lflag }
+    attributes.c_lflag
 }
 
 fn start_in_pty(

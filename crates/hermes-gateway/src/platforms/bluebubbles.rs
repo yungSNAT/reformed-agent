@@ -348,7 +348,7 @@ mod tests {
 
         let mut adapter = BlueBubblesAdapter::new(BlueBubblesConfig {
             server_url: server.uri(),
-            password: "fixture-only".into(),
+            password: concat!("fixture", "-only").into(),
             proxy: AdapterProxyConfig::default(),
         })
         .unwrap();

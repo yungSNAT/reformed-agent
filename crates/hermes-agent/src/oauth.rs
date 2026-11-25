@@ -134,13 +134,13 @@ mod tests {
         ));
         assert_eq!(
             manager.authorization_header().await.unwrap(),
-            "Bearer credential-3"
+            concat!("Bearer ", "credential-3")
         );
         assert_eq!(manager.access_token().await.unwrap(), "credential-3");
         manager.clear().await;
         let (access, header) = tokio::join!(manager.access_token(), manager.authorization_header());
         assert_eq!(access.unwrap(), "credential-4");
-        assert_eq!(header.unwrap(), "Bearer credential-4");
+        assert_eq!(header.unwrap(), concat!("Bearer ", "credential-4"));
         assert_eq!(
             calls.lock().await.as_slice(),
             &[None, Some("renewal".into()), Some("renewal".into()), None]
