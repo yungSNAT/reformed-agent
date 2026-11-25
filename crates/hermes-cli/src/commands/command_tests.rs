@@ -1231,6 +1231,8 @@ note the fixtures"));
     }
 
     #[cfg(unix)]
+    mod background_queue_contract;
+    #[cfg(unix)]
     mod objective_contract;
     #[cfg(unix)]
     mod policy_context_contract;
