@@ -218,41 +218,50 @@ pub(crate) fn run_process(
     let mut err_pipe = child.stderr.take().expect("stderr piped");
     let deadline = timeout_secs.map(|s| timer + Duration::from_secs(s));
 
-    let (status, timed_out, out_bytes, err_bytes) = std::thread::scope(|scope| {
-        let out_reader = scope.spawn(move || {
+    let (wait_res, out_res, err_res) = std::thread::scope(|scope| {
+        let out_reader = scope.spawn(move || -> std::io::Result<Vec<u8>> {
             let mut buf = Vec::new();
-            let _ = out_pipe.read_to_end(&mut buf);
-            buf
+            out_pipe.read_to_end(&mut buf)?;
+            Ok(buf)
         });
-        let err_reader = scope.spawn(move || {
+        let err_reader = scope.spawn(move || -> std::io::Result<Vec<u8>> {
             let mut buf = Vec::new();
-            let _ = err_pipe.read_to_end(&mut buf);
-            buf
+            err_pipe.read_to_end(&mut buf)?;
+            Ok(buf)
         });
 
-        let mut timed_out = false;
-        let status = loop {
+        let wait_res = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
+                Ok(Some(status)) => break Ok(Some(status)),
                 Ok(None) => {
                     if let Some(limit) = deadline {
                         if Instant::now() >= limit {
-                            timed_out = true;
                             let _ = child.kill();
                             let _ = child.wait();
-                            break None;
+                            break Ok(None);
                         }
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
-                Err(_) => break None,
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(format!("failed while waiting for {program}: {e}"));
+                }
             }
         };
 
-        let out_bytes = out_reader.join().unwrap_or_default();
-        let err_bytes = err_reader.join().unwrap_or_default();
-        (status, timed_out, out_bytes, err_bytes)
+        (wait_res, out_reader.join(), err_reader.join())
     });
+
+    let status = wait_res?;
+    let timed_out = status.is_none();
+    let out_bytes = out_res
+        .map_err(|_| format!("stdout reader thread panicked for {program}"))?
+        .map_err(|e| format!("failed reading stdout of {program}: {e}"))?;
+    let err_bytes = err_res
+        .map_err(|_| format!("stderr reader thread panicked for {program}"))?
+        .map_err(|e| format!("failed reading stderr of {program}: {e}"))?;
 
     let finished = Timestamp::now();
     let elapsed_secs = timer.elapsed().as_secs_f64();
@@ -377,5 +386,43 @@ pub(crate) fn py_float(value: Option<&Py>, default: f64) -> f64 {
         }
         Some(Py::Str(s)) => py::strip(s).parse::<f64>().unwrap_or(default),
         _ => default,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_process;
+    use std::path::Path;
+
+    #[test]
+    fn run_process_captures_output_and_reports_missing_binary() {
+        let missing = run_process(
+            &["definitely-not-a-real-binary-xyz-123".to_string()],
+            Path::new("."),
+            Some(5),
+        );
+        assert!(missing.is_err());
+
+        #[cfg(unix)]
+        let res = run_process(
+            &[
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf hi; exit 0".to_string(),
+            ],
+            Path::new("."),
+            Some(5),
+        )
+        .unwrap();
+        #[cfg(windows)]
+        let res = run_process(
+            &["cmd".to_string(), "/C".to_string(), "echo hi".to_string()],
+            Path::new("."),
+            Some(5),
+        )
+        .unwrap();
+        assert!(res.ok);
+        assert!(!res.timed_out);
+        assert!(res.stdout.contains("hi"));
     }
 }

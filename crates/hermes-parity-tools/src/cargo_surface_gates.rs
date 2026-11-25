@@ -32,10 +32,10 @@ pub struct ClippyWarningGateArgs {
     #[arg(long, default_value = ".ci/clippy-allowlist.txt")]
     allowlist: String,
     /// Refresh allowlist from current clippy warnings
-    #[arg(long)]
+    #[arg(long, overrides_with = "check")]
     update: bool,
     /// Validate current warnings against allowlist (default)
-    #[arg(long)]
+    #[arg(long, overrides_with = "update")]
     check: bool,
     /// Extra cargo clippy arguments (after `--`)
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -99,10 +99,6 @@ fn parse_clippy_warning_entries(stdout: &str) -> BTreeSet<String> {
 pub fn run_clippy_warning_gate(args: ClippyWarningGateArgs) -> Result<i32, String> {
     let repo_root = resolve_repo_root(&args.repo_root)?;
     let _ = args.check;
-    let extra: &[String] = match args.extra_args.first() {
-        Some(first) if first == "--" => &args.extra_args[1..],
-        _ => &args.extra_args,
-    };
 
     println!("[clippy-gate] collecting warnings...");
     let output = Command::new("cargo")
@@ -112,7 +108,7 @@ pub fn run_clippy_warning_gate(args: ClippyWarningGateArgs) -> Result<i32, Strin
             "--all-targets",
             "--message-format=json",
         ])
-        .args(extra)
+        .args(&args.extra_args)
         .current_dir(&repo_root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -553,4 +549,31 @@ pub fn run_ultra_feature_benchmarks(args: RepoRootOnlyArgs) -> Result<i32, Strin
         }
     }
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClippyWarningGateArgs;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct GateWrapper {
+        #[command(flatten)]
+        args: ClippyWarningGateArgs,
+    }
+
+    #[test]
+    fn clippy_gate_flags_preserve_last_wins_and_double_dash_passthrough() {
+        let check_last = GateWrapper::try_parse_from(["gate", "--update", "--check"]).unwrap();
+        assert!(!check_last.args.update);
+        assert!(check_last.args.check);
+
+        let update_last = GateWrapper::try_parse_from(["gate", "--check", "--update"]).unwrap();
+        assert!(update_last.args.update);
+        assert!(!update_last.args.check);
+
+        let passthrough =
+            GateWrapper::try_parse_from(["gate", "--check", "--", "--", "-D", "warnings"]).unwrap();
+        assert_eq!(passthrough.args.extra_args, vec!["--", "-D", "warnings"]);
+    }
 }

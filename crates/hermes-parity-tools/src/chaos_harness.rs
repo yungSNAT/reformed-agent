@@ -48,7 +48,7 @@ pub struct CompareAdapterChaosArgs {
 
 fn extract_failure_excerpt(stdout: &str, stderr: &str) -> String {
     let combined = py::strip(&format!("{}\n{}", py::strip(stdout), py::strip(stderr))).to_string();
-    let lower = combined.to_lowercase();
+    let lower = combined.to_ascii_lowercase();
     let marker = "adapter chaos harness mismatches:";
     if let Some(idx) = lower.find(marker) {
         let slice = &combined[idx..];
@@ -353,4 +353,17 @@ pub fn run_compare(args: CompareAdapterChaosArgs) -> Result<i32, String> {
         }
     }
     Ok(i32::from(!ok))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_failure_excerpt;
+
+    #[test]
+    fn extract_failure_excerpt_handles_unicode_case_expansion() {
+        let prefix = "\u{0130}\u{00df}\u{212a} prefix ";
+        let input = format!("{prefix}Adapter Chaos Harness Mismatches: detail line");
+        let excerpt = extract_failure_excerpt(&input, "");
+        assert_eq!(excerpt, "Adapter Chaos Harness Mismatches: detail line");
+    }
 }

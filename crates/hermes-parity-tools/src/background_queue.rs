@@ -124,6 +124,7 @@ pub fn run(args: AuditBackgroundQueueArgs) -> Result<i32, String> {
 
             let status =
                 py::strip(&py::str_of(payload.get("status").unwrap_or(&"".into()))).to_lowercase();
+            let mut effective_status = status.clone();
             let task =
                 py::strip(&py::str_of(payload.get("task").unwrap_or(&"".into()))).to_string();
             let started_at = parse_time(payload.get("started_at"));
@@ -150,12 +151,13 @@ pub fn run(args: AuditBackgroundQueueArgs) -> Result<i32, String> {
                             );
                             write_job(&path, &payload)?;
                             repaired_count += 1;
+                            effective_status = "failed".to_string();
                         }
                     }
                 }
             }
 
-            if (status == "queued" || status == "running") && !task.is_empty() {
+            if (effective_status == "queued" || effective_status == "running") && !task.is_empty() {
                 let key = job_key(&task);
                 if let Some((_, list)) = active_by_task.iter_mut().find(|(k, _)| k == &key) {
                     list.push((path, payload));
@@ -251,4 +253,65 @@ pub fn run(args: AuditBackgroundQueueArgs) -> Result<i32, String> {
     }
 
     Ok(i32::from(!ok))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run, AuditBackgroundQueueArgs};
+    use crate::py::{self, Py};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn make_temp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hermes-bgq-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("background_jobs")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn stale_repaired_job_is_excluded_from_duplicate_active_detection() {
+        let home = make_temp_dir("repaired-stale");
+        let jobs = home.join("background_jobs");
+        let report_path = home.join("report.json");
+        let stale = Py::dict([
+            ("status", Py::from("running")),
+            ("task", Py::from("same task")),
+            ("started_at", Py::from("2020-01-01T00:00:00Z")),
+            ("created_at", Py::from("2020-01-01T00:00:00Z")),
+        ]);
+        let fresh_queued = Py::dict([
+            ("status", Py::from("queued")),
+            ("task", Py::from("same task")),
+            ("created_at", Py::from("2026-11-25T00:00:00Z")),
+        ]);
+        fs::write(jobs.join("a_stale.json"), py::dumps(&stale, Some(2), false)).unwrap();
+        fs::write(
+            jobs.join("b_fresh.json"),
+            py::dumps(&fresh_queued, Some(2), false),
+        )
+        .unwrap();
+
+        let code = run(AuditBackgroundQueueArgs {
+            home: home.to_string_lossy().into_owned(),
+            stale_running_seconds: 60,
+            repair: true,
+            report: report_path.to_string_lossy().into_owned(),
+            json: false,
+        })
+        .unwrap();
+        assert_eq!(code, 1);
+
+        let report_raw = fs::read_to_string(&report_path).unwrap();
+        let report = py::loads(&report_raw).unwrap();
+        let totals = report.get("totals").unwrap();
+        assert_eq!(totals.get("stale_running"), Some(&Py::Int(1)));
+        assert_eq!(totals.get("duplicate_active"), Some(&Py::Int(0)));
+        assert_eq!(totals.get("repaired"), Some(&Py::Int(1)));
+
+        let fresh_raw = fs::read_to_string(jobs.join("b_fresh.json")).unwrap();
+        assert!(fresh_raw.contains("\"queued\""));
+
+        let _ = fs::remove_dir_all(&home);
+    }
 }

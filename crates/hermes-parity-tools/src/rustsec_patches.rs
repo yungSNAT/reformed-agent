@@ -45,9 +45,9 @@ const KNOWN_CRATES: &[&str] = &["tungstenite"];
 
 const USAGE: &str = "\
 Usage:
-  scripts/refresh-rustsec-patches.sh check [all|crate-name]
-  scripts/refresh-rustsec-patches.sh refresh <crate-name> [version]
-  scripts/refresh-rustsec-patches.sh list
+  cargo run --locked -q -p hermes-parity-tools -- refresh-rustsec-patches check [all|crate-name]
+  cargo run --locked -q -p hermes-parity-tools -- refresh-rustsec-patches refresh <crate-name> [version]
+  cargo run --locked -q -p hermes-parity-tools -- refresh-rustsec-patches list
 
 Downloads the configured crates.io crate tarball, reapplies the local RustSec
 patch file, and either checks patched files against the repository copy or
@@ -58,6 +58,72 @@ Resolution workflow:
   2. Update Cargo.toml [patch.crates-io] to the refreshed directory if still needed.
   3. If the official crate no longer needs the local patch, remove the patch entry
      instead and rerun cargo audit/check/test/build gates.";
+
+fn is_semver_ident(part: &str) -> bool {
+    !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+fn validate_crate_version(version: &str) -> Result<(), String> {
+    if version.is_empty()
+        || version.contains('/')
+        || version.contains('\\')
+        || version.contains('\0')
+        || version.contains("..")
+    {
+        return Err(format!("invalid crate version: {version:?}"));
+    }
+    let (main_and_pre, build) = match version.split_once('+') {
+        Some((left, right)) => {
+            if right.is_empty() || !right.split('.').all(is_semver_ident) {
+                return Err(format!("invalid crate version build metadata: {version:?}"));
+            }
+            (left, true)
+        }
+        None => (version, false),
+    };
+    let _ = build;
+    let (core, pre) = match main_and_pre.split_once('-') {
+        Some((left, right)) => {
+            if right.is_empty() || !right.split('.').all(is_semver_ident) {
+                return Err(format!("invalid crate version prerelease: {version:?}"));
+            }
+            (left, true)
+        }
+        None => (main_and_pre, false),
+    };
+    let _ = pre;
+    let parts: Vec<&str> = core.split('.').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(format!(
+            "invalid semver version (expected MAJOR.MINOR.PATCH): {version:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn safe_child_dir(parent: &Path, child_name: &str) -> Result<PathBuf, String> {
+    if child_name.is_empty()
+        || child_name.contains('/')
+        || child_name.contains('\\')
+        || child_name.contains("..")
+        || child_name.contains('\0')
+    {
+        return Err(format!("unsafe directory component: {child_name:?}"));
+    }
+    let joined = parent.join(child_name);
+    if joined.parent() != Some(parent) {
+        return Err(format!(
+            "resolved path {} escapes {}",
+            joined.display(),
+            parent.display()
+        ));
+    }
+    Ok(joined)
+}
 
 struct TempDir {
     path: PathBuf,
@@ -110,7 +176,8 @@ fn download_and_patch(
     patch_file: &Path,
     workdir: &Path,
 ) -> Result<(), String> {
-    let archive = workdir.join(format!("{crate_name}-{version}.crate"));
+    validate_crate_version(version)?;
+    let archive = safe_child_dir(workdir, &format!("{crate_name}-{version}.crate"))?;
     let url = format!("https://crates.io/api/v1/crates/{crate_name}/{version}/download");
 
     let curl_res = run_process(
@@ -280,10 +347,12 @@ fn refresh_one(
 ) -> Result<(), String> {
     let spec = patch_spec(crate_name).ok_or_else(|| format!("unknown crate: {crate_name}"))?;
     let version = requested_version.unwrap_or(spec.configured_version);
+    validate_crate_version(version)?;
     let patch_file = patch_dir.join(spec.patch_rel);
     let tmp = TempDir::new()?;
-    let src = tmp.path.join(format!("{crate_name}-{version}"));
-    let dest = patch_dir.join(format!("{crate_name}-{version}"));
+    let folder_name = format!("{crate_name}-{version}");
+    let src = safe_child_dir(&tmp.path, &folder_name)?;
+    let dest = safe_child_dir(patch_dir, &folder_name)?;
 
     download_and_patch(crate_name, version, &patch_file, &tmp.path)?;
     prune_non_runtime_artifacts(&src)?;
@@ -361,4 +430,39 @@ pub fn run(args: RefreshRustsecPatchesArgs) -> Result<i32, String> {
 
 fn crate_spec_exists(crate_name: &str) -> bool {
     patch_spec(crate_name).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{safe_child_dir, validate_crate_version, USAGE};
+    use std::path::Path;
+
+    #[test]
+    fn usage_names_cargo_command_not_deleted_shell_script() {
+        assert!(USAGE.contains("refresh-rustsec-patches"));
+        assert!(!USAGE.contains("scripts/refresh-rustsec-patches.sh"));
+    }
+
+    #[test]
+    fn version_validation_accepts_semver_and_rejects_traversal() {
+        assert!(validate_crate_version("0.29.0").is_ok());
+        assert!(validate_crate_version("1.2.3-rc.1+meta-2").is_ok());
+        for bad in [
+            "",
+            "../evil",
+            "0.29.0/../../x",
+            "0.29.0\\..\\x",
+            "0.29.0..1",
+            "0.29",
+            "0.29.0-beta.",
+            "0.29.0 a",
+        ] {
+            assert!(
+                validate_crate_version(bad).is_err(),
+                "expected error for {bad}"
+            );
+        }
+        assert!(safe_child_dir(Path::new("root"), "tungstenite-0.29.0").is_ok());
+        assert!(safe_child_dir(Path::new("root"), "../escape").is_err());
+    }
 }
