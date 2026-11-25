@@ -137,6 +137,14 @@ llm_providers:
     }
 
     #[test]
+    fn agent_config_loads_max_session_cost_usd_from_yaml() {
+        let config: GatewayConfig =
+            serde_yaml::from_str("agent:\n  max_session_cost_usd: 2.5\n").expect("load spend cap");
+        assert_eq!(config.agent.max_session_cost_usd, Some(2.5));
+        assert_eq!(GatewayConfig::default().agent.max_session_cost_usd, None);
+    }
+
+    #[test]
     fn repo_cli_config_example_parses_as_rust_gateway_config() {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let example_path = manifest_dir.join("../..").join("cli-config.yaml.example");

@@ -764,6 +764,17 @@ The **stale stream detection** kills connections that receive SSE keep-alive pin
 
 The **stale non-stream detection** kills non-streaming calls that produce no response for too long. By default Hermes disables this on local endpoints to avoid false positives during long prefills. If you explicitly set `providers.<id>.stale_timeout_seconds`, `providers.<id>.models.<model>.stale_timeout_seconds`, or `HERMES_API_CALL_STALE_TIMEOUT`, that explicit value is honored even on local endpoints.
 
+## Session Spend Cap
+
+```yaml
+agent:
+  max_session_cost_usd: 5.00   # Most a session may spend, in US dollars (default: no cap)
+```
+
+Each request's cost comes from the usage the provider reports, priced by model. At 80% of the cap the agent adds a warning to the conversation and switches to a cheaper model: `retry.fallback_model` when set, otherwise a built-in cheaper model on OpenAI. Once the cap is reached the run stops with a `Cost guard tripped` note.
+
+In the interactive CLI and TUI the cap covers the whole session: every message's spend counts, a message sent once the session is at its cap makes no request, and `/new` or `/reset` starts the count again. The count is kept in memory, so restarting the CLI starts it again. On the gateway and the HTTP server the cap applies to each message on its own. Delegated sub-agents share what is left of their parent's cap.
+
 ## Context Pressure Warnings
 
 Separate from iteration budget pressure, context pressure tracks how close the conversation is to the **compaction threshold** — the point where context compression fires to summarize older messages. This helps both you and the agent understand when the conversation is getting long.

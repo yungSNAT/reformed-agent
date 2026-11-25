@@ -655,6 +655,7 @@ impl App {
         include_tools: bool,
     ) -> Result<hermes_core::AgentResult, AgentError> {
         self.check_tool_snapshot_sync(include_tools)?;
+        self.agent.set_session_spent_usd(self.session_cost_usd);
         // `None` would offer every tool the agent holds.
         let tool_schemas = Some(if include_tools {
             self.tool_schemas.clone()
