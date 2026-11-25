@@ -623,7 +623,7 @@ impl App {
     }
 
     async fn run_messages_with_current_agent(
-        &self,
+        &mut self,
         messages: Vec<hermes_core::Message>,
         stream_enabled: bool,
     ) -> Result<hermes_core::AgentResult, AgentError> {
@@ -649,13 +649,30 @@ impl App {
     }
 
     pub(crate) async fn run_messages_with_current_agent_tools(
-        &self,
+        &mut self,
         messages: Vec<hermes_core::Message>,
         stream_enabled: bool,
         include_tools: bool,
     ) -> Result<hermes_core::AgentResult, AgentError> {
         self.check_tool_snapshot_sync(include_tools)?;
         self.agent.set_session_spent_usd(self.session_cost_usd);
+        let result = self
+            .run_messages_on_agent(messages, stream_enabled, include_tools)
+            .await;
+        // Counted here, not when a result is applied: objective continuations
+        // and quorum voters never apply theirs.
+        if let Ok(result) = &result {
+            self.count_run_cost(result);
+        }
+        result
+    }
+
+    async fn run_messages_on_agent(
+        &self,
+        messages: Vec<hermes_core::Message>,
+        stream_enabled: bool,
+        include_tools: bool,
+    ) -> Result<hermes_core::AgentResult, AgentError> {
         // `None` would offer every tool the agent holds.
         let tool_schemas = Some(if include_tools {
             self.tool_schemas.clone()
@@ -831,6 +848,13 @@ impl App {
                             "Agent stopped after {} turns (did not finish naturally)",
                             total_turns
                         );
+                        if let Some(note) = self.cost_guard_note().map(str::to_string) {
+                            if self.stream_handle.is_some() {
+                                self.push_ui_assistant(format!("[{note}]"));
+                            } else {
+                                println!("[{note}]");
+                            }
+                        }
                     }
                     break;
                 }

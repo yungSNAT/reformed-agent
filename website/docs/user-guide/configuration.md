@@ -771,9 +771,9 @@ agent:
   max_session_cost_usd: 5.00   # Most a session may spend, in US dollars (default: no cap)
 ```
 
-Each request's cost comes from the usage the provider reports, priced by model. At 80% of the cap the agent adds a warning to the conversation and switches to a cheaper model: `retry.fallback_model` when set, otherwise a built-in cheaper model on OpenAI. Once the cap is reached the run stops with a `Cost guard tripped` note.
+A value that is not a positive number is ignored. Each request's cost comes from the usage the provider reports, priced by model. Once the session's spend passes 80% of the cap, a run adds a warning to the conversation after its next request and, for the rest of that run, switches to a cheaper model when one is available (`retry.fallback_model`, or a built-in cheaper model on OpenAI); otherwise it only warns. Each run starts on your configured model, so its first request is at full price. Once the cap is reached the run stops and shows a `Cost guard tripped` note.
 
-In the interactive CLI and TUI the cap covers the whole session: every message's spend counts, a message sent once the session is at its cap makes no request, and `/new` or `/reset` starts the count again. The count is kept in memory, so restarting the CLI starts it again. On the gateway and the HTTP server the cap applies to each message on its own. Delegated sub-agents share what is left of their parent's cap.
+In the interactive CLI and TUI the cap covers the agent runs of the whole session, including objective continuations and quorum voters: a message sent once the session is at its cap makes no request, and `/new` or `/reset` starts the count again. Background memory and skill review and `/btw` side questions are not counted. The count is kept in memory, so restarting the CLI starts it again. Everywhere else (the gateway, the HTTP server, the desktop gateway, ACP and benchmarks) the cap applies to each run on its own. Delegated sub-agents share what is left of their parent's cap.
 
 ## Context Pressure Warnings
 

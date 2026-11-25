@@ -887,7 +887,10 @@ pub fn build_agent_config(config: &GatewayConfig, model: &str) -> AgentConfig {
         provider: provider_from_model,
         stream: config.streaming.enabled,
         stream_max_lifetime: config.agent.stream_max_lifetime,
-        max_cost_usd: config.agent.max_session_cost_usd,
+        max_cost_usd: config
+            .agent
+            .max_session_cost_usd
+            .filter(|cap| cap.is_finite() && *cap > 0.0),
         delegation_model: config
             .delegation
             .model

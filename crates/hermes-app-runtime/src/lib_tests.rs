@@ -146,6 +146,14 @@ mod tests {
             build_agent_config(&GatewayConfig::default(), "openai:gpt-4o").max_cost_usd,
             None
         );
+        for unusable in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            cfg.agent.max_session_cost_usd = Some(unusable);
+            assert_eq!(
+                build_agent_config(&cfg, "openai:gpt-4o").max_cost_usd,
+                None,
+                "{unusable} is not a cap"
+            );
+        }
     }
 
     #[test]

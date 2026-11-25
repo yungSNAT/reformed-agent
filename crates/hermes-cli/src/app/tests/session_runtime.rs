@@ -78,7 +78,7 @@
             ..Default::default()
         };
 
-        app.apply_agent_result(hermes_core::AgentResult {
+        let first_run = hermes_core::AgentResult {
             messages: vec![hermes_core::Message::assistant("first")],
             finished_naturally: true,
             total_turns: 1,
@@ -88,8 +88,10 @@
             session_cost_usd: Some(0.002),
             session_started_hooks_fired: false,
             compressed_transcripts: Vec::new(),
-        });
-        app.apply_agent_result(hermes_core::AgentResult {
+        };
+        app.count_run_cost(&first_run);
+        app.apply_agent_result(first_run);
+        let second_run = hermes_core::AgentResult {
             messages: vec![hermes_core::Message::assistant("second")],
             finished_naturally: true,
             total_turns: 1,
@@ -99,7 +101,9 @@
             session_cost_usd: None,
             session_started_hooks_fired: false,
             compressed_transcripts: Vec::new(),
-        });
+        };
+        app.count_run_cost(&second_run);
+        app.apply_agent_result(second_run);
 
         assert_eq!(app.last_usage, Some(second));
         let session = app.session_usage.as_ref().expect("session usage");

@@ -39,20 +39,34 @@ impl App {
         self.ui_messages.retain(|m| m.insert_at <= cap);
     }
 
-    /// Apply the finalized messages returned by an agent run.
-    pub fn apply_agent_result(&mut self, result: hermes_core::AgentResult) {
-        let usage = result.usage.clone();
+    /// Add what one agent run spent to the session's running total, which
+    /// seeds the next run's cost guard. Call once for every run, whether or
+    /// not its result is applied.
+    pub fn count_run_cost(&mut self, result: &hermes_core::AgentResult) {
         let run_cost = result
             .session_cost_usd
-            .or_else(|| usage.as_ref().and_then(|usage| usage.estimated_cost))
+            .or_else(|| result.usage.as_ref().and_then(|usage| usage.estimated_cost))
             .filter(|cost| cost.is_finite() && *cost >= 0.0);
+        if let Some(run_cost) = run_cost {
+            self.session_cost_usd += run_cost;
+        }
+    }
 
+    /// The cost guard's note when it ended the last run, if it did.
+    pub fn cost_guard_note(&self) -> Option<&str> {
+        let last = self.messages.last()?;
+        (last.role == hermes_core::MessageRole::System)
+            .then_some(last.content.as_deref()?)
+            .filter(|text| text.starts_with("Cost guard tripped"))
+    }
+
+    /// Apply the finalized messages returned by an agent run. Its cost is
+    /// counted separately, by [`Self::count_run_cost`].
+    pub fn apply_agent_result(&mut self, result: hermes_core::AgentResult) {
+        let usage = result.usage.clone();
         self.last_usage = usage.clone();
         if let Some(usage) = usage {
             self.session_usage = Some(merge_usage_stats(self.session_usage.take(), &usage));
-        }
-        if let Some(run_cost) = run_cost {
-            self.session_cost_usd += run_cost;
         }
         self.messages = result.messages;
         self.prune_ui_after_current_messages();
