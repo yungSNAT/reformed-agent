@@ -635,6 +635,73 @@ async fn platform_auth_status_and_logout_update_the_isolated_profile() {
 }
 
 #[tokio::test]
+async fn gemini_verify_persists_the_cached_credential_without_contacting_the_provider() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let source = sandbox.path().join("gemini-oauth.json");
+    let state = sandbox.path().join("hermes-oauth.json");
+    let endpoint = MockServer::start().await;
+    let endpoint_url = format!("{}/token", endpoint.uri());
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(0)
+        .mount(&endpoint)
+        .await;
+
+    let access = "synthetic-gemini-access";
+    let cached = serde_json::json!({
+        "access": access,
+        "expires": 4_102_444_800_000_i64,
+        "project_id": "fixture-project"
+    })
+    .to_string();
+
+    for (fixture, success, expected) in [
+        (
+            None,
+            false,
+            "status=missing, source=none, credential_present=false",
+        ),
+        (
+            Some(cached.as_str()),
+            true,
+            "status=valid, source=google-oauth, credential_present=true",
+        ),
+        (
+            Some("[]"),
+            false,
+            "status=refresh_failed, source=env, credential_present=true",
+        ),
+    ] {
+        if let Some(fixture) = fixture {
+            std::fs::write(&source, fixture).unwrap();
+        }
+        let output = tokio::time::timeout(
+            Duration::from_secs(20),
+            isolated_hermes(sandbox.path())
+                .env("HERMES_GEMINI_OAUTH_FILE", &source)
+                .env("HERMES_GEMINI_OAUTH_TOKEN_URL", &endpoint_url)
+                .env("HERMES_AUTH_FILE", &state)
+                .args(["auth", "verify", "google-gemini-cli"])
+                .output(),
+        )
+        .await
+        .expect("offline Gemini verification timed out")
+        .unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.success(), success, "{stdout}\n{stderr}");
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(!stdout.contains(access) && !stderr.contains(access));
+        if success {
+            assert!(stdout.contains("expires_at=2100-01-01T00:00:00+00:00"));
+            assert_eq!(std::fs::read_to_string(&source).unwrap(), cached);
+        }
+    }
+    assert!(endpoint.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn qwen_verification_omits_untrusted_refresh_error_details() {
     const FIXTURE_MARKER: &str = "loopback-provider-diagnostic-marker";
     let endpoint = MockServer::start().await;
