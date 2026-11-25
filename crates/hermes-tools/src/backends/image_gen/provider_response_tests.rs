@@ -30,6 +30,134 @@ fn request(prompt: &str) -> ImageGenerateRequest {
     }
 }
 
+fn compatible_backend(server: &MockServer, cache: PathBuf) -> OpenRouterCompatImageGenBackend {
+    OpenRouterCompatImageGenBackend {
+        client: Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap(),
+        config: OpenRouterCompatImageGenConfig {
+            provider: OpenRouterCompatImageProviderKind::Nous,
+            api_key: Some("local-compatible-fixture".into()),
+            base_url: server.uri(),
+            model: "fixture-image-model".into(),
+            output_dir: cache,
+        },
+    }
+}
+
+#[tokio::test]
+async fn compatible_image_failures_leave_the_cache_untouched() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("compatible-cache");
+    let mut backend = compatible_backend(&server, cache.clone());
+    assert!(matches!(
+        backend.generate(request("  ")).await,
+        Err(ToolError::InvalidParams(_))
+    ));
+    assert!(!cache.exists());
+    let key = backend.config.api_key.take();
+    assert!(matches!(
+        backend.generate(request("missing credentials")).await,
+        Err(ToolError::ExecutionFailed(detail)) if detail.contains("requires credentials")
+    ));
+    assert!(!cache.exists());
+    backend.config.api_key = key;
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    for (prompt, reply, expected) in [
+        (
+            "rejected fixture",
+            ResponseTemplate::new(422)
+                .set_body_json(json!({"error": {"message": "fixture validation failed"}})),
+            "image generation failed (422 Unprocessable Entity): fixture validation failed",
+        ),
+        (
+            "malformed fixture response",
+            ResponseTemplate::new(200).set_body_string("invalid fixture JSON"),
+            "returned invalid JSON",
+        ),
+        (
+            "text-only fixture response",
+            ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"message": {"content": "text only", "images": []}}]
+            })),
+            "returned no image. Ensure the model 'fixture-image-model' supports image output",
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(header("authorization", "Bearer local-compatible-fixture"))
+            .and(body_partial_json(json!({"messages": [
+                {"role": "user", "content": [{"type": "text", "text": prompt}]}
+            ]})))
+            .respond_with(reply)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = backend.generate(request(prompt)).await.unwrap_err();
+        assert!(matches!(error, ToolError::ExecutionFailed(_)));
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(!cache.exists());
+    }
+    server.verify().await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn compatible_image_edits_forward_the_reference_and_cache_the_download() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("compatible-cache");
+    let reference = format!("data:image/png;base64,{}", STANDARD.encode(b"reference"));
+    let generated = format!("{}/generated", server.uri());
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("authorization", "Bearer local-compatible-fixture"))
+        .and(body_partial_json(json!({
+            "model": "fixture-image-model",
+            "modalities": ["image", "text"],
+            "image_config": {"aspect_ratio": "9:16"},
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Edit the fixture"},
+                {"type": "image_url", "image_url": {"url": &reference}}
+            ]}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"images": [
+                {"type": "image_url", "image_url": {"url": &generated}}
+            ]}}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/generated"))
+        .and(|req: &wiremock::Request| !req.headers.contains_key("authorization"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("generated fixture", "image/jpeg"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let backend = ImageGenRuntimeBackend::from(compatible_backend(&server, cache.clone()));
+    assert_eq!(backend.capabilities().provider.as_deref(), Some("nous"));
+    let mut edit = request("  Edit the fixture  ");
+    edit.size = Some("portrait".into());
+    edit.image_url = Some(reference);
+    let output: Value = serde_json::from_str(&backend.generate(edit).await.unwrap()).unwrap();
+    assert_eq!(output["modality"], "image");
+    assert_eq!(output["source_images"], 1);
+    assert_eq!(output["images"][0]["source_url"], generated);
+    let image = Path::new(output["image"].as_str().unwrap());
+    assert_eq!(image.parent(), Some(cache.as_path()));
+    assert_eq!(image.extension().unwrap(), "jpg");
+    assert_eq!(std::fs::read(image).unwrap(), b"generated fixture");
+    server.verify().await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
 fn krea_backend(transport: KreaTransport, cache: PathBuf) -> KreaImageGenBackend {
     KreaImageGenBackend {
         client: Client::builder()
