@@ -899,6 +899,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn patch_replaces_only_the_selected_fuzzy_span() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.txt");
+        let backend = LocalPatchBackend::new();
+        for (original, needle, strategy, expected) in [
+            (
+                "before\nquoted\tfield\nfinal\nafter\n",
+                r"quoted\tfield\nfinal",
+                "escape_normalized",
+                "before\nreplacement\nafter\n",
+            ),
+            (
+                "☕ Before\r\n“Ready” — l’été…\r\nAfter\r\n",
+                "\"Ready\" -- l'été...",
+                "unicode_normalized",
+                "☕ Before\r\nreplacement\r\nAfter\r\n",
+            ),
+            (
+                "before\nbegin\nThe counter was 7.\nend\nafter\n",
+                "begin\nThe counter was 8.\nend",
+                "block_anchor",
+                "before\nreplacement\nafter\n",
+            ),
+        ] {
+            std::fs::write(&path, original).unwrap();
+            let result = backend
+                .patch_file(path.to_str().unwrap(), needle, "replacement", false)
+                .await
+                .unwrap();
+            let result: Value = serde_json::from_str(&result).unwrap();
+            assert_eq!(result["strategy"], strategy);
+            assert_eq!(result["replacements"], 1);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        }
+    }
+
+    #[tokio::test]
     async fn search_content_supports_offset_and_output_modes() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
