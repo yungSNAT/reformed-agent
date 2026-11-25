@@ -118,7 +118,7 @@ async fn a_streamed_run_counts_what_earlier_runs_of_the_session_spent() {
     let (agent, _provider, _home) = capped_haiku_agent(0.01);
     agent.set_session_spent_usd(0.006);
     let result = agent
-        .run_stream(vec![Message::user("two")], None, None)
+        .run_stream(vec![Message::user("two")], None, Some(Box::new(|_| {})))
         .await
         .expect("streamed run");
     assert!(!result.finished_naturally);
@@ -136,7 +136,7 @@ async fn a_session_already_at_its_cap_makes_no_request() {
         .await
         .expect("refused run");
     let streamed = agent
-        .run_stream(vec![Message::user("four")], None, None)
+        .run_stream(vec![Message::user("four")], None, Some(Box::new(|_| {})))
         .await
         .expect("refused streamed run");
 
