@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::json;
-use wiremock::matchers::{body_json, header, method, path};
+use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const AUTH_PATH: &str = "/open-apis/auth/v3/tenant_access_token/internal";
@@ -45,6 +45,29 @@ fn authorised_request(verb: &str, route: &str) -> wiremock::MockBuilder {
     Mock::given(method(verb))
         .and(path(route))
         .and(header("Authorization", bearer(TENANT).as_str()))
+}
+
+async fn mount_single_tenant_request(server: &MockServer) {
+    tenant_request()
+        .respond_with(tenant_success())
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+fn chat_message_request(kind: &str, content: serde_json::Value) -> wiremock::MockBuilder {
+    authorised_request("POST", "/open-apis/im/v1/messages")
+        .and(query_param("receive_id_type", "chat_id"))
+        .and(body_json(json!({
+            "receive_id": "office",
+            "msg_type": kind,
+            "content": content.to_string(),
+        })))
+}
+
+fn accepted_message() -> ResponseTemplate {
+    ResponseTemplate::new(200)
+        .set_body_json(json!({"code": 0, "data": {"message_id": "delivered"}}))
 }
 
 #[tokio::test]
@@ -225,4 +248,122 @@ async fn message_mutations_distinguish_fatal_and_nonfatal_service_errors() {
     );
     adapter.add_reaction("message", "THUMBSUP").await.unwrap();
     server.verify().await;
+}
+
+#[tokio::test]
+async fn audio_delivery_uploads_opus_with_duration_and_sends_its_key() {
+    let server = MockServer::start().await;
+    let adapter = loopback_adapter(&server);
+    mount_single_tenant_request(&server).await;
+    let root = tempfile::tempdir().unwrap();
+    let clip = root.path().join("shift-notes.opus");
+    std::fs::write(&clip, b"synthetic audio bytes").unwrap();
+    authorised_request("POST", "/open-apis/im/v1/files")
+        .and(body_string_contains("name=\"file_type\"\r\n\r\nopus"))
+        .and(body_string_contains("name=\"duration\"\r\n\r\n900"))
+        .and(body_string_contains("filename=\"shift-notes.opus\""))
+        .and(body_string_contains("synthetic audio bytes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"file_key": "audio-key"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    chat_message_request("audio", json!({"file_key": "audio-key"}))
+        .respond_with(accepted_message())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let id = adapter
+        .send_audio("office", clip.to_str().unwrap(), Some(900))
+        .await
+        .unwrap();
+    assert_eq!(id, "delivered");
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn generic_file_delivery_uploads_document_then_sends_its_caption() {
+    let server = MockServer::start().await;
+    let adapter = loopback_adapter(&server);
+    mount_single_tenant_request(&server).await;
+    let root = tempfile::tempdir().unwrap();
+    let document = root.path().join("notes.txt");
+    std::fs::write(&document, b"synthetic shift notes").unwrap();
+    authorised_request("POST", "/open-apis/im/v1/files")
+        .and(body_string_contains("name=\"file_type\"\r\n\r\nstream"))
+        .and(body_string_contains("filename=\"notes.txt\""))
+        .and(body_string_contains("synthetic shift notes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"file_key": "document-key"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    chat_message_request("file", json!({"file_key": "document-key"}))
+        .respond_with(accepted_message())
+        .expect(1)
+        .mount(&server)
+        .await;
+    chat_message_request("text", json!({"text": "Shift handover"}))
+        .respond_with(accepted_message())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    adapter
+        .send_file("office", document.to_str().unwrap(), Some("Shift handover"))
+        .await
+        .unwrap();
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 4);
+    assert_eq!(received[1].url.path(), "/open-apis/im/v1/files");
+    let file_message: serde_json::Value = serde_json::from_slice(&received[2].body).unwrap();
+    assert_eq!(file_message["msg_type"], "file");
+    let caption_message: serde_json::Value = serde_json::from_slice(&received[3].body).unwrap();
+    assert_eq!(caption_message["msg_type"], "text");
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn image_delivery_stops_when_upload_does_not_produce_a_key() {
+    let root = tempfile::tempdir().unwrap();
+    let image = root.path().join("diagram.png");
+    std::fs::write(&image, b"synthetic image bytes").unwrap();
+    for (response, expected) in [
+        (
+            ResponseTemplate::new(503).set_body_string("images unavailable"),
+            "Feishu image upload error: images unavailable",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_string("not JSON"),
+            "Feishu image upload parse failed",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_json(json!({"data": {}})),
+            "No image_key in upload response",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        let adapter = loopback_adapter(&server);
+        mount_single_tenant_request(&server).await;
+        authorised_request("POST", "/open-apis/im/v1/images")
+            .and(body_string_contains("name=\"image_type\"\r\n\r\nmessage"))
+            .and(body_string_contains("filename=\"diagram.png\""))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = adapter
+            .send_image("office", image.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, GatewayError::SendFailed(message) if message.contains(expected)),
+            "{error}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        server.verify().await;
+    }
 }
