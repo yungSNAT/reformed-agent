@@ -21,6 +21,160 @@ fn assert_exit(output: Output, code: i32, context: &str) {
 }
 
 #[test]
+fn workstream_report_counts_source_evidence_and_marks_deferred_work() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let isolate = |command: &mut Command| {
+        command
+            .env_clear()
+            .env("HOME", root)
+            .env("USERPROFILE", root)
+            .env("GIT_CONFIG_GLOBAL", root.join("gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_ATTR_NOSYSTEM", "1")
+            .env("GIT_ALLOW_PROTOCOL", "file")
+            .current_dir(root);
+        for key in ["PATH", "SystemRoot", "LLVM_PROFILE_FILE"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+    };
+    let git = |args: &[&str]| {
+        let mut command = Command::new("git");
+        isolate(&mut command);
+        let output = command.args(args).output().unwrap();
+        let stdout = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .trim()
+            .to_owned();
+        assert_exit(output, 0, &format!("fixture git {args:?}"));
+        stdout
+    };
+    let write = |name: &str, content: &str| {
+        let path = root.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    };
+    let commit = |message: &str| {
+        git(&[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            message,
+        ]);
+    };
+    git(&["init", "--quiet", "--template="]);
+    write("skills/fixture/SKILL.md", "Synthetic skill");
+    write(
+        "optional-skills/fixture/SKILL.md",
+        "Synthetic optional skill",
+    );
+    git(&["add", "--", "skills", "optional-skills"]);
+    commit("Fixture upstream");
+    let upstream = git(&["rev-parse", "HEAD"]);
+    write("skills/local/SKILL.md", "Synthetic local skill");
+    git(&["add", "--", "skills/local"]);
+    commit("Fixture local");
+    let local = git(&["rev-parse", "HEAD"]);
+    assert_ne!(local, upstream);
+
+    let wiring = "wire_cron_scheduler_backend(&tool_registry);";
+    for file in ["src/main.rs", "src/app.rs", "src/commands/cron.rs"] {
+        write(&format!("crates/hermes-cli/{file}"), wiring);
+    }
+    write(
+        "crates/hermes-cli/src/runtime_tool_wiring.rs",
+        "pub fn wire_gateway_messaging_backend() {}\npub fn wire_gateway_clarify_backend() {}\npub fn wire_stdio_clarify_backend() {}",
+    );
+    write(
+        "crates/hermes-cli/tests/e2e_cli.rs",
+        "fn e2e_fixture() {}\nfn e2e_second() {}",
+    );
+    write(
+        ".github/workflows/ci.yml",
+        "tests:\r\n  runs-on: fixture\r\n  steps:\r\n    - cargo test --workspace\r\n    - cargo test -p hermes-parity-tests\r\n    - check-runtime-placeholders.sh\r\n    - clippy-warning-gate.sh\r\n",
+    );
+    for name in [
+        "upstream_webhook_sync.py",
+        "setup-upstream-webhook-launchd.sh",
+        "sync-upstream.sh",
+    ] {
+        write(&format!("scripts/{name}"), "fixture");
+    }
+    write(
+        "scripts/install-upstream-webhook-launchd.sh",
+        "# Reads GITHUB_WEBHOOK_SECRET",
+    );
+    write("docs/parity/compatibility-policy.md", "Synthetic policy");
+    write(
+        "docs/parity/intentional-divergence.json",
+        r#"{"items":[{"path_prefixes":["skills/","optional-skills/"]},{"path_prefixes":["web/","ui-tui/"]}]}"#,
+    );
+    write(
+        "docs/parity/shared-different-classification.json",
+        r#"{"items":[{"classification":"deferred","path":"skills/fixture/SKILL.md"}]}"#,
+    );
+    for name in [
+        "python-test-suite-coverage",
+        "hermes-cli-test-coverage",
+        "ui-tui-source-coverage",
+    ] {
+        write(&format!("docs/parity/{name}.json"), r#"{"entries":[]}"#);
+    }
+
+    let mut command = parity_tool(root, "generate-workstream-status");
+    isolate(&mut command);
+    assert_exit(
+        command
+            .args(["--no-fetch", "--upstream-ref", "HEAD^", "--upstream-url"])
+            .arg(root.join("unused-upstream"))
+            .output()
+            .unwrap(),
+        0,
+        "generate isolated workstream reports",
+    );
+    let report: Value =
+        serde_json::from_slice(&fs::read(root.join("docs/parity/workstream-status.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["head_sha"], local);
+    assert_eq!(report["upstream_ref"], "HEAD^");
+    assert_eq!(report["upstream_sha"], upstream);
+    assert_eq!(report["states"], json!({"complete":6,"in_progress":1}));
+    let streams = report["workstreams"].as_array().unwrap();
+    let get = |id: &str| {
+        streams
+            .iter()
+            .find(|entry| entry["workstream"] == id)
+            .unwrap()
+    };
+    assert_eq!(get("WS2")["metrics"]["wiring_sites_detected"], 3);
+    assert_eq!(get("WS3")["metrics"]["runtime_wiring_functions"], 3);
+    assert_eq!(get("WS4")["state"], "in_progress");
+    assert_eq!(
+        get("WS4")["metrics"],
+        json!({
+            "upstream_skill_files": 2,
+            "local_skill_files": 3,
+            "divergence_documented": true,
+            "rows_not_shown_matching": 1,
+        })
+    );
+    assert_eq!(get("WS5")["metrics"]["e2e_cli_tests"], 2);
+    assert_eq!(get("WS6")["metrics"]["ci_jobs"], 1);
+    let markdown = fs::read_to_string(root.join("docs/parity/workstream-status.md")).unwrap();
+    assert!(markdown.contains(&format!("- Local HEAD: `{local}`")));
+    assert!(markdown.contains(&format!("- Upstream: `HEAD^` (`{upstream}`)")));
+    assert!(markdown.contains("| `WS4` | Skills parity | **in_progress** |"));
+    assert!(markdown.contains("rows are deferred or not rechecked"));
+}
+
+#[test]
 fn adapter_matrix_reports_only_feature_gated_platforms_and_public_memory_plugins() {
     let root = tempfile::tempdir().unwrap();
     for (relative, source) in [
