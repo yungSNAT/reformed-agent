@@ -30,6 +30,180 @@ fn request(prompt: &str) -> ImageGenerateRequest {
     }
 }
 
+fn krea_backend(transport: KreaTransport, cache: PathBuf) -> KreaImageGenBackend {
+    KreaImageGenBackend {
+        client: Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap(),
+        config: KreaImageGenConfig {
+            transport,
+            model: "krea-2-medium".into(),
+            creativity: "medium".into(),
+            output_dir: cache,
+            poll_initial_interval: Duration::ZERO,
+            poll_max_interval: Duration::ZERO,
+            poll_timeout: Duration::from_secs(5),
+        },
+    }
+}
+
+#[tokio::test]
+async fn krea_submit_errors_preserve_transport_context_and_stop_before_polling() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("krea-cache");
+    let direct = krea_backend(
+        KreaTransport::Direct {
+            api_key: "local-krea-fixture".into(),
+            base_url: server.uri(),
+        },
+        cache.clone(),
+    );
+    let managed = krea_backend(
+        KreaTransport::Managed {
+            gateway_origin: server.uri(),
+            nous_token: "local-managed-fixture".into(),
+        },
+        cache.clone(),
+    );
+    for (backend, bearer, prompt, response, expected) in [
+        (
+            &direct,
+            "Bearer local-krea-fixture",
+            "direct rejection",
+            ResponseTemplate::new(422).set_body_json(json!({"error": "fixture rejected"})),
+            "Krea image generation failed (422 Unprocessable Entity): fixture rejected",
+        ),
+        (
+            &managed,
+            "Bearer local-managed-fixture",
+            "managed capacity",
+            ResponseTemplate::new(429).set_body_json(json!({"error": "fixture busy"})),
+            "concurrency cap was hit",
+        ),
+        (
+            &managed,
+            "Bearer local-managed-fixture",
+            "managed model disabled",
+            ResponseTemplate::new(403).set_body_json(json!({"error": "fixture model disabled"})),
+            "krea-2-medium' may not be enabled",
+        ),
+        (
+            &direct,
+            "Bearer local-krea-fixture",
+            "malformed submit response",
+            ResponseTemplate::new(200).set_body_string("invalid fixture JSON"),
+            "Krea returned invalid JSON on submit",
+        ),
+        (
+            &direct,
+            "Bearer local-krea-fixture",
+            "empty job identifier",
+            ResponseTemplate::new(200).set_body_json(json!({"job_id": "  "})),
+            "Krea submit response missing job_id",
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/generate/image/krea/krea-2/medium"))
+            .and(header("authorization", bearer))
+            .and(body_partial_json(json!({"prompt": prompt})))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = backend.generate(request(prompt)).await.unwrap_err();
+        assert!(matches!(error, ToolError::ExecutionFailed(_)));
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+    server.verify().await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 5);
+    assert!(!cache.exists());
+}
+
+#[tokio::test]
+async fn krea_poll_reports_terminal_jobs_and_keeps_an_unavailable_image_url() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("krea-cache");
+    let backend = krea_backend(
+        KreaTransport::Direct {
+            api_key: "local-krea-fixture".into(),
+            base_url: server.uri(),
+        },
+        cache.clone(),
+    );
+    let image_url = format!("{}/fixture.png", server.uri());
+    let job = "cache-fallback";
+    Mock::given(method("GET"))
+        .and(path(format!("/jobs/{job}")))
+        .and(header("authorization", "Bearer local-krea-fixture"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("invalid fixture JSON"))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/fixture.png"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for (job, result, expected_error) in [
+        (
+            "fixture-failed",
+            json!({"status": "failed", "result": {"error": "fixture rejected"}}),
+            Some("Krea job fixture-failed failed: fixture rejected"),
+        ),
+        (
+            "fixture-cancelled",
+            json!({"status": "cancelled"}),
+            Some("Krea job fixture-cancelled was cancelled"),
+        ),
+        (
+            "missing-image",
+            json!({"status": "completed", "result": {"urls": []}}),
+            Some("Krea result contained no image URL"),
+        ),
+        (
+            job,
+            json!({"completed_at": "2026-01-01T00:00:00Z", "result": {"urls": [&image_url]}}),
+            None,
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/generate/image/krea/krea-2/medium"))
+            .and(header("authorization", "Bearer local-krea-fixture"))
+            .and(body_partial_json(json!({"prompt": job})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"job_id": job})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/jobs/{job}")))
+            .and(header("authorization", "Bearer local-krea-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(result))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let result = backend.generate(request(job)).await;
+        if let Some(expected) = expected_error {
+            let error = result.unwrap_err();
+            assert!(matches!(error, ToolError::ExecutionFailed(_)));
+            assert!(error.to_string().contains(expected), "{error}");
+        } else {
+            let payload: Value = serde_json::from_str(&result.unwrap()).unwrap();
+            assert_eq!(payload["job_id"], job);
+            assert_eq!(payload["image"], image_url);
+            assert_eq!(payload["images"][0]["source_url"], image_url);
+        }
+    }
+    server.verify().await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 10);
+    assert!(!cache.exists() || cache.read_dir().unwrap().next().is_none());
+}
+
 #[tokio::test]
 async fn malformed_provider_responses_do_not_create_an_image() {
     let server = MockServer::start().await;
