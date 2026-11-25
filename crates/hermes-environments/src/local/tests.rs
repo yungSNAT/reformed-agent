@@ -373,6 +373,73 @@ fn test_rewrite_compound_background_contract() {
     assert_eq!(rewrite_compound_background(&once), once);
 }
 
+#[test]
+fn shell_init_lists_accept_json_and_delimited_paths() {
+    for (value, expected) in [
+        (" ", &[][..]),
+        (
+            r#"["path,with,comma.sh", "  second.sh  ", "", "  "]"#,
+            &["path,with,comma.sh", "second.sh"][..],
+        ),
+        ("first.sh, , second.sh", &["first.sh", "second.sh"][..]),
+        ("first.sh:: second.sh", &["first.sh", "second.sh"][..]),
+        ("[literal.sh:second.sh", &["[literal.sh", "second.sh"][..]),
+    ] {
+        assert_eq!(parse_shell_init_list(value), expected, "{value}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn shell_init_variable_expansion_preserves_non_reference_text() {
+    let _lock = lock_env();
+    let _directory = EnvGuard::set("HERMES_FIXTURE_INIT_ROOT", "/fixture/rc");
+    let _missing = EnvGuard::remove("HERMES_FIXTURE_INIT_MISSING");
+    assert_eq!(
+        expand_env_refs("${HERMES_FIXTURE_INIT_ROOT}/setup${HERMES_FIXTURE_INIT_MISSING}.sh"),
+        "/fixture/rc/setup.sh"
+    );
+    assert_eq!(
+        expand_env_refs("${lowercase}/${}/${HERMES_FIXTURE_INIT_ROOT"),
+        "${lowercase}/${}/${HERMES_FIXTURE_INIT_ROOT"
+    );
+}
+
+#[test]
+fn compound_background_rewrite_only_wraps_top_level_chain_tails() {
+    for (input, expected) in [
+        (
+            "printf '%s' 'a && b' && printf done &",
+            "printf '%s' 'a && b' && { printf done & }",
+        ),
+        (
+            "printf '%s' \"a || b\" || printf done &",
+            "printf '%s' \"a || b\" || { printf done & }",
+        ),
+        (
+            "(printf a || printf b) && printf done &",
+            "(printf a || printf b) && { printf done & }",
+        ),
+        (
+            "printf '%s' $(printf a && printf b) && printf done &",
+            "printf '%s' $(printf a && printf b) && { printf done & }",
+        ),
+    ] {
+        assert_eq!(rewrite_compound_background(input), expected, "{input}");
+    }
+    for input in [
+        "# printf a && printf done &\n\n",
+        "false && printf skipped; printf done &",
+        "printf a && printf '%s' escaped\\&",
+        "printf a &&",
+        "printf a && &",
+        "printf '%s' 'a && b' &",
+        "printf '%s' \"$(printf a && printf b)\" &",
+    ] {
+        assert_eq!(rewrite_compound_background(input), input);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn test_foreground_process_group_avoids_fork_hook() {
