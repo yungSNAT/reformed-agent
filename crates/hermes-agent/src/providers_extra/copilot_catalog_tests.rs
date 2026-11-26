@@ -323,15 +323,40 @@ async fn copilot_responses_route_sends_only_levels_the_model_is_known_to_accept(
         CopilotProvider::new(server.uri(), "synthetic-test-value").with_model("gpt-5.1");
     let cases = [
         // The lookup drops the `openai/` prefix and clamps to the catalogue.
-        (&catalogued, "openai/gpt-5.1", json!({"reasoning_effort": "xhigh"}), Some("medium")),
+        (
+            &catalogued,
+            "openai/gpt-5.1",
+            json!({"reasoning_effort": "xhigh"}),
+            Some("medium"),
+        ),
         // No catalogue row, or no catalogue: the pattern list.
-        (&catalogued, "gpt-5.2", json!({"reasoning_effort": "xhigh"}), Some("high")),
-        (&uncatalogued, "gpt-5.1", json!({"reasoning_effort": "xhigh"}), Some("high")),
+        (
+            &catalogued,
+            "gpt-5.2",
+            json!({"reasoning_effort": "xhigh"}),
+            Some("high"),
+        ),
+        (
+            &uncatalogued,
+            "gpt-5.1",
+            json!({"reasoning_effort": "xhigh"}),
+            Some("high"),
+        ),
         // A model no list covers gets no reasoning.
-        (&uncatalogued, "gpt-6", json!({"reasoning_effort": "high"}), None),
+        (
+            &uncatalogued,
+            "gpt-6",
+            json!({"reasoning_effort": "high"}),
+            None,
+        ),
         // No effort asked for: medium, as upstream sends.
         (&uncatalogued, "gpt-5.1", json!({}), Some("medium")),
-        (&uncatalogued, "gpt-5.1", json!({"reasoning_effort": "none"}), None),
+        (
+            &uncatalogued,
+            "gpt-5.1",
+            json!({"reasoning_effort": "none"}),
+            None,
+        ),
     ];
     for (provider, model, body, _) in &cases {
         one_shot(provider, Some(model), body).await;
