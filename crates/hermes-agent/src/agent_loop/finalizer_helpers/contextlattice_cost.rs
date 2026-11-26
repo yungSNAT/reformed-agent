@@ -280,15 +280,22 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
 
 use hermes_intelligence::usage_pricing::PricingEntry;
 
-/// The official price table's entry for `model` (`provider:model`, or the configured
-/// provider). None for a model or provider the table does not list; its cached tokens are
-/// then charged at full input.
+/// The official price table's entry for `model`, looked up under the configured provider,
+/// then a `provider:` prefix, then a `vendor/` prefix (an OpenRouter route such as
+/// `openai/gpt-4o` is billed at its vendor's prices). None for a model the table does not
+/// list, or lists at no charge (a subscription route); its cached tokens are then charged at
+/// full input.
 fn listed_pricing(model: &str, provider: Option<&str>) -> Option<PricingEntry> {
-    let (prefix, bare) = match model.split_once(':') {
-        Some((prefix, bare)) => (Some(prefix), bare),
+    let (prefix, rest) = match model.split_once(':') {
+        Some((prefix, rest)) => (Some(prefix), rest),
         None => (None, model),
     };
-    hermes_intelligence::usage_pricing::get_pricing_entry(bare, provider.or(prefix), None)
+    let vendor = rest.split_once('/').map(|(vendor, _)| vendor);
+    [provider, prefix, vendor]
+        .into_iter()
+        .flatten()
+        .filter_map(|p| hermes_intelligence::usage_pricing::get_pricing_entry(rest, Some(p), None))
+        .find(|entry| entry.input_cost_per_million.is_some_and(|input| input > 0.0))
 }
 
 #[cfg(test)]
