@@ -1849,6 +1849,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hermes-entrypoint"
+version = "0.22.0"
+
+[[package]]
 name = "hermes-environments"
 version = "0.22.0"
 dependencies = [

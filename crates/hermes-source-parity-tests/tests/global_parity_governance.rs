@@ -633,3 +633,75 @@ fn test_release_gate_holds_rows_not_shown_matching() {
         "an overdue deferred row must fail the daily audit"
     );
 }
+
+/// Upstream tree drift (commits behind, missing patches, upstream-only files) grows with
+/// every upstream commit, so it is reported through `drift_alert_thresholds` and neither
+/// threshold profile gates on it.
+const TREE_DRIFT_METRICS: [&str; 3] = [
+    "max_commits_behind",
+    "max_upstream_patch_missing",
+    "max_files_only_upstream",
+];
+
+/// The CI profile and the release gate share one functional policy: no tree drift in
+/// either, and every CI profile check is also a release check that is at least as strict,
+/// so a release cannot pass a check the CI profile would fail.
+#[test]
+fn test_ci_and_release_profiles_share_the_functional_policy() {
+    let thresholds = read_json("docs/parity/global-parity-thresholds.json");
+    let ci = thresholds["ci_thresholds"]
+        .as_object()
+        .expect("ci_thresholds should be an object");
+    let release = &thresholds["release_thresholds"];
+    let release_metrics = release["metric_thresholds"]
+        .as_object()
+        .expect("release metric_thresholds should be an object");
+    for (name, profile) in [
+        ("ci_thresholds", &thresholds["ci_thresholds"]),
+        ("release_thresholds", release),
+    ] {
+        assert_eq!(
+            profile["gate_mode"].as_str(),
+            Some("functional"),
+            "{name} must gate on functional parity"
+        );
+        assert!(
+            profile.get("special_rules").is_none(),
+            "{name} needs no drift exemptions once drift does not gate"
+        );
+    }
+    for metric in TREE_DRIFT_METRICS {
+        assert!(
+            !ci.contains_key(metric) && !release_metrics.contains_key(metric),
+            "{metric} is upstream tree drift: report it, do not gate on it"
+        );
+        let warn = metric.replacen("max_", "warn_", 1);
+        assert!(
+            thresholds["drift_alert_thresholds"][&warn]
+                .as_f64()
+                .is_some(),
+            "{warn} must keep reporting {metric}"
+        );
+    }
+    for (metric, limit) in ci {
+        if metric == "gate_mode" {
+            continue;
+        }
+        let limit = limit
+            .as_f64()
+            .unwrap_or_else(|| panic!("ci_thresholds.{metric} should be a number"));
+        let release_limit = release_metrics
+            .get(metric)
+            .and_then(Value::as_f64)
+            .unwrap_or_else(|| panic!("ci_thresholds.{metric} must also gate the release"));
+        let as_strict = if metric.starts_with("min_") {
+            release_limit >= limit
+        } else {
+            release_limit <= limit
+        };
+        assert!(
+            as_strict,
+            "release limit for {metric} ({release_limit}) must be at least as strict as the CI profile limit ({limit})"
+        );
+    }
+}
