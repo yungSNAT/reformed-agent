@@ -1,10 +1,13 @@
 //! Webhook-driven upstream sync: a GitHub webhook receiver that queues
-//! upstream push events. Port of `scripts/upstream_webhook_sync.py`; the
-//! worker follows in a later change.
+//! upstream push events, and a worker that runs the upstream sync for each.
+//! Port of `scripts/upstream_webhook_sync.py`.
 
 mod event;
 mod listen;
 mod queue;
+mod upkeep;
+mod worker;
+mod worker_cli;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -27,6 +30,8 @@ struct Cli {
 enum Command {
     /// Start the GitHub webhook receiver.
     Listen(ListenArgs),
+    /// Run the queue worker and execute syncs.
+    Worker(worker_cli::WorkerArgs),
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -52,10 +57,16 @@ struct ListenArgs {
     expected_repo: String,
     #[arg(long, default_value = "refs/heads/main")]
     expected_ref: String,
+    #[command(flatten)]
+    backend: BackendArgs,
+}
+
+#[derive(clap::Args)]
+pub(crate) struct BackendArgs {
     #[arg(long, value_enum, default_value = "sqlite")]
     backend: Backend,
     #[arg(long, default_value = ".sync-queue/upstream-events.db")]
-    sqlite_path: PathBuf,
+    pub(crate) sqlite_path: PathBuf,
     /// Default: UPSTREAM_SYNC_SQS_QUEUE_URL.
     #[arg(long)]
     sqs_queue_url: Option<String>,
@@ -67,6 +78,44 @@ struct ListenArgs {
     /// Default: UPSTREAM_SYNC_KAFKA_TOPIC, else hermes-upstream-sync.
     #[arg(long)]
     kafka_topic: Option<String>,
+}
+
+impl BackendArgs {
+    /// The script's backend checks, then a refusal for the backends not
+    /// ported yet.
+    pub(crate) fn check(&self) -> Result<(), (u8, String)> {
+        // argparse took these defaults from the environment.
+        let flag_or_env = |flag: &Option<String>, var: &str, default: &str| {
+            flag.clone()
+                .unwrap_or_else(|| std::env::var(var).unwrap_or_else(|_| default.to_string()))
+        };
+        let sqs_queue_url = flag_or_env(&self.sqs_queue_url, "UPSTREAM_SYNC_SQS_QUEUE_URL", "");
+        let kafka_bootstrap = flag_or_env(
+            &self.kafka_bootstrap,
+            "UPSTREAM_SYNC_KAFKA_BOOTSTRAP",
+            "127.0.0.1:9092",
+        );
+        let kafka_topic = flag_or_env(
+            &self.kafka_topic,
+            "UPSTREAM_SYNC_KAFKA_TOPIC",
+            "hermes-upstream-sync",
+        );
+        match self.backend {
+            Backend::Sqlite => Ok(()),
+            Backend::Sqs if sqs_queue_url.is_empty() => {
+                Err((2, "--sqs-queue-url is required for SQS backend".into()))
+            }
+            Backend::Kafka if kafka_bootstrap.is_empty() || kafka_topic.is_empty() => Err((
+                2,
+                "--kafka-bootstrap and --kafka-topic are required for Kafka backend".into(),
+            )),
+            Backend::Sqs | Backend::Kafka => Err((
+                2,
+                "the sqs and kafka backends are not ported to Rust yet; use --backend sqlite"
+                    .into(),
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -109,6 +158,7 @@ fn main() -> ExitCode {
     LOG_LEVEL.store(level as u8, Ordering::Relaxed);
     let result = match cli.command {
         Command::Listen(args) => listen(args),
+        Command::Worker(args) => worker_cli::run(args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -120,40 +170,7 @@ fn main() -> ExitCode {
 }
 
 fn listen(args: ListenArgs) -> Result<(), (u8, String)> {
-    // argparse took these defaults from the environment.
-    let flag_or_env = |flag: Option<String>, var: &str, default: &str| {
-        flag.unwrap_or_else(|| std::env::var(var).unwrap_or_else(|_| default.to_string()))
-    };
-    let sqs_queue_url = flag_or_env(args.sqs_queue_url, "UPSTREAM_SYNC_SQS_QUEUE_URL", "");
-    let kafka_bootstrap = flag_or_env(
-        args.kafka_bootstrap,
-        "UPSTREAM_SYNC_KAFKA_BOOTSTRAP",
-        "127.0.0.1:9092",
-    );
-    let kafka_topic = flag_or_env(
-        args.kafka_topic,
-        "UPSTREAM_SYNC_KAFKA_TOPIC",
-        "hermes-upstream-sync",
-    );
-    match args.backend {
-        Backend::Sqlite => {}
-        Backend::Sqs if sqs_queue_url.is_empty() => {
-            return Err((2, "--sqs-queue-url is required for SQS backend".into()))
-        }
-        Backend::Kafka if kafka_bootstrap.is_empty() || kafka_topic.is_empty() => {
-            return Err((
-                2,
-                "--kafka-bootstrap and --kafka-topic are required for Kafka backend".into(),
-            ))
-        }
-        Backend::Sqs | Backend::Kafka => {
-            return Err((
-                2,
-                "the sqs and kafka backends are not ported to Rust yet; use --backend sqlite"
-                    .into(),
-            ))
-        }
-    }
+    args.backend.check()?;
     let config = listen::ListenConfig {
         host: args.host,
         port: args.port,
@@ -165,7 +182,7 @@ fn listen(args: ListenArgs) -> Result<(), (u8, String)> {
         backend_name: "sqlite".to_string(),
     };
     listen::check_secret(&config).map_err(|e| (2, e))?;
-    let queue = queue::SqliteQueue::open(&args.sqlite_path).map_err(|e| (1, e))?;
+    let queue = queue::SqliteQueue::open(&args.backend.sqlite_path).map_err(|e| (1, e))?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| (1, format!("could not start the runtime: {e}")))?;
     runtime
