@@ -166,7 +166,7 @@ let reply = agent.ask("What time is it?").await?; // reply.text, reply.ending
 ```
 
 - By default the agent runs in its own empty home, removed when it is dropped, and reads nothing of the person running the program: no `SOUL.md`, memories or skills from `HERMES_HOME`, and no `AGENTS.md`, `@file:` references, code index or LSP notes from the working folder. It posts no checkpoint anywhere. `.home(path)` points it at a Hermes home instead.
-- A model is required, and `max_turns` defaults to 30. `reply.ending` says whether the run finished or stopped at the turn limit, the cost cap or an interrupt.
+- A model is required, and `max_turns` defaults to 30. `reply.ending` says whether the run finished or stopped at the turn limit, the cost cap, an interrupt or another reason.
 
 ## Against Hermes Agent
 
