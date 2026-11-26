@@ -477,6 +477,9 @@ fn browser_profiles_and_key_stores_are_sensitive() {
     for p in [
         "/h/.mozilla/firefox/p.default/cookies.sqlite",
         "/h/snap/firefox/common/.mozilla/firefox/p/logins.json",
+        // Folders alone, with names no file rule matches.
+        "/h/.mozilla/firefox/p.default/prefs.js",
+        "/h/.password-store/notes.txt",
         "/h/.config/google-chrome/Default/Cookies",
         "/h/.config/chromium/Default/Login Data",
         "/h/.config/BraveSoftware/Brave-Browser/Default/History",
@@ -517,6 +520,39 @@ fn a_working_folder_holding_system_folders_is_not_a_root() {
         "/tmp/x",
     ] {
         assert!(extra_root_allowed(Path::new(ok), Some(home)), "{ok}");
+    }
+}
+
+#[test]
+fn a_working_folder_in_a_kernel_file_system_is_never_a_root() {
+    // `/proc/self/environ` and the like: refused wherever the folder sits, home included.
+    for bad in [
+        "/proc/self",
+        "/proc/123/cwd",
+        "/sys/kernel",
+        "/dev/shm",
+        "/dev",
+    ] {
+        assert!(
+            !extra_root_allowed(Path::new(bad), Some(Path::new("/"))),
+            "{bad}"
+        );
+        assert!(
+            !extra_root_allowed(Path::new(bad), Some(Path::new("/home/u"))),
+            "{bad}"
+        );
+    }
+    // A link to one is judged by where it resolves, as `admit` canonicalises first.
+    #[cfg(target_os = "linux")]
+    {
+        let t = tree();
+        symlink("/proc/self", t.root.join("me")).unwrap();
+        let real = std::fs::canonicalize(t.root.join("me")).unwrap();
+        assert!(
+            !extra_root_allowed(&real, Some(&t.root)),
+            "{}",
+            real.display()
+        );
     }
 }
 
