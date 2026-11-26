@@ -230,7 +230,7 @@ impl AgentLoop {
             self.preflight_context_compress_with_status(&mut ctx);
         }
         let replay = ReplayRecorder::for_session(&self.config, session_id);
-        let max_turns_limit = effective_max_turns(self.config.max_turns);
+        let max_turns_limit = effective_max_turns(self.config.max_turns, self.config.isolated);
         replay.record(
             "session_start",
             serde_json::json!({
@@ -858,11 +858,14 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizers_apply && finalizer_repo_research_plan_requires_retry(
-                    ctx.get_messages(),
-                    assistant_msg.content.as_deref().unwrap_or_default(),
-                    finalizer_repo_research_plan_retries,
-                ) {
+                if !self.config.isolated
+                    && finalizers_apply
+                    && finalizer_repo_research_plan_requires_retry(
+                        ctx.get_messages(),
+                        assistant_msg.content.as_deref().unwrap_or_default(),
+                        finalizer_repo_research_plan_retries,
+                    )
+                {
                     finalizer_repo_research_plan_retries =
                         finalizer_repo_research_plan_retries.saturating_add(1);
                     self.emit_status(
@@ -875,11 +878,13 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_claim_requires_evidence_retry(
-                    ctx.get_messages(),
-                    assistant_msg.content.as_deref().unwrap_or_default(),
-                    finalizer_evidence_retries,
-                ) {
+                if !self.config.isolated
+                    && finalizer_claim_requires_evidence_retry(
+                        ctx.get_messages(),
+                        assistant_msg.content.as_deref().unwrap_or_default(),
+                        finalizer_evidence_retries,
+                    )
+                {
                     finalizer_evidence_retries = finalizer_evidence_retries.saturating_add(1);
                     ctx.add_message(Message::system(
                         "[SYSTEM] Finalizer evidence contract: include explicit evidence lines and confidence calibration.\n\

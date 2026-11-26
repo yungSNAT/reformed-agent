@@ -412,7 +412,7 @@ mod tests {
     fn test_build_agent_config_maps_single_failover_model_from_env() {
         let _guard = env_test_lock();
         let _env = EnvSnapshot::capture(&["HERMES_FALLBACK_MODELS", "HERMES_FALLBACK_MODEL"]);
-        std::env::remove_var("HERMES_FALLBACK_MODELS");
+        std::env::set_var("HERMES_FALLBACK_MODELS", " , ");
         std::env::set_var("HERMES_FALLBACK_MODEL", "anthropic:claude-3-5-sonnet");
         let cfg = GatewayConfig::default();
         let agent_cfg = build_agent_config(&cfg, "nous:openai/gpt-5.5");
@@ -437,6 +437,7 @@ mod tests {
             fallback_models: vec![
                 "openrouter:anthropic/claude-sonnet-4.6".to_string(),
                 "nous:Hermes-4".to_string(),
+                "   ".to_string(),
             ],
             fallback_model: Some("OpenRouter:anthropic/claude-sonnet-4.6".to_string()),
             ..GatewayConfig::default()
@@ -904,5 +905,108 @@ mod tests {
             std::env::var("HERMES_INFERENCE_PROVIDER").ok().as_deref(),
             Some("openai")
         );
+    }
+
+    #[test]
+    fn build_agent_config_maps_smart_routing_model() {
+        let _guard = env_test_lock();
+        let mut config = GatewayConfig::default();
+        config.smart_model_routing.enabled = true;
+        config.smart_model_routing.max_simple_chars = 72;
+        config.smart_model_routing.max_simple_words = 12;
+        config.smart_model_routing.cheap_model = Some(hermes_config::CheapModelRouteConfig {
+            provider: Some("fixture".into()),
+            model: Some("catalogue-small".into()),
+            base_url: Some("https://fixture.example.test/v1".into()),
+            api_key_env: Some("HERMES_TEST_ROUTING_TOKEN".into()),
+        });
+
+        let routing = build_agent_config(&config, "fixture:catalogue").smart_model_routing;
+        assert!(routing.enabled);
+        assert_eq!(routing.max_simple_chars, 72);
+        assert_eq!(routing.max_simple_words, 12);
+        let cheap = routing.cheap_model.expect("configured smart route");
+        assert_eq!(cheap.provider.as_deref(), Some("fixture"));
+        assert_eq!(cheap.model.as_deref(), Some("catalogue-small"));
+        assert_eq!(cheap.base_url.as_deref(), Some("https://fixture.example.test/v1"));
+        assert_eq!(cheap.api_key_env.as_deref(), Some("HERMES_TEST_ROUTING_TOKEN"));
+    }
+
+    #[test]
+    fn runtime_provider_mode_and_service_tier_keep_compatible_request_shapes() {
+        assert_eq!(parse_provider_api_mode(" Bedrock-Converse "), Some(ApiMode::BedrockConverse));
+        assert_eq!(parse_provider_api_mode("other"), None);
+        let body = serde_json::json!(["legacy", true]);
+        assert_eq!(
+            merge_service_tier_extra_body(Some(body.clone()), Some("fast".into())),
+            Some(serde_json::json!({"extra_body":["legacy", true],"service_tier":"priority"}))
+        );
+        assert_eq!(merge_service_tier_extra_body(Some(body.clone()), Some("off".into())), Some(body));
+    }
+
+    #[test]
+    fn provider_override_keeps_model_slug() {
+        let resolved = resolve_cli_chat_provider_model_with(
+            Some("original: catalogue/model"),
+            None,
+            Some(" NEW "),
+            |_| panic!("a qualified model requires no normalisation"),
+        )
+        .expect("resolve");
+        assert_eq!(resolved, "new:catalogue/model");
+    }
+
+    #[test]
+    fn blank_runtime_model_and_prompt_leave_current_state_alone() {
+        let _lock = env_test_lock();
+        let _env = EnvSnapshot::capture(&[
+            "HERMES_MODEL",
+            "HERMES_INFERENCE_MODEL",
+            "HERMES_INFERENCE_PROVIDER",
+            "HERMES_TUI_PROVIDER",
+            "HERMES_RUNTIME_PROMPT_REFORMULATION",
+            "HERMES_RUNTIME_CONTRADICTION_SELF_CHECK",
+        ]);
+        std::env::set_var("HERMES_MODEL", "fixture:original");
+        std::env::set_var("HERMES_RUNTIME_PROMPT_REFORMULATION", "1");
+        std::env::set_var("HERMES_RUNTIME_CONTRADICTION_SELF_CHECK", "off");
+
+        apply_cli_chat_runtime_env("  ");
+        assert_eq!(std::env::var("HERMES_MODEL").unwrap(), "fixture:original");
+        apply_cli_chat_runtime_env("bare-model");
+        assert_eq!(std::env::var("HERMES_MODEL").unwrap(), "bare-model");
+        assert!(!runtime_contradiction_self_check_enabled());
+        assert_eq!(preview_for_runtime_status(" \t\n", 30), "");
+        assert_eq!(build_runtime_reformulation_message(" \n", None), None);
+        let prompt = build_runtime_reformulation_message("Review the catalogue", None)
+            .expect("reformulated request");
+        assert!(prompt.contains("consistency self-audit optional"));
+        assert_eq!(bullet_lines(&[" ".into()], 5), "- (none)");
+    }
+
+    #[test]
+    fn empty_or_unrelated_model_catalogs_respect_resolution_contract() {
+        let entries = ["org/catalogue".to_string(), " ".to_string(), "catalogue".to_string()];
+        assert_eq!(resolve_catalog_model_candidate("unknown", &[]), None);
+        assert_eq!(resolve_catalog_model_candidate(" ", &entries).as_deref(), Some("org/catalogue"));
+        assert!(rank_catalog_model_candidates("catalogue", &entries, 0).is_empty());
+        assert_eq!(rank_catalog_model_candidates(" ", &entries, 1), ["org/catalogue"]);
+        assert_eq!(rank_catalog_model_candidates("catalogue", &entries, 4), ["catalogue", "org/catalogue"]);
+        assert!(rank_catalog_model_candidates("zzzzzz", &entries, 4).is_empty());
+
+        let catalog = ["catalogue".to_string()];
+        for model in [":catalogue", "fixture:", "fixture:catalogue", "openai:codex:dynamic"] {
+            assert_eq!(query_mode_remediation_target_from_catalog(model, &catalog), None, "{model}");
+        }
+    }
+
+    #[test]
+    fn assistant_reply_ignores_non_assistant_messages_after_the_reply() {
+        let result = AgentResult {
+            messages: vec![Message::assistant("last reply"), Message::user("next request")],
+            ..AgentResult::default()
+        };
+        assert_eq!(assistant_reply_from_result(&result), "last reply");
+        assert_eq!(assistant_reply_from_result(&AgentResult::default()), "(no assistant reply)");
     }
 }

@@ -716,6 +716,103 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    #[tokio::test]
+    async fn loopback_provider_wrappers_forward_chat_and_stream_requests() {
+        use futures::StreamExt;
+        use serde_json::json;
+        use wiremock::matchers::{body_partial_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let base = format!("{}/v1", server.uri());
+        let mut qwen = QwenProvider::new("fixture-only")
+            .with_base_url(&base)
+            .with_model("fixture-a");
+        qwen.inner = qwen.inner.with_direct_endpoint().unwrap();
+        let mut kimi = KimiProvider::new("fixture-only")
+            .with_base_url(&base)
+            .with_model("fixture-b");
+        kimi.inner = kimi.inner.with_direct_endpoint().unwrap();
+        let mut minimax = MiniMaxProvider::new("fixture-only")
+            .with_base_url(&base)
+            .with_model("fixture-c");
+        minimax.inner = minimax.inner.with_direct_endpoint().unwrap();
+        let mut nous = NousProvider::new("fixture-only")
+            .with_base_url(&base)
+            .with_model("fixture-d");
+        nous.inner = nous.inner.with_direct_endpoint().unwrap();
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer fixture-only"))
+            .and(body_partial_json(json!({"stream": true, "stream_options": {"include_usage": true}})))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                concat!(
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Fixture stream\"}}]}\n\n",
+                    "data: [DONE]\n\n"
+                ),
+                "text/event-stream",
+            ))
+            .with_priority(1)
+            .expect(4)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer fixture-only"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"message": {"role": "assistant", "content": "Fixture response"}, "finish_reason": "stop"}]
+            })))
+            .with_priority(2)
+            .expect(4)
+            .mount(&server)
+            .await;
+
+        let providers: [&dyn LlmProvider; 4] = [&qwen, &kimi, &minimax, &nous];
+        let messages = [Message::user("Summarise the fixture")];
+        let effort = json!({"reasoning_effort": "low", "supports_reasoning": true});
+        for (index, provider) in providers.into_iter().enumerate() {
+            let extra = (index == 3).then_some(&effort);
+            let result = provider
+                .chat_completion(&messages, &[], None, None, None, extra)
+                .await
+                .unwrap();
+            assert_eq!(result.message.content.as_deref(), Some("Fixture response"));
+            assert_eq!(result.finish_reason.as_deref(), Some("stop"));
+            let chunks = provider
+                .chat_completion_stream(&messages, &[], None, None, None, extra)
+                .collect::<Vec<_>>()
+                .await;
+            let text: String = chunks
+                .into_iter()
+                .filter_map(|chunk| chunk.unwrap().delta.and_then(|delta| delta.content))
+                .collect();
+            assert_eq!(text, "Fixture stream");
+        }
+        let requests = server.received_requests().await.unwrap();
+        let models = ["fixture-a", "fixture-b", "fixture-c", "fixture-d"];
+        let qwen_content = json!([{"type": "text", "text": "Summarise the fixture"}]);
+        let plain_content = json!("Summarise the fixture");
+        assert_eq!(requests.len(), models.len() * 2);
+        for (index, request) in requests.iter().enumerate() {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body["model"], models[index / 2]);
+            assert_eq!(body["messages"][0]["role"], "user");
+            let expected_content = if index / 2 == 0 {
+                &qwen_content
+            } else {
+                &plain_content
+            };
+            assert_eq!(&body["messages"][0]["content"], expected_content);
+            assert_eq!(body["stream"].as_bool(), (index % 2 == 1).then_some(true));
+            if index / 2 == 3 {
+                assert_eq!(body["reasoning"], json!({"effort": "low"}));
+                assert!(body.get("reasoning_effort").is_none());
+                assert!(body.get("supports_reasoning").is_none());
+            }
+        }
+    }
+
     #[test]
     fn qwen_provider_defaults() {
         let p = QwenProvider::new("test-key");

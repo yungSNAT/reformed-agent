@@ -29,7 +29,7 @@ pub fn save_store(store: &KanbanStore) -> Result<PathBuf, AgentError> {
 /// Keep the lock beside the JSON file so replacing the JSON preserves the lock.
 pub(crate) struct KanbanStoreLock {
     path: PathBuf,
-    _file: File,
+    file: File,
 }
 
 pub(crate) fn lock_store() -> Result<KanbanStoreLock, AgentError> {
@@ -56,7 +56,7 @@ impl KanbanStoreLock {
         file.lock().map_err(|error| {
             AgentError::Io(format!("lock {} failed: {error}", lock_path.display()))
         })?;
-        Ok(Self { path, _file: file })
+        Ok(Self { path, file })
     }
 
     pub(crate) fn load(&self) -> Result<KanbanStore, AgentError> {
@@ -65,6 +65,13 @@ impl KanbanStoreLock {
 
     pub(crate) fn save(self, store: &KanbanStore) -> Result<PathBuf, AgentError> {
         save_store_to_path(store, &self.path)
+    }
+}
+
+impl Drop for KanbanStoreLock {
+    fn drop(&mut self) {
+        // A concurrent fork can temporarily keep the file description open.
+        let _ = self.file.unlock();
     }
 }
 
@@ -158,4 +165,34 @@ fn backup_corrupt_store(path: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_unlocks_while_a_duplicate_descriptor_is_still_open() {
+        let home = tempfile::tempdir().unwrap();
+        let path = kanban_store_path_in(home.path());
+        let lock = KanbanStoreLock::open(path.clone()).unwrap();
+        let snapshot = lock.load().unwrap();
+        let duplicate = lock.file.try_clone().unwrap();
+        let contender = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.with_extension("lock"))
+            .unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+
+        lock.save(&snapshot).unwrap();
+        contender
+            .try_lock()
+            .expect("commit must unlock before the duplicate closes");
+        contender.unlock().unwrap();
+        drop(duplicate);
+    }
 }

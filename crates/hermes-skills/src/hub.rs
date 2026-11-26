@@ -916,6 +916,56 @@ mod tests {
     }
 
     #[test]
+    fn local_catalogue_ranks_exact_prefix_and_summary_matches() {
+        let payload = serde_json::json!({
+            "skills": [
+                {"id": "summary", "description": "Write a report"},
+                {"id": "weekly-report"},
+                {"id": "report-z"},
+                {"id": "report-a"},
+                {"id": "report", "name": "Previous metadata"},
+                {"id": "unrelated"},
+                {"name": "Missing identifier"}
+            ]
+        });
+        let candidates = clawhub_metas_from_listing(&payload);
+        assert_eq!(candidates.len(), 6);
+        let exact_payload = serde_json::json!({"display_name": "Updated metadata", "tags": 1});
+        let exact = clawhub_meta_from_payload(&exact_payload, "report").unwrap();
+        assert!(exact.tags.is_empty());
+        let results = clawhub_finalize_search_results("report", candidates.clone(), Some(exact), 5);
+        let ids = |rows: &[RegistrySkillMeta]| {
+            rows.iter()
+                .map(|row| row.identifier.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(&results),
+            ["report", "report-a", "report-z", "weekly-report", "summary"]
+        );
+        assert_eq!(results[0].name, "Updated metadata");
+        assert_eq!(
+            ids(&clawhub_finalize_search_results("   ", candidates, None, 3)),
+            ["report", "report-a", "report-z"]
+        );
+    }
+
+    #[test]
+    fn local_catalogue_version_uses_the_first_listed_fallback() {
+        let version = serde_json::json!({"version": " 2.0.1 "});
+        assert_eq!(clawhub_latest_version(&version).as_deref(), Some("2.0.1"));
+        let versions = serde_json::json!({
+            "latestVersion": {"version": " "},
+            "versions": [{"version": "1.2.0"}, {"version": "1.1.0"}]
+        });
+        assert_eq!(clawhub_latest_version(&versions).as_deref(), Some("1.2.0"));
+        assert_eq!(
+            clawhub_latest_version(&serde_json::json!({"versions": []})),
+            None
+        );
+    }
+
+    #[test]
     fn clawhub_version_and_files_support_inline_and_raw_refs() {
         let detail = serde_json::json!({"latestVersion": {"version": "1.0.1"}});
         assert_eq!(clawhub_latest_version(&detail).as_deref(), Some("1.0.1"));

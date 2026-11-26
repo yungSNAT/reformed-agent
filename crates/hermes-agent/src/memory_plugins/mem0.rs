@@ -1134,3 +1134,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "mem0_coverage_gen.rs"]
+mod coverage_gen;

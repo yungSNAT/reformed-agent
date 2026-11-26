@@ -900,6 +900,86 @@ mod tests {
         .unwrap()
     }
 
+    #[tokio::test]
+    async fn loopback_thread_delivery_falls_back_only_for_notifications() {
+        use serde_json::json;
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mut adapter = MattermostAdapter::new(MattermostConfig {
+            server_url: server.uri(),
+            token: "mattermost-fixture".into(),
+            team_id: None,
+            proxy: AdapterProxyConfig::default(),
+            reply_to_mode: "thread".into(),
+        })
+        .unwrap();
+        adapter.client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/api/v4/posts/reply7"))
+            .and(header("authorization", "Bearer mattermost-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"root_id": "root7"})))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v4/posts"))
+            .and(header("authorization", "Bearer mattermost-fixture"))
+            .and(body_json(json!({
+                "channel_id": "channel7",
+                "message": "Fixture update",
+                "root_id": "root7",
+            })))
+            .respond_with(ResponseTemplate::new(404).set_body_string("Thread root not found"))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v4/posts"))
+            .and(header("authorization", "Bearer mattermost-fixture"))
+            .and(body_json(json!({
+                "channel_id": "channel7",
+                "message": "Mattermost thread delivery failed; posting final reply in channel.\n\nFixture update",
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": "post7"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let options = SendMessageOptions {
+            thread_id: Some("reply7".into()),
+            notify: false,
+            ..Default::default()
+        };
+        let error = adapter
+            .send_message_with_options("channel7", "Fixture update", None, options.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            GatewayError::SendFailed(message) if message == "Mattermost API error (404): Thread root not found"
+        ));
+        adapter
+            .send_message_with_options(
+                "channel7",
+                "Fixture update",
+                None,
+                SendMessageOptions {
+                    notify: true,
+                    ..options
+                },
+            )
+            .await
+            .unwrap();
+    }
+
     #[test]
     fn websocket_url_uses_ws_scheme_and_realtime_path() {
         let adapter = test_adapter();
@@ -1157,3 +1237,7 @@ mod tests {
         assert_eq!(text, "Figure 1\nhttps://cdn.example.com/path/diagram");
     }
 }
+
+#[cfg(test)]
+#[path = "mattermost_coverage_gen.rs"]
+mod coverage_gen_platforms_mattermost;

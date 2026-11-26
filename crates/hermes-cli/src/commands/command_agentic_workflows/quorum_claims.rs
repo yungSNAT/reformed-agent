@@ -320,3 +320,6 @@ fn latest_quorum_artifact_path(app: &App) -> Option<PathBuf> {
     best_session.or(best_any).map(|(_, path)| path)
 }
 
+#[cfg(test)]
+#[path = "quorum_claims_coverage_gen.rs"]
+mod coverage_gen_commands_command_agentic_workflows_quorum_claims;

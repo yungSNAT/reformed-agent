@@ -809,3 +809,7 @@ fn handle_model_failover_command(
     }
     Ok(CommandResult::Handled)
 }
+
+#[cfg(test)]
+#[path = "model_capabilities_coverage_gen.rs"]
+mod coverage_gen_commands_command_dispatch_model_model_capabilities;

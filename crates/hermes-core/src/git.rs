@@ -1057,6 +1057,91 @@ mod tests {
         }
     }
 
+    #[test]
+    fn git_config_booleans_follow_git_spelling_and_integer_rules() {
+        for (value, expected) in [
+            (None, Some(true)),
+            (Some(&b"On"[..]), Some(true)),
+            (Some(&b"YeS"[..]), Some(true)),
+            (Some(&b"FALSE"[..]), Some(false)),
+            (Some(&b""[..]), Some(false)),
+            (Some(&b"0"[..]), Some(false)),
+            (Some(&b"-22"[..]), Some(true)),
+            (Some(&b"enabled"[..]), None),
+            (Some(&b"\xff"[..]), None),
+        ] {
+            assert_eq!(parse_git_bool(value), expected, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn git_path_patterns_handle_ranges_negation_and_escaped_literals() {
+        let cases: &[(&[u8], &[u8], bool, bool)] = &[
+            (br"[A-Z][0-9]?", b"a3z", true, true),
+            (br"[A-Z][0-9]?", b"a3z", false, false),
+            (br"[^0-9]*", b"a13", false, true),
+            (br"[!0-9]*", b"9ab", false, false),
+            (br"[a\-c]", b"-", false, true),
+            (br"[\]-\_]", b"_", false, true),
+            (br"[[:lower:]]", b"A", true, true),
+            (br"[[:lower:]]", b"A", false, false),
+            (br"[[:unknown:]]", b"a", false, false),
+            (br"[a-", b"a", false, false),
+            (br"[a-c]", b"d", false, false),
+            (br"ab\*", b"ab*", false, true),
+            (br"ab\", b"ab", false, false),
+            (br"a**c", b"ac", false, true),
+        ];
+        for &(pattern, text, ignore_case, expected) in cases {
+            assert_eq!(
+                wildmatch_segment(pattern, text, ignore_case),
+                expected,
+                "pattern {pattern:?}, input {text:?}, ignore_case={ignore_case}",
+            );
+        }
+    }
+
+    #[test]
+    fn git_metadata_paths_require_regular_nonempty_records() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join(".git");
+        let common = root.path().join("commondir");
+        let head = root.path().join("HEAD");
+
+        std::fs::create_dir(&marker).unwrap();
+        std::fs::create_dir(&common).unwrap();
+        std::fs::create_dir(&head).unwrap();
+        assert_eq!(read_gitfile(&marker), None);
+        assert_eq!(resolve_commondir(root.path()), None);
+        assert_eq!(parse_head_branch(&head), None);
+        assert!(!is_valid_head(&head));
+
+        std::fs::remove_dir(&marker).unwrap();
+        std::fs::remove_dir(&common).unwrap();
+        std::fs::remove_dir(&head).unwrap();
+        std::fs::write(&marker, b"gitdir: \r\n").unwrap();
+        std::fs::write(&common, b"\n").unwrap();
+        assert_eq!(read_gitfile(&marker), None);
+        assert_eq!(resolve_commondir(root.path()), None);
+
+        std::fs::write(&head, b"ref:\t refs/heads/fixture\r\n").unwrap();
+        assert_eq!(
+            parse_head_branch(&head).as_deref(),
+            Some(b"fixture".as_slice())
+        );
+        assert!(is_valid_head(&head));
+    }
+
+    #[test]
+    fn lexical_paths_resolve_components_without_losing_parent_paths() {
+        assert_eq!(lexical_normalize(Path::new("./one/..")), PathBuf::from("."));
+        assert_eq!(
+            lexical_normalize(Path::new("../one/../two")),
+            PathBuf::from("../two")
+        );
+        assert_eq!(lexical_parent(Path::new("config")), PathBuf::new());
+    }
+
     /// A `git` that never answers `git version` must not hold up the caller.
     #[cfg(unix)]
     #[test]

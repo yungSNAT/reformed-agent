@@ -590,12 +590,9 @@ impl PlatformAdapter for EmailAdapter {
                 "hermes-{}",
                 uuid::Uuid::new_v4().to_string().replace('-', "")
             );
+            let content_type = format!("multipart/mixed; boundary=\"{boundary}\"");
 
             let mut email_body = String::new();
-            email_body.push_str(&format!(
-                "Content-Type: multipart/mixed; boundary=\"{boundary}\"\r\n"
-            ));
-            email_body.push_str("MIME-Version: 1.0\r\n\r\n");
             email_body.push_str(&format!("--{boundary}\r\n"));
             email_body.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\n");
             email_body.push_str(&caption_owned);
@@ -620,7 +617,7 @@ impl PlatformAdapter for EmailAdapter {
                 to: &to,
                 subject: &subject,
                 body: &email_body,
-                content_type_override: Some("multipart/mixed"),
+                content_type_override: Some(&content_type),
             })
         })
         .await
@@ -677,49 +674,70 @@ fn smtp_send_raw(req: SmtpSendRaw<'_>) -> Result<(), GatewayError> {
     ])?;
 
     let addr = format!("{host}:{}", req.port);
-    let mut stream = TcpStream::connect(&addr)
+    let stream = TcpStream::connect(&addr)
         .map_err(|e| GatewayError::SendFailed(format!("SMTP connect {addr}: {e}")))?;
     stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(30))).ok();
+    let mut stream = BufReader::new(stream);
 
-    let read_line = |stream: &TcpStream| -> Result<String, GatewayError> {
-        let mut reader = BufReader::new(stream);
+    let read_reply = |stream: &mut BufReader<TcpStream>| -> Result<String, GatewayError> {
         let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| GatewayError::SendFailed(format!("SMTP read: {e}")))?;
-        Ok(line)
+        let mut expected_code = None;
+        loop {
+            line.clear();
+            stream
+                .read_line(&mut line)
+                .map_err(|e| GatewayError::SendFailed(format!("SMTP read: {e}")))?;
+            if !line.ends_with('\n') {
+                return Err(GatewayError::SendFailed("SMTP reply ended early".into()));
+            }
+            let reply = line.trim_end_matches(['\r', '\n']).as_bytes();
+            let separator = reply.get(3);
+            let Some(code) = reply.first_chunk::<3>().filter(|code| {
+                code.iter().all(u8::is_ascii_digit)
+                    && expected_code.is_none_or(|expected| expected == **code)
+                    && matches!(separator, None | Some(b' ' | b'-'))
+            }) else {
+                return Err(GatewayError::SendFailed("Invalid SMTP reply".into()));
+            };
+            if separator != Some(&b'-') {
+                return Ok(line);
+            }
+            expected_code = Some(*code);
+        }
     };
 
-    let send_cmd = |stream: &mut TcpStream, cmd: &str| -> Result<String, GatewayError> {
-        stream
+    let send_cmd = |stream: &mut BufReader<TcpStream>, cmd: &str| -> Result<String, GatewayError> {
+        let socket = stream.get_mut();
+        socket
             .write_all(cmd.as_bytes())
             .map_err(|e| GatewayError::SendFailed(format!("SMTP write: {e}")))?;
-        stream
+        socket
             .write_all(b"\r\n")
             .map_err(|e| GatewayError::SendFailed(format!("SMTP write: {e}")))?;
-        stream
+        socket
             .flush()
             .map_err(|e| GatewayError::SendFailed(format!("SMTP flush: {e}")))?;
-        read_line(&*stream)
+        read_reply(stream)
     };
 
-    // Read greeting
-    let _greeting = read_line(&stream)?;
-
-    // EHLO
-    let _ehlo = send_cmd(&mut stream, "EHLO hermes-agent")?;
-    // Drain multi-line EHLO response
-    loop {
-        let line = read_line(&stream)?;
-        if line.len() < 4 || line.as_bytes().get(3) == Some(&b' ') {
-            break;
+    let require_code = |step: &str, reply: String, expected: &str| {
+        let code = &reply[..3];
+        if code != expected {
+            return Err(GatewayError::SendFailed(format!(
+                "SMTP {step} rejected: {code}"
+            )));
         }
-    }
-
-    // AUTH LOGIN
-    let _auth = send_cmd(&mut stream, "AUTH LOGIN")?;
-    let _user = send_cmd(&mut stream, &base64_encode_simple(username.as_bytes()))?;
+        Ok(())
+    };
+    require_code("greeting", read_reply(&mut stream)?, "220")?;
+    require_code("EHLO", send_cmd(&mut stream, "EHLO hermes-agent")?, "250")?;
+    require_code("AUTH LOGIN", send_cmd(&mut stream, "AUTH LOGIN")?, "334")?;
+    require_code(
+        "username",
+        send_cmd(&mut stream, &base64_encode_simple(username.as_bytes()))?,
+        "334",
+    )?;
     let auth_resp = send_cmd(&mut stream, &base64_encode_simple(password.as_bytes()))?;
     if !auth_resp.starts_with("235") {
         return Err(GatewayError::SendFailed(format!(
@@ -742,23 +760,20 @@ fn smtp_send_raw(req: SmtpSendRaw<'_>) -> Result<(), GatewayError> {
         .content_type_override
         .unwrap_or("text/plain; charset=utf-8");
     let mut msg = format!(
-        "From: {}\r\nTo: {}\r\nSubject: {}\r\n",
+        "From: {}\r\nTo: {}\r\nSubject: {}\r\nContent-Type: {ct}\r\nMIME-Version: 1.0\r\n\r\n",
         req.from, req.to, req.subject
     );
-    if req.content_type_override.is_none() {
-        msg.push_str(&format!("Content-Type: {ct}\r\nMIME-Version: 1.0\r\n"));
-    }
-    msg.push_str("\r\n");
     msg.push_str(req.body);
     msg.push_str("\r\n.\r\n");
 
-    stream
+    let socket = stream.get_mut();
+    socket
         .write_all(msg.as_bytes())
         .map_err(|e| GatewayError::SendFailed(format!("SMTP DATA write: {e}")))?;
-    stream
+    socket
         .flush()
         .map_err(|e| GatewayError::SendFailed(format!("SMTP flush: {e}")))?;
-    let data_resp = read_line(&stream)?;
+    let data_resp = read_reply(&mut stream)?;
     if !data_resp.starts_with("250") {
         return Err(GatewayError::SendFailed(format!(
             "SMTP DATA rejected: {}",
@@ -784,7 +799,6 @@ fn imap_fetch_unseen(
     password: &str,
     auth_policy: EmailInboundAuthPolicy,
 ) -> Result<Vec<IncomingMessage>, GatewayError> {
-    use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;
 
@@ -812,7 +826,15 @@ fn imap_fetch_unseen(
         .map_err(|e| GatewayError::Platform(format!("IMAP connect {addr}: {e}")))?;
     tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
     let mut stream = rustls::StreamOwned::new(conn, tcp);
+    read_unseen_imap_messages(&mut stream, username, password, &auth_policy)
+}
 
+fn read_unseen_imap_messages(
+    stream: &mut (impl std::io::Read + std::io::Write),
+    username: &str,
+    password: &str,
+    auth_policy: &EmailInboundAuthPolicy,
+) -> Result<Vec<IncomingMessage>, GatewayError> {
     let mut tag = 0u32;
     let mut next_tag = || -> String {
         tag += 1;
@@ -820,7 +842,7 @@ fn imap_fetch_unseen(
     };
 
     fn read_response(
-        stream: &mut rustls::StreamOwned<rustls::ClientConnection, TcpStream>,
+        stream: &mut impl std::io::Read,
         tag: &str,
     ) -> Result<Vec<String>, GatewayError> {
         let mut lines = Vec::new();
@@ -859,7 +881,7 @@ fn imap_fetch_unseen(
     stream
         .write_all(cmd.as_bytes())
         .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-    let login_resp = read_response(&mut stream, &t)?;
+    let login_resp = read_response(stream, &t)?;
     let last = login_resp.last().map(|s| s.as_str()).unwrap_or("");
     if !last.contains("OK") {
         return Err(GatewayError::Platform(format!("IMAP LOGIN failed: {last}")));
@@ -871,7 +893,7 @@ fn imap_fetch_unseen(
     stream
         .write_all(cmd.as_bytes())
         .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-    let _ = read_response(&mut stream, &t)?;
+    let _ = read_response(stream, &t)?;
 
     // SEARCH UNSEEN
     let t = next_tag();
@@ -879,7 +901,7 @@ fn imap_fetch_unseen(
     stream
         .write_all(cmd.as_bytes())
         .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-    let search_resp = read_response(&mut stream, &t)?;
+    let search_resp = read_response(stream, &t)?;
 
     let mut msg_ids: Vec<String> = Vec::new();
     for line in &search_resp {
@@ -902,10 +924,9 @@ fn imap_fetch_unseen(
         stream
             .write_all(cmd.as_bytes())
             .map_err(|e| GatewayError::Platform(format!("IMAP write: {e}")))?;
-        let fetch_resp = read_response(&mut stream, &t)?;
+        let fetch_resp = read_response(stream, &t)?;
 
-        if let Some(message) = incoming_message_from_imap_fetch(mid, &fetch_resp, &auth_policy, &t)
-        {
+        if let Some(message) = incoming_message_from_imap_fetch(mid, &fetch_resp, auth_policy, &t) {
             messages.push(message);
         }
     }
@@ -975,6 +996,14 @@ fn base64_encode_lines(data: &[u8]) -> String {
     }
     result
 }
+
+#[cfg(test)]
+#[path = "email/tests/smtp_contract.rs"]
+mod smtp_contract;
+
+#[cfg(all(test, unix))]
+#[path = "email/tests/imap_contract.rs"]
+mod imap_contract;
 
 #[cfg(test)]
 mod tests {

@@ -801,6 +801,37 @@ note the fixtures"));
         assert!(latest_ui_assistant_text(&app).contains("Empty prompt"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prompt_editor_failures_report_the_error_and_remove_drafts() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let drafts = tmp.path().join("drafts");
+        std::fs::create_dir(&drafts).unwrap();
+        let _drafts = EnvVarGuard::set("TMPDIR", &drafts);
+        let _visual_guard = EnvVarGuard::set("VISUAL", " ");
+        let failing_editor = tmp.path().join("editor-exit-7");
+        write_test_executable(&failing_editor);
+        std::fs::write(&failing_editor, "#!/bin/sh\nexit 7\n").unwrap();
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        for (editor, expected) in [
+            (tmp.path().join("missing-editor"), "Could not launch editor"),
+            (failing_editor, "exit status: 7"),
+        ] {
+            let _editor_guard = EnvVarGuard::set("EDITOR", &editor);
+            let result = handle_slash_command(&mut app, "/compose", &["fixture"])
+                .await
+                .unwrap();
+            assert_eq!(result, CommandResult::Handled);
+            let output = latest_ui_assistant_text(&app);
+            assert!(output.starts_with("Could not open prompt editor: "), "{output}");
+            assert!(output.contains(expected), "{output}");
+            assert!(app.take_pending_agent_seed().is_none());
+            assert!(std::fs::read_dir(&drafts).unwrap().next().is_none());
+        }
+    }
+
     #[tokio::test]
     async fn learn_command_records_learning_request_for_next_turn() {
         let _guard = test_env_lock::lock_async().await;
@@ -834,6 +865,132 @@ note the fixtures"));
         assert_eq!(app.pet_settings().mood, "hyped");
         assert_eq!(app.pending_system_note_count(), 1);
         assert!(latest_ui_assistant_text(&app).contains("Pet hatch request captured"));
+    }
+
+    #[tokio::test]
+    async fn hatch_infers_mood_and_persists_each_described_companion() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let pet_file = tmp.path().join("pet.json");
+
+        let empty = handle_slash_command(&mut app, "/hatch", &[" "]).await.unwrap();
+        assert_eq!(empty, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).starts_with("Usage: /hatch"));
+        assert_eq!(app.pending_system_note_count(), 0);
+        assert!(!pet_file.exists());
+
+        for (description, species, mood) in [
+            ("energetic owl", "owl", "hyped"),
+            ("cozy fox", "fox", "chill"),
+        ] {
+            let result = handle_slash_command(&mut app, "/hatch", &[description]).await.unwrap();
+            assert_eq!(result, CommandResult::Handled);
+            assert_eq!(app.pet_settings().species, species);
+            assert_eq!(app.pet_settings().mood, mood);
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&pet_file).unwrap()).unwrap();
+            assert_eq!(saved["enabled"], true);
+            assert_eq!(saved["species"], species);
+            assert_eq!(saved["mood"], mood);
+        }
+        assert_eq!(app.pending_system_note_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn rewind_restores_the_prompt_and_reset_keeps_the_session_id() {
+        use hermes_core::Message;
+
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let session_id = app.session_id.clone();
+        app.messages = vec![
+            Message::user("First question"),
+            Message::assistant("First answer"),
+            Message::user("Second question"),
+            Message::assistant("Second answer"),
+            Message::user("Third question"),
+        ];
+
+        handle_slash_command(&mut app, "/undo", &["0"]).await.unwrap();
+        assert!(latest_ui_assistant_text(&app).starts_with("Usage: /undo"));
+        assert_eq!(app.messages.len(), 5);
+        assert_eq!(app.take_pending_input_prefill(), None);
+
+        handle_slash_command(&mut app, "/rewind", &["2"]).await.unwrap();
+        assert!(latest_ui_assistant_text(&app).contains("Undid 2 user turns"));
+        assert_eq!(app.messages.len(), 2);
+        assert_eq!(app.messages[1].content.as_deref(), Some("First answer"));
+        assert_eq!(app.take_pending_input_prefill().as_deref(), Some("Second question"));
+
+        handle_slash_command(&mut app, "/reset", &[]).await.unwrap();
+        assert_eq!(app.session_id, session_id);
+        assert!(app.messages.is_empty());
+        assert_eq!(latest_ui_assistant_text(&app), "[Session reset]");
+        handle_slash_command(&mut app, "/undo", &[]).await.unwrap();
+        assert_eq!(latest_ui_assistant_text(&app), "[No user turns to undo]");
+
+        handle_slash_command(&mut app, "/new", &[]).await.unwrap();
+        assert_ne!(app.session_id, session_id);
+        assert!(app.messages.is_empty());
+        assert_eq!(latest_ui_assistant_text(&app), format!("[New session started: {}]", app.session_id));
+    }
+
+    #[tokio::test]
+    async fn harness_command_reports_the_requested_workspace_and_action() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let repo = tmp.path().join("fixture project");
+        std::fs::create_dir(&repo).unwrap();
+        let repo = repo.to_str().unwrap();
+
+        let result = handle_slash_command(&mut app, "/harness", &[" ", "STATUS", repo])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let rendered = latest_ui_assistant_text(&app);
+        assert!(rendered.contains("status=ok"));
+        assert!(rendered.contains(&format!("repo_root={repo}")));
+
+        let result = handle_slash_command(&mut app, "/harness", &[repo, "--json"])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let status: serde_json::Value = serde_json::from_str(&latest_ui_assistant_text(&app)).unwrap();
+        assert_eq!(status["repo_root"], repo);
+        assert_eq!(status["proof"]["gate_snapshot"]["status"], "missing_report_dir");
+
+        let result = handle_slash_command(&mut app, "/harness", &["help", repo])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let help: serde_json::Value = serde_json::from_str(&latest_ui_assistant_text(&app)).unwrap();
+        assert_eq!(help["tool"], "harness_cockpit");
+        assert!(help["actions"].as_array().unwrap().iter().any(|action| action == "proof"));
+    }
+
+    #[tokio::test]
+    async fn toolcards_command_distinguishes_help_from_tui_export_guidance() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+
+        let help = handle_slash_command(&mut app, "/toolcards", &[]).await.unwrap();
+        assert_eq!(help, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).contains("/toolcards export"));
+
+        let export = handle_slash_command(&mut app, "/toolcards", &["export"]).await.unwrap();
+        assert_eq!(export, CommandResult::Handled);
+        let rendered = latest_ui_assistant_text(&app);
+        assert!(rendered.contains("interactive TUI"));
+        assert!(rendered.contains("logs/toolcards-export.txt"));
+        assert!(!tmp.path().join("logs/toolcards-export.txt").exists());
     }
 
     #[tokio::test]
@@ -988,6 +1145,151 @@ note the fixtures"));
             Some(&DeliverTarget::Local)
         );
         assert!(latest_ui_assistant_text(&app).contains("Scheduled `Custom reminder`"));
+    }
+
+    #[tokio::test]
+    async fn tools_slash_commands_list_availability_and_sort_trust_scores() {
+        use hermes_core::{JsonSchema, ToolError, ToolHandler, ToolSchema};
+
+        struct DisplayOnlyTool(ToolSchema);
+
+        #[async_trait::async_trait]
+        impl ToolHandler for DisplayOnlyTool {
+            async fn execute(&self, _: serde_json::Value) -> Result<String, ToolError> {
+                panic!("tool scorecards must never run a tool");
+            }
+
+            fn schema(&self) -> ToolSchema {
+                self.0.clone()
+            }
+        }
+
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        app.tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
+
+        let result = handle_slash_command(&mut app, "/tools", &[]).await.unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        assert_eq!(latest_ui_assistant_text(&app), "No tools registered.");
+
+        for (name, toolset, env_deps) in [
+            ("markdown_preview", "fixture", vec![]),
+            ("document_preview", "fixture", vec![]),
+            ("terminal", "fixture", vec![]),
+            (
+                "http_token_helper",
+                "Network",
+                vec!["FIXTURE_DEPENDENCY".into()],
+            ),
+        ] {
+            let description = format!("Fixture {name}");
+            let schema = ToolSchema::new(name, &description, JsonSchema::new("object"));
+            app.tool_registry.register(
+                name,
+                toolset,
+                schema.clone(),
+                Arc::new(DisplayOnlyTool(schema)),
+                Arc::new(|| true),
+                env_deps,
+                false,
+                description,
+                "",
+                None,
+            );
+        }
+        Arc::make_mut(&mut app.config).tools_config.disabled = vec!["terminal".into()];
+        let result = handle_slash_command(&mut app, "/tools", &["list"])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let list = latest_ui_assistant_text(&app);
+        assert!(list.contains("Registered tools (4)"));
+        assert!(list.contains("`document_preview` [enabled]"));
+        assert!(list.contains("`terminal` [disabled]"));
+
+        let result = handle_slash_command(&mut app, "/tools", &["trust"])
+            .await
+            .unwrap();
+        assert_eq!(result, CommandResult::Handled);
+        let trust = latest_ui_assistant_text(&app);
+        assert!(trust.contains("registered_tools=4"));
+        assert!(trust.contains("policy_counters: allow=0 deny=0"));
+        let rows: Vec<_> = trust
+            .lines()
+            .filter_map(|line| line.strip_prefix("- "))
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                vec!["document_preview", "score=100", "tier=low-risk"],
+                vec!["markdown_preview", "score=100", "tier=low-risk"],
+                vec!["terminal", "score=", "65", "tier=moderate-risk"],
+                vec!["http_token_helper", "score=", "40", "tier=high-risk"],
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn config_slash_commands_report_changes_and_reject_invalid_updates() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        {
+            let config = Arc::make_mut(&mut app.config);
+            config.model = Some("fixture-model".into());
+            config.system_prompt = Some("Synthetic system prompt.".into());
+        }
+        for (args, expected) in [
+            (&["get", "model"][..], "model = fixture-model"),
+            (
+                &["get", "system_prompt"],
+                "system_prompt = Synthetic system prompt.",
+            ),
+            (
+                &["get", "unused"],
+                "Key 'unused' not found in configuration.",
+            ),
+            (&["get"], "Usage: /config get <key>"),
+            (&["set", "personality"], "Usage: /config set <key> <value>"),
+            (
+                &["set", "personality", "concise"],
+                "Set personality = concise",
+            ),
+            (&["get", "personality"], "personality = concise"),
+            (&["set", "max_turns", "42"], "Set max_turns = 42"),
+            (
+                &["set", "max_turns", "invalid"],
+                "Unknown configuration key: max_turns",
+            ),
+            (&["get", "max_turns"], "max_turns = 42"),
+            (
+                &["set", "unused", "value"],
+                "Unknown configuration key: unused",
+            ),
+            (
+                &["unknown"],
+                "Unknown config action 'unknown'. Use 'get' or 'set'.",
+            ),
+        ] {
+            let before = app.ui_messages.len();
+            let result = handle_slash_command(&mut app, "/config", args)
+                .await
+                .unwrap();
+            assert_eq!(result, CommandResult::Handled);
+            assert_eq!(app.ui_messages.len(), before + 1);
+            assert_eq!(latest_ui_assistant_text(&app), expected);
+        }
+        assert_eq!(app.current_personality.as_deref(), Some("concise"));
+        assert_eq!(app.config.max_turns, 42);
+        assert_eq!(app.config.model.as_deref(), Some("fixture-model"));
+        assert_eq!(
+            app.config.system_prompt.as_deref(),
+            Some("Synthetic system prompt.")
+        );
     }
 
     #[tokio::test]
@@ -1216,7 +1518,48 @@ note the fixtures"));
     include!("tests/background_jobs.rs");
     include!("tests/surface_and_compression.rs");
     include!("tests/tool_scope.rs");
+    #[cfg(unix)]
+    include!("tests/quorum_policy_contract.rs");
 
+    #[cfg(unix)]
+    async fn command_output(app: &mut App, command: &str, args: &[&str]) -> String {
+        app.ui_messages.clear();
+        assert_eq!(
+            handle_slash_command(app, command, args).await.unwrap(),
+            CommandResult::Handled,
+            "{command} {args:?}",
+        );
+        let output = latest_ui_assistant_text(app);
+        assert!(!output.is_empty(), "no output for {command} {args:?}");
+        output
+    }
+
+    #[cfg(unix)]
+    mod background_queue_contract;
+    #[cfg(unix)]
+    mod model_diagnostics_contract;
+    #[cfg(unix)]
+    mod objective_contract;
+    #[cfg(unix)]
+    mod policy_context_contract;
+    #[cfg(unix)]
+    mod replay_command_contract;
+    #[cfg(unix)]
+    mod session_mission_contract;
+    #[cfg(unix)]
+    mod session_steering_contract;
+    #[cfg(unix)]
+    mod browser_command_contract;
+    #[cfg(unix)]
+    mod triage_contract;
+    #[cfg(unix)]
+    mod readiness_walkthrough_contract;
+    #[cfg(unix)]
+    mod graph_journey_contract;
+    #[cfg(unix)]
+    mod ops_control_contract;
+    #[cfg(unix)]
+    mod evidence_reports_contract;
     mod runtime_parity_ops;
     mod skill_model_policy;
 

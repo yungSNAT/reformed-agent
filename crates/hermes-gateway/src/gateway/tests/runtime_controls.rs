@@ -1,6 +1,110 @@
 use super::*;
 
 #[tokio::test]
+async fn gateway_retry_and_undo_preserve_earlier_turns() {
+    let replies = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("fixture-user");
+    let gateway = Gateway::new(sessions.clone(), dm, GatewayConfig::default());
+    gateway
+        .register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: replies.clone(),
+            }),
+        )
+        .await;
+    let captured = requests.clone();
+    gateway
+        .set_message_handler(Arc::new(move |messages| {
+            let captured = captured.clone();
+            Box::pin(async move {
+                let visible = messages
+                    .into_iter()
+                    .filter(|message| {
+                        matches!(message.role, MessageRole::User | MessageRole::Assistant)
+                    })
+                    .map(|message| message.content.unwrap_or_default())
+                    .collect::<Vec<_>>();
+                let mut requests = captured.lock().unwrap();
+                requests.push(visible);
+                Ok(format!("Fixture reply {}", requests.len()))
+            })
+        }))
+        .await;
+    let mut incoming = IncomingMessage {
+        platform: "test".into(),
+        chat_id: "fixture-chat".into(),
+        user_id: "fixture-user".into(),
+        text: String::new(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    let key = sessions.compose_session_key("test", "fixture-chat", "fixture-user");
+    for (command, reply, expected_messages, last_reply) in [
+        ("/retry", "No previous message to retry.", 0, None),
+        (
+            "First fixture question",
+            "Fixture reply 1",
+            2,
+            Some("Fixture reply 1"),
+        ),
+        (
+            "Second fixture question",
+            "Fixture reply 2",
+            4,
+            Some("Fixture reply 2"),
+        ),
+        ("/retry", "Fixture reply 3", 4, Some("Fixture reply 3")),
+        ("/undo", "Removed 2 message(s)", 2, Some("Fixture reply 1")),
+        ("/undo", "Removed 2 message(s)", 0, None),
+        ("/undo", "Nothing to undo.", 0, None),
+    ] {
+        let sent_before = replies.lock().unwrap().len();
+        incoming.text = command.into();
+        gateway.route_message(&incoming).await.unwrap();
+        let messages = sessions.get_messages(&key).await;
+        assert_eq!(messages.len(), expected_messages, "{command}");
+        assert_eq!(
+            messages
+                .last()
+                .and_then(|message| message.content.as_deref()),
+            last_reply,
+            "{command}"
+        );
+        if expected_messages > 0 {
+            assert_eq!(messages[0].role, MessageRole::User);
+            assert_eq!(
+                messages[0].content.as_deref(),
+                Some("First fixture question")
+            );
+            assert_eq!(messages[1].role, MessageRole::Assistant);
+            assert_eq!(messages[1].content.as_deref(), Some("Fixture reply 1"));
+        }
+        let sent = replies.lock().unwrap();
+        assert!(
+            sent[sent_before..]
+                .iter()
+                .any(|(chat, text)| chat == "fixture-chat" && text.contains(reply)),
+            "{command}: {sent:?}"
+        );
+    }
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0], ["First fixture question"]);
+    let expected = [
+        "First fixture question",
+        "Fixture reply 1",
+        "Second fixture question",
+    ];
+    assert_eq!(requests[1], expected);
+    assert_eq!(requests[2], expected);
+}
+
+#[tokio::test]
 async fn gateway_runtime_state_is_injected_into_agent_messages() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(TestAdapter {

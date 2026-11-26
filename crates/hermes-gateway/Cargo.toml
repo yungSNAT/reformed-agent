@@ -63,6 +63,9 @@ ruma = { version = "0.17", features = ["client-api-c", "rand"], optional = true 
 aes = { version = "0.8", optional = true }
 rand = { version = "0.10.1", optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3"
 wiremock = "0.6"

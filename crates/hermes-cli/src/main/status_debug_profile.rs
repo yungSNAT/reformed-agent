@@ -1351,3 +1351,6 @@ async fn run_profile(
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "status_debug_profile_coverage_gen.rs"]
+mod coverage_gen_main_status_debug_profile;

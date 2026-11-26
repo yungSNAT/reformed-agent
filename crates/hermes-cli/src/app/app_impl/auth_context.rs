@@ -347,3 +347,7 @@ impl App {
     }
 
 }
+
+#[cfg(test)]
+#[path = "auth_context_coverage_gen.rs"]
+mod coverage_gen_app_app_impl_auth_context;

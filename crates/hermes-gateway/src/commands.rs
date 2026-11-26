@@ -942,6 +942,10 @@ pub fn handle_command(input: &str) -> GatewayCommandResult {
 }
 
 #[cfg(test)]
+#[path = "commands_usage_tests.rs"]
+mod usage_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

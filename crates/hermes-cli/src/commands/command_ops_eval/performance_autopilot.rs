@@ -768,3 +768,7 @@ async fn run_performance_autopilot_native(
     write_performance_autopilot_markdown(&md_path, &report)?;
     Ok((report, json_path, md_path))
 }
+
+#[cfg(test)]
+#[path = "performance_autopilot_coverage_gen.rs"]
+mod coverage_gen_commands_command_ops_eval_performance_autopilot;

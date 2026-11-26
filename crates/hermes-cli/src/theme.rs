@@ -927,3 +927,7 @@ mod tests {
         assert_eq!(colors.status_bar_warn, Color::Rgb(0x77, 0x88, 0x99));
     }
 }
+
+#[cfg(test)]
+#[path = "theme_coverage_gen.rs"]
+mod coverage_gen_theme;

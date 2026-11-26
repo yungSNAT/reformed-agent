@@ -327,7 +327,7 @@ impl AgentLoop {
         max_context_chars: usize,
     ) {
         let mode = compaction_governance_mode_runtime();
-        if matches!(mode, CompactionGovernanceMode::Off) {
+        if self.config.isolated || matches!(mode, CompactionGovernanceMode::Off) {
             return;
         }
 
@@ -1346,3 +1346,7 @@ impl AgentLoop {
     }
 
 }
+
+#[cfg(test)]
+#[path = "methods_prompt_llm_coverage_gen.rs"]
+mod coverage_gen;

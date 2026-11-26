@@ -2351,15 +2351,22 @@ mod tests {
     /// Either failure leaves the next `answer_once` waiting for a connection
     /// that never comes.
     async fn answer_once(listener: &tokio::net::TcpListener, reply: String) -> String {
+        answer_once_with_body(listener, reply).await.0
+    }
+
+    async fn answer_once_with_body(
+        listener: &tokio::net::TcpListener,
+        reply: String,
+    ) -> (String, String) {
         use tokio::io::AsyncWriteExt;
         let (mut stream, _) = listener.accept().await.expect("accept");
-        let (head, _) = read_request(&mut stream).await;
+        let request = read_request(&mut stream).await;
         let reply = reply.replacen("\r\n", "\r\nConnection: close\r\n", 1);
         stream
             .write_all(reply.as_bytes())
             .await
             .expect("write reply");
-        head
+        request
     }
 
     #[tokio::test]
@@ -2528,6 +2535,8 @@ mod tests {
             body.len()
         )
     }
+
+    mod http_transport_contract;
 
     // Each stub closes the connection after one reply, so it says so: a
     // client that pooled it would otherwise send the next request into a

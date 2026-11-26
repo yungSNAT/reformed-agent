@@ -198,6 +198,71 @@ mod tests {
         assert!(!tr.is_error);
     }
 
+    #[tokio::test]
+    async fn dispatch_batch_preserves_call_ids_and_reports_missing_tools() {
+        let registry = Arc::new(ToolRegistry::new());
+        let handler = Arc::new(LargeHandler);
+        registry.register(
+            "large",
+            "test",
+            handler.schema(),
+            handler,
+            Arc::new(|| true),
+            vec![],
+            false,
+            "Large output",
+            "",
+            None,
+        );
+        let calls = [
+            ("first", "large"),
+            ("unknown-tool", "fixture-missing"),
+            ("last", "large"),
+        ]
+        .into_iter()
+        .map(|(id, name)| ToolCall {
+            id: id.into(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments: "{}".into(),
+            },
+            extra_content: None,
+        })
+        .collect::<Vec<_>>();
+
+        for pool_size in [0, 2] {
+            let results = dispatch_tools(
+                calls.clone(),
+                registry.clone(),
+                BudgetConfig::default(),
+                pool_size,
+            )
+            .await;
+            assert_eq!(results.len(), calls.len());
+            for call in &calls {
+                let result = results
+                    .iter()
+                    .find(|result| result.tool_call_id == call.id)
+                    .unwrap();
+                let content: Value =
+                    serde_json::from_str(&result.content).expect("tool response is JSON");
+                match call.id.as_str() {
+                    "unknown-tool" => {
+                        assert!(result.is_error);
+                        assert_eq!(content["error"], "Tool not found: fixture-missing");
+                    }
+                    _ => {
+                        assert!(!result.is_error);
+                        assert_eq!(
+                            content["result"].as_str().unwrap(),
+                            format!("large-start-{}", "x".repeat(5_000))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn dispatch_single_persists_oversized_result() {
         let _guard = STORAGE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

@@ -521,6 +521,11 @@ mod tests {
     #[test]
     fn notice_line_prefers_depleted_over_usage_band() {
         let mut state = parse_nous_credits_headers(valid_headers()).expect("credits state");
+        state.subscription_micros = 500_000;
+        assert_eq!(
+            nous_credits_notice_line(&state).as_deref(),
+            Some("credits: 90% used - run /usage")
+        );
         state.paid_access = false;
         assert_eq!(
             nous_credits_notice_line(&state).as_deref(),
@@ -595,5 +600,115 @@ mod tests {
             Some("credits: depleted - run /usage")
         );
         clear_last_nous_credits_state();
+    }
+
+    #[test]
+    fn rejects_unsupported_or_invalid_header_fields() {
+        for (key, value) in [
+            ("x-nous-credits-version", "2"),
+            ("x-nous-credits-denominator-kind", "unrecognised"),
+            ("x-nous-credits-remaining-micros", "1.5"),
+            ("x-nous-credits-subscription-limit-usd", "invalid"),
+        ] {
+            let headers =
+                valid_headers()
+                    .into_iter()
+                    .map(|pair| if pair.0 == key { (key, value) } else { pair });
+            assert!(parse_nous_credits_headers(headers).is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn renders_usage_with_optional_amounts_and_access_reason_missing() {
+        let headers = valid_headers().into_iter().filter(|(key, _)| {
+            !matches!(
+                *key,
+                "x-nous-credits-remaining-usd"
+                    | "x-nous-credits-subscription-usd"
+                    | "x-nous-credits-purchased-usd"
+                    | "x-nous-tool-pool-micros"
+                    | "x-nous-tool-pool-gated-off"
+                    | "x-nous-credits-as-of-ms"
+            )
+        });
+        let mut state = parse_nous_credits_headers(headers).expect("credits state");
+        assert_eq!(state.as_of_ms, None);
+        assert_eq!(state.tool_pool_micros, 0);
+        assert!(!state.tool_pool_gated_off);
+        assert!(!render_nous_credits_lines(&state)
+            .iter()
+            .any(|line| line.starts_with("Tool pool:")));
+        state.paid_access = false;
+        state.tool_pool_gated_off = true;
+        let lines = render_nous_credits_lines(&state);
+        for expected in [
+            "Subscription: 50% remaining (50% used)",
+            "Total usable: 12000000 micros",
+            "Tool pool: 0 micros (gated off)",
+            "Status: access depleted - paid access paused",
+        ] {
+            assert!(lines.iter().any(|line| line == expected), "{lines:?}");
+        }
+        assert!(!lines.iter().any(|line| line.starts_with("Top-up credits:")));
+
+        state.subscription_limit_micros = Some(0);
+        assert_eq!(state.used_fraction(), None);
+        assert!(!render_nous_credits_lines(&state)
+            .iter()
+            .any(|line| line.starts_with("Subscription:")));
+    }
+
+    #[test]
+    fn grant_spent_notice_can_render_a_purchase_in_micros() {
+        let mut state = parse_nous_credits_headers(valid_headers()).unwrap();
+        state.subscription_micros = 0;
+        state.purchased_usd.clear();
+        assert_eq!(
+            nous_credits_notice_line(&state).as_deref(),
+            Some("credits: grant spent - 6000000 micros top-up left")
+        );
+    }
+
+    #[test]
+    fn low_usage_and_empty_state_have_no_flash_notice() {
+        let _guard = TEST_CREDITS_LOCK.lock().unwrap();
+        clear_last_nous_credits_state();
+        assert!(render_last_nous_credits_lines().is_empty());
+        assert!(!yield_current_nous_credits_flash_notice());
+        let headers = valid_headers().into_iter().map(|(key, value)| {
+            if key == "x-nous-credits-subscription-micros" {
+                (key, "7500000")
+            } else {
+                (key, value)
+            }
+        });
+        capture_nous_credits_from_pairs(headers).expect("captured");
+        assert_eq!(last_nous_credits_notice_line(), None);
+        assert!(!yield_current_nous_credits_flash_notice());
+        clear_last_nous_credits_state();
+    }
+
+    #[test]
+    fn poisoned_flash_notice_state_falls_back_to_visible_notices() {
+        let _serial = TEST_CREDITS_LOCK.lock().unwrap();
+        clear_last_nous_credits_state();
+        let flash = YIELDED_FLASH_NOTICES
+            .get()
+            .expect("initialised flash notices");
+        let poison = std::panic::catch_unwind(|| {
+            let _guard = flash.lock().unwrap();
+            panic!("fixture panic while holding the flash notice lock");
+        });
+
+        let captured = capture_nous_credits_from_pairs(valid_headers());
+        let notice = last_nous_credits_notice_line();
+        let yielded = yield_current_nous_credits_flash_notice();
+        flash.clear_poison();
+        clear_last_nous_credits_state();
+
+        assert!(poison.is_err());
+        assert!(captured.is_some());
+        assert_eq!(notice.as_deref(), Some("credits: 50% used - run /usage"));
+        assert!(!yielded);
     }
 }

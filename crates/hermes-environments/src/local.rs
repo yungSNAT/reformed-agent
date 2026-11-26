@@ -419,9 +419,14 @@ async fn write_resolved_file(
         }
     }
 
-    tokio::fs::write(resolved, content)
-        .await
-        .map_err(|error| AgentError::Io(format!("Failed to write file '{requested}': {error}")))
+    let resolved_buf = resolved.to_path_buf();
+    let content_bytes = content.as_bytes().to_vec();
+    tokio::task::spawn_blocking(move || {
+        hermes_config::atomic_write_bytes_no_follow(&resolved_buf, &content_bytes, None)
+    })
+    .await
+    .map_err(|error| AgentError::Io(format!("Failed to write file '{requested}': {error}")))?
+    .map_err(|error| AgentError::Io(format!("Failed to write file '{requested}': {error}")))
 }
 
 #[async_trait]

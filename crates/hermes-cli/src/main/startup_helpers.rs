@@ -254,3 +254,7 @@ fn oneshot_auto_verify_oauth_provider(
     }
     None
 }
+
+#[cfg(test)]
+#[path = "startup_helpers_coverage_gen.rs"]
+mod coverage_gen_main_startup_helpers;
