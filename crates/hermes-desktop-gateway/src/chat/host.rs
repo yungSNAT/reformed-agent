@@ -948,11 +948,21 @@ mod unix {
             }
         }
 
+        /// Escaped processes, killed when the test ends however it ends.
+        #[derive(Default)]
+        struct Escaped(Vec<i32>);
+
+        impl Drop for Escaped {
+            fn drop(&mut self) {
+                self.0.iter().copied().for_each(kill);
+            }
+        }
+
         #[tokio::test]
         async fn a_child_that_leaves_its_session_holds_neither_the_answer_nor_its_slot() {
             let dir = tempfile::tempdir().unwrap();
-            let mut escaped = Vec::new();
-            // 5 in a row: more than the process's 4 slots, so a leaked slot fails the fifth.
+            let mut escaped = Escaped::default();
+            // 5 in a row: a leaked slot fails the third (2 a connection), and `held` at once.
             for run in 0..5 {
                 let folder = dir.path().join(run.to_string());
                 std::fs::create_dir(&folder).unwrap();
@@ -967,16 +977,49 @@ mod unix {
                 )
                 .await;
                 if folder.join("pid").exists() {
-                    escaped.push(background_pid(&folder.join("pid")));
+                    escaped.0.push(background_pid(&folder.join("pid")));
                 }
-                let ended = ended.unwrap_or_else(|_| {
-                    escaped.iter().copied().for_each(kill);
-                    panic!("the answer waited on a descendant that left the session")
-                });
+                let ended = ended.expect("the answer waited on a descendant that left the session");
                 assert!(matches!(ended, Ended::Exited { code: Some(0), .. }));
                 assert_eq!(held(9005), 0, "the slot was not given back");
             }
-            escaped.into_iter().for_each(kill);
+        }
+
+        #[tokio::test]
+        async fn a_run_polled_once_and_dropped_starts_no_child() {
+            use futures::FutureExt;
+            let dir = tempfile::tempdir().unwrap();
+            let runs = dir.path().join("runs");
+            let counting = || {
+                let mut command = Command::new("/bin/sh");
+                command.arg("-c").arg("echo run >> runs");
+                command
+            };
+            let once = supervise(
+                counting(),
+                dir.path().to_path_buf(),
+                Duration::from_secs(30),
+                Slot(9007),
+            )
+            .now_or_never();
+            assert!(once.is_none(), "a child run answers only after a wait");
+            // Block this runtime's only thread, so no supervisor can kill what the poll started.
+            std::thread::sleep(Duration::from_secs(1));
+            let count = || {
+                std::fs::read_to_string(&runs)
+                    .map(|text| text.lines().count())
+                    .unwrap_or(0)
+            };
+            assert_eq!(count(), 0, "the dropped request started its command");
+            let ended = supervise(
+                counting(),
+                dir.path().to_path_buf(),
+                Duration::from_secs(30),
+                Slot(9007),
+            )
+            .await;
+            assert!(matches!(ended, Ended::Exited { code: Some(0), .. }));
+            assert_eq!(count(), 1);
         }
 
         #[cfg(target_os = "linux")]
@@ -994,8 +1037,8 @@ mod unix {
             )
             .await;
             let pid = background_pid(&dir.path().join("pid"));
+            let _escaped = Escaped(vec![pid]);
             let survived = !gone(pid).await;
-            kill(pid);
             assert!(ended.is_ok(), "the answer waited on a descendant");
             assert!(!survived, "a descendant in the run's session outlived it");
         }
@@ -1031,6 +1074,12 @@ mod tests {
         }
         conn.origin = Origin::Local;
         assert!(admit(&conn, true).is_ok());
+    }
+
+    /// Every handler passes this flag, so serving off Unix fails here on that host.
+    #[test]
+    fn only_a_unix_host_serves_the_host_methods() {
+        assert_eq!(HOST_SERVES, cfg!(unix));
     }
 
     /// Run on every platform, so weakening the Windows refusal fails here, not only on Windows.
