@@ -115,6 +115,12 @@ impl SourceDir {
                 Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
                 Err(err) => return Err(err),
             };
+            #[cfg(test)]
+            tests::BETWEEN.with(|between| {
+                if let Some(between) = &*between.borrow() {
+                    between(name);
+                }
+            });
             Ok(Some(if meta.file_type().is_symlink() {
                 Entry::Link
             } else if meta.is_dir() {
@@ -274,7 +280,7 @@ impl Tree {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use std::cell::RefCell;
@@ -282,11 +288,74 @@ pub(crate) mod tests {
     pub(crate) type Hook = Option<Box<dyn Fn(&OsStr)>>;
 
     thread_local! {
-        /// Runs between an entry's classing and its open, so a test can
-        /// change the entry in between.
+        /// Runs before an entry's open (on Unix, after its classing), so a
+        /// test can change the entry in between.
         pub(crate) static BETWEEN: RefCell<Hook> = RefCell::new(None);
     }
 
+    /// A file and a folder swapped for links to outside ones just before
+    /// their open are counted as links, and nothing outside is read.
+    #[cfg(windows)]
+    #[test]
+    fn an_entry_swapped_for_a_link_before_its_open_is_not_followed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "outside bytes\n").unwrap();
+        let source = tmp.path().join("source");
+        std::fs::create_dir_all(source.join("refs")).unwrap();
+        std::fs::write(source.join("SKILL.md"), "a skill\n").unwrap();
+        std::fs::write(source.join("refs").join("note.md"), "a note\n").unwrap();
+        // A file symlink needs the privilege or Developer Mode; a junction
+        // needs neither.
+        let probe = tmp.path().join("probe");
+        let file_links = std::os::windows::fs::symlink_file(outside.join("secret.txt"), &probe)
+            .map(|()| std::fs::remove_file(&probe).unwrap())
+            .is_ok();
+        if !file_links {
+            eprintln!("no file symlink privilege: the folder case alone runs");
+        }
+
+        let dir = SourceDir::open(&source).unwrap();
+        let (at, to) = (source.clone(), outside.clone());
+        BETWEEN.with(|between| {
+            *between.borrow_mut() = Some(Box::new(move |name: &OsStr| {
+                if name == "SKILL.md" && file_links {
+                    std::fs::remove_file(at.join("SKILL.md")).unwrap();
+                    std::os::windows::fs::symlink_file(to.join("secret.txt"), at.join("SKILL.md"))
+                        .unwrap();
+                } else if name == "refs" {
+                    std::fs::remove_dir_all(at.join("refs")).unwrap();
+                    let made = std::process::Command::new("cmd")
+                        .args(["/C", "mklink", "/J"])
+                        .arg(at.join("refs"))
+                        .arg(&to)
+                        .output()
+                        .unwrap();
+                    assert!(made.status.success(), "{made:?}");
+                }
+            }))
+        });
+        let tree = Tree::read(&dir);
+        BETWEEN.with(|between| *between.borrow_mut() = None);
+
+        let tree = tree.unwrap();
+        let read: Vec<_> = tree.nodes.iter().map(|(path, _)| path.clone()).collect();
+        assert!(
+            !tree.nodes.iter().any(|(_, node)| matches!(node,
+                Node::File(bytes, _) if bytes.as_slice() == b"outside bytes\n")),
+            "read outside the folder: {read:?}"
+        );
+        assert_eq!(tree.links, if file_links { 2 } else { 1 }, "{read:?}");
+        let expected: Vec<PathBuf> = if file_links {
+            Vec::new()
+        } else {
+            vec!["SKILL.md".into()]
+        };
+        assert_eq!(read, expected);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn an_entry_gone_between_its_class_and_its_open_is_an_error_not_none() {
         let tmp = tempfile::tempdir().unwrap();
