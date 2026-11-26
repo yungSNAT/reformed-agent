@@ -27,9 +27,11 @@ pub(super) const METHODS: &[(&str, Handler)] = &[
 const NOT_AVAILABLE: i64 = 4030;
 const NOT_AVAILABLE_TEXT: &str = "not available to this client";
 const NOT_ON_THIS_HOST: &str = "not available on this host yet";
+/// Whether this host serves the host methods: every handler passes it to [`admit`].
+const HOST_SERVES: bool = cfg!(unix);
 
 /// The capability check, first in every handler here, then whether this host serves these
-/// methods at all (`host_serves`, `cfg!(unix)` outside tests).
+/// methods at all (`host_serves`, [`HOST_SERVES`] outside tests).
 fn admit(conn: &Conn, host_serves: bool) -> Result<(), RpcError> {
     if !(conn.host_input && conn.origin == Origin::Local) {
         Err((NOT_AVAILABLE, NOT_AVAILABLE_TEXT.into()))
@@ -55,7 +57,7 @@ fn text<'a>(params: &'a Map<String, Value>, key: &str, max: usize) -> Result<&'a
 }
 
 async fn shell_exec(req: Request) -> Result<Value, RpcError> {
-    admit(&req.conn, cfg!(unix))?;
+    admit(&req.conn, HOST_SERVES)?;
     #[cfg(unix)]
     {
         unix::shell_exec(req).await
@@ -67,7 +69,7 @@ async fn shell_exec(req: Request) -> Result<Value, RpcError> {
 }
 
 async fn cli_exec(req: Request) -> Result<Value, RpcError> {
-    admit(&req.conn, cfg!(unix))?;
+    admit(&req.conn, HOST_SERVES)?;
     #[cfg(unix)]
     {
         unix::cli_exec(req).await
@@ -79,7 +81,7 @@ async fn cli_exec(req: Request) -> Result<Value, RpcError> {
 }
 
 async fn complete_path(req: Request) -> Result<Value, RpcError> {
-    admit(&req.conn, cfg!(unix))?;
+    admit(&req.conn, HOST_SERVES)?;
     #[cfg(unix)]
     {
         unix::complete_path(req).await
@@ -403,6 +405,10 @@ mod unix {
         limit: Duration,
         slot: Slot,
     ) -> Ended {
+        // A request past the connection's waiting frames is polled once and, if pending,
+        // dropped and answered 'send again'. Waiting here first means that poll starts nothing,
+        // so a command that ran is never answered that way.
+        tokio::task::yield_now().await;
         let env = kept_env(std::env::vars_os().filter_map(|(name, value)| {
             Some((name.into_string().ok()?, value.into_string().ok()?))
         }));
@@ -499,22 +505,47 @@ mod unix {
         unsafe {
             libc::killpg(leader, libc::SIGKILL);
         }
+        // A process that forks can add one behind a pass, so passes repeat until one kills
+        // nothing, at most 10.
         #[cfg(target_os = "linux")]
+        for _ in 0..10 {
+            if sweep_session(leader) == 0 {
+                break;
+            }
+        }
+    }
+
+    /// Kills every live process in `leader`'s session but the leader; returns how many.
+    #[cfg(target_os = "linux")]
+    fn sweep_session(leader: i32) -> usize {
+        let session = leader.to_string();
+        let mut killed = 0;
         for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
             let Some(pid) = entry
                 .file_name()
                 .to_str()
                 .and_then(|n| n.parse::<i32>().ok())
+                .filter(|pid| *pid != leader)
             else {
                 continue;
             };
-            // SAFETY: getsid and kill take plain integers and touch no memory of ours.
-            unsafe {
-                if pid != leader && libc::getsid(pid) == leader {
+            let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+                continue;
+            };
+            // After the command's closing parenthesis: state, parent, group, session.
+            let fields: Vec<&str> = stat
+                .rsplit_once(')')
+                .map(|(_, rest)| rest.split_whitespace().take(4).collect())
+                .unwrap_or_default();
+            if fields.len() == 4 && fields[0] != "Z" && fields[3] == session {
+                // SAFETY: kill takes plain integers and touches no memory of ours.
+                unsafe {
                     libc::kill(pid, libc::SIGKILL);
                 }
+                killed += 1;
             }
         }
+        killed
     }
 
     /// Up to [`READ_CAP`] bytes of `stream`, read until its end or until `stop`'s sender is
