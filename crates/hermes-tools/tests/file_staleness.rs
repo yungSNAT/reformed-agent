@@ -269,3 +269,38 @@ async fn patch_no_warning_when_fresh() {
         "{result}"
     );
 }
+
+#[tokio::test]
+async fn another_sessions_read_does_not_bless_a_write() {
+    let tools = registry();
+    let (_dir, path) = fixture("shared.txt", "original\n");
+    ok(&read(&tools, "reader", &path).await);
+
+    refused(&write(&tools, "other", &path, "clobber\n").await);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+
+    ok(&write(&tools, "reader", &path, "informed\n").await);
+    // The reader's write moved the file on from what the other session last saw.
+    ok(&read(&tools, "other", &path).await);
+    ok(&write(&tools, "reader", &path, "again\n").await);
+    refused(&write(&tools, "other", &path, "stale\n").await);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "again\n");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_link_and_its_target_share_one_record() {
+    let tools = registry();
+    let (dir, target) = fixture("target.txt", "original\n");
+    let link = dir.path().join("link.txt");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    ok(&read(&tools, "l1", &link).await);
+    ok(&write(&tools, "l1", &target, "through the target\n").await);
+    modify_externally(&target, "changed elsewhere\n");
+    refused(&write(&tools, "l1", &link, "stale\n").await);
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "changed elsewhere\n"
+    );
+}

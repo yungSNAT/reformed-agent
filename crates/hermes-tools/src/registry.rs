@@ -362,8 +362,8 @@ impl ToolRegistry {
         });
 
         let output = match result {
-            Ok(output) => {
-                let output = hermes_core::secret_values::mask(&output);
+            Ok(raw) => {
+                let output = hermes_core::secret_values::mask(&raw);
                 self.disk_cleanup_auto
                     .post_tool_call_success(name, &effective_params, &output);
                 let filtered = rtk_filter.filter_and_log(
@@ -373,9 +373,12 @@ impl ToolRegistry {
                     raw_bypassed,
                     rewrite_applied,
                 );
-                Self::tool_result(&truncate_to_chars(&filtered, max_chars))
+                let shown = truncate_to_chars(&filtered, max_chars);
+                crate::file_state::settle_read(name, &effective_params, shown == raw);
+                Self::tool_result(&shown)
             }
             Err(e) => {
+                crate::file_state::settle_read(name, &effective_params, false);
                 let err_text = hermes_core::secret_values::mask(&e.to_string()).into_owned();
                 let filtered = rtk_filter.filter_and_log(
                     name,
@@ -434,8 +437,8 @@ impl ToolRegistry {
         }
 
         let output = match handler.execute(effective_params.clone()).await {
-            Ok(output) => {
-                let output = hermes_core::secret_values::mask(&output);
+            Ok(raw) => {
+                let output = hermes_core::secret_values::mask(&raw);
                 self.disk_cleanup_auto
                     .post_tool_call_success(name, &effective_params, &output);
                 let filtered = rtk_filter.filter_and_log(
@@ -445,9 +448,12 @@ impl ToolRegistry {
                     raw_bypassed,
                     rewrite_applied,
                 );
-                Self::tool_result(&truncate_to_chars(&filtered, max_chars))
+                let shown = truncate_to_chars(&filtered, max_chars);
+                crate::file_state::settle_read(name, &effective_params, shown == raw);
+                Self::tool_result(&shown)
             }
             Err(e) => {
+                crate::file_state::settle_read(name, &effective_params, false);
                 let err_text = hermes_core::secret_values::mask(&e.to_string()).into_owned();
                 let filtered = rtk_filter.filter_and_log(
                     name,

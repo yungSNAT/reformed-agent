@@ -840,6 +840,7 @@ impl AgentLoop {
             let raw_args = tc.function.arguments.clone();
             let registry = self.tool_registry.clone();
             let plugin_manager = self.plugin_manager.clone();
+            let session_id = self.config.session_id.clone();
 
             join_set.spawn(async move {
                 let params: Value = match serde_json::from_str(&raw_args) {
@@ -860,7 +861,8 @@ impl AgentLoop {
                     original_args: params.clone(),
                     turn,
                 };
-                let terminal = |next_params: Value| {
+                let terminal = |mut next_params: Value| {
+                    scope_file_tool_params(&tool_name, &mut next_params, session_id.as_deref());
                     Self::execute_tool_call_terminal(
                         &registry,
                         &tool_call_id,
@@ -1120,5 +1122,49 @@ impl AgentLoop {
         if todo_markers > 0 {
             tracing::debug!(todo_markers, "Hydrated todo markers from prior context");
         }
+    }
+}
+
+/// Names this run's session to the file tools, which keep per session what
+/// each file's reader has seen, replacing any value the model sent. Without a
+/// session the tools use their shared default.
+fn scope_file_tool_params(tool_name: &str, params: &mut Value, session_id: Option<&str>) {
+    if !matches!(tool_name, "read_file" | "write_file" | "patch") {
+        return;
+    }
+    let Some(args) = params.as_object_mut() else {
+        return;
+    };
+    let key = hermes_core::file_edit::SESSION_PARAM;
+    match session_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => {
+            args.insert(key.to_string(), Value::from(id));
+        }
+        None => {
+            args.remove(key);
+        }
+    }
+}
+
+#[cfg(test)]
+mod file_tool_session_tests {
+    use super::scope_file_tool_params;
+    use serde_json::json;
+
+    #[test]
+    fn file_tools_carry_the_runs_session_not_the_models() {
+        let key = hermes_core::file_edit::SESSION_PARAM;
+        let mut params = json!({ "path": "a.txt" });
+        params[key] = json!("forged");
+        scope_file_tool_params("write_file", &mut params, Some("s1"));
+        assert_eq!(params[key], "s1");
+
+        scope_file_tool_params("read_file", &mut params, None);
+        assert!(params.get(key).is_none(), "{params}");
+
+        let mut other = json!({ "command": "ls" });
+        other[key] = json!("kept");
+        scope_file_tool_params("terminal", &mut other, Some("s1"));
+        assert_eq!(other[key], "kept");
     }
 }

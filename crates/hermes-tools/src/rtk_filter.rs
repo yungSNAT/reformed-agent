@@ -135,6 +135,12 @@ impl RtkFilterEngine {
     }
 
     fn filter_output(&self, tool_name: &str, params: &Value, raw_output: &str) -> String {
+        if tool_name == "read_file" {
+            // A file is shown as it is: trimmed, collapsed or summarised, it
+            // would let the model rewrite the file from a view missing lines.
+            // Secrets are still redacted, and the registry's size cap applies.
+            return redact_secrets(raw_output);
+        }
         let mut text = crate::ansi_strip::strip_ansi(raw_output).into_owned();
         if text.is_empty() {
             return text;
@@ -504,6 +510,26 @@ mod tests {
         let out = engine.filter_output("terminal", &json!({ "command": "cargo test" }), &raw);
         assert!(out.contains("error: boom"));
         assert!(out.contains("omitted"));
+    }
+
+    #[test]
+    fn read_file_output_is_shown_whole_with_secrets_redacted() {
+        let engine = RtkFilterEngine {
+            log_dir: std::env::temp_dir().join("hermes-rtk-test"),
+            head_lines: 4,
+            tail_lines: 3,
+            repeat_keep: 2,
+        };
+        let mut raw = "}\n}\n}\n\n\n\n".to_string();
+        for i in 0..150 {
+            raw.push_str(&format!("line {i}\n"));
+        }
+        let params = json!({ "path": "notes.txt" });
+        assert_eq!(engine.filter_output("read_file", &params, &raw), raw);
+
+        let secret = format!("ghp_{}", "A".repeat(40));
+        let shown = engine.filter_output("read_file", &params, &format!("token={secret}\n"));
+        assert!(!shown.contains(&secret), "{shown}");
     }
 
     #[test]
