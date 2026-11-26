@@ -8,10 +8,11 @@
 //! - a request head must arrive within 10 seconds of the connection opening
 //!   and its body within 10 seconds of a body slot being taken (GitHub gives
 //!   up on a delivery after 10 seconds); one request per connection;
-//! - at most 128 connections are open, 32 of them from any one address;
+//! - at most 128 connections are open, 32 of them from any one address
+//!   group (an IPv4 /24 or an IPv6 /64);
 //! - a body slot is taken only once the head is read and the method, path
-//!   and length pass; there are 16 slots, at most 4 held by one address, and
-//!   a request waits up to 5 seconds for one before 503;
+//!   and length pass; there are 16 slots, at most 4 held by one address
+//!   group, and a request waits up to 5 seconds for one before 503;
 //! - bodies are capped at GitHub's 25 MB payload limit, must declare their
 //!   length and are read into one buffer of that length;
 //! - a body already queued under another delivery id is not queued again;
@@ -21,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
@@ -67,8 +68,8 @@ pub struct ListenConfig {
     pub backend_name: String,
 }
 
-/// The addresses `--host` names, resolved once: the listener binds exactly
-/// the addresses [`check_secret`] approved.
+/// The addresses `--host` names, resolved once: the listener binds the first
+/// of the addresses [`check_secret`] approved that it can.
 pub fn resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
     let addrs: Vec<SocketAddr> = (host, port)
         .to_socket_addrs()
@@ -131,8 +132,21 @@ pub fn verify_signature(body: &[u8], secret: &str, header: Option<&[u8]>) -> boo
     mac.verify_slice(&digest).is_ok()
 }
 
-/// One shared value per peer address, alive whilst anything holds it: the
-/// number of holders is what that peer has open.
+/// The group a peer's limits count against: its IPv4 /24 or IPv6 /64. One
+/// host can hold several neighbouring IPv4 addresses and usually a whole
+/// IPv6 /64.
+fn address_group(peer: IpAddr) -> IpAddr {
+    match peer {
+        IpAddr::V4(v4) => IpAddr::V4(Ipv4Addr::from(u32::from(v4) & 0xffff_ff00)),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => address_group(IpAddr::V4(v4)),
+            None => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & !u128::from(u64::MAX))),
+        },
+    }
+}
+
+/// One shared value per address group, alive whilst anything holds it: the
+/// number of holders is what that group has open.
 struct PerPeer<T>(Mutex<HashMap<IpAddr, Weak<T>>>);
 
 impl<T> PerPeer<T> {
@@ -141,6 +155,7 @@ impl<T> PerPeer<T> {
     }
 
     fn get(&self, peer: IpAddr, make: impl FnOnce() -> T) -> Arc<T> {
+        let peer = address_group(peer);
         let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         map.retain(|_, held| held.strong_count() > 0);
         if let Some(held) = map.get(&peer).and_then(Weak::upgrade) {
@@ -160,7 +175,7 @@ struct Shared {
 }
 
 impl Shared {
-    /// One of the peer's own slots, then one of all; `None` after
+    /// One of the peer's group's slots, then one of all; `None` after
     /// [`SLOT_WAIT`].
     async fn take_slot(&self, peer: IpAddr) -> Option<[OwnedSemaphorePermit; 2]> {
         let own = self
@@ -216,8 +231,15 @@ pub async fn run(
     tokio::pin!(interrupted);
     loop {
         // At the cap, new connections wait in the listen backlog.
-        let Ok(open) = Arc::clone(&connections).acquire_owned().await else {
-            return Ok(());
+        let open = tokio::select! {
+            open = Arc::clone(&connections).acquire_owned() => match open {
+                Ok(open) => open,
+                Err(_) => return Ok(()),
+            },
+            _ = &mut interrupted => {
+                log(Level::Info, "webhook server interrupted; exiting");
+                return Ok(());
+            }
         };
         let (stream, peer) = tokio::select! {
             accepted = listener.accept() => match accepted {

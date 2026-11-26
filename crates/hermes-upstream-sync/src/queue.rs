@@ -56,7 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_queue_events_status_created ON queue_events(statu
 /// came with, unique where known. The script writes NULL there and reads
 /// rows by column name, so it still shares the file.
 const BODY_HASH_COLUMN: &str = "ALTER TABLE queue_events ADD COLUMN body_sha256 TEXT";
-const BODY_HASH_INDEX: &str = "CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_events_body_sha256      ON queue_events(body_sha256) WHERE body_sha256 IS NOT NULL";
+const BODY_HASH_INDEX: &str = "CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_events_body_sha256 ON queue_events(body_sha256) WHERE body_sha256 IS NOT NULL";
 
 #[allow(dead_code)] // the worker's side lands next
 impl SqliteQueue {

@@ -115,6 +115,13 @@ TLS-terminating reverse proxy or tunnel on the same machine. Use
 `--host 0.0.0.0` only when that proxy runs on another host and the network
 between them is private.
 
+Every request through such a front end reaches the listener from one
+address, so they all share the listener's per-address limits. The front end
+must therefore read each request body in full before it forwards the
+request, and must time out slow clients itself. One that streams bodies
+through lets a single client that sends its body slowly make deliveries
+fail.
+
 Start listener:
 
 ```bash
