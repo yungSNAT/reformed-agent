@@ -475,7 +475,6 @@ fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
             estimated_cost: None,
             cache_read_tokens,
             cache_write_tokens,
-            ..Default::default()
         }
     });
 
@@ -556,7 +555,6 @@ fn parse_openai_response(json: &Value) -> Result<LlmResponse, AgentError> {
             estimated_cost: None,
             cache_read_tokens,
             cache_write_tokens,
-            ..Default::default()
         })
     });
 
