@@ -376,7 +376,7 @@ impl LlmProvider for NousProvider {
 #[path = "providers_extra/copilot_catalog.rs"]
 mod copilot_catalog;
 
-use copilot_catalog::{reconcile_effort, CopilotCatalog, EffortSupport};
+use copilot_catalog::{legacy_support, reconcile_effort, CopilotCatalog, EffortSupport};
 
 /// GitHub Copilot HTTP provider with a configurable inference base URL.
 /// GPT-5 and later models go to its Responses API, the rest to Chat
@@ -450,6 +450,38 @@ impl CopilotProvider {
         requires_responses_api(wire_model)
     }
 
+    /// The effort levels the model is known to accept: the catalogue's
+    /// answer, else the pattern list upstream falls back to.
+    async fn known_effort_levels(&self, model: Option<&str>, body: Option<&Value>) -> Vec<String> {
+        let wire_model = match body.and_then(|body| body.get("model")) {
+            Some(Value::String(model)) => model,
+            _ => model.unwrap_or(&self.inner.model),
+        }
+        .trim();
+        let lookup = match wire_model.get(..7) {
+            Some(prefix) if prefix.eq_ignore_ascii_case("openai/") => &wire_model[7..],
+            _ => wire_model,
+        };
+        let support = match &self.catalog {
+            Some(catalog) => catalog.effort_support(&self.inner.api_key, lookup).await,
+            None => EffortSupport::Unknown,
+        };
+        match support {
+            EffortSupport::Supported(levels) => levels,
+            EffortSupport::Unsupported => Vec::new(),
+            EffortSupport::Unknown => match legacy_support(lookup) {
+                EffortSupport::Supported(levels) => levels,
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    /// The Responses API body, with the effort clamped to known levels.
+    async fn responses_body(&self, model: Option<&str>, body: Option<&Value>) -> Option<Value> {
+        let levels = self.known_effort_levels(model, body).await;
+        responses_extra_body(body, &levels)
+    }
+
     async fn reconcile_reasoning<'a>(
         &self,
         model: Option<&str>,
@@ -494,21 +526,28 @@ impl CopilotProvider {
     }
 }
 
-fn requested_catalog_effort(body: &Value) -> Option<&str> {
-    if [
+fn reasoning_disabled(body: &Value) -> bool {
+    [
         "/reasoning/enabled",
         "/reasoning_config/enabled",
         "/supports_reasoning",
     ]
     .iter()
     .any(|field| body.pointer(field).and_then(Value::as_bool) == Some(false))
-    {
+        || body
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .is_some_and(|effort| effort.trim().eq_ignore_ascii_case("none"))
+}
+
+fn requested_catalog_effort(body: &Value) -> Option<&str> {
+    if reasoning_disabled(body) {
         return None;
     }
     body.get("reasoning_effort")?
         .as_str()
         .map(str::trim)
-        .filter(|effort| !effort.is_empty() && !effort.eq_ignore_ascii_case("none"))
+        .filter(|effort| !effort.is_empty())
 }
 
 /// GPT-5 and later answer only on Copilot's Responses API, except the
@@ -525,15 +564,27 @@ fn requires_responses_api(model: &str) -> bool {
     major.parse::<u32>().is_ok_and(|major| major >= 5) && !name.starts_with("gpt-5-mini")
 }
 
-/// The Chat Completions extra body as the Responses API takes it: the
-/// effort, when one is asked for, goes in `reasoning` with a summary, as
-/// the reasoning text comes back only with one.
-fn responses_extra_body(body: Option<&Value>) -> Option<Value> {
-    let Some(Value::Object(map)) = body else {
-        return body.cloned();
+/// The Chat Completions extra body as the Responses API takes it. Unless
+/// reasoning is off, the effort asked for (medium by default, as upstream
+/// sends) is clamped to `levels` and goes in `reasoning` with a summary, as
+/// the reasoning text comes back only with one. With no known levels, no
+/// effort is sent.
+fn responses_extra_body(body: Option<&Value>, levels: &[String]) -> Option<Value> {
+    let mut map = match body {
+        Some(Value::Object(map)) => map.clone(),
+        None => serde_json::Map::new(),
+        Some(other) => return Some(other.clone()),
     };
-    let effort = body.and_then(requested_catalog_effort).map(str::to_owned);
-    let mut map = map.clone();
+    let effort = match body {
+        Some(body) if reasoning_disabled(body) => None,
+        _ => reconcile_effort(
+            body.and_then(requested_catalog_effort).unwrap_or("medium"),
+            levels,
+        ),
+    };
+    if body.is_none() && effort.is_none() {
+        return None;
+    }
     for key in [
         "reasoning_effort",
         "reasoning",
@@ -568,9 +619,8 @@ impl LlmProvider for CopilotProvider {
         model: Option<&str>,
         extra_body: Option<&Value>,
     ) -> Result<LlmResponse, AgentError> {
-        let adjusted = self.reconcile_reasoning(model, extra_body).await;
         if self.uses_responses_api(model, extra_body) {
-            let body = responses_extra_body(adjusted.as_deref());
+            let body = self.responses_body(model, extra_body).await;
             return self
                 .responses
                 .chat_completion(
@@ -583,6 +633,7 @@ impl LlmProvider for CopilotProvider {
                 )
                 .await;
         }
+        let adjusted = self.reconcile_reasoning(model, extra_body).await;
         self.inner
             .chat_completion(
                 messages,
@@ -624,11 +675,10 @@ impl LlmProvider for CopilotProvider {
         let model = model.map(str::to_owned);
         let extra_body = extra_body.cloned();
         Box::pin(async_stream::stream! {
-            let adjusted = provider
-                .reconcile_reasoning(model.as_deref(), extra_body.as_ref())
-                .await;
             let mut stream = if responses {
-                let body = responses_extra_body(adjusted.as_deref());
+                let body = provider
+                    .responses_body(model.as_deref(), extra_body.as_ref())
+                    .await;
                 provider.responses.chat_completion_stream(
                     &messages,
                     &tools,
@@ -638,6 +688,9 @@ impl LlmProvider for CopilotProvider {
                     body.as_ref(),
                 )
             } else {
+                let adjusted = provider
+                    .reconcile_reasoning(model.as_deref(), extra_body.as_ref())
+                    .await;
                 provider.inner.chat_completion_stream(
                     &messages,
                     &tools,
