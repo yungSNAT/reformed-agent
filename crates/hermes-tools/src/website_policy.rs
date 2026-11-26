@@ -78,17 +78,31 @@ pub fn load_website_blocklist(
         if !root.is_mapping() {
             return Err(WebsitePolicyError::new("config root must be a mapping"));
         }
-        Some(root)
+        Some((raw, root))
     } else {
         None
     };
     // With the managed scope laid over it, as `load_config` reads it, so a
     // blocklist the administrator pins applies and the profile cannot lift it.
     let root = match hermes_config::managed_scope_dir() {
-        Some(_) => hermes_config::load_effective_config_yaml_value(&path)
-            .and_then(|merged| serde_yaml::to_value(merged).ok())
-            .or(user),
-        None => user,
+        Some(dir) => {
+            if let Some(problem) = managed_config_problem(&dir) {
+                return Err(WebsitePolicyError::new(problem));
+            }
+            // The overlay reads the profile as JSON, so a profile it cannot
+            // read that way would lose its own rules.
+            if let Some((raw, _)) = &user {
+                if serde_yaml::from_str::<serde_json::Value>(raw).is_err() {
+                    return Err(WebsitePolicyError::new(
+                        "config YAML cannot be merged with the managed config",
+                    ));
+                }
+            }
+            hermes_config::load_effective_config_yaml_value(&path)
+                .and_then(|merged| serde_yaml::to_value(merged).ok())
+                .or(user.map(|(_, root)| root))
+        }
+        None => user.map(|(_, root)| root),
     };
     let Some(serde_yaml::Value::Mapping(root)) = root else {
         return Ok(WebsiteBlocklistPolicy {
@@ -201,6 +215,28 @@ pub fn check_website_access_with_policy(
         }
     }
     None
+}
+
+/// Why the managed scope's `config.yaml` in `dir`, when it exists, cannot be laid over a
+/// profile's. The shared loader skips such a file with a warning; security readers refuse
+/// instead, as it may pin a restriction.
+pub(crate) fn managed_config_problem(dir: &Path) -> Option<String> {
+    let path = dir.join("config.yaml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => return Some(format!("Failed to read {}: {e}", path.display())),
+    };
+    if text.trim().is_empty() {
+        return None;
+    }
+    match serde_yaml::from_str::<serde_yaml::Value>(&text) {
+        Err(e) => Some(format!("Invalid YAML in {}: {e}", path.display())),
+        Ok(root) if !root.is_mapping() => Some(format!("{} must be a mapping", path.display())),
+        Ok(root) => serde_json::to_value(root)
+            .err()
+            .map(|e| format!("{} cannot be read as JSON: {e}", path.display())),
+    }
 }
 
 fn mapping_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
@@ -431,5 +467,57 @@ security:
         assert!(
             check_website_access_with_policy("https://managed-only.invalid/", &policy).is_some()
         );
+    }
+
+    #[test]
+    fn load_website_blocklist_refuses_a_managed_config_it_cannot_use() {
+        let _env = test_lock::lock();
+        let home = tempfile::tempdir().unwrap();
+        let config = home.path().join("config.yaml");
+        std::fs::write(
+            &config,
+            "security:\n  website_blocklist:\n    enabled: false\n",
+        )
+        .unwrap();
+        for managed_config in ["security: [unclosed\n", "- a list\n"] {
+            let managed = tempfile::tempdir().unwrap();
+            std::fs::write(managed.path().join("config.yaml"), managed_config).unwrap();
+            let _managed = ManagedDir::set(managed.path());
+            assert!(
+                load_website_blocklist(Some(&config)).is_err(),
+                "{managed_config:?} was used"
+            );
+        }
+        let managed = tempfile::tempdir().unwrap();
+        std::fs::create_dir(managed.path().join("config.yaml")).unwrap();
+        let _managed = ManagedDir::set(managed.path());
+        assert!(load_website_blocklist(Some(&config)).is_err());
+    }
+
+    #[test]
+    fn load_website_blocklist_never_drops_profile_rules_under_a_managed_scope() {
+        let _env = test_lock::lock();
+        let home = tempfile::tempdir().unwrap();
+        let managed = tempfile::tempdir().unwrap();
+        std::fs::write(
+            managed.path().join("config.yaml"),
+            "display:\n  tool_progress: all\n",
+        )
+        .unwrap();
+        let config = home.path().join("config.yaml");
+        // A sequence key parses as YAML but cannot be read as JSON.
+        std::fs::write(
+            &config,
+            "? [a, b]\n: x\nsecurity:\n  website_blocklist:\n    enabled: true\n    domains: [profile-only.invalid]\n",
+        )
+        .unwrap();
+        let policy = load_website_blocklist(Some(&config)).unwrap();
+        assert!(
+            policy.enabled,
+            "the profile's rules apply without a managed scope"
+        );
+
+        let _managed = ManagedDir::set(managed.path());
+        assert!(load_website_blocklist(Some(&config)).is_err());
     }
 }

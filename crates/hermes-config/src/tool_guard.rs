@@ -47,18 +47,53 @@ fn profile_home() -> &'static Path {
     HOME.get_or_init(crate::paths::hermes_home)
 }
 
-/// The first guard this process reads from the profile's config, kept until
-/// it exits. "No guard" is never kept, so a torn read cannot pin it, and a
-/// read that finds none still defers to a guard another call pinned meanwhile.
+/// The guard in force for this process's profile.
 async fn profile_guard() -> Result<Option<&'static ToolGuardConfig>, String> {
-    static GUARD: OnceLock<ToolGuardConfig> = OnceLock::new();
-    if let Some(guard) = GUARD.get() {
-        return Ok(Some(guard));
+    static PINS: OnceLock<Pins> = OnceLock::new();
+    PINS.get_or_init(Pins::default)
+        .guard(crate::managed_scope_dir().as_deref(), profile_home())
+        .await
+}
+
+/// The first guard read from each scope, kept until the process exits. "No
+/// guard" is never kept, so a torn read cannot pin it, and a read that finds
+/// none still defers to a guard another call pinned meanwhile. The managed
+/// config is read on each call until it names a guard, so an administrator's
+/// guard governs even after the profile's was pinned.
+#[derive(Default)]
+struct Pins {
+    managed: OnceLock<ToolGuardConfig>,
+    profile: OnceLock<ToolGuardConfig>,
+}
+
+impl Pins {
+    async fn guard(
+        &self,
+        managed: Option<&Path>,
+        home: &Path,
+    ) -> Result<Option<&ToolGuardConfig>, String> {
+        if let Some(guard) = self.managed.get() {
+            return Ok(Some(guard));
+        }
+        if let Some(dir) = managed {
+            if let Some(read) = guard_in(&dir.join("config.yaml"), "the managed config").await? {
+                return Ok(Some(self.managed.get_or_init(|| read)));
+            }
+        }
+        if let Some(guard) = self.pinned() {
+            return Ok(Some(guard));
+        }
+        Ok(
+            match guard_in(&home.join("config.yaml"), "the profile config").await? {
+                Some(read) => Some(self.profile.get_or_init(|| read)),
+                None => self.pinned(),
+            },
+        )
     }
-    Ok(match configured_guard(profile_home()).await? {
-        Some(read) => Some(GUARD.get_or_init(|| read)),
-        None => GUARD.get(),
-    })
+
+    fn pinned(&self) -> Option<&ToolGuardConfig> {
+        self.managed.get().or(self.profile.get())
+    }
 }
 
 async fn ask_command(
@@ -102,28 +137,10 @@ fn undecided(why: impl std::fmt::Display) -> String {
     format!("The tool guard refused the call: {why}.")
 }
 
-/// The guard `config.yaml` names, read without the rest of the config so an
+/// The guard a `config.yaml` names, read without the rest of the config so an
 /// unrelated setting cannot switch it off. A config that exists but cannot be
-/// read refuses, as it may name a guard.
-async fn configured_guard(home: &Path) -> Result<Option<ToolGuardConfig>, String> {
-    guard_in_scopes(crate::managed_scope_dir().as_deref(), home).await
-}
-
-/// The administrator's guard (the managed scope's `config.yaml`) is used whole
-/// when it names one; the profile's guard applies only when it names none.
-async fn guard_in_scopes(
-    managed: Option<&Path>,
-    home: &Path,
-) -> Result<Option<ToolGuardConfig>, String> {
-    if let Some(managed) = managed {
-        let guard = guard_in(&managed.join("config.yaml"), "the managed config").await?;
-        if guard.is_some() {
-            return Ok(guard);
-        }
-    }
-    guard_in(&home.join("config.yaml"), "the profile config").await
-}
-
+/// read refuses, as it may name a guard. The administrator's guard (the
+/// managed scope's) is used whole; the profile's applies only when it names none.
 async fn guard_in(path: &Path, name: &str) -> Result<Option<ToolGuardConfig>, String> {
     let text = match tokio::fs::read_to_string(path).await {
         Ok(text) => text,
@@ -343,14 +360,25 @@ mod tests {
         format!("cat >/dev/null; printf '%s' '{DENY}'")
     }
 
+    /// The guard one fresh read finds, without this process's pins.
+    async fn read_once(
+        managed: Option<&Path>,
+        home: &Path,
+    ) -> Result<Option<ToolGuardConfig>, String> {
+        Pins::default()
+            .guard(managed, home)
+            .await
+            .map(|guard| guard.cloned())
+    }
+
     /// `check_command` for the profile in `home`, without this process's pin.
     async fn check_command_in(home: &Path, command: &str, cwd: &Path) -> Result<(), String> {
-        ask_command(configured_guard(home).await?.as_ref(), command, cwd).await
+        ask_command(read_once(None, home).await?.as_ref(), command, cwd).await
     }
 
     /// `check_write` for the profile in `home`, without this process's pin.
     async fn check_write_in(home: &Path, path: &Path) -> Result<(), String> {
-        ask_write(configured_guard(home).await?.as_ref(), path).await
+        ask_write(read_once(None, home).await?.as_ref(), path).await
     }
 
     #[tokio::test]
@@ -506,7 +534,7 @@ mod tests {
     async fn the_managed_scope_names_the_guard_first() {
         let managed = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
-        let read = || guard_in_scopes(Some(managed.path()), home.path());
+        let read = || read_once(Some(managed.path()), home.path());
         assert_eq!(read().await, Ok(None));
 
         write_guard(managed.path(), "managed.exe");
@@ -524,7 +552,7 @@ mod tests {
         .unwrap();
         assert_eq!(read().await, Ok(guard_named("profile.exe")));
         assert_eq!(
-            guard_in_scopes(None, home.path()).await,
+            read_once(None, home.path()).await,
             Ok(guard_named("profile.exe"))
         );
     }
@@ -539,9 +567,37 @@ mod tests {
         ] {
             let managed = tempfile::tempdir().unwrap();
             std::fs::write(managed.path().join("config.yaml"), config).unwrap();
-            let refused = guard_in_scopes(Some(managed.path()), home.path()).await;
+            let refused = read_once(Some(managed.path()), home.path()).await;
             assert!(refused.is_err(), "{config}");
         }
+        // A config.yaml that cannot be read at all (here a folder).
+        let managed = tempfile::tempdir().unwrap();
+        std::fs::create_dir(managed.path().join("config.yaml")).unwrap();
+        assert!(read_once(Some(managed.path()), home.path()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_managed_guard_governs_after_the_profiles_was_pinned() {
+        let managed = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let pins = Pins::default();
+        let read = || async {
+            pins.guard(Some(managed.path()), home.path())
+                .await
+                .map(|guard| guard.cloned())
+        };
+        write_guard(home.path(), "profile.exe");
+        assert_eq!(read().await, Ok(guard_named("profile.exe")));
+
+        // The profile cannot drop its pinned guard.
+        std::fs::write(home.path().join("config.yaml"), "display: {}\n").unwrap();
+        assert_eq!(read().await, Ok(guard_named("profile.exe")));
+
+        // An administrator's guard added later replaces it, and stays.
+        write_guard(managed.path(), "managed.exe");
+        assert_eq!(read().await, Ok(guard_named("managed.exe")));
+        std::fs::remove_file(managed.path().join("config.yaml")).unwrap();
+        assert_eq!(read().await, Ok(guard_named("managed.exe")));
     }
 
     #[tokio::test]
@@ -556,7 +612,7 @@ mod tests {
         let config = crate::load_user_config_file(&path).unwrap();
         crate::save_config_yaml(&path, &config).unwrap();
         assert_eq!(
-            configured_guard(home.path()).await.unwrap(),
+            read_once(None, home.path()).await.unwrap(),
             Some(ToolGuardConfig {
                 command: "guard.exe".into(),
                 args: Vec::new(),
