@@ -87,8 +87,22 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     };
     let cwd = std::env::current_dir()
         .map_err(|e| (IMAGE_WRITE_FAILED, format!("no working folder: {e}")))?;
-    let (source, remainder) = image_path(raw, &cwd)
-        .map_err(|token| (IMAGE_UNSUPPORTED, format!("image not found: {token}")))?;
+    let (source, remainder) = match image_path(raw, &cwd) {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            let (token, _) = split_path_input(raw);
+            return Err((IMAGE_UNSUPPORTED, format!("image not found: {token}")));
+        }
+        Err(Refused(token)) => {
+            return Err((
+                IMAGE_UNSUPPORTED,
+                format!(
+                    "image path refused: network shares, device paths and reserved device \
+                     names are not read: {token}"
+                ),
+            ));
+        }
+    };
     let name = source
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -189,22 +203,24 @@ fn detach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     Ok(json!({"detached": !removed.is_empty(), "count": count}))
 }
 
+/// A path refused before any file system call: a network share or device namespace path, or
+/// a Windows reserved device name. Holds the client's token.
+struct Refused(String);
+
 /// The image file `raw` names and the words after it, as upstream's `image.attach` reads a
-/// terminal drop: a dropped path when `raw` starts like one, else its first token. `Err` holds
-/// the token that named no file.
-fn image_path(raw: &str, cwd: &Path) -> Result<(PathBuf, String), String> {
-    if let Some(found) = dropped(raw, cwd) {
-        return Ok(found);
+/// terminal drop: a dropped path when `raw` starts like one, else its first token. `None` when
+/// it names no file.
+fn image_path(raw: &str, cwd: &Path) -> Result<Option<(PathBuf, String)>, Refused> {
+    if let Some(found) = dropped(raw, cwd)? {
+        return Ok(Some(found));
     }
     let (token, remainder) = split_path_input(raw);
-    resolve(&token, cwd)
-        .map(|path| (path, remainder))
-        .ok_or(token)
+    Ok(resolve(&token, cwd)?.map(|path| (path, remainder)))
 }
 
 /// Upstream's `_detect_file_drop`: a path at the start of `raw` (optionally quoted; `/`, `~`,
 /// `./`, `../`, a drive prefix, or unquoted `file://`), with the words after it.
-fn dropped(raw: &str, cwd: &Path) -> Option<(PathBuf, String)> {
+fn dropped(raw: &str, cwd: &Path) -> Result<Option<(PathBuf, String)>, Refused> {
     let text = raw.trim();
     let quoted = text.starts_with(['"', '\'']);
     let unquoted = if quoted { &text[1..] } else { text };
@@ -219,22 +235,25 @@ fn dropped(raw: &str, cwd: &Path) -> Option<(PathBuf, String)> {
         || (!quoted && unquoted.starts_with("file://"))
         || drive;
     if !like_path {
-        return None;
+        return Ok(None);
     }
-    if let Some(path) = resolve(text, cwd) {
-        return Some((path, String::new()));
+    if let Some(path) = resolve(text, cwd)? {
+        return Ok(Some((path, String::new())));
     }
     let (token, remainder) = split_path_input(text);
-    if let Some(path) = resolve(&token, cwd) {
-        return Some((path, remainder));
+    if let Some(path) = resolve(&token, cwd)? {
+        return Ok(Some((path, remainder)));
     }
     if quoted {
-        return None;
+        return Ok(None);
     }
     // An unquoted path with spaces: the longest prefix ending before a space that names a file.
-    text.match_indices(' ').rev().find_map(|(pos, _)| {
-        resolve(text[..pos].trim_end(), cwd).map(|path| (path, text[pos + 1..].trim().to_string()))
-    })
+    for (pos, _) in text.match_indices(' ').rev() {
+        if let Some(path) = resolve(text[..pos].trim_end(), cwd)? {
+            return Ok(Some((path, text[pos + 1..].trim().to_string())));
+        }
+    }
+    Ok(None)
 }
 
 /// Upstream's `_split_path_input`: a leading path token, quoted or with `\ ` escapes, and the
@@ -272,38 +291,77 @@ fn split_path_input(raw: &str) -> (String, String) {
 
 /// Upstream's `_resolve_attachment_path`: quotes, `\ ` escapes, `file://` and a leading `~`
 /// are undone, a relative path is taken from `cwd`, and only an existing file is returned.
-/// A network share or device namespace path (`\\host\share`, `\\?\`, `\\.\`, `//host`) is
-/// refused before anything touches it.
-fn resolve(raw: &str, cwd: &Path) -> Option<PathBuf> {
+/// Before anything touches it, [`Refused`]: 2 leading separators in any mix (`\\host\share`,
+/// `\\?\`, `\\.\`, `//host`, `/\host`, `\/host`), the `\??\` prefix, a `file://` URL naming a
+/// host, or a reserved device name ([`reserved_name`]).
+fn resolve(raw: &str, cwd: &Path) -> Result<Option<PathBuf>, Refused> {
     let mut token = raw.trim();
     if token.len() >= 2 && token.starts_with(['"', '\'']) && token.ends_with(&token[..1]) {
         token = token[1..token.len() - 1].trim();
     }
     let token = token.replace("\\ ", " ");
     if token.is_empty() {
-        return None;
+        return Ok(None);
     }
+    let refused = || Refused(raw.trim().to_string());
     let path = if token.starts_with("file://") {
-        url::Url::parse(&token)
-            .ok()
-            .and_then(|url| url.to_file_path().ok())
-            .unwrap_or_else(|| PathBuf::from(&token))
+        match url::Url::parse(&token) {
+            Ok(url)
+                if url
+                    .host_str()
+                    .is_some_and(|h| !h.is_empty() && h != "localhost") =>
+            {
+                return Err(refused());
+            }
+            Ok(url) => url
+                .to_file_path()
+                .unwrap_or_else(|()| PathBuf::from(&token)),
+            Err(_) => PathBuf::from(&token),
+        }
     } else if let Some(rest) = token
         .strip_prefix('~')
         .filter(|rest| rest.is_empty() || rest.starts_with(['/', '\\']))
     {
-        home()?.join(rest.trim_start_matches(['/', '\\']))
+        let Some(home) = home() else {
+            return Ok(None);
+        };
+        home.join(rest.trim_start_matches(['/', '\\']))
     } else {
         PathBuf::from(&token)
     };
     let shown = path.as_os_str().to_string_lossy();
-    if shown.starts_with(r"\\") || shown.starts_with("//") {
-        return None;
+    let mut lead = shown.chars();
+    let separator = |c: Option<char>| matches!(c, Some('/' | '\\'));
+    if (separator(lead.next()) && separator(lead.next())) || shown.starts_with(r"\??\") {
+        return Err(refused());
+    }
+    if path
+        .file_name()
+        .is_some_and(|name| reserved_name(&name.to_string_lossy()))
+    {
+        return Err(refused());
     }
     let path = cwd.join(path);
-    std::fs::metadata(&path)
+    Ok(std::fs::metadata(&path)
         .is_ok_and(|m| m.is_file())
-        .then_some(path)
+        .then_some(path))
+}
+
+/// Whether `name` is a Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to
+/// `COM9`, `LPT1` to `LPT9`), in any case, with or without an extension or trailing spaces and
+/// dots. Refused on every platform, so a path means the same file everywhere.
+fn reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or_default();
+    let stem = stem.trim_end_matches([' ', '.']).to_ascii_uppercase();
+    match stem.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => {
+            let bytes = stem.as_bytes();
+            bytes.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && (b'1'..=b'9').contains(&bytes[3])
+        }
+    }
 }
 
 /// The user's home folder, as `~` names it.
