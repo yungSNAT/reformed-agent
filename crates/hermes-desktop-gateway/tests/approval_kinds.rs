@@ -2,7 +2,7 @@
 
 use hermes_desktop_gateway::approval::{
     ApprovalAccess, ApprovalAnswer, ApprovalChoice, ApprovalKind, ApprovalRequest,
-    ApprovalRespondParams,
+    ApprovalRespondParams, CanonicalApprovalRespondParams,
 };
 use serde_json::{json, Value};
 
@@ -67,6 +67,14 @@ fn folder_and_site_cards_carry_their_fields() {
     assert_eq!(params["host"], "example.com");
     assert_eq!(params["label"], "Web search (example.com)");
     assert_eq!(params["choices"], json!(["once", "always", "deny"]));
+
+    let folder = request(json!({"kind": "access", "path": "/srv", "access": "read"})).unwrap();
+    assert_eq!(folder.access, Some(ApprovalAccess::Read));
+    assert!(folder.params().is_ok());
+    let site =
+        request(json!({"kind": "network", "host": "example.com", "label": "Example"})).unwrap();
+    assert_eq!(site.label.as_deref(), Some("Example"));
+    assert!(site.params().is_ok());
 }
 
 #[test]
@@ -83,6 +91,9 @@ fn a_folder_or_site_request_that_names_none_is_never_sent() {
         json!({"kind": "access", "path": "  ", "access": "read"}),
         json!({"kind": "network"}),
         json!({"kind": "network", "host": "", "label": "Somewhere"}),
+        json!({"kind": "access", "host": "example.com"}),
+        json!({"kind": "network", "path": "/srv"}),
+        json!({"kind": "access", "path": "\u{1f}\u{1c} \t"}),
     ] {
         let approval = request(fields.clone()).unwrap();
         assert!(approval.params().is_err(), "{fields} was accepted");
@@ -157,4 +168,93 @@ fn a_deny_reason_rides_the_answer_and_approval_respond() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("why"), "{err}");
+}
+
+#[test]
+fn the_offered_choices_are_always_sent_and_never_broader_than_the_request_allows() {
+    let offered = |fields: Value| request(fields).unwrap().params().unwrap()["choices"].clone();
+    assert_eq!(
+        offered(json!({"command": "ls"})),
+        json!(["once", "session", "always", "deny"])
+    );
+    assert_eq!(
+        offered(json!({"command": "ls", "choices": []})),
+        json!(["once", "session", "always", "deny"])
+    );
+    for restricted in [
+        json!({"command": "rm -rf /", "allow_session": false}),
+        json!({"command": "rm -rf /", "allow_session": false, "choices": []}),
+        json!({"command": "rm -rf /", "smart_denied": true}),
+        json!({"command": "rm -rf /", "smart_denied": true, "allow_permanent": true}),
+    ] {
+        assert_eq!(
+            offered(restricted.clone()),
+            json!(["once", "deny"]),
+            "{restricted}"
+        );
+    }
+    assert_eq!(
+        offered(json!({"command": "ls", "allow_permanent": false})),
+        json!(["once", "session", "deny"])
+    );
+    // Choices the sender names go out as named.
+    assert_eq!(
+        offered(json!({"command": "ls", "choices": ["once", "deny"], "allow_permanent": true})),
+        json!(["once", "deny"])
+    );
+}
+
+#[test]
+fn an_absent_respond_choice_denies() {
+    let respond: ApprovalRespondParams =
+        serde_json::from_value(json!({"session_id": "s1", "request_id": "r1"})).unwrap();
+    assert_eq!(respond.choice_or_deny(), ApprovalChoice::Deny);
+    let respond: ApprovalRespondParams =
+        serde_json::from_value(json!({"session_id": "s1", "choice": "once"})).unwrap();
+    assert_eq!(respond.choice_or_deny(), ApprovalChoice::Once);
+}
+
+#[test]
+fn a_canonical_answer_names_its_turn_generation_and_prompt() {
+    let frame = json!({
+        "session_id": "s1", "execution_generation": 3, "prompt_id": "p1", "choice": "once"
+    });
+    let answer: CanonicalApprovalRespondParams = serde_json::from_value(frame.clone()).unwrap();
+    assert_eq!(
+        (
+            answer.execution_generation,
+            answer.prompt_id.as_str(),
+            answer.choice
+        ),
+        (3, "p1", ApprovalChoice::Once)
+    );
+    let routed: CanonicalApprovalRespondParams =
+        serde_json::from_value(json!({"profile": "work", "session_id": "s1",
+            "execution_generation": 3, "prompt_id": "p1", "choice": "deny"}))
+        .unwrap();
+    assert_eq!(routed.profile.as_deref(), Some("work"));
+
+    for missing in ["execution_generation", "prompt_id", "choice", "session_id"] {
+        let mut partial = frame.clone();
+        partial.as_object_mut().unwrap().remove(missing);
+        assert!(
+            serde_json::from_value::<CanonicalApprovalRespondParams>(partial).is_err(),
+            "accepted without {missing}"
+        );
+    }
+    for (key, value) in [
+        ("request_id", json!("r1")),
+        ("all", json!(true)),
+        ("reason", json!("x")),
+    ] {
+        let mut wider = frame.clone();
+        wider.as_object_mut().unwrap().insert(key.into(), value);
+        assert!(
+            serde_json::from_value::<CanonicalApprovalRespondParams>(wider).is_err(),
+            "accepted {key}"
+        );
+    }
+    let mut negative = frame.clone();
+    negative["execution_generation"] = json!(-1);
+    assert!(serde_json::from_value::<CanonicalApprovalRespondParams>(negative).is_err());
 }
