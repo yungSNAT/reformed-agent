@@ -19,7 +19,12 @@ fn hermes(home: &Path) -> Command {
         cmd.env("SystemRoot", value);
     }
     if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
-        let profile = std::path::absolute(profile).unwrap();
+        let profile = std::path::PathBuf::from(profile);
+        let profile = if profile.starts_with("%t") {
+            profile
+        } else {
+            std::path::absolute(profile).unwrap()
+        };
         cmd.env("LLVM_PROFILE_FILE", profile);
     }
     cmd
@@ -139,7 +144,7 @@ fn logs_follow_passes_the_line_count_and_reports_a_failed_tail() {
 
     let followed = hermes(home)
         .env("PATH", executables.path())
-        .args(["logs", "--follow", "--lines", "4"])
+        .args(["logs", "--follow", "4"])
         .assert()
         .success();
     let output = stdout(&followed);
