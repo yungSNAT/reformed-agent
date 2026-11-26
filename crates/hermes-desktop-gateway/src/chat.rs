@@ -33,6 +33,7 @@ use tokio::time::Instant;
 use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
+mod host;
 mod session;
 mod slash;
 use canonical::Admission;
@@ -105,6 +106,9 @@ pub(crate) struct Conn {
         reason = "read by the methods that serve only local clients"
     )]
     pub(crate) origin: Origin,
+    /// May act on the host (`chat/host.rs`): set only in `upgrade` (lib.rs), for a local-mode
+    /// ticket connection, which a native channel issues. Off by default.
+    pub(crate) host_input: bool,
 }
 
 impl Conn {
@@ -115,6 +119,7 @@ impl Conn {
             outbox,
             canonical,
             origin: Origin::default(),
+            host_input: false,
         }
     }
 }
@@ -146,7 +151,7 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 }
 
 /// Every area's methods; a new area adds its table here.
-const AREAS: &[&[(&str, Handler)]] = &[METHODS, slash::METHODS];
+const AREAS: &[&[(&str, Handler)]] = &[METHODS, slash::METHODS, host::METHODS];
 
 /// The methods served on both wires.
 const METHODS: &[(&str, Handler)] = &[

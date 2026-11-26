@@ -354,6 +354,10 @@ async fn upgrade(
     let origin = match gw.auth {
         Auth::Token(_) | Auth::Native(_) => Origin::Local,
     };
+    // The host-input capability (`Conn::host_input`): only local mode's tickets come through a
+    // native channel. A token can be presented through a tunnel from another machine, and a
+    // child gateway's parent dials it with a token, so neither gets it.
+    let host_input = matches!(gw.auth, Auth::Native(_));
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
     let ws = if canonical {
         ws.protocols([CANONICAL_PROTOCOL])
@@ -362,7 +366,7 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, chat, canonical, origin))
+        .on_upgrade(move |socket| session(socket, chat, canonical, origin, host_input))
 }
 
 /// The ticket a native dial offers as its `hermes-gateway-ticket.` subprotocol: `None` when it
@@ -388,7 +392,13 @@ fn protocol_ticket(headers: &HeaderMap) -> Result<Option<&str>, ()> {
 
 /// One connection. A `canonical` one ([`CANONICAL_PROTOCOL`]) announces the session authority in
 /// its `gateway.ready` and answers the session verbs as [`chat`]'s `canonical` module does.
-async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool, origin: Origin) {
+async fn session(
+    mut socket: WebSocket,
+    chat: Arc<Chat>,
+    canonical: bool,
+    origin: Origin,
+    host_input: bool,
+) {
     let mut ready = json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -414,6 +424,7 @@ async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool, origin
         canonical,
     );
     conn.origin = origin;
+    conn.host_input = host_input;
     let call = |method: &str, params: Value| chat.call(&conn, method, params);
     serve_socket(&mut socket, &mut events, &call, chat.write_timeout()).await;
     chat.disconnect(conn.id);
