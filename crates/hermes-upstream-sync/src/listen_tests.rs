@@ -186,6 +186,13 @@ async fn bad_signatures_are_refused_before_anything_else() {
         PUSH.replace("bbb", "ccc").as_bytes(),
     );
     assert_eq!(send(addr, tampered).await.0, 401);
+    // The signature is checked over the bytes received, before any parsing:
+    // a body that is not JSON still gets 401, and the same JSON with other
+    // spacing fails the signature made for the original bytes.
+    let not_json = push("{not json", "d-7", Some(&sign(b"{}")));
+    assert_eq!(send(addr, not_json).await.0, 401);
+    let respaced = push(&PUSH.replace(": ", ":"), "d-8", Some(&good));
+    assert_eq!(send(addr, respaced).await.0, 401);
     assert!(queue.0.lock().unwrap().is_empty());
 }
 
@@ -260,15 +267,55 @@ async fn oversized_bodies_are_refused_without_reading_them() {
 }
 
 #[tokio::test]
-async fn bodies_without_a_declared_length_are_capped_as_they_arrive() {
+async fn the_cap_applies_whilst_the_body_is_read() {
+    // Even a body longer than its declared length stops at the cap.
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_LENGTH, MAX_BODY_BYTES.into());
     let body = Body::from(vec![b'x'; MAX_BODY_BYTES + 1]);
-    let refused = read_body(&HeaderMap::new(), body).await.unwrap_err();
-    assert_eq!(refused.0, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        read_body(&headers, body).await.unwrap_err().0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
     let body = Body::from(vec![b'x'; MAX_BODY_BYTES]);
     assert_eq!(
-        read_body(&HeaderMap::new(), body).await.unwrap().len(),
+        read_body(&headers, body).await.unwrap().len(),
         MAX_BODY_BYTES
     );
+}
+
+#[tokio::test]
+async fn a_body_without_a_declared_length_is_refused() {
+    // The script read no body without Content-Length and failed the
+    // signature; GitHub always sends one.
+    let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let chunk = format!("{:x}\r\n{PUSH}\r\n0\r\n\r\n", PUSH.len());
+    let raw = format!(
+        "POST {PATH} HTTP/1.1\r\nHost: t\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\
+         X-GitHub-Event: push\r\nX-GitHub-Delivery: d-c\r\nX-Hub-Signature-256: {}\r\n\r\n{chunk}",
+        sign(PUSH.as_bytes())
+    );
+    assert_eq!(
+        send(addr, raw.into_bytes()).await,
+        (411, "length required".into())
+    );
+}
+
+#[tokio::test]
+async fn a_seventeenth_request_is_refused_while_16_are_open() {
+    let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let mut held = Vec::new();
+    for _ in 0..MAX_IN_FLIGHT {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let head = format!("POST {PATH} HTTP/1.1\r\nHost: t\r\nContent-Length: 10\r\n\r\n");
+        stream.write_all(head.as_bytes()).await.unwrap();
+        held.push(stream);
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        send(addr, push(PUSH, "d-17", None)).await,
+        (503, "busy".into())
+    );
+    drop(held);
 }
 
 #[tokio::test]
