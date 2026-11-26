@@ -6,6 +6,109 @@ use std::time::Duration;
 use support::isolated_hermes;
 
 #[tokio::test]
+async fn offline_systems_replay_reports_damaged_traces_and_exports_json() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let replay = sandbox.path().join("hermes/logs/replay");
+    std::fs::create_dir_all(&replay).unwrap();
+    std::fs::write(
+        replay.join("damaged.jsonl"),
+        concat!(
+            "{\"seq\":1,\"event_hash\":\"first\"}\n",
+            "incomplete fixture record\n",
+            "{\"seq\":3,\"prev_hash\":\"missing\",\"event_hash\":\"third\"}\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(replay.join("notes.txt"), "Local fixture notes").unwrap();
+
+    let mut command = isolated_hermes(sandbox.path());
+    command.args(["systems", "replay", "--output", "reports/replay.json"]);
+    let output = tokio::time::timeout(Duration::from_secs(15), command.output())
+        .await
+        .expect("systems replay timed out")
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Replay trace logs: 1 file(s)"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| { line.contains("damaged.jsonl entries=2 parse_errors=1 chain_breaks=1") }),
+        "{text}"
+    );
+
+    let report_path = sandbox.path().join("reports/replay.json");
+    let report_bytes = std::fs::read(&report_path).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&report_bytes).unwrap();
+    assert_eq!(report["kind"], "hermes.replay.report");
+    assert_eq!(report["passed"], false);
+    assert_eq!(report["log_count"], 1);
+    let logs = report["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 1);
+    let log = &logs[0];
+    assert!(std::path::Path::new(log["path"].as_str().unwrap()).ends_with("damaged.jsonl"));
+    assert_eq!(log["entries"], 2);
+    assert_eq!(log["parse_errors"], 1);
+    assert_eq!(log["chain_breaks"], 1);
+    assert_eq!(log["first_seq"], 1);
+    assert_eq!(log["last_seq"], 3);
+
+    let mut blocked = isolated_hermes(sandbox.path());
+    blocked.args([
+        "systems",
+        "replay",
+        "--output",
+        "reports/replay.json/nested.json",
+    ]);
+    let failure = tokio::time::timeout(Duration::from_secs(15), blocked.output())
+        .await
+        .expect("systems replay with blocked output timed out")
+        .unwrap();
+    assert_eq!(failure.status.code(), Some(1), "{failure:?}");
+    let error = String::from_utf8(failure.stderr).unwrap();
+    assert!(
+        error
+            .replace('\\', "/")
+            .contains("mkdir reports/replay.json"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(report_path).unwrap(), report_bytes);
+}
+
+#[tokio::test]
+async fn offline_systems_rejects_unknown_topics_without_creating_reports() {
+    let sandbox = tempfile::tempdir().unwrap();
+    for (action, label) in [
+        ("agent-card", "agent-card"),
+        ("mcp", "MCP"),
+        ("acp", "ACP"),
+        ("handoff", "handoff"),
+        ("provenance", "provenance"),
+    ] {
+        let mut command = isolated_hermes(sandbox.path());
+        command.args([
+            "systems",
+            action,
+            "fixture-unknown",
+            "--json",
+            "--output",
+            "reports/result.json",
+        ]);
+        let result = tokio::time::timeout(Duration::from_secs(15), command.output())
+            .await
+            .expect("systems validation timed out")
+            .unwrap();
+        assert_eq!(result.status.code(), Some(1), "{action}: {result:?}");
+        assert!(result.stdout.is_empty(), "{action}: {result:?}");
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(
+            stderr.contains(&format!("unknown {label} action 'fixture-unknown'")),
+            "{stderr}"
+        );
+        assert!(!sandbox.path().join("reports").exists());
+    }
+}
+
+#[tokio::test]
 async fn offline_pairing_approves_masks_and_revokes_a_disposable_device() {
     use hermes_cli::pairing_store::{PairedDevice, PairingStatus, PairingStore};
 
