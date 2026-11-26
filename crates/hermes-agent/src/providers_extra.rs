@@ -542,6 +542,12 @@ fn responses_extra_body(body: Option<&Value>) -> Option<Value> {
     ] {
         map.remove(key);
     }
+    // The Responses API names its output limit `max_output_tokens`.
+    for limit in ["max_completion_tokens", "max_tokens"] {
+        if let Some(value) = map.remove(limit) {
+            map.entry("max_output_tokens").or_insert(value);
+        }
+    }
     if let Some(effort) = effort {
         map.insert(
             "reasoning".into(),
