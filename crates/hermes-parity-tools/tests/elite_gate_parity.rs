@@ -112,7 +112,7 @@ impl Sandbox {
 
     /// Run one implementation and return its masked record.
     /// stdout and stderr go to files, so a process left holding them cannot
-    /// stall the record; a run that takes 20 seconds or more fails the case.
+    /// stall the record; a run that takes 5 seconds or more fails the case.
     fn record(&self, mut cmd: Command) -> String {
         let (out_path, err_path) = (self.root.join("stdout.txt"), self.root.join("stderr.txt"));
         cmd.stdout(fs::File::create(&out_path).expect("stdout file"))
@@ -120,7 +120,7 @@ impl Sandbox {
         let started = std::time::Instant::now();
         let status = cmd.status().expect("run");
         let took = started.elapsed();
-        assert!(took.as_secs() < 20, "run took {took:?}");
+        assert!(took.as_secs() < 5, "run took {took:?}");
         let stdout = fs::read(&out_path).expect("stdout");
         let stderr = fs::read(&err_path).expect("stderr");
         let mut files = BTreeMap::new();
