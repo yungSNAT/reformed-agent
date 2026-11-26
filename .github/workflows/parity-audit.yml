@@ -70,9 +70,9 @@ jobs:
           test ! -e "$report"
           cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref "$UPSTREAM_SHA" --local-ref "$LOCAL_SHA" --report-path "$report" || test "$?" -eq 1
           jq -er 'select(.summary.missing_total | type == "number") | "- Upstream surface files missing locally: `\(.summary.missing_total)` of `\(.summary.upstream_file_count)`"' "$report" >> "$GITHUB_STEP_SUMMARY"
-      # The harness imports upstream's hermes_cli.commands, which needs upstream's
-      # core dependencies. Upstream's uv.lock applies its dependency overrides,
-      # which pip cannot, and the venv keeps them off the system Python.
+      # The harness shim runs the Rust harness, which reads upstream's
+      # hermes_cli/commands.py as source; the venv only supplies the Python
+      # that runs the shim. tests/test_release_readiness_summary.py pins these steps.
       - name: Install uv
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
       - name: Install upstream dependencies for the golden harness
