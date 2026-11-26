@@ -153,6 +153,21 @@ hermes-ultra import-agent codex --apply          # the same for Codex
 - `CLAUDE.md`, or Codex's `AGENTS.md` and `memories/*.md`, become entries in `memories/MEMORY.md`, within the memory tool's 2,200-character limit and scan; the old file is backed up first. MCP servers go into `config.yaml` (and `mcp_servers.json` for a command's arguments and environment); Codex's `env_http_headers` and `bearer_token_env_var` become `${VAR}` references. Each skill folder with a `SKILL.md` goes into `skills/claude-code-imports/` or `skills/codex-imports/`.
 - It replaces nothing: a server or skill this home already has is listed and left alone. Environment variables and headers whose names look like secrets are left out and named, as are a memory entry or a skill that looks like it holds a credential; add them yourself. Permission rules and custom slash commands have no equivalent here and are listed as skipped.
 
+### Embedding in another program
+
+[`hermes_agent::embed`](crates/hermes-agent/src/embed.rs) runs the agent loop inside another Rust program, with that program's own provider and tools:
+
+```rust
+let agent = Agent::builder(provider)              // any LlmProvider
+    .model("gpt-4o-mini")
+    .tool(schema, |args| Ok(answer(args)))        // the program's own tools
+    .build()?;
+let reply = agent.ask("What time is it?").await?; // reply.text, reply.ending
+```
+
+- By default the agent runs in its own empty home, removed when it is dropped, and reads nothing of the person running the program: no `SOUL.md`, memories or skills from `HERMES_HOME`, and no `AGENTS.md`, `@file:` references, code index or LSP notes from the working folder. It posts no checkpoint anywhere. `.home(path)` points it at a Hermes home instead.
+- A model is required, and `max_turns` defaults to 30. `reply.ending` says whether the run finished or stopped at the turn limit, the cost cap or an interrupt.
+
 ## Against Hermes Agent
 
 What Reformed has against [Hermes Agent v0.23.1](https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.1) (`3b421578`, released 10 November 2026), checked on 16 November 2026 against this repository's `main` and Hermes's source at that tag. Each cell links its evidence.
