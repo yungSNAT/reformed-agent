@@ -472,7 +472,7 @@ fn rpc_error(id: Value, code: i64, message: String) -> Value {
 }
 
 /// Runs one request's method; the error is a JSON-RPC code and message.
-type Call<'a> = dyn Fn(&str, Value) -> Reply + 'a;
+type Call<'a> = dyn Fn(&str, Value) -> Reply + Sync + 'a;
 
 /// The reply to one inbound frame: one request or a JSON-RPC batch of them, run in order.
 async fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {

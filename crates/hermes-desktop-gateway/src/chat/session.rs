@@ -42,7 +42,7 @@ pub(crate) struct Budget {
 /// Takes `bytes` from `counter` if the total stays within `cap`.
 fn reserve(counter: &AtomicUsize, bytes: usize, cap: usize) -> bool {
     counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
             held.checked_add(bytes).filter(|total| *total <= cap)
         })
         .is_ok()
