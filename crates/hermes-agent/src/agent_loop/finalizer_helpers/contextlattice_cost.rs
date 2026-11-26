@@ -347,19 +347,32 @@ mod non_anthropic_cache_pricing_tests {
         }
     }
 
+    /// The table lists a subscription route at no charge; the estimate stays at or above the
+    /// earlier fallback: gpt-4o at $2.50 input and $10 output, cached reads at a tenth of input.
     #[test]
-    fn a_subscription_route_is_not_priced_at_zero() {
-        let usage = UsageStats {
-            prompt_tokens: 100_000,
-            completion_tokens: 1_000,
-            ..UsageStats::default()
-        };
+    fn a_subscription_route_is_never_priced_below_the_earlier_fallback() {
         let config = AgentConfig {
             provider: Some("openai-codex".into()),
             ..AgentConfig::default()
         };
-        let cost = estimate_usage_cost_usd(&usage, "gpt-4o", &config);
-        assert!(cost.unwrap() > 0.0, "{cost:?}");
+        for cache_read_tokens in [0, 90_000] {
+            let usage = UsageStats {
+                prompt_tokens: 100_000,
+                completion_tokens: 1_000,
+                cache_read_tokens,
+                ..UsageStats::default()
+            };
+            let uncached = (100_000 - cache_read_tokens) as f64;
+            let earlier =
+                (uncached * 2.5 + cache_read_tokens as f64 * 0.25 + 1_000.0 * 10.0) / 1_000_000.0;
+            for model in ["gpt-4o", "openai:gpt-4o", "openai/gpt-4o"] {
+                let cost = estimate_usage_cost_usd(&usage, model, &config).unwrap();
+                assert!(
+                    cost >= earlier - 1e-12,
+                    "{model}, {cache_read_tokens} cached: {cost} < {earlier}"
+                );
+            }
+        }
     }
 
     /// What the cost guard and the session cap are given is never below the list price
