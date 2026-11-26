@@ -155,7 +155,11 @@ mod tests {
 
     /// Stands in for the credential guard: admits the caller the request names.
     async fn admit_as(mut request: Request, next: Next) -> Response {
-        let caller = match request.headers().get("x-caller").and_then(|v| v.to_str().ok()) {
+        let caller = match request
+            .headers()
+            .get("x-caller")
+            .and_then(|v| v.to_str().ok())
+        {
             Some("browser") => Some(Caller::Browser { generation: 1 }),
             Some("native") => Some(Caller::Native),
             Some("token") => Some(Caller::Token),

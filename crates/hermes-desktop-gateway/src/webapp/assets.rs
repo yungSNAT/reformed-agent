@@ -202,9 +202,7 @@ fn resolve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Result<Page, Re
     };
     match file {
         Some(file) => {
-            let meta = file
-                .metadata()
-                .map_err(unreadable)?;
+            let meta = file.metadata().map_err(unreadable)?;
             if (meta.dev(), meta.ino()) == (index.dev(), index.ino()) {
                 return entry(&root, boot);
             }
