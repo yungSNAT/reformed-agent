@@ -8,7 +8,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use axum::http::StatusCode;
 
-use crate::chat::profiles::install_root;
 use crate::webapp::api::{ApiError, Caller, Ctx};
 
 const LOCK_WAIT: Duration = Duration::from_secs(3);
@@ -40,6 +39,16 @@ pub(crate) fn home(ctx: &Ctx) -> PathBuf {
 pub(crate) fn machine_root(ctx: &Ctx) -> PathBuf {
     let root = install_root(&home(ctx));
     std::fs::canonicalize(&root).unwrap_or(root)
+}
+
+/// The home itself, or its grandparent when the home is a profile's folder `<root>/profiles/<name>`.
+pub(crate) fn install_root(home: &Path) -> PathBuf {
+    match home.parent() {
+        Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
+            parent.parent().unwrap_or(parent).to_path_buf()
+        }
+        _ => home.to_path_buf(),
+    }
 }
 
 /// Runs file work on the blocking pool; a panic in it is a 500.

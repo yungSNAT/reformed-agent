@@ -233,6 +233,18 @@ fn an_unreadable_store_is_busy_not_empty() {
     ));
 }
 
+#[test]
+fn the_machine_root_climbs_out_of_a_profile_home_only() {
+    use crate::webapp::routes::store::install_root;
+    let root = Path::new("/r");
+    assert_eq!(install_root(root), root);
+    assert_eq!(install_root(&root.join("profiles").join("x")), root);
+    assert_eq!(
+        install_root(&root.join("other").join("x")),
+        root.join("other").join("x")
+    );
+}
+
 // ---- Desktop plugins ------------------------------------------------------------------------
 
 fn plugins(dir: &tempfile::TempDir) -> PathBuf {
