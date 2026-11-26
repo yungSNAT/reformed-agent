@@ -413,6 +413,18 @@ async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool) {
         canonical,
     };
     let call = |method: &str, params: Value| chat.call(&conn, method, params);
+    serve_socket(&mut socket, &mut events, &call, chat.write_timeout()).await;
+    chat.disconnect(conn.id);
+}
+
+/// Answers `socket`'s requests with `call` and writes `events`, each frame within
+/// `write_timeout` of being queued, until either side closes.
+async fn serve_socket(
+    socket: &mut WebSocket,
+    events: &mut mpsc::UnboundedReceiver<Outgoing>,
+    call: &Call<'_>,
+    write_timeout: std::time::Duration,
+) {
     loop {
         let inbound = tokio::select! {
             biased;
@@ -423,10 +435,10 @@ async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool) {
             Ok(event) => Some(event),
             Err(inbound) => match inbound {
                 Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
-                    reply_to(&text, &call).await.map(Outgoing::from)
+                    reply_to(&text, call).await.map(Outgoing::from)
                 }
                 Some(Ok(Message::Text(text))) => match attach_request(&text) {
-                    Some(request) => reply_to_one(request, &call).await.map(Outgoing::from),
+                    Some(request) => reply_to_one(request, call).await.map(Outgoing::from),
                     None => break,
                 },
                 Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,
@@ -435,14 +447,13 @@ async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool) {
             },
         };
         if let Some(outgoing) = frame {
-            let deadline = outgoing.queued + chat.write_timeout();
+            let deadline = outgoing.queued + write_timeout;
             let text = axum::extract::ws::Utf8Bytes::from(&*outgoing.text);
             if !write_by(deadline, socket.send(Message::Text(text))).await {
                 break;
             }
         }
     }
-    chat.disconnect(conn.id);
 }
 
 /// Runs `write` until it finishes or `deadline` passes: true if it finished first. `write` is

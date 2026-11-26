@@ -270,7 +270,7 @@ impl Chat {
     }
 
     fn new_session(&self) -> Arc<LiveSession> {
-        Arc::new(LiveSession::new(Arc::clone(&self.budget)))
+        LiveSession::new(Arc::clone(&self.budget))
     }
 
     /// Stops streaming to connection `id`, which has closed.
@@ -526,6 +526,7 @@ impl Chat {
         // prompt.
         let images = std::mem::take(&mut *session.images());
         let prompt = Queued {
+            owner: conn.id,
             text,
             images,
             admission: admission.map(Box::new),
@@ -582,6 +583,7 @@ impl Chat {
                     id: id.clone(),
                     turn_id: uuid::Uuid::new_v4().simple().to_string(),
                     slot: Some(Arc::new(slot)),
+                    owner: prompt.owner,
                     admission: prompt.admission.map(|admission| *admission),
                 };
                 turn.run(prompt.text, prompt.images, &session).await;
@@ -770,6 +772,8 @@ struct Turn {
     turn_id: String,
     /// The turn's slot, sent with its last event.
     slot: Option<Arc<OwnedSemaphorePermit>>,
+    /// The connection that prompted the turn.
+    owner: u64,
     /// Set on the canonical wire.
     admission: Option<Admission>,
 }
@@ -787,7 +791,7 @@ impl Turn {
             admission.stamp(&mut params);
         }
         // With no connection left the turn still runs and is saved.
-        session.publish(params, slot);
+        session.publish(params, slot.map(|slot| (self.owner, slot)));
     }
 
     async fn run(mut self, text: String, images: Vec<StagedImage>, session: &Arc<LiveSession>) {

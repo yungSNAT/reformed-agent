@@ -54,6 +54,8 @@ fn release(counter: &AtomicUsize, bytes: usize) {
 
 /// A prompt waiting for the session's running turn.
 pub(super) struct Queued {
+    /// The connection that sent it.
+    pub(super) owner: u64,
     pub(super) text: String,
     pub(super) images: Vec<StagedImage>,
     pub(super) admission: Option<Box<Admission>>,
@@ -116,12 +118,12 @@ pub(crate) struct LiveSession {
 }
 
 impl LiveSession {
-    pub(super) fn new(budget: Arc<Budget>) -> Self {
-        Self {
+    pub(super) fn new(budget: Arc<Budget>) -> Arc<Self> {
+        Arc::new(Self {
             hub: Mutex::default(),
             budget,
             images: Mutex::default(),
-        }
+        })
     }
 
     fn hub(&self) -> MutexGuard<'_, Hub> {
@@ -148,9 +150,14 @@ impl LiveSession {
     }
 
     /// Sends one event, its `params` stamped with the next seq, to every connection and keeps
-    /// it in the log. `slot` is a turn's slot, freed once every connection's copy is written or
-    /// dropped.
-    pub(crate) fn publish(&self, mut params: Value, slot: Option<Arc<OwnedSemaphorePermit>>) {
+    /// it in the log. `slot` is a turn's slot and the connection that prompted the turn, freed
+    /// once every connection's copy is written or dropped.
+    pub(crate) fn publish(
+        &self,
+        mut params: Value,
+        slot: Option<(u64, Arc<OwnedSemaphorePermit>)>,
+    ) {
+        let slot = slot.map(|(_, permit)| permit);
         let mut hub = self.hub();
         hub.seq += 1;
         let seq = hub.seq;
@@ -305,7 +312,7 @@ mod tests {
     use serde_json::json;
     use tokio::sync::mpsc;
 
-    fn session() -> LiveSession {
+    fn session() -> Arc<LiveSession> {
         LiveSession::new(Arc::default())
     }
 
@@ -375,6 +382,7 @@ mod tests {
 
     fn prompt(text: &str) -> Queued {
         Queued {
+            owner: 0,
             text: text.into(),
             images: Vec::new(),
             admission: None,
