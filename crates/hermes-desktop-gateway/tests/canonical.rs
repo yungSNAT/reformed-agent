@@ -380,6 +380,13 @@ async fn canonical_requests_refuse_another_profile_unknown_sessions_and_launch_o
         .request("session.resume", json!({"session_id": "no-such-session"}))
         .await;
     assert_eq!(refused["error"]["code"], 4001, "{refused}");
+    // A request id longer than any the desktop makes is refused, not remembered.
+    let refused = client
+        .request("session.create", json!({"request_id": "r".repeat(129)}))
+        .await;
+    assert_eq!(refused["error"]["code"], 4001, "{refused}");
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("invalid_params"), "{refused}");
     // A submission id longer than any the desktop makes is refused before it is queued.
     let made = client
         .request("session.create", json!({"request_id": "r-3"}))

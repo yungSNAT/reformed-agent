@@ -639,12 +639,14 @@ mod tests {
         ));
         assert!(matches!(live.next(&mut None), Next::Wait));
         assert_eq!(live.state().2, 1, "no generation before a slot");
+        assert!(!live.state().0, "no turn runs whilst the next waits for a slot");
         let freed = Arc::new(tokio::sync::Semaphore::new(1));
         let mut slot = Arc::clone(&freed).try_acquire_owned().ok();
         let Next::Run(first, _) = live.next(&mut slot) else {
             panic!("a slot was given");
         };
         assert_eq!((first.text.as_str(), live.state().2), ("q0", 2));
+        assert!(live.state().0, "the next turn runs once it has a slot");
         loop {
             let mut slot = Arc::clone(&freed).try_acquire_owned().ok();
             if matches!(live.next(&mut slot), Next::Idle) {
