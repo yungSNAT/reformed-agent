@@ -221,14 +221,29 @@ fn an_orchestrator_gets_the_tools_only_by_naming_the_kanban_toolset() {
     assert_eq!(names(&config).len(), 8);
 }
 
-#[test]
-fn cron_runs_never_get_kanban_tools() {
-    for tool in TOOLS {
-        assert!(
-            hermes_cron::CRON_HARD_DISABLED_TOOLS.contains(&tool.name()),
-            "{} reaches cron runs",
-            tool.name()
-        );
+#[tokio::test(flavor = "multi_thread")]
+async fn cron_runs_never_get_kanban_tools() {
+    let fx = fixture();
+    let registry = ToolRegistry::new();
+    register_kanban_tools_at(&registry, fx.path.clone(), worker("run-a"), false);
+    let mut config = hermes_config::GatewayConfig::default();
+    // Even a cron plan that names the toolset gets none of it.
+    config
+        .platform_toolsets
+        .insert("cron".to_string(), vec![KANBAN_TOOLSET.to_string()]);
+    let offered = hermes_tool_planning::resolve_platform_tool_schemas(
+        &config,
+        "cron",
+        &Arc::new(registry.clone()),
+    );
+    assert!(offered.iter().any(|schema| schema.name == "kanban_show"));
+    let bridged = crate::app::bridge_tool_registry_for_cron(
+        &config,
+        &registry,
+        hermes_tools::ToolOverrides::new(),
+    );
+    for name in kanban_tool_names() {
+        assert!(bridged.get(name).is_none(), "{name} reaches cron runs");
     }
 }
 

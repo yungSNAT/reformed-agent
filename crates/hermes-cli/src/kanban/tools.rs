@@ -288,6 +288,11 @@ pub fn offer_kanban_worker_tools(schemas: &mut Vec<ToolSchema>, binding: Option<
     schemas.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
+/// Names of every kanban tool.
+pub fn kanban_tool_names() -> impl Iterator<Item = &'static str> {
+    TOOLS.into_iter().map(Tool::name)
+}
+
 fn refused(message: impl Into<String>) -> ToolError {
     ToolError::InvalidParams(format!("{} Nothing changed.", message.into()))
 }

@@ -72,21 +72,7 @@ const DEFAULT_SCRIPT_SHELL: &str = "sh";
 const MAX_SCRIPT_OUTPUT_CHARS: usize = 64_000;
 const CRON_PLATFORM: &str = "cron";
 const CRON_DEFAULT_TOOLSET: &str = "hermes-cron";
-/// The kanban tools are here because a cron job fired inside a dispatched
-/// kanban worker must not act as that worker.
-pub const CRON_HARD_DISABLED_TOOLS: &[&str] = &[
-    "cronjob",
-    "send_message",
-    "clarify",
-    "kanban_show",
-    "kanban_list",
-    "kanban_complete",
-    "kanban_block",
-    "kanban_create",
-    "kanban_link",
-    "kanban_unblock",
-    "kanban_attachments",
-];
+pub const CRON_HARD_DISABLED_TOOLS: &[&str] = &["cronjob", "send_message", "clarify"];
 
 #[derive(Debug, Clone)]
 struct ScriptControl {
