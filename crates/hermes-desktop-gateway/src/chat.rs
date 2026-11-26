@@ -83,7 +83,6 @@ pub(crate) enum Origin {
     #[default]
     Remote,
     /// A browser session of the Webapp.
-    #[allow(dead_code, reason = "set by the Webapp's listener")]
     Webapp,
     /// This machine's desktop or terminal UI: the loopback token socket or local mode's ticket
     /// socket (`upgrade` in lib.rs).
