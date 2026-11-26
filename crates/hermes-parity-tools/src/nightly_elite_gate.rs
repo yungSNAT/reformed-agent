@@ -10,6 +10,9 @@ use std::fs::{self, File};
 use std::io::{self, Read as _, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use clap::Args;
 use jiff::Timestamp;
@@ -43,7 +46,7 @@ pub struct NightlyEliteGateArgs {
 }
 
 /// `${NAME:-default}`: an unset or empty variable takes the default.
-pub(crate) fn env_or(name: &str, default: &str) -> String {
+fn env_or(name: &str, default: &str) -> String {
     match std::env::var(name) {
         Ok(value) if !value.is_empty() => value,
         _ => default.to_string(),
@@ -70,17 +73,23 @@ fn basename(path: &str) -> String {
     trimmed.rsplit('/').next().unwrap_or(trimmed).to_string()
 }
 
-/// Repository root: the argument as given, or the current directory.
-pub(crate) fn repo_root_arg(raw: Option<&str>) -> Result<String, String> {
-    match raw {
-        Some(root) => Ok(root.to_string()),
-        None => std::env::current_dir()
-            .map(|dir| dir.to_string_lossy().into_owned())
-            .map_err(|e| format!("cannot read the current directory: {e}")),
+/// A path argument made absolute against the starting directory, so children
+/// that run inside the repository root and a launchd plist both read it right.
+pub(crate) fn absolute_arg(flag: &str, raw: &str) -> Result<String, String> {
+    if raw.is_empty() {
+        return Err(format!("missing value for {flag}"));
     }
+    std::path::absolute(raw)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|e| format!("{flag} {raw}: {e}"))
 }
 
-pub(crate) fn json_string(text: &str) -> String {
+/// Repository root: the argument made absolute, or the current directory.
+pub(crate) fn repo_root_arg(raw: Option<&str>) -> Result<String, String> {
+    absolute_arg("--repo-root", raw.unwrap_or("."))
+}
+
+fn json_string(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string())
 }
 
@@ -98,46 +107,68 @@ pub(crate) fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or(1)
 }
 
+/// How long a step's leftover background processes may keep writing to the
+/// gate's output after the step itself exits. The script's `tee` waited only
+/// for the step, so a server or daemon a step leaves running must not hold
+/// the gate either.
+const LEFTOVER_OUTPUT_GRACE: Duration = Duration::from_secs(1);
+
 /// Writes every byte to this command's stdout and to the log file.
+#[derive(Clone)]
 struct Tee {
-    log: File,
+    log: Arc<Mutex<File>>,
 }
 
 impl Tee {
-    fn bytes(&mut self, data: &[u8]) {
+    fn bytes(&self, data: &[u8]) {
+        let mut log = self.log.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = io::stdout().lock();
         let _ = out.write_all(data);
         let _ = out.flush();
-        let _ = self.log.write_all(data);
+        let _ = log.write_all(data);
     }
 
-    fn line(&mut self, text: &str) {
-        self.bytes(format!("{text}\n").as_bytes());
+    fn line(&self, text: &str) {
+        self.bytes(
+            format!(
+                "{text}
+"
+            )
+            .as_bytes(),
+        );
     }
 
-    /// Run a step with stdout and stderr joined into the tee; returns its exit code.
-    fn run(&mut self, cwd: &Path, program: &str, args: &[&str]) -> i32 {
+    /// Run a step with stdout and stderr joined into the tee; returns its exit
+    /// code once the step exits, without waiting for processes it left behind.
+    fn run(&self, cwd: &Path, program: &str, args: &[&str]) -> i32 {
         let spawned = io::pipe().and_then(|(mut reader, writer)| {
-            let child = Command::new(program)
+            // The parent's copies of the writer drop with the Command.
+            let mut child = Command::new(program)
                 .args(args)
                 .current_dir(cwd)
                 .stdin(Stdio::inherit())
                 .stdout(writer.try_clone()?)
                 .stderr(writer)
-                .spawn();
-            // The parent's copies of the writer drop with the Command, so the
-            // reader sees end of file once the child and its children exit.
-            let mut child = child?;
-            let mut buf = [0u8; 8192];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => self.bytes(&buf[..n]),
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Err(e) => return Err(e),
+                .spawn()?;
+            let tee = self.clone();
+            let (done_tx, done_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => tee.bytes(&buf[..n]),
+                        Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                        Err(_) => break,
+                    }
                 }
-            }
-            child.wait()
+                let _ = done_tx.send(());
+            });
+            let status = child.wait()?;
+            // Output still in the pipe arrives within the grace period; a
+            // leftover holder of the pipe is left to its detached reader.
+            let _ = done_rx.recv_timeout(LEFTOVER_OUTPUT_GRACE);
+            Ok(status)
         });
         match spawned {
             Ok(status) => exit_code(status),
@@ -149,7 +180,7 @@ impl Tee {
     }
 
     /// `$(git ...)`: stdout captured with trailing newlines removed, stderr to the tee.
-    fn capture_git(&mut self, cwd: &Path, args: &[&str]) -> String {
+    fn capture_git(&self, cwd: &Path, args: &[&str]) -> String {
         match Command::new("git")
             .args(args)
             .current_dir(cwd)
@@ -192,7 +223,7 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    fn gate(&mut self, tee: &mut Tee) -> i32 {
+    fn gate(&mut self, tee: &Tee) -> i32 {
         tee.line(&format!("[elite-gate] started at {}", utc_now()));
         tee.line(&format!("[elite-gate] repo={}", self.repo_root));
         if !self.root.is_dir() {
@@ -313,7 +344,7 @@ fn write_or_warn(path: &str, contents: String) {
 pub fn run(args: NightlyEliteGateArgs) -> Result<i32, String> {
     let repo_root = repo_root_arg(args.repo_root.as_deref())?;
     let log_dir = match &args.log_dir {
-        Some(dir) => dir.clone(),
+        Some(dir) => absolute_arg("--log-dir", dir)?,
         None => format!("{}/.hermes-agent-ultra/logs/elite-gate", home_dir()?),
     };
     let sink_order = env_or(
@@ -346,6 +377,9 @@ pub fn run(args: NightlyEliteGateArgs) -> Result<i32, String> {
     let body_path = format!("{log_dir}/nightly-elite-gate-summary-{stamp}.md");
     let meta_path = format!("{log_dir}/nightly-elite-gate-summary-{stamp}.json");
     let log = File::create(&log_path).map_err(|e| format!("{log_path}: {e}"))?;
+    let tee = Tee {
+        log: Arc::new(Mutex::new(log)),
+    };
 
     let root = PathBuf::from(&repo_root);
     let mut run = Run {
@@ -356,7 +390,7 @@ pub fn run(args: NightlyEliteGateArgs) -> Result<i32, String> {
         summary_path: summary_path.clone(),
         failed_step: "bootstrap",
     };
-    let rc = run.gate(&mut Tee { log });
+    let rc = run.gate(&tee);
     let failed_step = run.failed_step;
 
     let head_sha = Command::new("git")
@@ -467,6 +501,18 @@ mod tests {
         assert_eq!(basename("repo"), "repo");
         assert_eq!(basename("/"), "/");
         assert_eq!(basename(""), "");
+    }
+
+    #[test]
+    fn path_arguments_become_absolute_and_empty_ones_fail() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let rel = absolute_arg("--log-dir", "logs/x").expect("absolute");
+        assert_eq!(rel, cwd.join("logs/x").to_string_lossy());
+        assert_eq!(repo_root_arg(None).expect("cwd"), cwd.to_string_lossy());
+        assert_eq!(
+            absolute_arg("--repo-root", ""),
+            Err("missing value for --repo-root".to_string())
+        );
     }
 
     #[test]

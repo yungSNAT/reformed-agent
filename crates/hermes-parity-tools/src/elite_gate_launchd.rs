@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use clap::Args;
 use regex::Regex;
 
-use crate::nightly_elite_gate::{exit_code, home_dir, repo_root_arg};
+use crate::nightly_elite_gate::{absolute_arg, exit_code, home_dir, repo_root_arg};
 
 const DEFAULT_PREFIX: &str = "com.hermes_agent_ultra";
 
@@ -79,14 +79,14 @@ fn uid() -> Result<String, String> {
 
 fn agents_dir(raw: Option<&str>) -> Result<String, String> {
     match raw {
-        Some(dir) => Ok(dir.to_string()),
+        Some(dir) => absolute_arg("--agents-dir", dir),
         None => Ok(format!("{}/Library/LaunchAgents", home_dir()?)),
     }
 }
 
 fn log_dir(raw: Option<&str>) -> Result<String, String> {
     match raw {
-        Some(dir) => Ok(dir.to_string()),
+        Some(dir) => absolute_arg("--log-dir", dir),
         None => Ok(format!("{}/.hermes-agent-ultra/logs", home_dir()?)),
     }
 }
@@ -119,27 +119,55 @@ fn last_component(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-fn plist(label: &str, repo_root: &str, log_dir: &str, hour: &str, minute: &str) -> String {
-    let program: String = [
-        "/usr/bin/env".to_string(),
-        "cargo".to_string(),
-        "run".to_string(),
-        "--locked".to_string(),
-        "-q".to_string(),
-        "--manifest-path".to_string(),
-        format!("{repo_root}/Cargo.toml"),
-        "-p".to_string(),
-        "hermes-parity-tools".to_string(),
-        "--".to_string(),
-        "run-nightly-elite-gate".to_string(),
-        "--repo-root".to_string(),
-        repo_root.to_string(),
-        "--log-dir".to_string(),
-        format!("{log_dir}/elite-gate"),
-    ]
-    .iter()
-    .map(|arg| format!("    <string>{}</string>\n", xml(arg)))
-    .collect();
+/// The first executable `name` on a `PATH` value, as an absolute path.
+fn find_program(path_var: &str, name: &str) -> Option<String> {
+    path_var
+        .split(':')
+        .filter(|dir| dir.starts_with('/'))
+        .map(|dir| std::path::Path::new(dir).join(name))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.to_string_lossy().into_owned())
+}
+
+/// How the plist starts cargo: the installer's own `cargo` by absolute path,
+/// because launchd's `PATH` below lacks `~/.cargo/bin`; else `env cargo`.
+fn cargo_launcher() -> Vec<String> {
+    match find_program(&std::env::var("PATH").unwrap_or_default(), "cargo") {
+        Some(cargo) => vec![cargo],
+        None => vec!["/usr/bin/env".to_string(), "cargo".to_string()],
+    }
+}
+
+fn plist(
+    label: &str,
+    launcher: &[String],
+    repo_root: &str,
+    log_dir: &str,
+    hour: u32,
+    minute: u32,
+) -> String {
+    let program: String = launcher
+        .iter()
+        .cloned()
+        .chain([
+            "run".to_string(),
+            "--locked".to_string(),
+            "-q".to_string(),
+            "--manifest-path".to_string(),
+            format!("{repo_root}/Cargo.toml"),
+            "-p".to_string(),
+            "hermes-parity-tools".to_string(),
+            "--".to_string(),
+            "run-nightly-elite-gate".to_string(),
+            "--repo-root".to_string(),
+            repo_root.to_string(),
+            "--log-dir".to_string(),
+            format!("{log_dir}/elite-gate"),
+        ])
+        .collect::<Vec<_>>()
+        .iter()
+        .map(|arg| format!("    <string>{}</string>\n", xml(arg)))
+        .collect();
     let env = [
         (
             "PATH",
@@ -225,17 +253,24 @@ pub fn run_install(args: InstallArgs) -> Result<i32, String> {
     }
     fs::write(
         &plist_path,
-        plist(&label, &repo_root, &logs, &args.hour, &args.minute),
+        plist(&label, &cargo_launcher(), &repo_root, &logs, hour, minute),
     )
     .map_err(|e| format!("{plist_path}: {e}"))?;
 
     if !args.no_load {
         let domain = format!("gui/{}", uid()?);
         bootout(&domain, &plist_path);
-        let status = Command::new("launchctl")
+        let status = match Command::new("launchctl")
             .args(["bootstrap", &domain, &plist_path])
             .status()
-            .map_err(|e| format!("launchctl: {e}"))?;
+        {
+            Ok(status) => status,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                eprintln!("launchctl: command not found");
+                return Ok(127);
+            }
+            Err(e) => return Err(format!("launchctl: {e}")),
+        };
         if !status.success() {
             return Ok(exit_code(status));
         }
@@ -390,8 +425,23 @@ mod tests {
     }
 
     #[test]
+    fn cargo_is_found_by_absolute_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin = dir.path().join("cargo");
+        fs::write(&bin, "").expect("write");
+        let root = dir.path().to_string_lossy().into_owned();
+        let path_var = format!("relative:/nonexistent:{root}");
+        assert_eq!(
+            find_program(&path_var, "cargo"),
+            Some(bin.to_string_lossy().into_owned())
+        );
+        assert_eq!(find_program("relative:/nonexistent", "cargo"), None);
+    }
+
+    #[test]
     fn plist_escapes_xml_and_runs_the_rust_gate() {
-        let text = plist("p.nightly_elite_gate", "/r/a&b", "/l", "3", "30");
+        let launcher = vec!["/usr/bin/env".to_string(), "cargo".to_string()];
+        let text = plist("p.nightly_elite_gate", &launcher, "/r/a&b", "/l", 3, 30);
         assert!(text.contains("<string>/r/a&amp;b/Cargo.toml</string>"));
         assert!(text.contains("<string>run-nightly-elite-gate</string>"));
         assert!(text.contains("<string>a&amp;b</string>"));

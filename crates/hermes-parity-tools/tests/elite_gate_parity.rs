@@ -34,6 +34,9 @@ if [[ -n "${FAKE_CARGO_FAIL:-}" && "$*" == *"$FAKE_CARGO_FAIL"* ]]; then
   echo "fake cargo failing: $*" >&2
   exit "${FAKE_CARGO_RC:-1}"
 fi
+if [[ -n "${FAKE_CARGO_LEAK:-}" && "$*" == "test -p hermes-cli" ]]; then
+  ( sleep 30 & )
+fi
 echo "fake cargo ok: $*"
 echo "fake cargo note" >&2
 "#;
@@ -120,16 +123,26 @@ impl Sandbox {
     }
 
     /// Run one implementation and return its masked record.
+    /// stdout and stderr go to files, so a process left holding them cannot
+    /// stall the record; a run that takes 20 seconds or more fails the case.
     fn record(&self, mut cmd: Command) -> String {
-        let out = cmd.output().expect("run");
+        let (out_path, err_path) = (self.root.join("stdout.txt"), self.root.join("stderr.txt"));
+        cmd.stdout(fs::File::create(&out_path).expect("stdout file"))
+            .stderr(fs::File::create(&err_path).expect("stderr file"));
+        let started = std::time::Instant::now();
+        let status = cmd.status().expect("run");
+        let took = started.elapsed();
+        assert!(took.as_secs() < 20, "run took {took:?}");
+        let stdout = fs::read(&out_path).expect("stdout");
+        let stderr = fs::read(&err_path).expect("stderr");
         let mut files = BTreeMap::new();
         collect(&self.root.join("home"), &self.root, &mut files);
         let calls = fs::read_to_string(self.root.join("calls.log")).unwrap_or_default();
         let mut text = format!(
             "exit={:?}\n--- stdout\n{}--- stderr\n{}--- calls\n{calls}",
-            out.status.code(),
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr),
+            status.code(),
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr),
         );
         for (name, body) in files {
             text.push_str(&format!("--- file {name}\n{body}"));
@@ -289,6 +302,12 @@ fn nightly_gate_reports_the_failing_last_step() {
         ("FAKE_CARGO_RC", "7".to_string()),
     ];
     nightly("nightly_audit_fail", &["--skip-pull"], env, nothing);
+}
+
+#[test]
+fn nightly_gate_does_not_wait_for_processes_a_step_leaves_running() {
+    let env = vec![("FAKE_CARGO_LEAK", "1".to_string())];
+    nightly("nightly_leftover", &["--skip-pull"], env, nothing);
 }
 
 #[test]
