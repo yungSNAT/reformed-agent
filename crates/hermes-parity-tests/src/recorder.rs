@@ -191,13 +191,14 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
     let output = shim_command(python, py_root)
         .output()
         .map_err(|error| failure(format!("cannot run {python}: {error}\n")))?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    // Python ends lines with CRLF on Windows; `Recorded` holds LF, as the binary restores them.
+    let stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n");
     if !output.status.success() {
         return Err(failure(stderr));
     }
     // The results are the last line; anything the adapter printed comes before it.
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let body = stdout.trim_end_matches(['\r', '\n']);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let body = stdout.trim_end_matches('\n');
     let (printed, last) = body
         .rfind('\n')
         .map_or(("", body), |at| (&stdout[..=at], &body[at + 1..]));
@@ -222,13 +223,11 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
 pub fn record(py_root: &Path, python: &str) -> Recorded {
     let mut cases = checkpoint_cases();
     let source = py_root.display().to_string();
-    let (mut printed, mut stderr) = (String::new(), String::new());
-    if py_root.join("agent").join("anthropic_adapter.py").is_file() {
+    let (printed, stderr) = if py_root.join("agent").join("anthropic_adapter.py").is_file() {
         let upstream = match upstream_results(python, py_root) {
             Ok(upstream) => upstream,
             Err(failed) => return failed,
         };
-        (printed, stderr) = (upstream.printed, upstream.stderr);
         cases.extend(anthropic_inputs().into_iter().zip(upstream.results).map(
             |((op, input), py)| Case {
                 op,
@@ -236,11 +235,13 @@ pub fn record(py_root: &Path, python: &str) -> Recorded {
                 py: Output::Json(py),
             },
         ));
+        (upstream.printed, upstream.stderr)
     } else {
-        stderr = format!(
+        let note = format!(
             "Note: Python Hermes not found at {source} \u{2014} only checkpoint hash cases emitted.\n"
         );
-    }
+        (String::new(), note)
+    };
     Recorded {
         stdout: printed + &python_json(&Recording { source, cases }),
         stderr,
