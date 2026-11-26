@@ -1007,6 +1007,7 @@
         CostLimit,
         UnknownTool,
         SemanticRetry,
+        SemanticRetryFailure { retryable: bool },
         FinalizerRewrite,
         EmptyStop,
         PartialInterrupt,
@@ -1118,7 +1119,10 @@
                     finish_reason: Some(finish_reason.into()),
                 });
             }
-            if !matches!(self.scenario, StreamRetryScenario::SemanticRetry) {
+            if !matches!(
+                self.scenario,
+                StreamRetryScenario::SemanticRetry | StreamRetryScenario::SemanticRetryFailure { .. }
+            ) {
                 return Err(AgentError::LlmApi("unused".to_string()));
             }
             assert!(messages.iter().any(|message| {
@@ -1127,6 +1131,14 @@
             }));
             let mut retries = self.semantic_retries.lock().unwrap();
             *retries += 1;
+            if let StreamRetryScenario::SemanticRetryFailure { retryable } = self.scenario {
+                let message = if retryable {
+                    "HTTP 503 during fixture semantic recovery"
+                } else {
+                    "invalid request during fixture semantic recovery"
+                };
+                return Err(AgentError::LlmApi(message.into()));
+            }
             let (text, finish_reason, prompt_tokens, completion_tokens) = if *retries == 1 {
                 ("", "length", 4, 2)
             } else {
@@ -1175,7 +1187,7 @@
                     Ok(stream_chunk_tool_args(0, "{}")),
                     Ok(stream_chunk_finish("tool_calls")),
                 ],
-                StreamRetryScenario::SemanticRetry => vec![
+                StreamRetryScenario::SemanticRetry | StreamRetryScenario::SemanticRetryFailure { .. } => vec![
                     Ok(StreamChunk {
                         delta: Some(hermes_core::StreamDelta {
                             content: None,
@@ -1401,6 +1413,58 @@
         assert_eq!(notices.len(), 2);
         assert!(notices[0].starts_with("Reasoning-only response"));
         assert!(notices[1].starts_with("Empty assistant response"));
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_recovery_propagates_failure_or_interrupts_during_backoff() {
+        for retryable in [false, true] {
+            let mut config = AgentConfig {
+                model: "openai:fixture-model".into(),
+                thinking_prefill_max_retries: 1,
+                empty_content_max_retries: 1,
+                skip_memory: true,
+                skip_context_files: true,
+                ..AgentConfig::default()
+            };
+            config.retry.max_retries = 1;
+            config.retry.base_delay_ms = 1;
+            let _home = isolate_route_learning_home(&mut config);
+            let provider = Arc::new(StreamRetryProvider::new(
+                StreamRetryScenario::SemanticRetryFailure { retryable },
+            ));
+            let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+            let interrupt = agent.interrupt.clone();
+            let agent = agent.with_callbacks(AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle" && message.starts_with("LLM API retry in ") {
+                        interrupt.interrupt(None);
+                    }
+                })),
+                ..Default::default()
+            });
+            let result = agent
+                .run_stream(
+                    vec![Message::user("Show the answer")],
+                    None,
+                    Some(Box::new(|_| {})),
+                )
+                .await;
+
+            if retryable {
+                let result = result.expect("transport retry interruption is graceful");
+                assert!(result.interrupted);
+                assert!(!result.finished_naturally);
+                assert_eq!(result.total_turns, 1);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(AgentError::LlmApi(message))
+                        if message.contains("invalid request during fixture semantic recovery")
+                ));
+            }
+            assert_eq!(*provider.calls.lock().unwrap(), 1);
+            assert_eq!(*provider.semantic_retries.lock().unwrap(), 1);
+        }
     }
 
     #[tokio::test]
