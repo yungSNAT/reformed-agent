@@ -764,6 +764,17 @@ The **stale stream detection** kills connections that receive SSE keep-alive pin
 
 The **stale non-stream detection** kills non-streaming calls that produce no response for too long. By default Hermes disables this on local endpoints to avoid false positives during long prefills. If you explicitly set `providers.<id>.stale_timeout_seconds`, `providers.<id>.models.<model>.stale_timeout_seconds`, or `HERMES_API_CALL_STALE_TIMEOUT`, that explicit value is honored even on local endpoints.
 
+## Session Spend Cap
+
+```yaml
+agent:
+  max_session_cost_usd: 5.00   # Most a session may spend, in US dollars (default: no cap)
+```
+
+A value that is not a finite positive number is ignored. Each request's cost comes from the usage the provider reports, priced by model. Once the session's spend passes 80% of the cap, a run adds a warning to the conversation after its next request and, for the rest of that run, switches to a cheaper model when one is available (`retry.fallback_model`, or a built-in cheaper model on OpenAI); otherwise it only warns. Each run starts on your configured model, so its first request is at full price. Once the cap is reached the run stops and shows a `Cost guard tripped` note.
+
+In the interactive CLI and TUI the cap covers the agent runs of the whole session, including objective continuations and quorum voters: a message sent once the session is at its cap makes no request, and `/new` or `/reset` starts the count again. Background memory and skill review and `/btw` side questions are not counted. The count is kept in memory, so restarting the CLI starts it again. Everywhere else (the gateway, the HTTP server, the desktop gateway, ACP and benchmarks) the cap applies to each run on its own. Delegated sub-agents share what is left of their parent's cap.
+
 ## Context Pressure Warnings
 
 Separate from iteration budget pressure, context pressure tracks how close the conversation is to the **compaction threshold** — the point where context compression fires to summarize older messages. This helps both you and the agent understand when the conversation is getting long.

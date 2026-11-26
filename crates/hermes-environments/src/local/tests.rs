@@ -1759,3 +1759,24 @@ async fn test_commands_longer_than_a_windows_command_line_run() {
         "{wait}"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_write_file_refuses_leaf_symlink() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target.txt");
+    let link = dir.path().join("alias.txt");
+    std::fs::write(&target, "untouched").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let backend = LocalBackend::default();
+    let link_str = link.to_str().unwrap();
+    let err = backend.write_file(link_str, "overwrite").await.unwrap_err();
+    assert!(err.to_string().contains("symlink"), "{err}");
+    let err_tool = backend
+        .write_file_for_tool(link_str, "overwrite")
+        .await
+        .unwrap_err();
+    assert!(err_tool.to_string().contains("symlink"), "{err_tool}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
+}

@@ -560,7 +560,10 @@ async fn run_auth(
                     {
                         Ok(pair) => pair,
                         Err(e) => {
-                            println!("Weixin QR 登录失败，将回退到手动 token 输入: {}", e);
+                            println!(
+                                "Weixin QR login failed; falling back to manual token input: {}",
+                                e
+                            );
                             let fallback_account_id = if let Some(v) = account_id_opt.take() {
                                 v
                             } else {
