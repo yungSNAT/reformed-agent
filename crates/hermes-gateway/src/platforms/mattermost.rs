@@ -1002,6 +1002,181 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn loopback_attachment_fallback_reuses_upload_and_requires_notification() {
+        use serde_json::json;
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mut adapter = test_adapter();
+        adapter.config.server_url = server.uri();
+        adapter.config.reply_to_mode = "thread".into();
+        adapter.client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+        Mock::given(method("GET"))
+            .and(path("/api/v4/posts/reply7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"root_id": "root7"})))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v4/posts"))
+            .and(body_json(json!({
+                "channel_id": "channel7", "file_ids": ["file7"],
+                "message": "Mattermost thread delivery failed; posting final reply in channel.\n\nFixture caption"
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": "post7"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("red-queen.txt");
+        std::fs::write(&file, "Fixture attachment contents").unwrap();
+        for (channel, file_id, notify) in
+            [("channel6", "file6", false), ("channel7", "file7", true)]
+        {
+            let multipart_channel = format!("name=\"channel_id\"\r\n\r\n{channel}\r\n");
+            Mock::given(method("POST"))
+                .and(path("/api/v4/files"))
+                .and(header("authorization", "Bearer test-token"))
+                .and(move |request: &wiremock::Request| {
+                    let body = String::from_utf8_lossy(&request.body);
+                    body.contains(&multipart_channel)
+                        && body.contains("name=\"files\"; filename=\"red-queen.txt\"")
+                        && body.contains("Fixture attachment contents")
+                })
+                .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                    "file_infos": [{"id": file_id}]
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/api/v4/posts"))
+                .and(body_json(json!({
+                    "channel_id": channel, "message": "Fixture caption",
+                    "root_id": "root7", "file_ids": [file_id]
+                })))
+                .respond_with(ResponseTemplate::new(404).set_body_string("Thread root not found"))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let result = adapter
+                .send_file_with_options(
+                    channel,
+                    file.to_str().unwrap(),
+                    Some("Fixture caption"),
+                    SendMessageOptions {
+                        thread_id: Some("reply7".into()),
+                        notify,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            if notify {
+                result.unwrap();
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(GatewayError::SendFailed(message))
+                        if message == "Mattermost API error (404): Thread root not found"
+                ));
+            }
+        }
+        assert_eq!(server.received_requests().await.unwrap().len(), 7);
+    }
+
+    #[tokio::test]
+    async fn loopback_websocket_authenticates_pongs_and_delivers_posts() {
+        use serde_json::json;
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::tungstenite::{error::ProtocolError, Error as WsError};
+
+        for stop_on_post in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut adapter = test_adapter();
+            adapter.config.server_url = format!("http://{}", listener.local_addr().unwrap());
+            adapter.config.reply_to_mode = "thread".into();
+
+            let peer = async {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let auth = socket.next().await.unwrap().unwrap().into_text().unwrap();
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&auth).unwrap(),
+                    json!({
+                        "seq": 1,
+                        "action": "authentication_challenge",
+                        "data": {"token": adapter.config.token}
+                    })
+                );
+                let ping = b"fixture-ping".to_vec();
+                socket
+                    .send(Message::Ping(ping.clone().into()))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    socket.next().await.unwrap().unwrap(),
+                    Message::Pong(ping.into())
+                );
+
+                let post = json!({
+                    "id": "post7",
+                    "channel_id": "channel7",
+                    "user_id": "user7",
+                    "message": "Fixture post"
+                });
+                for frame in [
+                    Message::Binary(vec![0].into()),
+                    Message::Text("not json".into()),
+                    Message::Text(json!({"event": "hello"}).to_string().into()),
+                    Message::Text(
+                        json!({"event": "posted", "data": {"post": post.to_string()}})
+                            .to_string()
+                            .into(),
+                    ),
+                ] {
+                    socket.send(frame).await.unwrap();
+                }
+                if stop_on_post {
+                    assert!(matches!(
+                        socket.next().await,
+                        None | Some(
+                            Ok(Message::Close(_))
+                                | Err(WsError::Protocol(
+                                    ProtocolError::ResetWithoutClosingHandshake
+                                ))
+                        )
+                    ));
+                } else {
+                    socket.close(None).await.unwrap();
+                }
+            };
+            let mut posts = Vec::new();
+            let mut record = |post| {
+                posts.push(post);
+                if stop_on_post {
+                    adapter.stop_signal.notify_one();
+                }
+            };
+            let ((), result) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                tokio::join!(peer, adapter.ws_connect_and_listen(&mut record))
+            })
+            .await
+            .expect("loopback WebSocket exchange");
+            result.unwrap();
+            assert_eq!(posts.len(), 1);
+            assert_eq!(posts[0].message, "Fixture post");
+            assert_eq!(posts[0].thread_id.as_deref(), Some("post7"));
+        }
+    }
+
     #[test]
     fn post_body_preserves_thread_root_when_present() {
         let body = mattermost_post_body(
