@@ -98,6 +98,7 @@ pub struct ChildGateways {
     env: Vec<(OsString, OsString)>,
     max: usize,
     idle: Duration,
+    start: Duration,
 }
 
 impl ChildGateways {
@@ -116,6 +117,7 @@ impl ChildGateways {
             env,
             max: MAX_CHILDREN,
             idle: IDLE_STOP,
+            start: START_TIMEOUT,
         }
     }
 
@@ -128,6 +130,12 @@ impl ChildGateways {
     /// Stop a child after `idle` with no lease (10 minutes unless set).
     pub fn with_idle_stop(mut self, idle: Duration) -> Self {
         self.idle = idle;
+        self
+    }
+
+    /// Give a child `start` to report ready (20 seconds unless set).
+    pub fn with_start_timeout(mut self, start: Duration) -> Self {
+        self.start = start;
         self
     }
 }
@@ -364,7 +372,7 @@ async fn spawn(config: &ChildGateways, home: &Path) -> Result<Running, String> {
         unreachable!("both are piped");
     };
     let mut lines = BufReader::new(stdout).lines();
-    let port = tokio::time::timeout(START_TIMEOUT, async {
+    let port = tokio::time::timeout(config.start, async {
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(port) = line.strip_prefix("HERMES_BACKEND_READY port=") {
                 return port.trim().parse::<u16>().ok();
