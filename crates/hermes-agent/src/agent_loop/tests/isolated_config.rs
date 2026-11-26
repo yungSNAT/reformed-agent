@@ -32,6 +32,77 @@
     }
 
     #[test]
+    fn hook_context_preserves_the_full_payload_when_spilling_or_falling_back() {
+        if run_isolated_agent_test(
+            "agent_loop::tests::hook_context_preserves_the_full_payload_when_spilling_or_falling_back",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let agent_for = |home: &Path| {
+            AgentLoop::new(
+                AgentConfig {
+                    hermes_home: Some(home.display().to_string()),
+                    ..AgentConfig::default()
+                },
+                Arc::new(ToolRegistry::new()),
+                Arc::new(DummyProvider),
+            )
+        };
+        let agent = agent_for(root.path());
+        let large = format!("{}fixture-tail", "ø".repeat(13_000));
+        let mut context = ContextManager::default_budget();
+        agent.inject_hook_context(
+            &[
+                HookResult::InjectContext(" \n\t ".into()),
+                HookResult::InjectContext("  small note  ".into()),
+                HookResult::InjectContext(format!(" {large}\n")),
+            ],
+            &mut context,
+        );
+        let [inline, spilled] = context.get_messages() else {
+            panic!("expected one inline and one spilled note");
+        };
+        assert_eq!(inline.role, MessageRole::System);
+        assert_eq!(inline.content.as_deref(), Some("small note"));
+        assert_eq!(spilled.role, MessageRole::System);
+        let (file, preview) = spilled
+            .content
+            .as_deref()
+            .unwrap()
+            .strip_prefix("Hook context was oversized and spilled to disk.\nspill_path=")
+            .unwrap()
+            .split_once("\npreview:\n")
+            .unwrap();
+        let file = Path::new(file);
+        assert_eq!(
+            file.parent(),
+            Some(root.path().join("hooks").join("spills").as_path())
+        );
+        assert_eq!(std::fs::read_to_string(file).unwrap(), large);
+        assert!(preview.chars().count() <= 720);
+        let (head, omitted) = preview.split_once("\n...[truncated ").unwrap();
+        let omitted: usize = omitted.strip_suffix(" chars]...").unwrap().parse().unwrap();
+        assert!(head.starts_with('ø'));
+        assert!(large.starts_with(head));
+        assert_eq!(head.chars().count() + omitted, large.chars().count());
+
+        let blocked = root.path().join("blocked");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("hooks"), b"fixture file").unwrap();
+        let mut context = ContextManager::default_budget();
+        agent_for(&blocked).inject_hook_context(
+            &[HookResult::InjectContext(large.clone())],
+            &mut context,
+        );
+        let [inline] = context.get_messages() else {
+            panic!("expected the note to remain inline when spilling fails");
+        };
+        assert_eq!(inline.role, MessageRole::System);
+        assert_eq!(inline.content.as_deref(), Some(large.as_str()));
+    }
+
+    #[test]
     fn compaction_checkpoint_obeys_isolation_and_reports_write_results() {
         use wiremock::matchers::{body_json, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
