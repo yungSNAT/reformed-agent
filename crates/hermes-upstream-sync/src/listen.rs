@@ -178,9 +178,7 @@ impl Shared {
     /// One of the peer's group's slots, then one of all; `None` after
     /// [`SLOT_WAIT`].
     async fn take_slot(&self, peer: IpAddr) -> Option<[OwnedSemaphorePermit; 2]> {
-        let own = self
-            .peer_slots
-            .get(peer, || Semaphore::new(MAX_PEER_SLOTS));
+        let own = self.peer_slots.get(peer, || Semaphore::new(MAX_PEER_SLOTS));
         let slots = Arc::clone(&self.slots);
         let wait = async move {
             let own = own.acquire_owned().await.ok()?;

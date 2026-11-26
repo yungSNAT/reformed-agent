@@ -304,7 +304,10 @@ async fn the_cap_applies_whilst_the_body_is_read() {
     let body = Full::new(Bytes::from(vec![b'x'; MAX_BODY_BYTES]));
     let read = read_body(body, MAX_BODY_BYTES).await.unwrap();
     // One buffer of the declared length: no second copy, no spare room.
-    assert_eq!((read.len(), read.capacity()), (MAX_BODY_BYTES, MAX_BODY_BYTES));
+    assert_eq!(
+        (read.len(), read.capacity()),
+        (MAX_BODY_BYTES, MAX_BODY_BYTES)
+    );
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_LENGTH, (MAX_BODY_BYTES + 1).into());
     assert_eq!(
@@ -321,7 +324,12 @@ async fn one_peer_holds_at_most_4_slots_and_others_still_get_one() {
         slots: Arc::new(Semaphore::new(MAX_SLOTS)),
         peer_slots: PerPeer::new(),
     };
-    let (a, b): (IpAddr, IpAddr) = ("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+    // b sits in another /24: neighbouring_addresses_share_one_groups_slots
+    // covers peers within one group.
+    let (a, b): (IpAddr, IpAddr) = (
+        "192.0.2.1".parse().unwrap(),
+        "198.51.100.1".parse().unwrap(),
+    );
     let mut held = Vec::new();
     for _ in 0..MAX_PEER_SLOTS {
         held.push(shared.take_slot(a).await.expect("a slot"));
@@ -329,10 +337,16 @@ async fn one_peer_holds_at_most_4_slots_and_others_still_get_one() {
     let started = std::time::Instant::now();
     assert!(shared.take_slot(a).await.is_none());
     let waited = started.elapsed();
-    assert!(waited >= SLOT_WAIT && waited < Duration::from_millis(6500), "{waited:?}");
+    assert!(
+        waited >= SLOT_WAIT && waited < Duration::from_millis(6500),
+        "{waited:?}"
+    );
     assert!(shared.take_slot(b).await.is_some());
     held.pop();
-    assert!(shared.take_slot(a).await.is_some(), "a freed slot is reused");
+    assert!(
+        shared.take_slot(a).await.is_some(),
+        "a freed slot is reused"
+    );
 }
 
 #[tokio::test]
@@ -398,7 +412,12 @@ async fn a_connection_closes_once_its_reply_is_sent() {
 fn the_limits_are_the_documented_ones() {
     // The PR body's and module docs' table; change them together.
     assert_eq!(
-        (MAX_SLOTS, MAX_PEER_SLOTS, MAX_CONNECTIONS, MAX_PEER_CONNECTIONS),
+        (
+            MAX_SLOTS,
+            MAX_PEER_SLOTS,
+            MAX_CONNECTIONS,
+            MAX_PEER_CONNECTIONS
+        ),
         (16, 4, 128, 32)
     );
     let secs = Duration::from_secs;
@@ -447,10 +466,19 @@ async fn an_unfinished_or_absent_request_head_is_dropped_after_10_seconds() {
         closed_within(&mut partial, Duration::from_secs(15)),
         closed_within(&mut silent, Duration::from_secs(15)),
     );
-    assert!(partial.is_some(), "a half-sent head kept its connection open");
-    assert!(silent.is_some(), "a connection that sent nothing stayed open");
+    assert!(
+        partial.is_some(),
+        "a half-sent head kept its connection open"
+    );
+    assert!(
+        silent.is_some(),
+        "a connection that sent nothing stayed open"
+    );
     let waited = started.elapsed();
-    assert!(waited >= Duration::from_secs(9) && waited < Duration::from_secs(12), "{waited:?}");
+    assert!(
+        waited >= Duration::from_secs(9) && waited < Duration::from_secs(12),
+        "{waited:?}"
+    );
 }
 
 #[tokio::test]
@@ -482,7 +510,10 @@ async fn a_body_that_stalls_gets_408_after_10_seconds() {
         .await
         .expect("no reply within 15 seconds");
     let waited = started.elapsed();
-    assert!(waited >= Duration::from_secs(9) && waited < Duration::from_secs(12), "{waited:?}");
+    assert!(
+        waited >= Duration::from_secs(9) && waited < Duration::from_secs(12),
+        "{waited:?}"
+    );
     assert!(reply.starts_with(b"HTTP/1.1 408"), "{reply:?}");
 }
 
