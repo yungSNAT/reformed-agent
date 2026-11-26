@@ -230,16 +230,32 @@ fn open_lock(home: &Path, create: bool) -> std::io::Result<std::fs::File> {
             path.display()
         )));
     }
+    // A lock an older build created under the umask keeps its mode, as creation sets it only
+    // once: the claim narrows it, through this descriptor (upstream `_private_lock`). A probe
+    // leaves it, so a lock it cannot narrow (a read-only mount) does not refuse the home.
+    if create && meta.mode() & 0o077 != 0 {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     Ok(file)
 }
 
 /// True while a runtime holds `<home>/gateway.lock`. A lock that cannot be tested reads as held,
-/// so ensure waits rather than starting a second owner.
+/// so a caller waits rather than starting a second owner.
 pub fn lock_held(home: &Path) -> bool {
+    !matches!(lock_state(home), Ok(false))
+}
+
+/// Whether a runtime holds `<home>/gateway.lock` (false when there is none), or why the lock
+/// cannot be used safely: a link, a FIFO, another user's file or no `flock`.
+fn lock_state(home: &Path) -> Result<bool, String> {
+    let path = home.join(LOCK);
     match open_lock(home, false) {
         // A shared lock taken here is released when `file` closes.
-        Ok(file) => !matches!(try_flock(&file, libc::LOCK_SH), Ok(true)),
-        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        Ok(file) => try_flock(&file, libc::LOCK_SH)
+            .map(|taken| !taken)
+            .map_err(|e| format!("cannot lock {}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("cannot use {}: {e}", path.display())),
     }
 }
 
@@ -317,6 +333,44 @@ fn staging_socket(home: &Path, tag: &str) -> PathBuf {
     home.join(format!(".g{tag}")).join(SOCKET)
 }
 
+/// Removes the staging folders a bind killed part-way left in `home` (`.g` and 6 lowercase hex
+/// digits, owned by this user). Only the lock holder binds, so none is in use; a home other users
+/// can write is left alone, as a folder there could be swapped for a link.
+fn sweep_staging(home: &Path) {
+    if check_home(home).is_err() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(home) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(tag) = name.to_str().and_then(|n| n.strip_prefix(".g")) else {
+            continue;
+        };
+        if tag.len() != 6 || !tag.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            continue;
+        }
+        let dir = entry.path();
+        // The socket is unlinked through the folder this opened without following a link, so a
+        // folder swapped for a link after the check cannot point the unlink elsewhere; rmdir
+        // follows no link either.
+        let Ok(folder) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(&dir)
+        else {
+            continue;
+        };
+        if !folder.metadata().is_ok_and(|m| m.uid() == own_uid()) {
+            continue;
+        }
+        // SAFETY: unlinkat on a descriptor `folder` keeps open, with a NUL-terminated name.
+        unsafe { libc::unlinkat(folder.as_raw_fd(), c"gateway.sock".as_ptr(), 0) };
+        let _ = std::fs::remove_dir(&dir);
+    }
+}
+
 /// Binds the control socket in a fresh private folder, makes it 0600 and moves it into place, so
 /// it is never reachable with looser permissions, and a stale socket or link there is replaced.
 fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), String> {
@@ -329,6 +383,7 @@ fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), S
             staged.display()
         ));
     }
+    sweep_staging(home);
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&staging)
@@ -604,6 +659,16 @@ impl Verdict {
         }
     }
 
+    /// Upstream's bare `inaccessible`: a state with no reason code.
+    fn inaccessible(detail: String) -> Self {
+        Self {
+            state: "inaccessible",
+            reason_code: None,
+            detail: Some(detail.chars().take(MAX_DETAIL).collect()),
+            endpoint: None,
+        }
+    }
+
     fn refused(state: &'static str, reason_code: &'static str, detail: Option<String>) -> Self {
         Self {
             state,
@@ -716,6 +781,77 @@ pub fn ensure(home: &Path, timeout: Duration, mut command: Command) -> Verdict {
     }
 }
 
+/// What the gateway ensure starts must not inherit from the caller that asked for it (upstream
+/// `gateway_runtime_start.py`: `DAEMON_STRIPPED_ENV`, its `SUPERVISOR_MARKER_ENV` and the
+/// session variables of `gateway/session_context.py`). One launch's policy, session and pins
+/// would otherwise hold for every later session of the shared runtime, and a supervisor's
+/// markers would make it believe the supervisor started it.
+const DAEMON_STRIPPED_ENV: &[&str] = &[
+    "HERMES_PROFILE",
+    "HERMES_YOLO_MODE",
+    "HERMES_IGNORE_RULES",
+    "HERMES_SAFE_MODE",
+    "HERMES_IGNORE_USER_CONFIG",
+    "HERMES_ACCEPT_HOOKS",
+    "HERMES_SESSION_SOURCE",
+    "TERMINAL_CWD",
+    "HERMES_KANBAN_TASK",
+    "HERMES_KANBAN_WORKSPACE",
+    "HERMES_KANBAN_BRANCH",
+    "HERMES_KANBAN_RUN_ID",
+    "HERMES_KANBAN_CLAIM_LOCK",
+    "HERMES_KANBAN_CLAIM_TTL_SECONDS",
+    "HERMES_KANBAN_GOAL_MODE",
+    "HERMES_KANBAN_GOAL_MAX_TURNS",
+    "HERMES_KANBAN_DB",
+    "HERMES_KANBAN_WORKSPACES_ROOT",
+    "HERMES_KANBAN_BOARD",
+    "HERMES_TENANT",
+    "HERMES_SESSION_SOURCE_EXPLICIT",
+    "HERMES_TURN_AUTHOR",
+    "HERMES_INTERACTIVE",
+    "HERMES_GATEWAY_SESSION",
+    "HERMES_SINGLE_QUERY_SESSION",
+    "HERMES_EPHEMERAL_SYSTEM_PROMPT",
+    "HERMES_PREFILL_MESSAGES_FILE",
+    "HERMES_INFERENCE_PROVIDER",
+    "HERMES_ENABLE_PROJECT_PLUGINS",
+    "HERMES_TUI_CLIENT_ENV",
+    // Supervisor markers.
+    "INVOCATION_ID",
+    "JOURNAL_STREAM",
+    "XPC_SERVICE_NAME",
+    "LAUNCHD_SOCKET",
+    "HERMES_LAUNCHD_LABEL",
+    "HERMES_GATEWAY_EXTERNAL_SUPERVISOR",
+    "HERMES_SUPERVISED_CHILD",
+    "NOTIFY_SOCKET",
+    "WATCHDOG_USEC",
+    "WATCHDOG_PID",
+    // The launching turn's session.
+    "HERMES_SESSION_PLATFORM",
+    "HERMES_SESSION_CHAT_ID",
+    "HERMES_SESSION_CHAT_TYPE",
+    "HERMES_SESSION_CHAT_NAME",
+    "HERMES_SESSION_THREAD_ID",
+    "HERMES_SESSION_USER_ID",
+    "HERMES_SESSION_USER_ID_ALT",
+    "HERMES_SESSION_USER_NAME",
+    "HERMES_SESSION_SCOPE_ID",
+    "HERMES_SESSION_KEY",
+    "HERMES_SESSION_ID",
+    "HERMES_UI_SESSION_ID",
+    "HERMES_SESSION_MESSAGE_ID",
+    "HERMES_SESSION_PROFILE",
+    "HERMES_CRON_SESSION",
+    "HERMES_SESSION_PARENT_CHAT_ID",
+    "HERMES_SESSION_ACTOR_ID",
+    "HERMES_SESSION_ACTOR_NAME",
+    "HERMES_CRON_AUTO_DELIVER_PLATFORM",
+    "HERMES_CRON_AUTO_DELIVER_CHAT_ID",
+    "HERMES_CRON_AUTO_DELIVER_THREAD_ID",
+];
+
 fn spawn(
     home: &Path,
     command: &mut Command,
@@ -726,12 +862,25 @@ fn spawn(
         .mode(0o700)
         .create(&logs)?;
     let log_path = logs.join("gateway-stdio.log");
+    // A planted link must not point the gateway's output at another file, and a FIFO with no
+    // reader must not block the open (O_NONBLOCK makes it fail; a regular file ignores the flag).
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(&log_path)?;
-    let offset = log.metadata()?.len();
+    let meta = log.metadata()?;
+    if !meta.is_file() {
+        return Err(std::io::Error::other(format!(
+            "{} is not a regular file",
+            log_path.display()
+        )));
+    }
+    let offset = meta.len();
+    for key in DAEMON_STRIPPED_ENV {
+        command.env_remove(key);
+    }
     let child = command
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
@@ -745,7 +894,11 @@ fn spawn(
 /// The last lines the start wrote, up to [`MAX_DETAIL`] characters.
 fn log_tail(path: &Path, offset: u64) -> String {
     let mut text = String::new();
-    if let Ok(mut file) = std::fs::File::open(path) {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path);
+    if let Ok(mut file) = file {
         let len = file.metadata().map(|m| m.len()).unwrap_or(0);
         let from = offset.max(len.saturating_sub(4096));
         if file.seek(SeekFrom::Start(from)).is_ok() {
@@ -768,12 +921,12 @@ fn discover(home: &Path) -> Discovery {
         ));
     }
     let path = home.join(SOCKET);
-    let waiting = || {
-        if lock_held(home) {
-            Discovery::Starting
-        } else {
-            Discovery::Absent
-        }
+    // A lock no runtime can claim is named at once, as upstream's `missing_owner_state` does,
+    // instead of read as a start in progress until the deadline.
+    let waiting = || match lock_state(home) {
+        Ok(true) => Discovery::Starting,
+        Ok(false) => Discovery::Absent,
+        Err(detail) => Discovery::Found(Verdict::inaccessible(detail)),
     };
     let meta = match std::fs::symlink_metadata(&path) {
         Ok(meta) => meta,

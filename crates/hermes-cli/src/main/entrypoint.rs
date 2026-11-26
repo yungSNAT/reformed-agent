@@ -37,6 +37,14 @@ async fn run_main() {
         profile_dir,
     }) = &effective_command
     {
+        // The import writes to the new folder --profile-dir names; a named profile's home
+        // already exists, so --profile or --config-dir would be silently ignored here.
+        if cli.profile.is_some() || cli.config_dir.is_some() {
+            eprintln!(
+                "Error: --profile and --config-dir do not apply to import-hermes-sessions, which writes to --profile-dir."
+            );
+            std::process::exit(1);
+        }
         match hermes_cli::commands::import_hermes_sessions(export, profile_dir) {
             Ok(summary) => println!(
                 "Imported {} sessions with {} active messages into {}. Excluded {} inactive or metadata rows.",
