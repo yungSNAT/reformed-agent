@@ -19,7 +19,7 @@ exit=Some(10)
 - status: `failed`
 - summary_kind: `nightly_elite_gate`
 - repo: `<ROOT>/repo`
-- head_sha: `7c3fd650ca8fcc1f3409aaf60d2d63149a537919`
+- head_sha: `<SHA>`
 - metadata: `{"agent_id": "hermes_ultra_nightly", "checks": ["cargo test -p hermes-cli", "crates/hermes-parity-tools (run-deterministic-replay-suite)", "crates/hermes-parity-tools (run-security-release-gate-v2)", "crates/hermes-parity-tools (run-performance-autopilot)", "crates/hermes-parity-tools (run-upstream-surface-coverage-gate)", "crates/hermes-parity-tools (audit-background-queue)"], "exit_code": 10, "failed_step": "branch_check", "log_path": "<ROOT>/home/logs/nightly-elite-gate-<STAMP>.log", "summary_path": "<ROOT>/home/logs/nightly-elite-gate-latest.json"}`
 
 Nightly elite gate completed.
@@ -40,7 +40,7 @@ Nightly elite gate completed.
   "ok": false,
   "timestamp_utc": "<TIME>",
   "repo_root": "<ROOT>/repo",
-  "head_sha": "7c3fd650ca8fcc1f3409aaf60d2d63149a537919",
+  "head_sha": "<SHA>",
   "log_path": "<ROOT>/home/logs/nightly-elite-gate-<STAMP>.log",
   "failed_step": "branch_check",
   "exit_code": 10,
@@ -55,7 +55,7 @@ Nightly elite gate completed.
 }
 --- file home/logs/nightly-elite-gate-summary-<STAMP>.json
 {
-  "head_sha": "7c3fd650ca8fcc1f3409aaf60d2d63149a537919",
+  "head_sha": "<SHA>",
   "log_path": "<ROOT>/home/logs/nightly-elite-gate-<STAMP>.log",
   "summary_path": "<ROOT>/home/logs/nightly-elite-gate-latest.json",
   "exit_code": 10,
