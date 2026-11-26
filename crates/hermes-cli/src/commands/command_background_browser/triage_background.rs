@@ -935,7 +935,10 @@ fn apply_kanban_binding_env(
         for (key, value) in binding.env() {
             cmd.env(key, value);
         }
-        cmd.env(crate::kanban::ENV_WORKER_TASK, &binding.task);
+        cmd.env(
+            crate::kanban::ENV_WORKER_SCOPE,
+            format!("{}/{}", binding.board, binding.task),
+        );
     }
 }
 

@@ -172,8 +172,8 @@
                 ("HERMES_KANBAN_RUN_ID".to_string(), Some("bg_1".to_string())),
                 ("HERMES_KANBAN_TASK".to_string(), Some("K-0001".to_string())),
                 (
-                    "HERMES_KANBAN_WORKER_TASK".to_string(),
-                    Some("K-0001".to_string())
+                    "HERMES_KANBAN_WORKER_SCOPE".to_string(),
+                    Some("main/K-0001".to_string())
                 ),
             ]
         );

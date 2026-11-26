@@ -373,7 +373,7 @@ async fn a_worker_terminal_with_only_the_marker_is_held_to_its_own_task() {
     let store = home.join("hermes/alpha/kanban/boards.json");
     let before = std::fs::read(&store).unwrap();
     // What the terminal of the worker for K-0001 keeps after the strip.
-    let marker = [("HERMES_KANBAN_WORKER_TASK", "K-0001")];
+    let marker = [("HERMES_KANBAN_WORKER_SCOPE", "runs/K-0001")];
     for args in [
         &["done", "K-0002", "x"][..],
         &["done", "K-0002", "x", "--force"],
@@ -388,11 +388,11 @@ async fn a_worker_terminal_with_only_the_marker_is_held_to_its_own_task() {
     refused(
         &kanban_as(
             home,
-            &[("HERMES_KANBAN_WORKER_TASK", "../K-0001")],
+            &[("HERMES_KANBAN_WORKER_SCOPE", "../K-0001")],
             &["done", "K-0002", "--force"],
         )
         .await,
-        "is not a task id",
+        "is not <board>/<task>",
     );
     assert_eq!(std::fs::read(&store).unwrap(), before);
     // Its own task, and an operator with --force, still work.
@@ -405,4 +405,26 @@ async fn a_worker_terminal_with_only_the_marker_is_held_to_its_own_task() {
         .status
         .success());
     assert_eq!(lanes(home), [KanbanLane::Done, KanbanLane::Done]);
+}
+
+#[tokio::test]
+async fn a_worker_terminal_cannot_reach_its_task_id_on_another_board() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path();
+    two_running_workers(home, "running").await;
+    // A second board, selected by the child itself, with its own K-0001.
+    assert_kanban(home, &["init", "Other"], "Board selected").await;
+    assert_kanban(home, &["add", "elsewhere", "--lane", "doing"], "K-0001").await;
+    let store = home.join("hermes/alpha/kanban/boards.json");
+    let before = std::fs::read(&store).unwrap();
+    let marker = [("HERMES_KANBAN_WORKER_SCOPE", "runs/K-0001")];
+    for args in [
+        &["done", "K-0001", "x"][..],
+        &["done", "K-0001", "--force"],
+        &["block", "K-0001", "stop"],
+        &["move", "K-0001", "todo", "--force"],
+    ] {
+        refused(&kanban_as(home, &marker, args).await, "on board `runs`");
+    }
+    assert_eq!(std::fs::read(&store).unwrap(), before);
 }

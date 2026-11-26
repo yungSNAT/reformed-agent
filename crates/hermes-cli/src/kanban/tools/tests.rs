@@ -1017,7 +1017,12 @@ fn stored_text_is_redacted_before_it_is_saved() {
     as_worker(
         &fx,
         Tool::Create,
-        json!({"title": format!("rotate {secret}"), "description": format!("key {secret}")}),
+        json!({
+            "title": format!("rotate {secret}"),
+            "description": format!("key {secret}"),
+            "assignee": format!("owner {secret}"),
+            "tenant": format!("team {secret}")
+        }),
     )
     .unwrap();
     as_orchestrator(
@@ -1260,7 +1265,7 @@ fn oversized_input_is_refused_without_a_trace() {
 fn caller(fx: &Fixture, binding: Option<KanbanWorkerBinding>, marker: Option<&str>) -> CliCaller {
     CliCaller {
         binding,
-        worker_tree: worker_tree_task(marker.map(str::to_string)),
+        worker_tree: worker_scope(marker.map(str::to_string)),
         jobs_dir: fx.jobs.clone(),
     }
 }
@@ -1322,7 +1327,7 @@ fn a_worker_terminal_may_change_only_the_workers_own_task() {
     let board = &store.boards[0];
     let (own, other, idle) = (&board.tasks[0], &board.tasks[2], &board.tasks[1]);
     // The terminal child of the worker for K-0001: no binding, only the marker.
-    let child = caller(&fx, None, Some("K-0001"));
+    let child = caller(&fx, None, Some("main/K-0001"));
     fx.job_status("run-z", "running");
     for (task, force) in [(other, false), (other, true), (idle, false), (idle, true)] {
         let error = check_cli_lifecycle_with(board, task, "done", true, force, &child).unwrap_err();
@@ -1345,14 +1350,44 @@ fn a_malformed_worker_marker_fails_closed() {
     let fx = fixture();
     let store = store(&fx);
     let board = &store.boards[0];
-    for raw in ["", "  ", "../K-0001", "K-0001 K-0002", &"K".repeat(101)] {
+    for raw in [
+        "",
+        "  ",
+        "K-0001",
+        "main/",
+        "/K-0001",
+        "../K-0001",
+        "main/K-0001/x",
+        "main/K-0001 K-0002",
+        &format!("main/{}", "K".repeat(101)),
+    ] {
         let child = caller(&fx, None, Some(raw));
         for task in &board.tasks {
             let error =
                 check_cli_lifecycle_with(board, task, "block", false, true, &child).unwrap_err();
-            assert!(error.contains("is not a task id"), "{raw:?}: {error}");
+            assert!(error.contains("is not <board>/<task>"), "{raw:?}: {error}");
         }
     }
+}
+
+#[test]
+fn a_worker_tree_cannot_reach_its_task_id_on_another_board() {
+    let fx = fixture();
+    let store = store(&fx);
+    // Board `side` has its own K-0001.
+    let side = store.boards.iter().find(|b| b.id == "side").unwrap();
+    let side_task = &side.tasks[0];
+    assert_eq!(side_task.id, "K-0001");
+    let child = caller(&fx, None, Some("main/K-0001"));
+    for force in [false, true] {
+        let error =
+            check_cli_lifecycle_with(side, side_task, "done", true, force, &child).unwrap_err();
+        assert!(error.contains("on board `main`"), "{error}");
+        assert!(!error.contains("--force"), "{error}");
+    }
+    let bound = caller(&fx, worker("run-a"), None);
+    let error = check_cli_lifecycle_with(side, side_task, "done", true, false, &bound).unwrap_err();
+    assert!(error.contains("for board `main`, not `side`"), "{error}");
 }
 
 #[test]

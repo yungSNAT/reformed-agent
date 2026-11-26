@@ -37,25 +37,39 @@ pub const ENV_TASK: &str = "HERMES_KANBAN_TASK";
 pub const ENV_RUN_ID: &str = "HERMES_KANBAN_RUN_ID";
 /// Every variable of a worker binding.
 pub const KANBAN_WORKER_ENV: [&str; 3] = [ENV_BOARD, ENV_TASK, ENV_RUN_ID];
-/// Task id of the dispatched worker whose process tree this is. Unlike the
-/// binding it is not stripped from child processes, so a worker's terminal
-/// children keep it and the CLI holds them to the worker's own task. It
-/// guards against a misdirected task id, not against a child that edits its
-/// own environment.
-pub const ENV_WORKER_TASK: &str = "HERMES_KANBAN_WORKER_TASK";
+/// `<board>/<task>` of the dispatched worker whose process tree this is.
+/// Unlike the binding it is not stripped from child processes, so a worker's
+/// terminal children keep it and the CLI holds them to the worker's own task
+/// on its own board. It guards against a misdirected task id, not against a
+/// child that edits its own environment.
+pub const ENV_WORKER_SCOPE: &str = "HERMES_KANBAN_WORKER_SCOPE";
 
-/// What [`ENV_WORKER_TASK`] says about this process: `None` outside a worker
-/// tree, the worker's task id, or `Err` with a value that is not a plain id
-/// (which fails closed).
-fn worker_tree_task(raw: Option<String>) -> Option<Result<String, String>> {
+/// The board and task a worker tree is held to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkerScope {
+    board: String,
+    task: String,
+}
+
+/// What [`ENV_WORKER_SCOPE`] says about this process: `None` outside a
+/// worker tree, its board and task, or `Err` with a value that is not
+/// `<board>/<task>` of plain ids (which fails closed).
+fn worker_scope(raw: Option<String>) -> Option<Result<WorkerScope, String>> {
     let raw = raw?;
-    let id = raw.trim();
-    let plain = !id.is_empty()
-        && id.len() <= MAX_NAME_CHARS
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    Some(if plain { Ok(id.to_string()) } else { Err(raw) })
+    let plain = |id: &str| {
+        !id.is_empty()
+            && id.len() <= MAX_NAME_CHARS
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    Some(match raw.trim().split_once('/') {
+        Some((board, task)) if plain(board) && plain(task) => Ok(WorkerScope {
+            board: board.to_string(),
+            task: task.to_string(),
+        }),
+        _ => Err(raw),
+    })
 }
 
 const LIST_DEFAULT_LIMIT: u64 = 50;
@@ -311,7 +325,7 @@ pub fn check_cli_lifecycle(
 ) -> Result<(), String> {
     let caller = CliCaller {
         binding: KanbanWorkerBinding::from_env(),
-        worker_tree: worker_tree_task(std::env::var(ENV_WORKER_TASK).ok()),
+        worker_tree: worker_scope(std::env::var(ENV_WORKER_SCOPE).ok()),
         jobs_dir: background_jobs_path(),
     };
     check_cli_lifecycle_with(board, task, verb, completes, force, &caller)
@@ -320,7 +334,7 @@ pub fn check_cli_lifecycle(
 /// Who is running a `hermes kanban` lifecycle command.
 struct CliCaller {
     binding: Option<KanbanWorkerBinding>,
-    worker_tree: Option<Result<String, String>>,
+    worker_tree: Option<Result<WorkerScope, String>>,
     jobs_dir: PathBuf,
 }
 
@@ -340,19 +354,25 @@ fn check_cli_lifecycle_with(
             ))
         }
         (Some(binding), _) => {
+            if board.id != binding.board {
+                return Err(format!(
+                    "Refusing `{command}`: this process is the dispatched worker for board `{}`, not `{}`.",
+                    binding.board, board.id
+                ));
+            }
             check_worker_owns(binding, task, &command).map_err(|error| error.to_string())?
         }
         // A worker's terminal child: the binding was stripped, the marker kept.
         (None, Some(Err(raw))) => {
             return Err(format!(
-                "Refusing `{command}`: this process runs under a dispatched kanban worker, and its {ENV_WORKER_TASK} value `{raw}` is not a task id, so it may not change any task."
+                "Refusing `{command}`: this process runs under a dispatched kanban worker, and its {ENV_WORKER_SCOPE} value `{raw}` is not <board>/<task>, so it may not change any task."
             ))
         }
         (None, Some(Ok(own))) => {
-            if !task.id.eq_ignore_ascii_case(own) {
+            if board.id != own.board || !task.id.eq_ignore_ascii_case(&own.task) {
                 return Err(format!(
-                    "Refusing `{command}` on {}: this process runs under the dispatched worker for task {own}, which may change only its own task.",
-                    task.id
+                    "Refusing `{command}` on {} (board `{}`): this process runs under the dispatched worker for task {} on board `{}`, which may change only its own task.",
+                    task.id, board.id, own.task, own.board
                 ));
             }
         }
@@ -389,7 +409,7 @@ pub fn register_kanban_tools(
     config: &GatewayConfig,
     binding: Option<KanbanWorkerBinding>,
 ) {
-    let opted_in = orchestrator_opted_in(config, std::env::var_os(ENV_WORKER_TASK).is_some());
+    let opted_in = orchestrator_opted_in(config, std::env::var_os(ENV_WORKER_SCOPE).is_some());
     let ctx = KanbanToolContext {
         store_path: super::kanban_store_path(),
         // The folder `/background` keeps its job status files in.
@@ -1104,8 +1124,8 @@ fn create(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome,
             title: redact_sensitive_text(title),
             lane,
             priority,
-            assignee: capped_str(args, "assignee", MAX_NAME_CHARS)?,
-            tenant: capped_str(args, "tenant", MAX_NAME_CHARS)?,
+            assignee: capped_str(args, "assignee", MAX_NAME_CHARS)?.map(redact_sensitive_text),
+            tenant: capped_str(args, "tenant", MAX_NAME_CHARS)?.map(redact_sensitive_text),
             description: description.map(redact_sensitive_text),
             depends_on,
             goal_mode: opt_bool(args, "goal_mode")?.unwrap_or(false),
