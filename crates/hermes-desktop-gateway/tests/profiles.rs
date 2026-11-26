@@ -299,3 +299,55 @@ async fn roster_sync_keeps_valid_rows_once_and_replaces_the_last_roster() {
     let stored: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(stored["agents"], json!([]));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn roster_sync_makes_an_existing_roster_owner_only_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    seed_root(root.path());
+    let file = root.path().join("bot_relay").join("roster.json");
+    write(&file, "{}");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let addr = start(root.path()).await;
+    let mut socket = connect(addr).await;
+
+    let agents = json!([{"profile": "inbox", "connection_id": "laptop"}]);
+    let reply = call(
+        &mut socket,
+        1,
+        "bot_relay.roster.sync",
+        json!({"agents": agents}),
+    )
+    .await;
+    assert_eq!(reply["result"], json!({"count": 1}));
+    let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+}
+
+#[tokio::test]
+async fn roster_sync_reads_numbers_as_upstreams_str_does() {
+    let root = tempfile::tempdir().unwrap();
+    seed_root(root.path());
+    let addr = start(root.path()).await;
+    let mut socket = connect(addr).await;
+
+    // Upstream keeps `str(value or "")`: a number is its digits, zero and false are empty.
+    let agents = json!([
+        {"profile": "inbox", "connection_id": 7, "title": 12},
+        {"profile": "research", "connection_id": 0},
+        {"profile": "research", "connection_id": false},
+    ]);
+    let reply = call(
+        &mut socket,
+        1,
+        "bot_relay.roster.sync",
+        json!({"agents": agents}),
+    )
+    .await;
+    assert_eq!(reply["result"], json!({"count": 1}));
+    let file = root.path().join("bot_relay").join("roster.json");
+    let stored: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(stored["agents"][0]["connection_id"], "7");
+    assert_eq!(stored["agents"][0]["title"], "12");
+}
