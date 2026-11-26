@@ -925,6 +925,74 @@ mod tests {
         );
     }
 
+    /// With 16 requests waiting, the connection still reads: a request that answers at once
+    /// (an approval's answer, say) is answered, and one that would wait is answered busy.
+    #[tokio::test]
+    async fn a_connection_with_16_waiting_requests_still_reads_and_answers() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as Frame;
+
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (_outbox, events) = mpsc::unbounded_channel::<Outgoing>();
+        let events = Arc::new(std::sync::Mutex::new(Some(events)));
+        let parked = Arc::clone(&release);
+        let app = Router::new().route(
+            "/",
+            get(move |ws: WebSocketUpgrade| {
+                let events = events.lock().unwrap().take();
+                let release = Arc::clone(&parked);
+                async move {
+                    ws.on_upgrade(move |mut socket| async move {
+                        let mut events = events.expect("one connection");
+                        let call = move |method: &str, _: Value| -> Reply {
+                            if method == "wait" {
+                                let release = Arc::clone(&release);
+                                Box::pin(async move {
+                                    release.notified().await;
+                                    Ok(json!("released"))
+                                })
+                            } else {
+                                chat::ready(Ok(json!("answered")))
+                            }
+                        };
+                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30))
+                            .await;
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        let request = |id: u64, method: &str| {
+            Frame::text(json!({"jsonrpc": "2.0", "id": id, "method": method}).to_string())
+        };
+        for id in 1..=16 {
+            ws.send(request(id, "wait")).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        ws.send(request(17, "approval.respond")).await.unwrap();
+        let answered = read(&mut ws).await;
+        assert_eq!(
+            (&answered["id"], &answered["result"]),
+            (&json!(17), &json!("answered"))
+        );
+        ws.send(request(18, "wait")).await.unwrap();
+        let busy = read(&mut ws).await;
+        assert_eq!(busy["id"], 18, "{busy}");
+        assert_eq!(busy["error"]["code"], -32001, "{busy}");
+        release.notify_waiters();
+        let mut released = Vec::new();
+        for _ in 0..16 {
+            released.push(read(&mut ws).await["id"].as_u64().unwrap());
+        }
+        released.sort_unstable();
+        assert_eq!(released, (1..=16).collect::<Vec<_>>());
+    }
+
     async fn read(
         ws: &mut tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
