@@ -7,6 +7,7 @@ fn record(session: &str, process: &str) -> PendingReply {
         chat_id: "42".to_string(),
         thread_id: Some("7".to_string()),
         process: process.to_string(),
+        process_started: None,
         reply: None,
         attempts: 0,
     }
@@ -106,6 +107,131 @@ fn the_host_boot_time_is_known_where_records_are_held_for_live_writers() {
     // record look older than the boot, so it would be sent twice.
     let started = writer_started(&record("me", &this_process())).expect("start stamp");
     assert!(booted <= started, "booted {booted:?} after {started:?}");
+}
+
+/// A `sleep` child, killed on drop.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct Sleeper(std::process::Child);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Sleeper {
+    fn spawn() -> Self {
+        Self(
+            std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .expect("spawn sleep"),
+        )
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for Sleeper {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Write a record for `pid`, stamped now, whose writer started at `started`
+/// as read in this time namespace.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_started(dir: &Path, session: &str, pid: u32, started: Option<u64>) {
+    let start = started.map(|at| ProcessStart {
+        at,
+        time_namespace: time_namespace(),
+    });
+    write_start(dir, session, pid, start);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_start(dir: &Path, session: &str, pid: u32, start: Option<ProcessStart>) {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let mut record = record(session, &format!("{pid}-{stamp}"));
+    record.process_started = start;
+    write(dir, &record).expect("write");
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_start_read_in_another_time_namespace_leaves_the_record_to_its_live_writer() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let child = Sleeper::spawn();
+    // Another namespace shifts the reading, so a differing start proves nothing.
+    let other = time_namespace().map_or(1, |ns| ns.wrapping_add(1));
+    let start = ProcessStart {
+        at: 1,
+        time_namespace: Some(other),
+    };
+    write_start(&dir, "other namespace", child.0.id(), Some(start));
+    assert_eq!(take_over(&dir, |_| true), 0, "a live writer kept its record");
+    assert_eq!(json_files(&dir).len(), 1);
+}
+
+#[test]
+fn the_time_namespace_is_the_inode_its_link_names() {
+    assert_eq!(namespace_inode("time:[4026531834]"), Some(4_026_531_834));
+    assert_eq!(namespace_inode("mnt:[4026531834]"), None);
+    assert_eq!(namespace_inode("time:[]"), None);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_record_whose_writer_pid_now_names_another_process_is_taken_over() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let child = Sleeper::spawn();
+    // The writer had the child's pid but not its start: the pid was reused.
+    write_started(&dir, "reused", child.0.id(), Some(1));
+    assert_eq!(take_over(&dir, |_| true), 1, "a reused pid holds nothing");
+    assert_eq!(recovering(&dir)[0].1.session_key, "reused");
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_live_writer_with_its_own_start_or_an_unknown_one_holds_its_record() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let child = Sleeper::spawn();
+    let started = process_started(child.0.id());
+    assert!(started.is_some(), "a live child's start is readable");
+    assert_eq!(started, process_started(child.0.id()), "fixed for its life");
+    write_started(&dir, "own start", child.0.id(), started);
+    // Written before process starts were recorded.
+    write_started(&dir, "older record", child.0.id(), None);
+    assert_eq!(take_over(&dir, |_| true), 0);
+    assert_eq!(json_files(&dir).len(), 2);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn this_process_records_its_start_and_a_later_child_starts_no_earlier() {
+    let mine = this_process_started().expect("own start on Linux and macOS");
+    assert_eq!(mine.time_namespace, time_namespace());
+    let mine = mine.at;
+    assert_eq!(Some(mine), process_started(std::process::id()));
+    let child = Sleeper::spawn();
+    assert!(process_started(child.0.id()).expect("child start") >= mine);
+}
+
+#[test]
+fn the_start_is_field_22_counted_after_the_last_parenthesis_of_the_name() {
+    let tail = "S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 20 21";
+    assert_eq!(
+        started_from_stat(&format!("42 (gateway) {tail}")),
+        Some(987_654)
+    );
+    // A name may hold spaces and parentheses.
+    assert_eq!(
+        started_from_stat(&format!("42 (a) b (c) d) {tail}")),
+        Some(987_654)
+    );
+    assert_eq!(started_from_stat("42 (gateway) S 1 2"), None, "cut short");
+    assert_eq!(started_from_stat("42 gateway S 1"), None, "no name");
 }
 
 #[test]

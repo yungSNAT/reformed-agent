@@ -80,6 +80,10 @@ pub struct PendingReply {
     /// The process that wrote the record; a running gateway leaves its own
     /// records to the turns that own them.
     pub process: String,
+    /// When the writer started; a live process with the writer's pid and
+    /// another start reused the pid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_started: Option<ProcessStart>,
     /// The agent's reply, once it answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply: Option<String>,
@@ -109,6 +113,104 @@ pub fn this_process() -> String {
         format!("{}-{nanos}", std::process::id())
     })
     .clone()
+}
+
+/// A writer's start and the Linux time namespace it was read in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessStart {
+    /// As [`process_started`] reads it.
+    pub at: u64,
+    /// The reader's [`time_namespace`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_namespace: Option<u64>,
+}
+
+/// This process's start, as [`process_started`] reads it.
+pub fn this_process_started() -> Option<ProcessStart> {
+    static STARTED: std::sync::OnceLock<Option<ProcessStart>> = std::sync::OnceLock::new();
+    *STARTED.get_or_init(|| {
+        Some(ProcessStart {
+            at: process_started(std::process::id())?,
+            time_namespace: time_namespace(),
+        })
+    })
+}
+
+/// This process's Linux time namespace: the inode `/proc/self/ns/time`
+/// names. `None` elsewhere and before Linux 5.6, which has none.
+pub fn time_namespace() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        namespace_inode(&std::fs::read_link("/proc/self/ns/time").ok()?.to_string_lossy())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// The inode in a `time:[<inode>]` namespace link.
+#[cfg(any(target_os = "linux", test))]
+fn namespace_inode(link: &str) -> Option<u64> {
+    link.strip_prefix("time:[")?.strip_suffix(']')?.parse().ok()
+}
+
+/// When process `pid` started, as its kernel keeps it: fixed for the
+/// process's life and unmoved by clock changes, so a later process given the
+/// same pid reads another value. Linux: clock ticks after boot
+/// (`/proc/<pid>/stat` field 22); macOS: microseconds after the epoch
+/// (`proc_pidinfo`). `None` elsewhere or when unreadable. A Linux time
+/// namespace shifts the reading, so a record's start is compared only in the
+/// namespace that read it.
+pub fn process_started(pid: u32) -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        started_from_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        bsd_started(pid)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn bsd_started(pid: u32) -> Option<u64> {
+    let pid = libc::c_int::try_from(pid).ok()?;
+    let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_bsdinfo>()).ok()?;
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    // SAFETY: `info` is a writable, zeroed `proc_bsdinfo` of `size` bytes,
+    // the buffer `PROC_PIDTBSDINFO` fills.
+    let wrote = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if wrote != size {
+        return None;
+    }
+    // SAFETY: zeroed, then filled in full by the kernel.
+    let info = unsafe { info.assume_init() };
+    info.pbi_start_tvsec
+        .checked_mul(1_000_000)?
+        .checked_add(info.pbi_start_tvusec)
+}
+
+/// Field 22 (`starttime`) of a `/proc/<pid>/stat` line. Field 2, the name,
+/// is in parentheses and may itself hold spaces and parentheses, so the
+/// count starts after its last `)`.
+#[cfg(any(target_os = "linux", test))]
+fn started_from_stat(stat: &str) -> Option<u64> {
+    let after_name = stat.get(stat.rfind(')')? + 1..)?;
+    after_name.split_ascii_whitespace().nth(19)?.parse().ok()
 }
 
 fn turn_record_path(dir: &Path, session_key: &str) -> PathBuf {
@@ -409,6 +511,17 @@ fn writer_pid(record: &PendingReply) -> Option<u32> {
     record.process.split('-').next()?.parse().ok()
 }
 
+/// Whether the live process `pid` started at another time than the record's
+/// writer, so it is not the writer. Unknown starts (older records, Windows,
+/// an unreadable process) and starts read in another time namespace count as
+/// the writer.
+fn pid_reused(record: &PendingReply, pid: u32) -> bool {
+    record.process_started.is_some_and(|writer| {
+        writer.time_namespace == time_namespace()
+            && process_started(pid).is_some_and(|live| live != writer.at)
+    })
+}
+
 /// When the record's writer started.
 fn writer_started(record: &PendingReply) -> Option<std::time::SystemTime> {
     let nanos: u64 = record.process.split_once('-')?.1.parse().ok()?;
@@ -467,8 +580,9 @@ pub fn boot_time() -> Option<std::time::SystemTime> {
 /// into [`recovering_dir`]. Records this process wrote, and records whose
 /// writer `process_alive` says is still running (another gateway, or an old
 /// one still finishing a turn), stay. A writer that started before this
-/// host booted has stopped, whatever process its pid now names. Returns
-/// the number moved.
+/// host booted has stopped, whatever process its pid now names, as has one
+/// whose pid now names a process with another start. Returns the number
+/// moved.
 pub fn take_over(dir: &Path, process_alive: fn(u32) -> bool) -> usize {
     take_over_report(dir, process_alive).moved
 }
@@ -509,8 +623,9 @@ fn take_over_since_with_hook(
             .zip(writer_started(&record))
             .is_some_and(|(boot, started)| started < boot);
         if !before_boot
-            && writer_pid(&record)
-                .is_some_and(|pid| pid != std::process::id() && process_alive(pid))
+            && writer_pid(&record).is_some_and(|pid| {
+                pid != std::process::id() && process_alive(pid) && !pid_reused(&record, pid)
+            })
         {
             continue;
         }

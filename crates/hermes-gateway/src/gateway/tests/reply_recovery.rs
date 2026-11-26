@@ -47,6 +47,7 @@ fn left_by_an_earlier_process(home: &Path, session: &str, reply: Option<&str>) {
                     .unwrap()
                     .as_nanos()
             ),
+            process_started: None,
             reply: reply.map(str::to_string),
             attempts: 0,
         },
@@ -574,6 +575,7 @@ async fn concurrent_gateway_recoveries_at_two_authorize_at_most_three_total_call
             chat_id: "chat-race".to_string(),
             thread_id: None,
             process: "4242-1".to_string(),
+            process_started: None,
             reply: Some("race reply".to_string()),
             attempts: crate::reply_recovery::MAX_SEND_ATTEMPTS - 1,
         },
@@ -685,6 +687,7 @@ async fn three_recorded_attempts_without_sends_exhaust_record() {
             chat_id: "chat-crash".to_string(),
             thread_id: None,
             process: "4242-1".to_string(),
+            process_started: None,
             reply: Some("never sent".to_string()),
             attempts: 0,
         },
@@ -858,6 +861,7 @@ async fn retry_loop_terminates_when_stopped_record_cannot_be_taken_over() {
             chat_id: "chat-unmovable".to_string(),
             thread_id: None,
             process: "4242-1".to_string(),
+            process_started: None,
             reply: Some("blocked takeover".to_string()),
             attempts: 0,
         },
@@ -902,6 +906,7 @@ async fn retry_loop_terminates_when_recovering_dir_is_symlinked() {
             chat_id: "chat-sym".to_string(),
             thread_id: None,
             process: "4242-1".to_string(),
+            process_started: None,
             reply: Some("should not leak".to_string()),
             attempts: 0,
         })
