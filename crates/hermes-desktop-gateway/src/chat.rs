@@ -1029,6 +1029,32 @@ impl DeltaSink {
 mod tests {
     use super::*;
 
+    /// The methods the canonical wire answers in place of an area's handler.
+    const CANONICAL_OVERRIDES: &[&str] = &["session.create", "prompt.submit"];
+
+    /// `Chat::call` takes the first handler that names a method, so a second registration
+    /// would never run: each name is registered once across the areas, and the canonical
+    /// table repeats an area's name only where it is meant to override it.
+    #[test]
+    fn each_method_is_registered_once() {
+        let mut served = std::collections::HashSet::new();
+        for (name, _) in AREAS.iter().flat_map(|area| area.iter()) {
+            assert!(served.insert(*name), "{name} is registered twice in AREAS");
+        }
+        let mut canonical_names = std::collections::HashSet::new();
+        for (name, _) in canonical::METHODS {
+            assert!(
+                canonical_names.insert(*name),
+                "{name} is registered twice in canonical::METHODS"
+            );
+            assert_eq!(
+                served.contains(name),
+                CANONICAL_OVERRIDES.contains(name),
+                "{name}: served by an area but not a listed canonical override, or the reverse"
+            );
+        }
+    }
+
     #[test]
     fn session_ids() {
         assert!(valid_session_id("7f0c6a1e-2b4d-4c4e-9a37-1d2f3e4a5b6c"));
