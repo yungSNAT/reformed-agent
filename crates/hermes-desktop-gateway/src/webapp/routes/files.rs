@@ -7,11 +7,17 @@
 //! - a path must resolve inside the user's home folder or the served profile's working folder
 //!   (upstream: the whole host on a loopback Webapp), and the Hermes home is refused wherever it
 //!   is (it holds the browser credential and saved gateway tokens, which upstream's list lacks);
+//!   a working folder that is `/` or holds a system folder is not a root;
+//! - credential files and folders are refused anywhere, browser profiles, cookie and password
+//!   stores and keyrings included;
 //! - paths are absolute or `~`; the resolved path is opened by walking it from the root's
 //!   descriptor without following links, so a link swapped in after the check is refused;
+//! - a path outside the roots answers 403 whether or not it exists or is readable;
 //! - only a loopback peer reaches these routes, and never the remote-mode token caller;
 //! - `rev-parse` takes a ref of plain ref characters only, after `--end-of-options`;
-//! - git never searches above the root, runs no hook, external diff or configured program.
+//! - git never searches above the root, never enters a submodule, and runs no hook, external
+//!   diff or configured program; on Linux it runs in the folder descriptor that was checked
+//!   (elsewhere by its checked path, so a link swapped in during the call is a limitation).
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -45,7 +51,7 @@ pub(crate) const DATA_URL_MAX_BYTES: u64 = 16 * 1024 * 1024;
 /// The most entries one listing returns; past it the answer says `truncated`.
 pub(crate) const LIST_MAX_ENTRIES: usize = 10_000;
 const GIT_TIMEOUT: Duration = Duration::from_secs(5);
-const UNTRACKED_SCAN_CAP: usize = 500;
+const UNTRACKED_SCAN_CAP: usize = 200;
 const UNTRACKED_LINE_MAX_BYTES: u64 = 1024 * 1024;
 const STATUS_FILES_MAX: usize = 200;
 
@@ -67,7 +73,7 @@ const LIST_HIDDEN: [&str; 13] = [
 ];
 /// Credential file names, matched case-insensitively wherever they sit (upstream's managed-file
 /// list and home credential files, plus this gateway's own secret stores).
-const SENSITIVE_FILES: [&str; 23] = [
+const SENSITIVE_FILES: [&str; 29] = [
     "auth.json",
     "auth.lock",
     "credentials",
@@ -91,9 +97,16 @@ const SENSITIVE_FILES: [&str; 23] = [
     "gateway-connections.json",
     "gateway-connection-tokens.json",
     "session-token",
+    "cookies",
+    "cookies.sqlite",
+    "logins.json",
+    "key3.db",
+    "key4.db",
+    "login data",
 ];
-/// Credential folders, matched as consecutive path components anywhere.
-const SENSITIVE_DIRS: [&[&str]; 10] = [
+/// Credential folders, matched as consecutive lower-case path components anywhere: browser
+/// profiles (cookies, saved passwords), password stores and keyrings among them.
+const SENSITIVE_DIRS: [&[&str]; 27] = [
     &[".ssh"],
     &[".aws"],
     &[".gnupg"],
@@ -104,6 +117,23 @@ const SENSITIVE_DIRS: [&[&str]; 10] = [
     &[".config", "gcloud"],
     &["mcp-tokens"],
     &["whatsapp", "session"],
+    &[".mozilla"],
+    &[".password-store"],
+    &[".local", "share", "keyrings"],
+    &[".config", "google-chrome"],
+    &[".config", "chromium"],
+    &[".config", "bravesoftware"],
+    &[".config", "microsoft-edge"],
+    &[".config", "vivaldi"],
+    &[".config", "opera"],
+    &["library", "cookies"],
+    &["library", "keychains"],
+    &["library", "safari"],
+    &["library", "application support", "google"],
+    &["library", "application support", "chromium"],
+    &["library", "application support", "bravesoftware"],
+    &["library", "application support", "microsoft edge"],
+    &["library", "application support", "firefox"],
 ];
 
 pub(crate) fn sensitive(path: &Path) -> bool {
@@ -215,7 +245,25 @@ pub(crate) fn resolve(raw: &str, roots: &Roots, home: Option<&Path>) -> Result<R
     if sensitive(&requested) {
         return Err(Refusal::Sensitive);
     }
-    let path = std::fs::canonicalize(&requested).map_err(|e| io_refusal(&e))?;
+    let path = match std::fs::canonicalize(&requested) {
+        Ok(path) => path,
+        // A path that does not resolve answers as its nearest existing folder places it: outside
+        // the roots, missing and unreadable answer as an existing path does, so nothing there is
+        // revealed.
+        Err(err) => {
+            let near = requested
+                .ancestors()
+                .skip(1)
+                .find_map(|a| std::fs::canonicalize(a).ok());
+            return Err(match near {
+                Some(near) if roots.refused.iter().any(|r| near.starts_with(r)) => {
+                    Refusal::Sensitive
+                }
+                Some(near) if roots.allowed.iter().any(|r| near.starts_with(r)) => io_refusal(&err),
+                _ => Refusal::Outside,
+            });
+        }
+    };
     if sensitive(&path) {
         return Err(Refusal::Sensitive);
     }
@@ -457,14 +505,45 @@ pub(crate) fn valid_ref(r: &str) -> bool {
 }
 
 /// A git command for the folder `dir` under `root`: the repository's configuration cannot run
-/// a program, discovery stops at the root, and no hook or external diff runs.
+/// a program, discovery stops at the root, and no hook, external diff or submodule diff runs.
 fn git(dir: &Path, root: &Path) -> Option<Command> {
     let mut cmd = hermes_core::git::read_only_git(dir)?;
     let ceiling = root.parent().unwrap_or(root);
     cmd.env("GIT_CEILING_DIRECTORIES", ceiling)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .args(["-c", "core.hooksPath=/dev/null", "-c", "diff.external="]);
+        .args(["-c", "core.hooksPath=/dev/null", "-c", "diff.external="])
+        .args([
+            "-c",
+            "diff.submodule=short",
+            "-c",
+            "status.submoduleSummary=false",
+        ]);
     Some(cmd)
+}
+
+/// `status` as `git/status` runs it. A submodule has its own configuration, which the overrides
+/// do not reach, so status never looks inside one.
+pub(crate) const STATUS_ARGS: [&str; 5] = [
+    "status",
+    "--porcelain=v2",
+    "--branch",
+    "-z",
+    "--ignore-submodules=all",
+];
+/// The line counts of tracked changes, never inside a submodule.
+pub(crate) const DIFF_ARGS: [&str; 7] = [
+    "diff",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--numstat",
+    "-z",
+    "--ignore-submodules=all",
+    "HEAD",
+];
+
+/// `rev-parse` for a ref `valid_ref` passed, after `--end-of-options` all the same.
+pub(crate) fn rev_parse_args(wanted: &str) -> [&str; 4] {
+    ["rev-parse", "--verify", "--end-of-options", wanted]
 }
 
 fn git_out(dir: &Path, root: &Path, args: &[&str]) -> Option<(bool, String)> {
@@ -537,9 +616,21 @@ fn classify(tag: char, xy: &str, path: &str) -> Value {
     })
 }
 
-fn untracked_lines(dir: &Path, rel: &str) -> u64 {
-    let Ok(resolved) = resolve_under(dir, rel) else {
+/// The line count of the untracked file `rel` (a path git printed, relative to the repository's
+/// top `top`), walked from `root` without following a link; 0 when it leaves the root, is
+/// sensitive or refused, or is not a small text file.
+fn untracked_lines(root: &Path, top: &Path, rel: &str, refused: &[PathBuf]) -> u64 {
+    let rel = Path::new(rel);
+    if rel.is_absolute() || rel.components().any(|c| !matches!(c, Component::Normal(_))) {
         return 0;
+    }
+    let path = top.join(rel);
+    if sensitive(&path) || refused.iter().any(|r| path.starts_with(r)) {
+        return 0;
+    }
+    let resolved = Resolved {
+        root: root.to_path_buf(),
+        path,
     };
     let Ok(Opened::File(file, st)) = open_resolved(&resolved) else {
         return 0;
@@ -561,19 +652,18 @@ fn untracked_lines(dir: &Path, rel: &str) -> u64 {
     }
 }
 
-/// `rel` (a path git printed) under the folder `dir`, refused if it leaves it or is sensitive.
-fn resolve_under(dir: &Path, rel: &str) -> Result<Resolved, Refusal> {
-    let rel = Path::new(rel);
-    if rel.is_absolute()
-        || rel.components().any(|c| !matches!(c, Component::Normal(_)))
-        || sensitive(rel)
+/// The repository's top for the checked folder `dir`, from the prefix git reports for it.
+fn top_of(dir: &Path, prefix: &str) -> Option<PathBuf> {
+    let prefix = Path::new(prefix);
+    if prefix
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
     {
-        return Err(Refusal::Outside);
+        return None;
     }
-    Ok(Resolved {
-        root: dir.to_path_buf(),
-        path: dir.join(rel),
-    })
+    dir.ancestors()
+        .nth(prefix.components().count())
+        .map(Path::to_path_buf)
 }
 
 fn default_branch(dir: &Path, root: &Path) -> Option<String> {
@@ -598,9 +688,12 @@ fn default_branch(dir: &Path, root: &Path) -> Option<String> {
     .map(|r| r.rsplit('/').next().unwrap_or(r).to_owned())
 }
 
-/// Upstream's `repo_status`: `None` for a folder outside any repository.
-pub(crate) fn repo_status(dir: &Path, root: &Path) -> Option<Value> {
-    let (ok, raw) = git_out(dir, root, &["status", "--porcelain=v2", "--branch", "-z"])?;
+/// Upstream's `repo_status`: `None` for a folder outside any repository. Untracked files under
+/// `refused` are not read.
+pub(crate) fn repo_status(dir: &RepoDir, refused: &[PathBuf]) -> Option<Value> {
+    let run_in = dir.git_path();
+    let root = dir.resolved.root.as_path();
+    let (ok, raw) = git_out(&run_in, root, &STATUS_ARGS)?;
     if !ok {
         return None;
     }
@@ -625,19 +718,11 @@ pub(crate) fn repo_status(dir: &Path, root: &Path) -> Option<Value> {
         .map(|(t, xy, p)| classify(*t, xy, p))
         .collect();
     let (mut added, mut removed) = (0u64, 0u64);
-    if let Some((true, numstat)) = git_out(
-        dir,
-        root,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--numstat",
-            "HEAD",
-        ],
-    ) {
-        for line in numstat.lines() {
-            let mut parts = line.split('\t');
+    if let Some((true, numstat)) = git_out(&run_in, root, &DIFF_ARGS) {
+        // `-z`: `added<TAB>removed<TAB>path` records; a rename's 2 paths follow as records
+        // without a tab, which count nothing.
+        for record in numstat.split('\0') {
+            let mut parts = record.split('\t');
             added += parts
                 .next()
                 .and_then(|a| a.parse::<u64>().ok())
@@ -648,16 +733,22 @@ pub(crate) fn repo_status(dir: &Path, root: &Path) -> Option<Value> {
                 .unwrap_or(0);
         }
     }
-    added += entries
-        .iter()
-        .take(UNTRACKED_SCAN_CAP)
-        .filter(|(t, ..)| *t == '?')
-        .map(|(_, _, p)| untracked_lines(dir, p))
-        .sum::<u64>();
+    // Porcelain paths are relative to the repository's top, not to the folder asked about.
+    let top = git_out(&run_in, root, &["rev-parse", "--show-prefix"])
+        .filter(|(ok, _)| *ok)
+        .and_then(|(_, prefix)| top_of(&dir.resolved.path, prefix.trim_end_matches('\n')));
+    if let Some(top) = top {
+        added += entries
+            .iter()
+            .filter(|(t, ..)| *t == '?')
+            .take(UNTRACKED_SCAN_CAP)
+            .map(|(_, _, p)| untracked_lines(root, &top, p, refused))
+            .sum::<u64>();
+    }
     let count = |flag: &str| files.iter().filter(|f| f[flag] == true).count();
     Some(json!({
         "branch": branch,
-        "defaultBranch": default_branch(dir, root),
+        "defaultBranch": default_branch(&run_in, root),
         "detached": detached,
         "ahead": ahead,
         "behind": behind,
@@ -692,15 +783,57 @@ pub(crate) fn local_only(caller: Caller, peer: Option<SocketAddr>) -> Result<(),
     }
 }
 
+/// The connection's peer, as the listener recorded it.
+pub(crate) fn peer(ext: &Extensions) -> Option<SocketAddr> {
+    ext.get::<ConnectInfo<SocketAddr>>().map(|c| c.0)
+}
+
+/// System folders a configured working folder may neither be nor hold.
+const SYSTEM_DIRS: [&str; 24] = [
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/home",
+    "/lib",
+    "/lib64",
+    "/opt",
+    "/proc",
+    "/root",
+    "/run",
+    "/sbin",
+    "/srv",
+    "/sys",
+    "/tmp",
+    "/usr",
+    "/var",
+    "/Applications",
+    "/Library",
+    "/System",
+    "/Users",
+    "/Volumes",
+    "/cores",
+    "/private",
+];
+
+/// Whether the canonical working folder `dir` may be a root beside the home folder: never `/`,
+/// and outside `home` never a folder that is or holds a system folder.
+pub(crate) fn extra_root_allowed(dir: &Path, home: Option<&Path>) -> bool {
+    if dir.parent().is_none() {
+        return false;
+    }
+    if home.is_some_and(|h| dir.starts_with(h)) {
+        return true;
+    }
+    !SYSTEM_DIRS.iter().any(|s| Path::new(s).starts_with(dir))
+}
+
 fn admit(
     ctx: &Ctx,
     ext: &Extensions,
     q: &HashMap<String, String>,
 ) -> Result<(Roots, Option<PathBuf>), ApiError> {
-    local_only(
-        ctx.caller,
-        ext.get::<ConnectInfo<SocketAddr>>().map(|c| c.0),
-    )?;
+    local_only(ctx.caller, peer(ext))?;
     served_profile(&ctx.api, q.get("profile").map(String::as_str))?;
     let hermes_home = ctx
         .api
@@ -711,7 +844,15 @@ fn admit(
         .filter(|h| !h.is_empty())
         .map(PathBuf::from);
     let mut allowed: Vec<PathBuf> = user_home.iter().cloned().collect();
-    allowed.push(default_cwd_for(&hermes_home));
+    let real_home = user_home
+        .as_deref()
+        .and_then(|h| std::fs::canonicalize(h).ok());
+    if let Some(cwd) = std::fs::canonicalize(default_cwd_for(&hermes_home))
+        .ok()
+        .filter(|cwd| extra_root_allowed(cwd, real_home.as_deref()))
+    {
+        allowed.push(cwd);
+    }
     let refused = [hermes_home.clone(), machine_root(ctx)];
     Ok((Roots::new(&allowed, &refused), user_home))
 }
@@ -753,6 +894,34 @@ async fn fs_list(ctx: Ctx, ext: Extensions, Query(q): Query<HashMap<String, Stri
     .map(Json)
 }
 
+/// `read-data-url`'s answer for a checked path: the file's ETag, and its data URL unless `wanted`
+/// holds that ETag. A file over the limit is refused before it is read.
+pub(crate) fn data_url(
+    resolved: &Resolved,
+    wanted: &[String],
+) -> Result<(String, Option<String>), ApiError> {
+    let (file, st) = match open_resolved(resolved)? {
+        Opened::File(file, st) => (file, st),
+        Opened::Dir(_) => return Err(Refusal::NotAFile.into()),
+    };
+    if st.st_size as u64 > DATA_URL_MAX_BYTES {
+        return Err(Refusal::TooLarge.into());
+    }
+    let tag = etag(&resolved.path, &st);
+    if wanted.iter().any(|w| *w == tag || w == "*") {
+        return Ok((tag, None));
+    }
+    let bytes = read_capped(file, DATA_URL_MAX_BYTES)?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok((
+        tag,
+        Some(format!(
+            "data:{};base64,{encoded}",
+            mime_type(&resolved.path)
+        )),
+    ))
+}
+
 async fn read_data_url(
     ctx: Ctx,
     ext: Extensions,
@@ -773,26 +942,7 @@ async fn read_data_url(
             .unwrap_or_default();
         blocking(move || {
             let resolved = resolve(&raw, &roots, home.as_deref())?;
-            let (file, st) = match open_resolved(&resolved)? {
-                Opened::File(file, st) => (file, st),
-                Opened::Dir(_) => return Err(Refusal::NotAFile.into()),
-            };
-            if st.st_size as u64 > DATA_URL_MAX_BYTES {
-                return Err(Refusal::TooLarge.into());
-            }
-            let tag = etag(&resolved.path, &st);
-            if wanted.iter().any(|w| *w == tag || w == "*") {
-                return Ok((tag, None));
-            }
-            let bytes = read_capped(file, DATA_URL_MAX_BYTES)?;
-            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-            Ok((
-                tag,
-                Some(format!(
-                    "data:{};base64,{encoded}",
-                    mime_type(&resolved.path)
-                )),
-            ))
+            data_url(&resolved, &wanted)
         })
         .await
     };
@@ -816,11 +966,39 @@ async fn read_data_url(
     }
 }
 
+/// A repository folder a git route names: checked as `fs/list` checks a folder and held open.
+pub(crate) struct RepoDir {
+    resolved: Resolved,
+    fd: std::os::fd::OwnedFd,
+}
+
+impl RepoDir {
+    /// The path git is pointed at. On Linux it names the open descriptor, so git (its own
+    /// configuration read included) works in the folder that was checked even if a link is
+    /// swapped in afterwards; elsewhere it is the checked path.
+    fn git_path(&self) -> PathBuf {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            PathBuf::from(format!(
+                "/proc/{}/fd/{}",
+                std::process::id(),
+                self.fd.as_raw_fd()
+            ))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = &self.fd;
+            self.resolved.path.clone()
+        }
+    }
+}
+
 /// The repository folder a git route names: a folder inside a root, resolved as `fs/list` does.
-fn repo_dir(raw: &str, roots: &Roots, home: Option<&Path>) -> Result<Resolved, ApiError> {
+pub(crate) fn repo_dir(raw: &str, roots: &Roots, home: Option<&Path>) -> Result<RepoDir, ApiError> {
     let resolved = resolve(raw, roots, home)?;
     match open_resolved(&resolved)? {
-        Opened::Dir(_) => Ok(resolved),
+        Opened::Dir(fd) => Ok(RepoDir { resolved, fd }),
         Opened::File(..) => Err(Refusal::NotADirectory.into()),
     }
 }
@@ -842,7 +1020,7 @@ async fn git_status(
             }
             Err(err) => return Err(err),
         };
-        Ok(repo_status(&dir.path, &dir.root).unwrap_or(Value::Null))
+        Ok(repo_status(&dir, &roots.refused).unwrap_or(Value::Null))
     })
     .await
     .map(Json)
@@ -866,9 +1044,9 @@ async fn rev_parse(
     blocking(move || {
         let dir = repo_dir(&raw, &roots, home.as_deref())?;
         let sha = git_line(
-            &dir.path,
-            &dir.root,
-            &["rev-parse", "--verify", "--end-of-options", wanted.as_str()],
+            &dir.git_path(),
+            &dir.resolved.root,
+            &rev_parse_args(&wanted),
         );
         Ok(json!({"sha": sha}))
     })
