@@ -93,8 +93,12 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
     );
 
     let replies = adapter.drain_outbound().await;
+    assert_eq!(replies.len(), 3);
+    assert_eq!(replies[0].chat_id, "survey-chat");
+    assert!(replies[0].text.contains("Platform error: fixture failure"));
     let replies: Vec<_> = replies
         .iter()
+        .skip(1)
         .map(|reply| (reply.chat_id.as_str(), reply.text.as_str()))
         .collect();
     assert_eq!(
@@ -136,8 +140,10 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
         assert_eq!(*observed.lock().unwrap(), ["First count", "Cloud count"]);
 
         let replies = adapter.drain_outbound().await;
-        assert_eq!(replies.len(), 1);
+        assert_eq!(replies.len(), 2);
         assert_eq!(replies[0].chat_id, "weather-chat");
-        assert_eq!(replies[0].text, "fixture-sender received Cloud count");
+        assert!(replies[0].text.contains("Platform error: fixture failure"));
+        assert_eq!(replies[1].chat_id, "weather-chat");
+        assert_eq!(replies[1].text, "fixture-sender received Cloud count");
     }
 }
