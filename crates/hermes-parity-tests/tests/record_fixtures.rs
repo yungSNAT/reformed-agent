@@ -47,6 +47,15 @@ fn python() -> String {
     python
 }
 
+/// `text` as Python's text streams write it on this platform (CRLF line ends on Windows).
+fn native(text: &str) -> Vec<u8> {
+    if cfg!(windows) {
+        text.replace('\n', "\r\n").into_bytes()
+    } else {
+        text.as_bytes().to_vec()
+    }
+}
+
 fn golden(name: &str, py_root: &Path) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/record_fixtures")
@@ -96,13 +105,16 @@ fn without_a_checkout_prints_the_checkpoint_cases_and_a_note() {
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, "python-that-must-not-run");
     assert_eq!(recorded.code, 0);
-    assert_eq!(recorded.stdout, golden("no_checkout.json", &py_root));
+    assert_eq!(
+        recorded.stdout,
+        native(&golden("no_checkout.json", &py_root))
+    );
     assert_eq!(
         recorded.stderr,
-        format!(
+        native(&format!(
             "Note: Python Hermes not found at {} \u{2014} only checkpoint hash cases emitted.\n",
             py_root.display()
-        )
+        ))
     );
 }
 
@@ -111,9 +123,12 @@ fn with_a_checkout_records_the_adapter_cases_from_python() {
     let dir = checkout("fake", FAKE_ADAPTER);
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, &python());
-    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.stderr, b"");
     assert_eq!(recorded.code, 0);
-    assert_eq!(recorded.stdout, golden("fake_checkout.json", &py_root));
+    assert_eq!(
+        recorded.stdout,
+        native(&golden("fake_checkout.json", &py_root))
+    );
 }
 
 #[test]
@@ -122,9 +137,12 @@ fn what_the_adapter_writes_to_stderr_passes_through_on_success() {
     let dir = checkout("warns", &adapter);
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, &python());
-    assert_eq!(recorded.stderr, "adapter warning\n");
+    assert_eq!(recorded.stderr, native("adapter warning\n"));
     assert_eq!(recorded.code, 0);
-    assert_eq!(recorded.stdout, golden("fake_checkout.json", &py_root));
+    assert_eq!(
+        recorded.stdout,
+        native(&golden("fake_checkout.json", &py_root))
+    );
 }
 
 #[test]
@@ -133,14 +151,14 @@ fn what_the_adapter_prints_comes_before_the_json() {
     let dir = checkout("prints", &adapter);
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, &python());
-    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.stderr, b"");
     assert_eq!(recorded.code, 0);
     assert_eq!(
         recorded.stdout,
-        format!(
+        native(&format!(
             "loading adapter\n{}",
             golden("fake_checkout.json", &py_root)
-        )
+        ))
     );
 }
 
@@ -150,11 +168,14 @@ fn what_the_adapter_prints_without_a_newline_comes_before_the_json() {
     let dir = checkout("unterminated", &adapter);
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, &python());
-    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.stderr, b"");
     assert_eq!(recorded.code, 0);
     assert_eq!(
         recorded.stdout,
-        format!("loading{}", golden("fake_checkout.json", &py_root))
+        native(&format!(
+            "loading{}",
+            golden("fake_checkout.json", &py_root)
+        ))
     );
 }
 
@@ -163,8 +184,8 @@ fn what_the_adapter_prints_before_failing_is_kept_with_its_exit_code() {
     let adapter = "import sys\nprint('loading')\nsys.exit(3)\n";
     let dir = checkout("prints-then-fails", adapter);
     let recorded = record(&dir.path().join("hermes-agent"), &python());
-    assert_eq!(recorded.stdout, "loading\n");
-    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.stdout, native("loading\n"));
+    assert_eq!(recorded.stderr, b"");
     assert_eq!(recorded.code, 3);
 }
 
@@ -176,11 +197,11 @@ fn what_the_adapter_prints_at_exit_follows_the_json_with_its_exit_code() {
     let dir = checkout("exits-late", &adapter);
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, &python());
-    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.stderr, b"");
     assert_eq!(recorded.code, 3);
     assert_eq!(
         recorded.stdout,
-        format!("{}bye\n", golden("fake_checkout.json", &py_root))
+        native(&format!("{}bye\n", golden("fake_checkout.json", &py_root)))
     );
 }
 
@@ -193,9 +214,13 @@ fn bytes_the_adapter_writes_after_the_json_pass_through_unchanged() {
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, &python());
     assert_eq!(recorded.code, 0);
-    let stdout: &[u8] = recorded.stdout.as_ref();
-    let expected = [golden("fake_checkout.json", &py_root).as_bytes(), b"\xff\n"].concat();
-    assert_eq!(stdout, expected.as_slice());
+    // Written through `sys.stdout.buffer`, so the byte and its LF reach stdout untranslated.
+    let expected = [
+        native(&golden("fake_checkout.json", &py_root)),
+        b"\xff\n".to_vec(),
+    ]
+    .concat();
+    assert_eq!(recorded.stdout, expected);
 }
 
 #[test]
@@ -223,8 +248,9 @@ fn a_failing_adapter_import_fails_the_run_with_python_s_error() {
         stderr,
         code,
     } = record(&py_root, &python());
+    let stderr = String::from_utf8_lossy(&stderr);
     assert_eq!(code, 1);
-    assert_eq!(stdout, "");
+    assert_eq!(stdout, b"");
     assert!(
         stderr.contains("ImportError: adapter needs its dependencies"),
         "{stderr}"
@@ -238,13 +264,11 @@ fn a_missing_interpreter_fails_the_run() {
         &dir.path().join("hermes-agent"),
         "no-such-python-interpreter",
     );
+    let stderr = String::from_utf8_lossy(&recorded.stderr);
     assert_eq!(recorded.code, 1);
-    assert_eq!(recorded.stdout, "");
+    assert_eq!(recorded.stdout, b"");
     assert!(
-        recorded
-            .stderr
-            .starts_with("cannot run no-such-python-interpreter: "),
-        "{}",
-        recorded.stderr
+        stderr.starts_with("cannot run no-such-python-interpreter: "),
+        "{stderr}"
     );
 }

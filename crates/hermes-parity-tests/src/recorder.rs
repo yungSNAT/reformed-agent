@@ -97,12 +97,23 @@ struct Recording {
     cases: Vec<Case>,
 }
 
-/// What a recording run prints: stdout, stderr and the exit code.
+/// What a recording run prints, byte for byte as the script printed it on this platform:
+/// stdout, stderr and the exit code. What Python wrote passes through untouched; text the
+/// recorder writes itself ends its lines as Python's text streams do here.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Recorded {
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
     pub code: i32,
+}
+
+/// `text` with the line ends Python's text streams write on this platform (CRLF on Windows).
+fn native(text: &str) -> Vec<u8> {
+    if cfg!(windows) {
+        text.replace('\n', "\r\n").into_bytes()
+    } else {
+        text.as_bytes().to_vec()
+    }
 }
 
 fn checkpoint_cases() -> Vec<Case> {
@@ -150,10 +161,10 @@ fn python_json(recording: &Recording) -> String {
     out
 }
 
-fn failure(stderr: String) -> Recorded {
+fn failure(message: String) -> Recorded {
     Recorded {
-        stdout: String::new(),
-        stderr,
+        stdout: Vec::new(),
+        stderr: native(&message),
         code: 1,
     }
 }
@@ -190,18 +201,22 @@ fn shim_command(python: &str, py_root: &Path) -> Command {
 
 /// What the shim printed around its results, the results, its stderr and exit code.
 struct Upstream {
-    printed: String,
+    printed: Vec<u8>,
     results: Vec<Value>,
-    after: String,
-    stderr: String,
+    after: Vec<u8>,
+    stderr: Vec<u8>,
     code: i32,
 }
 
 /// Splits the shim's stdout into what the adapter printed before the results, the results,
 /// and what it printed after them (at interpreter exit); `None` when no complete results.
-fn split_results(stdout: &str) -> Option<(&str, Vec<Value>, &str)> {
-    let (printed, rest) = stdout.split_once(RESULTS_MARKER)?;
-    let mut values = serde_json::Deserializer::from_str(rest).into_iter::<Vec<Value>>();
+fn split_results(stdout: &[u8]) -> Option<(&[u8], Vec<Value>, &[u8])> {
+    let marker = RESULTS_MARKER.as_bytes();
+    let at = stdout
+        .windows(marker.len())
+        .position(|window| window == marker)?;
+    let (printed, rest) = (&stdout[..at], &stdout[at + marker.len()..]);
+    let mut values = serde_json::Deserializer::from_slice(rest).into_iter::<Vec<Value>>();
     let results = values.next()?.ok()?;
     Some((printed, results, &rest[values.byte_offset()..]))
 }
@@ -210,16 +225,13 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
     let output = shim_command(python, py_root)
         .output()
         .map_err(|error| failure(format!("cannot run {python}: {error}\n")))?;
-    // Python ends lines with CRLF on Windows; `Recorded` holds LF, as the binary restores them.
-    let stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n");
-    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     let code = output.status.code().unwrap_or(1);
-    let Some((printed, results, after)) = split_results(&stdout) else {
+    let Some((printed, results, after)) = split_results(&output.stdout) else {
         if code != 0 {
             // As the script did, keep what the adapter printed before it failed, and its exit code.
             return Err(Recorded {
-                stdout,
-                stderr,
+                stdout: output.stdout,
+                stderr: output.stderr,
                 code,
             });
         }
@@ -236,10 +248,10 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
     }
     // A failure after the results (at interpreter exit) still printed the recording.
     Ok(Upstream {
-        printed: printed.to_owned(),
+        printed: printed.to_vec(),
         results,
-        after: after.to_owned(),
-        stderr,
+        after: after.to_vec(),
+        stderr: output.stderr,
         code,
     })
 }
@@ -275,10 +287,11 @@ pub fn record(py_root: &Path, python: &str) -> Recorded {
         let note = format!(
             "Note: Python Hermes not found at {source} \u{2014} only checkpoint hash cases emitted.\n"
         );
-        (String::new(), String::new(), note, 0)
+        (Vec::new(), Vec::new(), native(&note), 0)
     };
+    let recording = native(&python_json(&Recording { source, cases }));
     Recorded {
-        stdout: printed + &python_json(&Recording { source, cases }) + &after,
+        stdout: [printed, recording, after].concat(),
         stderr,
         code,
     }

@@ -15,17 +15,7 @@ fn main() {
     let recorded = recorder::record(&py_root, &recorder::python_from_env());
     // A closed pipe (`| head`) ends the run with 1, as the script's BrokenPipeError did.
     let written = std::io::stdout()
-        .write_all(native_newlines(&recorded.stdout).as_bytes())
-        .and_then(|()| std::io::stderr().write_all(native_newlines(&recorded.stderr).as_bytes()));
+        .write_all(&recorded.stdout)
+        .and_then(|()| std::io::stderr().write_all(&recorded.stderr));
     std::process::exit(if written.is_ok() { recorded.code } else { 1 });
-}
-
-/// Python's text streams end lines with CRLF on Windows; match them byte for byte there.
-fn native_newlines(text: &str) -> String {
-    let text = text.replace("\r\n", "\n");
-    if cfg!(windows) {
-        text.replace('\n', "\r\n")
-    } else {
-        text
-    }
 }
