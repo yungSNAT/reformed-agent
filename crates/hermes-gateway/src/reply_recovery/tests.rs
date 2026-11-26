@@ -91,6 +91,23 @@ fn a_writer_from_before_the_boot_has_stopped_whatever_its_pid_names_now() {
     assert_eq!(recovering(&dir)[0].1.session_key, "rebooted");
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn the_host_boot_time_is_known_where_records_are_held_for_live_writers() {
+    let booted = boot_time().expect("boot time on Linux and macOS");
+    let up = std::time::SystemTime::now()
+        .duration_since(booted)
+        .expect("booted in the past");
+    assert!(
+        up < std::time::Duration::from_secs(10 * 365 * 24 * 3600),
+        "uptime {up:?} is not a boot time"
+    );
+    // A boot time after this process started would make every live writer's
+    // record look older than the boot, so it would be sent twice.
+    let started = writer_started(&record("me", &this_process())).expect("start stamp");
+    assert!(booted <= started, "booted {booted:?} after {started:?}");
+}
+
 #[test]
 fn each_send_is_counted_before_it_is_made_and_the_cap_drops_the_record() {
     let tmp = tempfile::tempdir().expect("tempdir");
