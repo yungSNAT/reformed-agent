@@ -31,7 +31,7 @@ impl LlmProvider for FailingPrimary {
         _temperature: Option<f64>,
         _model: Option<&str>,
         _extra_body: Option<&serde_json::Value>,
-    ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+    ) -> futures::stream::BoxStream<'static, Result<StreamChunk, AgentError>> {
         Box::pin(futures::stream::empty())
     }
 }
@@ -41,8 +41,9 @@ impl LlmProvider for FailingPrimary {
 /// primary model that just failed.
 #[test]
 fn after_a_route_falls_back_the_failover_chain_starts_from_the_primary() {
-    let _env_lock = env_test_lock();
-    let _no_key = EnvVarGuard::remove("DEEPSEEK_API_KEY");
+    let _env_lock = super::tests::env_test_lock();
+    let saved_key = std::env::var("DEEPSEEK_API_KEY").ok();
+    std::env::remove_var("DEEPSEEK_API_KEY");
     let mut config = AgentConfig {
         model: "openai:primary-model".to_string(),
         provider: Some("openai".to_string()),
@@ -56,7 +57,8 @@ fn after_a_route_falls_back_the_failover_chain_starts_from_the_primary() {
         },
         ..AgentConfig::default()
     };
-    let _home = isolate_route_learning_home(&mut config);
+    let home = tempfile::tempdir().expect("tempdir");
+    config.hermes_home = Some(home.path().to_string_lossy().to_string());
     let primary = Arc::new(FailingPrimary::default());
     let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), primary.clone());
     // A route to a provider with no key: it cannot be built, so the primary answers.
@@ -73,6 +75,9 @@ fn after_a_route_falls_back_the_failover_chain_starts_from_the_primary() {
         .expect("tokio runtime");
 
     let result = runtime.block_on(agent.call_llm_with_retry(&ctx, &[], Some(&route), None));
+    if let Some(key) = saved_key {
+        std::env::set_var("DEEPSEEK_API_KEY", key);
+    }
 
     assert!(result.is_err());
     let models = primary.models.lock().unwrap().clone();

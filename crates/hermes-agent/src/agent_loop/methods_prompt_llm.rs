@@ -1346,3 +1346,10 @@ impl AgentLoop {
     }
 
 }
+
+#[cfg(test)]
+mod route_fallback_errors {
+    use super::*;
+
+    include!("tests/route_fallback_errors.rs");
+}
