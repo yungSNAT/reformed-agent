@@ -4,7 +4,13 @@
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
 //! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
-//! self-update as off. Other methods get JSON-RPC 'method not found'.
+//! self-update as off. Other methods get JSON-RPC 'method not found' (-32601).
+//!
+//! One connection's requests can run at the same time and be answered out of order, as JSON-RPC
+//! allows: a request whose handler waits (a turn, an approval) does not hold up the next. A
+//! client that needs one request's effect before another waits for the first reply: an
+//! `image.attach_bytes` or `file.attach` before the `prompt.submit` that should carry it, and a
+//! `session.create` before any request that names its session.
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
 //! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token in its
@@ -23,6 +29,8 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -33,6 +41,8 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use futures::future::FutureExt;
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
@@ -44,7 +54,7 @@ pub mod local;
 mod tickets;
 
 pub use chat::Chat;
-use chat::{Outgoing, RpcError};
+use chat::{Conn, Origin, Outgoing, Reply};
 use tickets::{Purpose, Tickets};
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
@@ -109,9 +119,11 @@ enum Auth {
 struct Gateway {
     auth: Auth,
     port: u16,
-    replay_epoch: String,
     chat: Arc<Chat>,
 }
+
+/// Numbers each connection, so a session knows which ones it streams to.
+static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// A new random token: 64 hexadecimal characters from 2 version 4 UUIDs (244 random bits).
 pub fn new_token() -> String {
@@ -136,7 +148,6 @@ fn router(auth: Auth, port: u16, chat: Chat) -> Router {
     let gateway = Arc::new(Gateway {
         auth,
         port,
-        replay_epoch: uuid::Uuid::new_v4().simple().to_string(),
         chat: Arc::new(chat),
     });
     let private = Router::new()
@@ -343,9 +354,13 @@ async fn upgrade(
     ) {
         return status.into_response();
     }
-    let epoch = gw.replay_epoch.clone();
     let chat = Arc::clone(&gw.chat);
     let canonical = offered.is_some();
+    // Both listeners take loopback connections only: the token one checks `Host` and `Origin`,
+    // and the ticket one is local mode's. A new kind of listener must choose here.
+    let origin = match gw.auth {
+        Auth::Token(_) | Auth::Native(_) => Origin::Local,
+    };
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
     let ws = if canonical {
         ws.protocols([CANONICAL_PROTOCOL])
@@ -354,7 +369,7 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, epoch, chat, canonical))
+        .on_upgrade(move |socket| session(socket, chat, canonical, origin))
 }
 
 /// The ticket a native dial offers as its `hermes-gateway-ticket.` subprotocol: `None` when it
@@ -380,7 +395,7 @@ fn protocol_ticket(headers: &HeaderMap) -> Result<Option<&str>, ()> {
 
 /// One connection. A `canonical` one ([`CANONICAL_PROTOCOL`]) announces the session authority in
 /// its `gateway.ready` and answers the session verbs as [`chat`]'s `canonical` module does.
-async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>, canonical: bool) {
+async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool, origin: Origin) {
     let mut ready = json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -389,50 +404,101 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>, c
             // the desktop on its own polling until this backend broadcasts changes.
             "skin": {},
             "change_events": false,
-            "replay_epoch": replay_epoch,
+            "replay_epoch": chat.replay_epoch(),
         }},
     });
     if canonical {
         ready["params"]["payload"]["session_authority"] = true.into();
     }
-    // Turns stream their events through this connection's outbox, after `gateway.ready`;
-    // replies go out first, as each is written before the next outbox frame is read. Queued
-    // events are written before the next request is read, so a client that reads slowly cannot
-    // start more turns while finished ones wait. A turn keeps its slot until its last event is
-    // written, so the turn cap bounds the replies waiting across all connections. A frame not
-    // written within the write timeout of being queued closes the connection, which drops its
-    // queued events and frees their slots.
+    // Turns stream their events through the outbox of each connection on their session,
+    // after `gateway.ready` (see `serve_socket` for the order).
     let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
     // Cannot fail: `events` lives until the session ends.
     let _ = outbox.send(Outgoing::from(ready));
-    let call = |method: &str, params: &Value| {
-        if canonical {
-            chat.call_canonical(method, params, &outbox, &replay_epoch)
-        } else {
-            chat.call(method, params, &outbox)
-        }
+    let mut conn = Conn::new(
+        CONNECTIONS.fetch_add(1, Ordering::Relaxed),
+        outbox,
+        canonical,
+    );
+    conn.origin = origin;
+    let call = |method: &str, params: Value| chat.call(&conn, method, params);
+    serve_socket(&mut socket, &mut events, &call, chat.write_timeout()).await;
+    chat.disconnect(conn.id);
+}
+
+/// Most frames one connection has waiting on their handlers. Past it the connection still
+/// reads: a request whose handler answers at once is answered (an approval's or a prompt's
+/// answer, which a waiting turn needs), and one that would wait gets [`CONNECTION_BUSY`].
+const MAX_IN_FLIGHT: usize = 16;
+
+/// The code for a request refused because its connection has [`MAX_IN_FLIGHT`] waiting
+/// (JSON-RPC's range for server errors).
+const CONNECTION_BUSY: i64 = -32001;
+
+/// A frame's reply, once its handlers are done.
+type InFlight<'a> = Pin<Box<dyn Future<Output = Option<Value>> + Send + 'a>>;
+
+/// Answers `socket`'s requests with `call` and writes `events`, each frame within
+/// `write_timeout` of being queued, until either side closes.
+///
+/// A frame's handlers run whilst the connection goes on: a handler that waits holds up
+/// neither the connection's events nor its other requests, and its reply goes out when it is
+/// done, so replies can come out of order. Past [`MAX_IN_FLIGHT`] waiting frames, a request is
+/// still read and answered if its handler answers at once. Each pass writes a finished reply first, then a queued event, and only then reads
+/// another frame, so a handler that answers at once is answered before the next frame is read,
+/// and a client that reads slowly cannot start more turns whilst finished ones wait. A turn
+/// keeps its slot until its last event is written to the connection that prompted it, so the
+/// turn cap bounds the replies waiting on those connections. A frame not written within the
+/// write timeout of being queued closes the connection, which drops its queued events, frees
+/// their slots and drops the handlers still waiting.
+async fn serve_socket(
+    socket: &mut WebSocket,
+    events: &mut mpsc::UnboundedReceiver<Outgoing>,
+    call: &Call<'_>,
+    write_timeout: std::time::Duration,
+) {
+    // A handler that would wait is dropped before its first wait, which the handler contract
+    // makes safe (`chat::Handler`).
+    let answer_at_once = |method: &str, params: Value| {
+        match call(method, params).now_or_never() {
+        Some(result) => chat::ready(result),
+        None => chat::ready(Err((
+            CONNECTION_BUSY,
+            format!(
+                "busy: {MAX_IN_FLIGHT} requests wait on this connection; send again when one is answered"
+            ),
+        ))),
+    }
     };
+    let at_once: &Call<'_> = &answer_at_once;
+    // Declared after the handlers it borrows, so it is dropped first.
+    let mut in_flight: FuturesUnordered<InFlight<'_>> = FuturesUnordered::new();
     loop {
         let frame = tokio::select! {
             biased;
+            Some(reply) = in_flight.next(), if !in_flight.is_empty() => reply.map(Outgoing::from),
             Some(event) = events.recv() => Some(event),
-            inbound = socket.recv() => match inbound {
-                Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
-                    reply_to(&text, &call).map(Outgoing::from)
+            inbound = socket.recv() => {
+                let run = if in_flight.len() < MAX_IN_FLIGHT { call } else { at_once };
+                match inbound {
+                    Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
+                        in_flight.push(Box::pin(async move { reply_to(&text, run).await }));
+                    }
+                    Some(Ok(Message::Text(text))) => match attach_request(&text) {
+                        Some(request) => in_flight.push(Box::pin(reply_to_one(request, run))),
+                        None => break,
+                    },
+                    Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                    Some(Ok(_)) => {}
                 }
-                Some(Ok(Message::Text(text))) => match attach_request(&text) {
-                    Some(request) => reply_to_one(&request, &call).map(Outgoing::from),
-                    None => break,
-                },
-                Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,
-                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
-                Some(Ok(_)) => None,
-            },
+                None
+            }
         };
         if let Some(outgoing) = frame {
-            let text = outgoing.frame.to_string();
-            let deadline = outgoing.queued + chat.write_timeout();
-            if !write_by(deadline, socket.send(Message::Text(text.into()))).await {
+            let deadline = outgoing.queued + write_timeout;
+            let text = axum::extract::ws::Utf8Bytes::from(&*outgoing.text);
+            if !write_by(deadline, socket.send(Message::Text(text))).await {
                 break;
             }
         }
@@ -466,10 +532,34 @@ fn rpc_error(id: Value, code: i64, message: String) -> Value {
 }
 
 /// Runs one request's method; the error is a JSON-RPC code and message.
-type Call<'a> = dyn Fn(&str, &Value) -> Result<Value, RpcError> + 'a;
+type Call<'a> = dyn Fn(&str, Value) -> Reply + Sync + 'a;
 
-/// The reply to one inbound frame: one request or a JSON-RPC batch of them.
-fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
+/// The code for a batch member that was not run because the batch's reply had passed
+/// [`MAX_MESSAGE_BYTES`] (JSON-RPC's range for server errors).
+const BATCH_FULL: i64 = -32000;
+
+/// The length of `value` as JSON text, without building the text.
+fn json_len(value: &Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    // Writing to a counter cannot fail.
+    let _ = serde_json::to_writer(&mut count, value);
+    count.0
+}
+
+/// The reply to one inbound frame: one request or a JSON-RPC batch of them, run in order. Once
+/// a batch's replies pass [`MAX_MESSAGE_BYTES`], its later requests are not run and get
+/// [`BATCH_FULL`], so one small frame cannot build an unbounded reply.
+async fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return Some(rpc_error(Value::Null, -32700, "parse error".into()));
     };
@@ -485,13 +575,31 @@ fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
             format!("invalid request: a batch holds at most {MAX_BATCH} requests"),
         )),
         Value::Array(items) => {
-            let replies: Vec<Value> = items
-                .iter()
-                .filter_map(|item| reply_to_one(item, call))
-                .collect();
+            let full: &Call<'_> = &|_, _| {
+                chat::ready(Err((
+                    BATCH_FULL,
+                    format!(
+                        "not run: this batch's reply passed {} MiB; send the request again on its own",
+                        MAX_MESSAGE_BYTES >> 20
+                    ),
+                )))
+            };
+            let mut replies = Vec::new();
+            let mut bytes = 0;
+            for item in items {
+                let run = if bytes > MAX_MESSAGE_BYTES {
+                    full
+                } else {
+                    call
+                };
+                if let Some(reply) = reply_to_one(item, run).await {
+                    bytes += json_len(&reply);
+                    replies.push(reply);
+                }
+            }
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
-        single => reply_to_one(&single, call),
+        single => reply_to_one(single, call).await,
     }
 }
 
@@ -615,11 +723,12 @@ fn attach_request(text: &str) -> Option<Value> {
 /// -32600, where the specification allows no reply to any notification. Upstream's gateway
 /// (`_normalize_request` in tui_gateway/server.py) answers an empty method that way with or
 /// without an id, and Hermes Desktop never sends one.
-fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
+async fn reply_to_one(frame: Value, call: &Call<'_>) -> Option<Value> {
     let invalid = |id: Value| Some(rpc_error(id, -32600, "invalid request".into()));
-    let Some(request) = frame.as_object() else {
+    let Value::Object(mut request) = frame else {
         return invalid(Value::Null);
     };
+    let params = request.remove("params");
     let id = request.get("id");
     let id_valid = matches!(
         id,
@@ -629,18 +738,15 @@ fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
         Some(id) if id_valid => id.clone(),
         _ => Value::Null,
     };
-    let params_valid = matches!(
-        request.get("params"),
-        None | Some(Value::Array(_) | Value::Object(_))
-    );
+    let params_valid = matches!(params, None | Some(Value::Array(_) | Value::Object(_)));
+    let params = params.unwrap_or(Value::Null);
     let version_2 = request.get("jsonrpc").and_then(Value::as_str) == Some("2.0");
     match request.get("method") {
         Some(Value::String(method))
             if version_2 && !method.is_empty() && id_valid && params_valid =>
         {
             id?;
-            let params = request.get("params").unwrap_or(&Value::Null);
-            Some(match call(method, params) {
+            Some(match call(method, params).await {
                 Ok(result) => json!({"jsonrpc": "2.0", "id": reply_id, "result": result}),
                 Err((code, message)) => rpc_error(reply_id, code, message),
             })
@@ -739,20 +845,198 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    #[test]
-    fn notifications_and_responses_get_no_reply_and_run_nothing() {
+    #[tokio::test]
+    async fn notifications_and_responses_get_no_reply_and_run_nothing() {
         let call: &Call<'_> = &|method, _| panic!("{method} was run");
-        assert_eq!(reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#, call), None);
         assert_eq!(
-            reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#, call),
+            reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#, call).await,
+            None
+        );
+        assert_eq!(
+            reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#, call).await,
             None
         );
         assert_eq!(
             reply_to(
                 r#"[{"jsonrpc":"2.0","method":"x"},{"id":2,"result":{}}]"#,
                 call
-            ),
+            )
+            .await,
             None
         );
+    }
+
+    /// A batch whose replies pass [`MAX_MESSAGE_BYTES`] runs no more of its requests; each
+    /// is still answered, with an error that says to send it again on its own.
+    #[tokio::test]
+    async fn a_batch_stops_running_requests_once_its_reply_is_large() {
+        let runs = std::sync::atomic::AtomicUsize::new(0);
+        let big = "x".repeat(1 << 20);
+        let call: &Call<'_> = &|_, _| {
+            runs.fetch_add(1, Ordering::Relaxed);
+            chat::ready(Ok(Value::String(big.clone())))
+        };
+        let batch: Vec<Value> = (0..MAX_BATCH)
+            .map(|id| json!({"jsonrpc": "2.0", "id": id, "method": "m"}))
+            .collect();
+        let reply = reply_to(&Value::Array(batch).to_string(), call)
+            .await
+            .unwrap();
+        let replies = reply.as_array().unwrap();
+        assert_eq!(replies.len(), MAX_BATCH);
+        let ran = runs.load(Ordering::Relaxed);
+        assert!((1..MAX_BATCH).contains(&ran), "{ran} ran");
+        assert!(reply.to_string().len() <= MAX_MESSAGE_BYTES + (2 << 20));
+        let last = &replies[MAX_BATCH - 1];
+        assert_eq!(last["id"], MAX_BATCH - 1);
+        assert_eq!(last["error"]["code"], -32000, "{last}");
+    }
+
+    /// A request whose handler waits holds up neither the connection's events nor its
+    /// other requests, and is answered once it is done.
+    #[tokio::test]
+    async fn a_waiting_request_holds_up_neither_events_nor_other_requests() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as Frame;
+
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (outbox, events) = mpsc::unbounded_channel::<Outgoing>();
+        let events = Arc::new(std::sync::Mutex::new(Some(events)));
+        let parked = Arc::clone(&release);
+        let app = Router::new().route(
+            "/",
+            get(move |ws: WebSocketUpgrade| {
+                let events = events.lock().unwrap().take();
+                let release = Arc::clone(&parked);
+                async move {
+                    ws.on_upgrade(move |mut socket| async move {
+                        let mut events = events.expect("one connection");
+                        let call = move |method: &str, _: Value| -> Reply {
+                            if method == "wait" {
+                                let release = Arc::clone(&release);
+                                Box::pin(async move {
+                                    release.notified().await;
+                                    Ok(json!("released"))
+                                })
+                            } else {
+                                chat::ready(Ok(json!("pong")))
+                            }
+                        };
+                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30))
+                            .await;
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        let request = |id: u64, method: &str| {
+            Frame::text(json!({"jsonrpc": "2.0", "id": id, "method": method}).to_string())
+        };
+        ws.send(request(1, "wait")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        outbox
+            .send(Outgoing::from(json!({"method": "event"})))
+            .unwrap();
+        assert_eq!(read(&mut ws).await["method"], "event");
+        ws.send(request(2, "ping")).await.unwrap();
+        let pong = read(&mut ws).await;
+        assert_eq!((&pong["id"], &pong["result"]), (&json!(2), &json!("pong")));
+        release.notify_one();
+        let released = read(&mut ws).await;
+        assert_eq!(
+            (&released["id"], &released["result"]),
+            (&json!(1), &json!("released"))
+        );
+    }
+
+    /// With 16 requests waiting, the connection still reads: a request that answers at once
+    /// (an approval's answer, say) is answered, and one that would wait is answered busy.
+    #[tokio::test]
+    async fn a_connection_with_16_waiting_requests_still_reads_and_answers() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as Frame;
+
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (_outbox, events) = mpsc::unbounded_channel::<Outgoing>();
+        let events = Arc::new(std::sync::Mutex::new(Some(events)));
+        let parked = Arc::clone(&release);
+        let app = Router::new().route(
+            "/",
+            get(move |ws: WebSocketUpgrade| {
+                let events = events.lock().unwrap().take();
+                let release = Arc::clone(&parked);
+                async move {
+                    ws.on_upgrade(move |mut socket| async move {
+                        let mut events = events.expect("one connection");
+                        let call = move |method: &str, _: Value| -> Reply {
+                            if method == "wait" {
+                                let release = Arc::clone(&release);
+                                Box::pin(async move {
+                                    release.notified().await;
+                                    Ok(json!("released"))
+                                })
+                            } else {
+                                chat::ready(Ok(json!("answered")))
+                            }
+                        };
+                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30))
+                            .await;
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        let request = |id: u64, method: &str| {
+            Frame::text(json!({"jsonrpc": "2.0", "id": id, "method": method}).to_string())
+        };
+        for id in 1..=16 {
+            ws.send(request(id, "wait")).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        ws.send(request(17, "approval.respond")).await.unwrap();
+        let answered = read(&mut ws).await;
+        assert_eq!(
+            (&answered["id"], &answered["result"]),
+            (&json!(17), &json!("answered"))
+        );
+        ws.send(request(18, "wait")).await.unwrap();
+        let busy = read(&mut ws).await;
+        assert_eq!(busy["id"], 18, "{busy}");
+        assert_eq!(busy["error"]["code"], -32001, "{busy}");
+        release.notify_waiters();
+        let mut released = Vec::new();
+        for _ in 0..16 {
+            released.push(read(&mut ws).await["id"].as_u64().unwrap());
+        }
+        released.sort_unstable();
+        assert_eq!(released, (1..=16).collect::<Vec<_>>());
+    }
+
+    async fn read(
+        ws: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    ) -> Value {
+        use futures::StreamExt;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .expect("a frame within 5 s")
+                .unwrap()
+                .unwrap();
+            if let tokio_tungstenite::tungstenite::Message::Text(text) = frame {
+                return serde_json::from_str(&text).unwrap();
+            }
+        }
     }
 }

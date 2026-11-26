@@ -21,6 +21,21 @@ async fn mock_chat(server: &MockServer) {
         })))
         .mount(server)
         .await;
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "hello"}]}],
+            "status": "completed"
+        })))
+        .mount(server)
+        .await;
+}
+
+/// The effort a request asks for, on either route.
+fn effort(body: &Value) -> Option<&str> {
+    body.get("reasoning_effort")
+        .or_else(|| body.pointer("/reasoning/effort"))
+        .and_then(Value::as_str)
 }
 
 async fn mock_models(server: &MockServer, response: ResponseTemplate) {
@@ -56,7 +71,7 @@ async fn chat_requests(server: &MockServer, catalog_count: usize) -> Vec<Value> 
     );
     requests
         .iter()
-        .filter(|request| request.url.path() == "/chat/completions")
+        .filter(|request| matches!(request.url.path(), "/chat/completions" | "/responses"))
         .map(|request| request.body_json().expect("chat body"))
         .collect()
 }
@@ -148,10 +163,213 @@ async fn copilot_uses_only_usable_catalog_capabilities() {
     assert_eq!(chats.len(), cases.len());
     for (chat, (model, _, expected)) in chats.iter().zip(cases) {
         assert_eq!(chat["model"], model);
-        assert_eq!(
-            chat.get("reasoning_effort").and_then(Value::as_str),
-            expected
-        );
+        assert_eq!(effort(chat), expected, "{model}");
+    }
+}
+
+#[tokio::test]
+async fn copilot_sends_gpt_5_and_later_to_the_responses_api() {
+    let server = MockServer::start().await;
+    mock_chat(&server).await;
+    mock_models(
+        &server,
+        ResponseTemplate::new(200).set_body_json(vec![model(
+            "gpt-5.1",
+            json!({"supports": {"reasoning_effort": ["low", "medium", "high"]}}),
+        )]),
+    )
+    .await;
+    let provider = provider(&server);
+    let models = [
+        "gpt-5.1",
+        "gpt-4o",
+        "gpt-5-mini",
+        "claude-sonnet-4.5",
+        "openai/GPT-6",
+        "gpt-50",
+    ];
+    for model in models {
+        one_shot(
+            &provider,
+            Some(model),
+            &json!({"reasoning_effort": "xhigh"}),
+        )
+        .await;
+    }
+
+    let requests = server.received_requests().await.unwrap();
+    let routes: Vec<&str> = requests
+        .iter()
+        .map(|request| request.url.path())
+        .filter(|path| *path != "/models")
+        .collect();
+    assert_eq!(
+        routes,
+        [
+            "/responses",
+            "/chat/completions",
+            "/chat/completions",
+            "/chat/completions",
+            "/responses",
+            "/responses",
+        ]
+    );
+    let first: Value = requests
+        .iter()
+        .find(|request| request.url.path() == "/responses")
+        .unwrap()
+        .body_json()
+        .unwrap();
+    assert_eq!(first["model"], "gpt-5.1");
+    assert_eq!(
+        first["reasoning"],
+        json!({"effort": "high", "summary": "auto"})
+    );
+    assert!(first.get("reasoning_effort").is_none(), "{first}");
+    assert_eq!(first["input"][0]["content"][0]["text"], "hello");
+}
+
+#[tokio::test]
+async fn copilot_routes_by_the_body_model_and_renames_the_token_limit() {
+    let server = MockServer::start().await;
+    mock_chat(&server).await;
+    let provider = CopilotProvider::new(server.uri(), "synthetic-test-value").with_model("gpt-4o");
+    // The body's model outranks the call's and the default.
+    one_shot(
+        &provider,
+        Some("gpt-4.1"),
+        &json!({"model": "gpt-5.1", "max_completion_tokens": 100}),
+    )
+    .await;
+    one_shot(
+        &provider,
+        Some("gpt-5.1"),
+        &json!({"model": "gpt-4.1", "max_completion_tokens": 100}),
+    )
+    .await;
+    let stream = provider.chat_completion_stream(
+        &[Message::user("hello")],
+        &[],
+        None,
+        None,
+        None,
+        Some(&json!({"model": "gpt-5.1", "max_tokens": 50})),
+    );
+    let _ = stream.collect::<Vec<_>>().await;
+
+    let requests = server.received_requests().await.unwrap();
+    let sent: Vec<(&str, Value)> = requests
+        .iter()
+        .map(|request| (request.url.path(), request.body_json().unwrap()))
+        .collect();
+    assert_eq!(sent[0].0, "/responses");
+    assert_eq!(sent[0].1["model"], "gpt-5.1");
+    assert_eq!(sent[0].1["max_output_tokens"], 100);
+    assert!(
+        sent[0].1.get("max_completion_tokens").is_none(),
+        "{}",
+        sent[0].1
+    );
+    assert_eq!(sent[1].0, "/chat/completions");
+    assert_eq!(sent[1].1["model"], "gpt-4.1");
+    assert_eq!(sent[2].0, "/responses");
+    assert_eq!(sent[2].1["max_output_tokens"], 50);
+    assert!(sent[2].1.get("max_tokens").is_none(), "{}", sent[2].1);
+}
+
+#[tokio::test]
+async fn copilot_responses_route_honours_disabled_reasoning_and_streams() {
+    let server = MockServer::start().await;
+    mock_chat(&server).await;
+    let provider = CopilotProvider::new(server.uri(), "synthetic-test-value").with_model("gpt-5.2");
+    one_shot(
+        &provider,
+        None,
+        &json!({"reasoning_effort": "high", "reasoning": {"enabled": false}}),
+    )
+    .await;
+    let stream =
+        provider.chat_completion_stream(&[Message::user("hello")], &[], None, None, None, None);
+    let _ = stream.collect::<Vec<_>>().await;
+
+    let bodies = chat_requests(&server, 0).await;
+    let paths: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| request.url.path().to_string())
+        .collect();
+    assert_eq!(paths, ["/responses", "/responses"]);
+    assert!(bodies[0].get("reasoning").is_none(), "{}", bodies[0]);
+    assert!(bodies[0].get("reasoning_effort").is_none(), "{}", bodies[0]);
+    assert_eq!(bodies[1]["stream"], true);
+}
+
+#[tokio::test]
+async fn copilot_responses_route_sends_only_levels_the_model_is_known_to_accept() {
+    let server = MockServer::start().await;
+    mock_chat(&server).await;
+    mock_models(
+        &server,
+        ResponseTemplate::new(200).set_body_json(vec![model(
+            "gpt-5.1",
+            json!({"supports": {"reasoning_effort": ["low", "medium"]}}),
+        )]),
+    )
+    .await;
+    let catalogued = provider(&server);
+    let uncatalogued =
+        CopilotProvider::new(server.uri(), "synthetic-test-value").with_model("gpt-5.1");
+    let cases = [
+        // The lookup drops the `openai/` prefix and clamps to the catalogue.
+        (
+            &catalogued,
+            "openai/gpt-5.1",
+            json!({"reasoning_effort": "xhigh"}),
+            Some("medium"),
+        ),
+        // No catalogue row, or no catalogue: the pattern list.
+        (
+            &catalogued,
+            "gpt-5.2",
+            json!({"reasoning_effort": "xhigh"}),
+            Some("high"),
+        ),
+        (
+            &uncatalogued,
+            "gpt-5.1",
+            json!({"reasoning_effort": "xhigh"}),
+            Some("high"),
+        ),
+        // A model no list covers gets no reasoning.
+        (
+            &uncatalogued,
+            "gpt-6",
+            json!({"reasoning_effort": "high"}),
+            None,
+        ),
+        // No effort asked for: medium, as upstream sends.
+        (&uncatalogued, "gpt-5.1", json!({}), Some("medium")),
+        (
+            &uncatalogued,
+            "gpt-5.1",
+            json!({"reasoning_effort": "none"}),
+            None,
+        ),
+    ];
+    for (provider, model, body, _) in &cases {
+        one_shot(provider, Some(model), body).await;
+    }
+
+    let bodies = chat_requests(&server, 1).await;
+    assert_eq!(bodies.len(), cases.len());
+    for (body, (_, model, _, expected)) in bodies.iter().zip(&cases) {
+        assert_eq!(body["model"], *model);
+        assert_eq!(effort(body), *expected, "{model}: {body}");
+        if expected.is_some() {
+            assert_eq!(body["reasoning"]["summary"], "auto", "{body}");
+        }
     }
 }
 

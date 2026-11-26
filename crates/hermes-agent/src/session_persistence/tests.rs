@@ -256,11 +256,67 @@ fn drop_fts_repair_rebuilds_search_from_canonical_messages() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());
     persist_searchable_session(&sp);
-    corrupt_duplicate_fts_schema(&sp);
+    let conn = rusqlite::Connection::open(sp.db_path()).unwrap();
+    conn.execute_batch(
+        "PRAGMA writable_schema=ON;
+         UPDATE sqlite_schema SET sql = 'CREATE VIRTUAL TABLE messages_fts USING'
+             WHERE name = 'messages_fts';",
+    )
+    .unwrap();
+    drop(conn);
 
-    sp.repair_schema_drop_fts_pass().unwrap();
+    let repair = sp.repair_malformed_schema(false);
+    assert!(repair.repaired, "{repair:?}");
+    assert_eq!(repair.strategy.as_deref(), Some("drop_fts_rebuild"));
+    assert!(repair.backup_path.is_none());
     assert!(sp.db_health_error().is_none());
     assert_eq!(fts_match_rows(&sp, "pizza").len(), 2);
+}
+
+#[test]
+fn automatic_repair_backs_up_unrecoverable_schema_and_attempts_it_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    persist_searchable_session(&sp);
+    let conn = rusqlite::Connection::open(sp.db_path()).unwrap();
+    conn.execute_batch(
+        "PRAGMA writable_schema=ON;
+         UPDATE sqlite_schema SET sql = 'CREATE TABLE sessions(' WHERE name = 'sessions';",
+    )
+    .unwrap();
+    drop(conn);
+    let original = std::fs::read(sp.db_path()).unwrap();
+
+    let err = sp.ensure_db().unwrap_err().to_string();
+    assert!(
+        err.contains("sessions db malformed and repair failed"),
+        "{err}"
+    );
+    let backups = || {
+        std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".malformed-backup-")
+            })
+            .map(|entry| entry.path())
+    };
+    let mut first_backups = backups();
+    let backup = first_backups
+        .next()
+        .expect("automatic repair must make a backup");
+    assert!(first_backups.next().is_none());
+    drop(first_backups);
+    assert_eq!(std::fs::read(&backup).unwrap(), original);
+    std::fs::remove_file(&backup).unwrap();
+
+    let err = sp.ensure_db().unwrap_err().to_string();
+    assert!(SessionPersistence::is_malformed_db_error_message(&err));
+    assert!(!err.contains("repair failed"), "{err}");
+    assert!(backups().next().is_none());
 }
 
 #[test]

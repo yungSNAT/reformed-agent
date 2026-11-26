@@ -201,7 +201,7 @@ fn advertised_levels(field: Option<&Value>) -> EffortSupport {
     }
 }
 
-fn legacy_support(model: &str) -> EffortSupport {
+pub(super) fn legacy_support(model: &str) -> EffortSupport {
     let lower = model.to_ascii_lowercase();
     let name = lower.strip_prefix("openai/").unwrap_or(&lower);
     let levels: &[&str] = if ["o1", "o3", "o4"]

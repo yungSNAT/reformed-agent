@@ -821,6 +821,7 @@ fn atomic_write_to_a_file_held_open_fails_and_keeps_the_old_content() {
 
 include!("tests/runtime_bridges.rs");
 include!("tests/managed_overlays.rs");
+include!("tests/platform_toolsets.rs");
 
 include!("tests/user_config_patch.rs");
 
