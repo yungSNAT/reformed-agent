@@ -2144,6 +2144,7 @@ dependencies = [
  "hermes-tools",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 
