@@ -2179,6 +2179,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hermes-upstream-sync"
+version = "0.22.0"
+dependencies = [
+ "axum",
+ "clap",
+ "hermes-py",
+ "hmac 0.12.1",
+ "http-body-util",
+ "jiff",
+ "rusqlite",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
