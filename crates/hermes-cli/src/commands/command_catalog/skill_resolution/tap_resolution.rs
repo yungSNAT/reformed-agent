@@ -15,8 +15,26 @@ fn skill_directories<'a>(
     })
 }
 
+trait SkillTapSource {
+    fn branch_and_tree(
+        &self,
+        repo: &str,
+    ) -> impl std::future::Future<Output = Result<(String, Vec<GitHubTreeEntry>), AgentError>> + Send;
+}
+
+impl SkillTapSource for reqwest::Client {
+    async fn branch_and_tree(
+        &self,
+        repo: &str,
+    ) -> Result<(String, Vec<GitHubTreeEntry>), AgentError> {
+        let branch = github_default_branch(self, repo).await?;
+        let tree = github_repo_tree(self, repo, &branch).await?;
+        Ok((branch, tree))
+    }
+}
+
 async fn resolve_skill_via_taps(
-    client: &reqwest::Client,
+    source: &impl SkillTapSource,
     taps: &[String],
     requested_skill: &str,
 ) -> Result<ResolvedSkillSource, AgentError> {
@@ -25,13 +43,8 @@ async fn resolve_skill_via_taps(
         let Some(spec) = parse_skill_tap_spec(tap) else {
             continue;
         };
-        let branch = match github_default_branch(client, &spec.repo).await {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let tree = match github_repo_tree(client, &spec.repo, &branch).await {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Ok((branch, tree)) = source.branch_and_tree(&spec.repo).await else {
+            continue;
         };
         let path_prefix = if spec.path.is_empty() {
             String::new()
@@ -76,8 +89,7 @@ async fn resolve_skill_in_repo(
     requested_skill: &str,
     preferred_prefix: Option<&str>,
 ) -> Result<ResolvedSkillSource, AgentError> {
-    let branch = github_default_branch(client, repo).await?;
-    let tree = github_repo_tree(client, repo, &branch).await?;
+    let (branch, tree) = client.branch_and_tree(repo).await?;
     let skill_dir = select_repository_skill(&tree, repo, requested_skill, preferred_prefix)?;
 
     Ok(ResolvedSkillSource {
@@ -144,7 +156,7 @@ fn select_repository_skill(
 }
 
 async fn search_skills_via_taps(
-    client: &reqwest::Client,
+    source: &impl SkillTapSource,
     taps: &[String],
     query: &str,
     limit: usize,
@@ -157,13 +169,8 @@ async fn search_skills_via_taps(
         let Some(spec) = parse_skill_tap_spec(tap) else {
             continue;
         };
-        let branch = match github_default_branch(client, &spec.repo).await {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let tree = match github_repo_tree(client, &spec.repo, &branch).await {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Ok((_, tree)) = source.branch_and_tree(&spec.repo).await else {
+            continue;
         };
         let path_prefix = if spec.path.is_empty() {
             String::new()
@@ -262,12 +269,6 @@ async fn fetch_skill_files_from_github(
     if !files.iter().any(|(path, _)| path == "SKILL.md") {
         return Err(AgentError::Config(format!(
             "Resolved source {}/{} is missing SKILL.md",
-            source.repo, source.skill_dir
-        )));
-    }
-    if files.is_empty() {
-        return Err(AgentError::Config(format!(
-            "No files found at {}/{}",
             source.repo, source.skill_dir
         )));
     }

@@ -1222,4 +1222,8 @@ include!("session_persistence/session_io.rs");
 mod empty_snapshot_tests;
 
 #[cfg(test)]
+#[path = "session_persistence/metadata_tests.rs"]
+mod metadata_tests;
+
+#[cfg(test)]
 mod tests;
