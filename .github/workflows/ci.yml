@@ -367,5 +367,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native tests
         run: cargo test --locked --no-fail-fast -p hermes-config -p hermes-environments -p hermes-mcp
+      # Runs even when the step above fails, so each step reports on its own.
       - name: Source folder reads
+        if: ${{ !cancelled() }}
         run: cargo test --locked --no-fail-fast -p hermes-cli --lib source_tree
