@@ -1,6 +1,51 @@
 use super::*;
 
 #[tokio::test]
+async fn configured_store_key_takes_precedence_over_the_local_key_file() {
+    const CHILD: &str = "HERMES_TEST_CONFIGURED_STORE_KEY";
+    const KEY: [u8; TOKEN_STORE_KEY_BYTES] = [17; TOKEN_STORE_KEY_BYTES];
+    const TEST: &str =
+        "tests::storage_contract_tests::configured_store_key_takes_precedence_over_the_local_key_file";
+    if std::env::var(CHILD).as_deref() == Ok(TEST) {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("synthetic-store-key");
+        let file_key =
+            base64::engine::general_purpose::STANDARD.encode([93; TOKEN_STORE_KEY_BYTES]);
+        tokio::fs::write(&path, &file_key).await.unwrap();
+        assert_eq!(load_or_create_store_key(&path).await.unwrap(), KEY);
+        assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), file_key);
+        return;
+    }
+
+    let executable = std::env::current_dir()
+        .unwrap()
+        .join(std::env::args_os().next().expect("test executable"));
+    let mut command = tokio::process::Command::new(executable);
+    let key = base64::engine::general_purpose::STANDARD.encode(KEY);
+    command
+        .args(["--exact", TEST, "--color", "never"])
+        .env_clear()
+        .env(CHILD, TEST)
+        .env(TOKEN_STORE_KEY_ENV, format!(" {key} "))
+        .kill_on_drop(true);
+    for env in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+        if let Some(value) = std::env::var_os(env) {
+            command.env(env, value);
+        }
+    }
+    let output = tokio::time::timeout(std::time::Duration::from_secs(10), command.output())
+        .await
+        .expect("key fixture finishes")
+        .expect("run key fixture");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains(&format!("test {TEST} ... ok")),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
 async fn auth_manager_refreshes_an_expired_credential_and_persists_the_result() {
     let dir = tempdir().expect("isolated credential store");
     let path = dir.path().join("synthetic-credentials.json");

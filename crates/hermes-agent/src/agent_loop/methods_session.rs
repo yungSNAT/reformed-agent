@@ -150,6 +150,75 @@ impl AgentLoop {
         }
     }
 
+    /// Tell the cost guard what earlier runs of this session spent, so
+    /// `max_cost_usd` caps the session rather than each run. A run's result
+    /// still reports only its own spend. Negative or non-finite values count
+    /// as nothing.
+    pub fn set_session_spent_usd(&self, usd: f64) {
+        let usd = if usd.is_finite() && usd > 0.0 { usd } else { 0.0 };
+        self.session_spent_usd.store(usd.to_bits(), Ordering::Relaxed);
+    }
+
+    fn session_spent_usd(&self) -> f64 {
+        f64::from_bits(self.session_spent_usd.load(Ordering::Relaxed))
+    }
+
+    /// Keep priced runs of this named session in its transcript database.
+    pub fn with_session_budget_root(mut self, root: std::path::PathBuf) -> Self {
+        self.session_budget_root = Some(root);
+        self
+    }
+
+    fn session_budget(&self) -> Option<(crate::SessionPersistence, &str)> {
+        self.config.max_cost_usd?;
+        let id = self.config.session_id.as_deref().filter(|id| !id.is_empty())?;
+        Some((crate::SessionPersistence::new(self.session_budget_root.as_ref()?), id))
+    }
+
+    fn restore_session_budget(&self) -> Result<Option<std::fs::File>, AgentError> {
+        let Some((store, id)) = self.session_budget() else { return Ok(None) };
+        let lock = store.lock_session_budget(id)?;
+        self.set_session_spent_usd(store.session_spend_usd(id)?);
+        Ok(Some(lock))
+    }
+
+    fn begin_budget_request(&self) -> Result<(), AgentError> {
+        if let Some((store, id)) = self.session_budget() { store.begin_budget_request(id)?; }
+        Ok(())
+    }
+
+    fn charge_session_budget(&self, usd: f64) -> Result<f64, AgentError> {
+        if let Some((store, id)) = self.session_budget() { store.charge_session(id, usd)?; }
+        Ok(usd)
+    }
+
+    fn settle_rejected_budget(&self, err: &AgentError) -> Result<(), AgentError> {
+        if matches!(err, AgentError::AuthFailed(_) | AgentError::RateLimited { .. } | AgentError::ContextTooLong) {
+            self.charge_session_budget(0.0)?;
+        }
+        Ok(())
+    }
+
+    /// The reservation belongs to one dispatched attempt, including fallback requests.
+    async fn metered_completion(
+        &self,
+        request: impl std::future::Future<Output = Result<LlmResponse, AgentError>>,
+    ) -> Result<LlmResponse, AgentError> {
+        self.begin_budget_request()?;
+        let response = match request.await {
+            Ok(response) => response,
+            Err(error) => {
+                self.settle_rejected_budget(&error)?;
+                return Err(error);
+            }
+        };
+        let cost = response.usage.as_ref()
+            .and_then(|usage| estimate_usage_cost_usd(usage, &response.model, &self.config))
+            .unwrap_or(0.0);
+        self.charge_session_budget(cost)?;
+        Ok(response)
+    }
+
     /// Create a new agent loop.
     pub fn new(
         config: AgentConfig,
@@ -175,6 +244,8 @@ impl AgentLoop {
             code_index,
             lsp_context,
             route_learning,
+            session_spent_usd: std::sync::atomic::AtomicU64::new(0),
+            session_budget_root: None,
         }
     }
 
@@ -204,6 +275,8 @@ impl AgentLoop {
             code_index,
             lsp_context,
             route_learning,
+            session_spent_usd: std::sync::atomic::AtomicU64::new(0),
+            session_budget_root: None,
         }
     }
 
@@ -463,6 +536,10 @@ impl AgentLoop {
             code_index: self.code_index.clone(),
             lsp_context: self.lsp_context.clone(),
             route_learning: self.route_learning.clone(),
+            session_spent_usd: std::sync::atomic::AtomicU64::new(
+                self.session_spent_usd.load(Ordering::Relaxed),
+            ),
+            session_budget_root: self.session_budget_root.clone(),
         }
     }
 }

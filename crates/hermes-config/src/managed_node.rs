@@ -237,6 +237,21 @@ mod tests {
     }
 
     #[test]
+    fn explicit_node_lookup_preserves_spaces_and_requires_a_file() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path().join("portable runtime");
+        let executable = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
+        touch(&executable, true);
+
+        assert_eq!(
+            find_node_executable_on_path(executable.to_str().unwrap()),
+            Some(executable)
+        );
+        assert_eq!(find_node_executable_on_path(dir.to_str().unwrap()), None);
+        assert_eq!(find_node_executable_on_path("  "), None);
+    }
+
+    #[test]
     fn path_var_prepends_existing_managed_dirs_without_duplicates() {
         let tmp = tempdir().expect("tempdir");
         let node_dir = tmp.path().join("node");
