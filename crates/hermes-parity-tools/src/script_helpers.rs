@@ -142,6 +142,10 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
     Ok(tokens)
 }
 
+#[cfg(test)]
+#[path = "script_helpers_shlex_tests.rs"]
+mod shlex_tests;
+
 pub(crate) fn shlex_quote(token: &str) -> String {
     if token.is_empty() {
         return "''".to_string();
