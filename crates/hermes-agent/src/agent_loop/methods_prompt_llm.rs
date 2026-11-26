@@ -586,6 +586,8 @@ impl AgentLoop {
         let active_base_url = route
             .and_then(|r| r.base_url.clone())
             .or_else(|| self.resolve_runtime_base_url(active_provider.as_str(), None));
+        let (primary_provider, _) = self.extract_provider_and_model(self.config.model.as_str());
+        let primary_base_url = self.resolve_runtime_base_url(primary_provider.as_str(), None);
         if let Some(rt) = route {
             if let Some(ref label) = rt.route_label {
                 tracing::debug!(%label, model = %rt.model, ?rt.signature, "smart model route");
@@ -610,6 +612,23 @@ impl AgentLoop {
             // the real model behavior and makes quorum voters appear to "succeed"
             // on a different backend.
             let target = self.attempt_runtime(route, model);
+            // When the route could not be built the primary answered, so the
+            // error handling below keys on the primary, not the route.
+            let (route, model, active_provider, active_base_url) = if target.primary_fallback {
+                (
+                    None,
+                    self.config.model.as_str(),
+                    primary_provider.clone(),
+                    primary_base_url.clone(),
+                )
+            } else {
+                (
+                    route,
+                    model,
+                    active_provider.clone(),
+                    active_base_url.clone(),
+                )
+            };
             // A replay after an OAuth refresh reuses `target`, the provider that
             // now holds the new token: a rebuilt route could load the old key.
             let sent_at = tokio::time::Instant::now();
