@@ -36,14 +36,34 @@ impl LlmProvider for FailingPrimary {
     }
 }
 
+/// Unsets an environment variable and restores it when dropped, even on panic.
+struct UnsetVar(&'static str, Option<String>);
+
+impl UnsetVar {
+    fn new(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self(key, previous)
+    }
+}
+
+impl Drop for UnsetVar {
+    fn drop(&mut self) {
+        if let Some(value) = &self.1 {
+            std::env::set_var(self.0, value);
+        }
+    }
+}
+
 /// When the turn's route cannot be built, the primary answers, so the retry
 /// failover chain starts from the primary's model: it must not resend the
 /// primary model that just failed.
 #[test]
 fn after_a_route_falls_back_the_failover_chain_starts_from_the_primary() {
     let _env_lock = super::tests::env_test_lock();
-    let saved_key = std::env::var("DEEPSEEK_API_KEY").ok();
-    std::env::remove_var("DEEPSEEK_API_KEY");
+    // No key and no local base URL, so the route cannot be built.
+    let _no_key = UnsetVar::new("DEEPSEEK_API_KEY");
+    let _no_base_url = UnsetVar::new("DEEPSEEK_BASE_URL");
     let mut config = AgentConfig {
         model: "openai:primary-model".to_string(),
         provider: Some("openai".to_string()),
@@ -75,9 +95,6 @@ fn after_a_route_falls_back_the_failover_chain_starts_from_the_primary() {
         .expect("tokio runtime");
 
     let result = runtime.block_on(agent.call_llm_with_retry(&ctx, &[], Some(&route), None));
-    if let Some(key) = saved_key {
-        std::env::set_var("DEEPSEEK_API_KEY", key);
-    }
 
     assert!(result.is_err());
     let models = primary.models.lock().unwrap().clone();
