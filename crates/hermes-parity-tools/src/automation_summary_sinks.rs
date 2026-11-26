@@ -295,7 +295,7 @@ pub(crate) fn try_sinks(
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded_timeout_secs, curl_config, follows_redirect, run_bounded};
+    use super::{bounded_timeout_secs, curl_config, follows_redirect};
     use std::time::Duration;
 
     #[test]
@@ -347,7 +347,7 @@ mod tests {
             "-c",
             "head -c 300000 /dev/zero; head -c 200000 /dev/zero >&2; cat >/dev/null",
         ]);
-        let out = run_bounded(cmd, &vec![b'x'; 200_000]).expect("run");
+        let out = super::run_bounded(cmd, &vec![b'x'; 200_000]).expect("run");
         assert!(out.success);
         assert_eq!(out.stdout.len(), 64 * 1024);
         assert_eq!(out.stderr.len(), 64 * 1024);
