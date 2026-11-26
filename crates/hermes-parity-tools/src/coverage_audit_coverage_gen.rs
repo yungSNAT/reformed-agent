@@ -181,7 +181,7 @@ fn string_array_formats_items() {
 
 #[test]
 fn read_domains_classifies_and_serialises() {
-    let (_tmp, tests, domains) = setup();
+    let (_tmp, _tests, domains) = setup();
     assert_eq!(domains.len(), 3);
     assert_eq!(domains[0].id, "alpha");
     assert_eq!(domains[0].classification(), "direct_rust_test");
