@@ -1089,7 +1089,7 @@ fn test_finalizer_retries_need_tools() {
         );
         let messages = vec![Message::user("U1-abc hi remote")];
         let result = if stream {
-            rt.block_on(agent.run_stream(messages, Some(tools), None))
+            rt.block_on(agent.run_stream(messages, Some(tools), Some(Box::new(|_| {}))))
         } else {
             rt.block_on(agent.run(messages, Some(tools)))
         };
@@ -1146,7 +1146,11 @@ async fn stream_reissues_final_answers_with_the_required_contract() {
         );
         let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
         let result = agent
-            .run_stream(vec![Message::user(prompt)], Some(vec![schema]), None)
+            .run_stream(
+                vec![Message::user(prompt)],
+                Some(vec![schema]),
+                Some(Box::new(|_| {})),
+            )
             .await
             .expect("stream finalizer completes the fixture turn");
         assert!(result.finished_naturally, "{prompt}");
@@ -1217,14 +1221,27 @@ async fn workspace_finalizer_retries_unsupported_mail_claims_in_both_loops() {
             ToolSchema::new("skill_view", "Read a skill", JsonSchema::new("object")),
             ToolSchema::new("terminal", "Run commands", JsonSchema::new("object")),
         ];
+        let delivered = Arc::new(AtomicU32::new(0));
         let result = if stream {
-            agent.run_stream(messages, Some(tools), None).await
+            let chunks = delivered.clone();
+            agent
+                .run_stream(
+                    messages,
+                    Some(tools),
+                    Some(Box::new(move |chunk| {
+                        if chunk.delta.is_some_and(|delta| delta.content.is_some()) {
+                            chunks.fetch_add(1, Ordering::SeqCst);
+                        }
+                    })),
+                )
+                .await
         } else {
             agent.run(messages, Some(tools)).await
         }
         .expect("workspace finalizer completes the fixture turn");
         assert!(result.finished_naturally, "stream={stream}");
         assert_eq!(calls.load(Ordering::SeqCst), 2, "stream={stream}");
+        assert_eq!(delivered.load(Ordering::SeqCst) > 0, stream);
 
         let system_text = |marker: &str| {
             result
@@ -1301,7 +1318,9 @@ async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
         );
         let messages = vec![Message::user("What does the fixture show?")];
         let result = if stream {
-            agent.run_stream(messages, Some(Vec::new()), None).await
+            agent
+                .run_stream(messages, Some(Vec::new()), Some(Box::new(|_| {})))
+                .await
         } else {
             agent.run(messages, Some(Vec::new())).await
         }
