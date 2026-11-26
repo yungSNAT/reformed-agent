@@ -858,11 +858,14 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if !self.config.isolated && finalizers_apply && finalizer_repo_research_plan_requires_retry(
-                    ctx.get_messages(),
-                    assistant_msg.content.as_deref().unwrap_or_default(),
-                    finalizer_repo_research_plan_retries,
-                ) {
+                if !self.config.isolated
+                    && finalizers_apply
+                    && finalizer_repo_research_plan_requires_retry(
+                        ctx.get_messages(),
+                        assistant_msg.content.as_deref().unwrap_or_default(),
+                        finalizer_repo_research_plan_retries,
+                    )
+                {
                     finalizer_repo_research_plan_retries =
                         finalizer_repo_research_plan_retries.saturating_add(1);
                     self.emit_status(
