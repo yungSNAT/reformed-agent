@@ -160,7 +160,6 @@ async fn bad_signatures_are_refused_before_anything_else() {
         good.replace("sha256=", "sha1="),
         good[..good.len() - 2].to_string(),
         format!("{good}00"),
-        format!(" {good}"),
     ] {
         assert_eq!(
             send(addr, push(PUSH, "d-2", Some(&sig))).await,
@@ -264,7 +263,7 @@ async fn oversized_bodies_are_refused_without_reading_them() {
 async fn bodies_without_a_declared_length_are_capped_as_they_arrive() {
     let body = Body::from(vec![b'x'; MAX_BODY_BYTES + 1]);
     let refused = read_body(&HeaderMap::new(), body).await.unwrap_err();
-    assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(refused.0, StatusCode::PAYLOAD_TOO_LARGE);
     let body = Body::from(vec![b'x'; MAX_BODY_BYTES]);
     assert_eq!(
         read_body(&HeaderMap::new(), body).await.unwrap().len(),

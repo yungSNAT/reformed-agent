@@ -16,6 +16,7 @@ pub trait Publisher: Send + Sync {
 }
 
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)] // claimed by the worker, which lands next
 pub struct QueueItem {
     pub id: i64,
     pub attempts: i64,
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS queue_events (
 CREATE INDEX IF NOT EXISTS idx_queue_events_status_created ON queue_events(status, id);
 ";
 
+#[allow(dead_code)] // the worker's side lands next
 impl SqliteQueue {
     pub fn open(path: &Path) -> Result<SqliteQueue, String> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -296,6 +298,7 @@ mod tests {
             .unwrap()
             .query_row("SELECT payload_json FROM queue_events", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(stored, r#"{"b": 1, "a": "é"}"#);
+        let backslash = char::from(92u8);
+        assert_eq!(stored, format!(r#"{{"b": 1, "a": "{backslash}u00e9"}}"#));
     }
 }

@@ -184,7 +184,7 @@ async fn respond(shared: &Shared, request: Request) -> Response {
     let (parts, body) = request.into_parts();
     let body = match read_body(&parts.headers, body).await {
         Ok(body) => body,
-        Err(response) => return response,
+        Err((status, message)) => return text(status, message),
     };
     let headers = &parts.headers;
     let signature = headers.get("x-hub-signature-256").map(|v| v.as_bytes());
@@ -207,7 +207,7 @@ async fn respond(shared: &Shared, request: Request) -> Response {
     }
     let payload = match std::str::from_utf8(&body)
         .map_err(|e| e.to_string())
-        .and_then(|t| hermes_py::loads(t))
+        .and_then(hermes_py::loads)
     {
         Ok(payload) => payload,
         Err(_) => return text(StatusCode::BAD_REQUEST, "invalid json"),
@@ -254,20 +254,20 @@ async fn respond(shared: &Shared, request: Request) -> Response {
 
 /// The body, at most [`MAX_BODY_BYTES`], read within [`BODY_TIMEOUT`]. A
 /// declared length over the cap is refused before anything is read.
-async fn read_body(headers: &HeaderMap, body: Body) -> Result<Bytes, Response> {
+async fn read_body(headers: &HeaderMap, body: Body) -> Result<Bytes, (StatusCode, &'static str)> {
     let declared = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok());
     if declared.is_some_and(|n| n > MAX_BODY_BYTES as u64) {
-        return Err(text(StatusCode::PAYLOAD_TOO_LARGE, "payload too large"));
+        return Err((StatusCode::PAYLOAD_TOO_LARGE, "payload too large"));
     }
     match tokio::time::timeout(BODY_TIMEOUT, Limited::new(body, MAX_BODY_BYTES).collect()).await {
-        Err(_) => Err(text(StatusCode::REQUEST_TIMEOUT, "request timeout")),
+        Err(_) => Err((StatusCode::REQUEST_TIMEOUT, "request timeout")),
         Ok(Err(e)) if e.downcast_ref::<LengthLimitError>().is_some() => {
-            Err(text(StatusCode::PAYLOAD_TOO_LARGE, "payload too large"))
+            Err((StatusCode::PAYLOAD_TOO_LARGE, "payload too large"))
         }
-        Ok(Err(_)) => Err(text(StatusCode::BAD_REQUEST, "invalid body")),
+        Ok(Err(_)) => Err((StatusCode::BAD_REQUEST, "invalid body")),
         Ok(Ok(collected)) => Ok(collected.to_bytes()),
     }
 }
