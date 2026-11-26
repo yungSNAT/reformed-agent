@@ -30,7 +30,10 @@ fn seed_root(root: &Path) {
     write(&inbox.join("config.yaml"), "model: inbox-model\n");
     write(&inbox.join(".env"), "SOME_KEY=1\n");
     write(&inbox.join("skills/a/SKILL.md"), "---\nname: a\n---\n");
-    write(&inbox.join("skills/group/b/SKILL.md"), "---\nname: b\n---\n");
+    write(
+        &inbox.join("skills/group/b/SKILL.md"),
+        "---\nname: b\n---\n",
+    );
     write(&inbox.join("skills/a/references/SKILL.md"), "not a skill\n");
     write(&inbox.join("skills/.git/c/SKILL.md"), "not a skill\n");
     write(&inbox.join("assets/avatar.png"), "png");
@@ -74,9 +77,10 @@ async fn get_profiles(addr: SocketAddr, headers: &[(&str, &str)]) -> reqwest::Re
 }
 
 async fn connect(addr: SocketAddr) -> Socket {
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/ws?token={TOKEN}"))
-        .await
-        .unwrap();
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(format!("ws://{addr}/api/ws?token={TOKEN}"))
+            .await
+            .unwrap();
     let ready = next_frame(&mut socket).await;
     assert_eq!(ready["params"]["type"], "gateway.ready");
     socket
@@ -94,7 +98,10 @@ async fn next_frame(socket: &mut Socket) -> Value {
 
 async fn call(socket: &mut Socket, id: u64, method: &str, params: Value) -> Value {
     let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-    socket.send(Message::text(request.to_string())).await.unwrap();
+    socket
+        .send(Message::text(request.to_string()))
+        .await
+        .unwrap();
     loop {
         let frame = next_frame(socket).await;
         if frame["id"] == id {
@@ -150,7 +157,11 @@ async fn profiles_route_lists_the_default_and_each_identified_named_profile() {
     assert_eq!(inbox["is_default"], false);
     assert_eq!(
         inbox["path"],
-        root.path().join("profiles").join("inbox").display().to_string()
+        root.path()
+            .join("profiles")
+            .join("inbox")
+            .display()
+            .to_string()
     );
     assert_eq!(inbox["model"], "inbox-model");
     assert_eq!(inbox["provider"], Value::Null);
@@ -189,7 +200,10 @@ async fn a_gateway_running_in_a_profile_lists_the_whole_install() {
         .await
         .unwrap();
     assert_eq!(names(&body["profiles"]), ["default", "inbox", "research"]);
-    assert_eq!(body["profiles"][0]["path"], root.path().display().to_string());
+    assert_eq!(
+        body["profiles"][0]["path"],
+        root.path().display().to_string()
+    );
 }
 
 #[tokio::test]
@@ -200,7 +214,13 @@ async fn profiles_list_answers_upstreams_roster_shape() {
     let addr = start(root.path()).await;
     let mut socket = connect(addr).await;
 
-    let reply = call(&mut socket, 1, "profiles.list", json!({"include_sessions": true})).await;
+    let reply = call(
+        &mut socket,
+        1,
+        "profiles.list",
+        json!({"include_sessions": true}),
+    )
+    .await;
     let result = &reply["result"];
     assert_eq!(names(&result["profiles"]), ["default", "inbox", "research"]);
     // This backend does not inject the Bot Mode teammate protocol, so the Desktop must.
@@ -236,7 +256,13 @@ async fn roster_sync_keeps_valid_rows_once_and_replaces_the_last_roster() {
         {"profile": "inbox", "handle": "-x", "connection_id": "laptop"},
         "inbox",
     ]);
-    let reply = call(&mut socket, 1, "bot_relay.roster.sync", json!({"agents": agents})).await;
+    let reply = call(
+        &mut socket,
+        1,
+        "bot_relay.roster.sync",
+        json!({"agents": agents}),
+    )
+    .await;
     assert_eq!(reply["result"], json!({"count": 2}));
 
     let file = root.path().join("bot_relay").join("roster.json");
@@ -262,7 +288,13 @@ async fn roster_sync_keeps_valid_rows_once_and_replaces_the_last_roster() {
     }
 
     // A roster that is not a list replaces the last one with an empty one.
-    let reply = call(&mut socket, 2, "bot_relay.roster.sync", json!({"agents": "none"})).await;
+    let reply = call(
+        &mut socket,
+        2,
+        "bot_relay.roster.sync",
+        json!({"agents": "none"}),
+    )
+    .await;
     assert_eq!(reply["result"], json!({"count": 0}));
     let stored: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(stored["agents"], json!([]));

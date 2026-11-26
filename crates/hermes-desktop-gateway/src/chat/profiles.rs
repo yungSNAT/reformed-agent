@@ -48,7 +48,9 @@ const LIST_FAILED: i64 = 5061;
 
 /// This area's methods.
 pub(super) const METHODS: &[(&str, Handler)] = &[("profiles.list", |r| {
-    Box::pin(off_thread(r.chat, LIST_FAILED, |chat| Ok(chat.profiles_list())))
+    Box::pin(off_thread(r.chat, LIST_FAILED, |chat| {
+        Ok(chat.profiles_list())
+    }))
 })];
 
 /// Runs `work`, which reads or writes files, on a blocking thread; `code` reports its panic.
@@ -272,18 +274,20 @@ struct Row {
 }
 
 fn rows(root: &Path) -> impl Iterator<Item = Row> {
-    profile_homes(root).into_iter().map(|(name, home, is_default)| {
-        let (model, provider) = config_model(&home);
-        Row {
-            skill_count: skill_count(&home),
-            meta: profile_meta(&home),
-            name,
-            home,
-            is_default,
-            model,
-            provider,
-        }
-    })
+    profile_homes(root)
+        .into_iter()
+        .map(|(name, home, is_default)| {
+            let (model, provider) = config_model(&home);
+            Row {
+                skill_count: skill_count(&home),
+                meta: profile_meta(&home),
+                name,
+                home,
+                is_default,
+                model,
+                provider,
+            }
+        })
 }
 
 impl Chat {
@@ -354,7 +358,17 @@ mod tests {
         for good in ["a", "inbox", "0-bot_2", &"a".repeat(64)] {
             assert!(valid_profile_name(good), "{good}");
         }
-        for bad in ["", "-a", "_a", "A", "a.b", "a/b", "..", &"a".repeat(65), "é"] {
+        for bad in [
+            "",
+            "-a",
+            "_a",
+            "A",
+            "a.b",
+            "a/b",
+            "..",
+            &"a".repeat(65),
+            "é",
+        ] {
             assert!(!valid_profile_name(bad), "{bad}");
         }
     }
@@ -364,7 +378,10 @@ mod tests {
         let root = Path::new("/r");
         assert_eq!(install_root(root), root);
         assert_eq!(install_root(&root.join("profiles").join("x")), root);
-        assert_eq!(install_root(&root.join("other").join("x")), root.join("other/x"));
+        assert_eq!(
+            install_root(&root.join("other").join("x")),
+            root.join("other/x")
+        );
     }
 
     #[test]

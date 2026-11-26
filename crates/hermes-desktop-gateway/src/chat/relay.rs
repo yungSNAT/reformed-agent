@@ -55,16 +55,24 @@ fn normalize(row: &Value) -> Option<Map<String, Value>> {
     };
     if profile.is_empty()
         || connection_id.is_empty()
-        || ![handle, profile, connection_id].into_iter().all(valid_handle)
+        || ![handle, profile, connection_id]
+            .into_iter()
+            .all(valid_handle)
     {
         return None;
     }
-    let description = text("description").split_whitespace().collect::<Vec<_>>().join(" ");
+    let description = text("description")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut out = Map::new();
     out.insert("profile".into(), profile.into());
     out.insert("handle".into(), handle.into());
     out.insert("connection_id".into(), connection_id.into());
-    out.insert("connection_label".into(), clip(text("connection_label"), 80).into());
+    out.insert(
+        "connection_label".into(),
+        clip(text("connection_label"), 80).into(),
+    );
     out.insert("title".into(), clip(text("title"), 120).into());
     out.insert("description".into(), clip(&description, 160).into());
     if let Some(online) = row.get("online").and_then(Value::as_bool) {
@@ -83,7 +91,10 @@ fn write_roster(root: &Path, agents: Option<&Value>) -> Result<usize, String> {
         .filter_map(normalize)
     {
         let key = (
-            row["connection_id"].as_str().unwrap_or_default().to_string(),
+            row["connection_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             row["profile"].as_str().unwrap_or_default().to_string(),
         );
         by_key.entry(key).or_insert(row);
@@ -92,7 +103,8 @@ fn write_roster(root: &Path, agents: Option<&Value>) -> Result<usize, String> {
     let updated_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let roster = json!({"agents": by_key.into_values().collect::<Vec<_>>(), "updated_at": updated_at});
+    let roster =
+        json!({"agents": by_key.into_values().collect::<Vec<_>>(), "updated_at": updated_at});
     let dir = root.join("bot_relay");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("roster.json");
