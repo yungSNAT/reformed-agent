@@ -64,9 +64,25 @@ fn recall_file_values_use_the_python_plugin_bounds() {
     assert_eq!(recall.timeout, Duration::from_millis(250));
     assert_eq!(recall.request_timeout, Duration::from_secs(60));
 
-    let recall = load_with_file(r#"{"recall_limit": -1, "recall_full_read_limit": "17.9"}"#);
+    let recall = load_with_file(
+        r#"{"recall_limit": -1, "recall_full_read_limit": "17.9",
+            "recall_score_threshold": "nan", "recall_max_injected_chars": true,
+            "recall_prefer_abstract": "yes"}"#,
+    );
     assert_eq!(recall.limit, 1);
-    assert_eq!(recall.full_read_limit, 17);
+    assert_eq!(
+        recall.full_read_limit, 2,
+        "a fractional count is invalid, so the default"
+    );
+    assert_eq!(
+        recall.score_threshold, 0.15,
+        "a non-finite number is invalid, so the default"
+    );
+    assert_eq!(
+        recall.max_injected_chars, 4000,
+        "a bool is not a number, so the default"
+    );
+    assert!(recall.prefer_abstract);
 }
 
 #[test]
@@ -94,17 +110,27 @@ fn recall_environment_overrides_the_config_file() {
         recall.limit, 1,
         "a set variable beats the file, then clamps"
     );
-    assert_eq!(recall.max_injected_chars, 2500);
     assert_eq!(
-        recall.full_read_limit, 4,
-        "an unparsable variable keeps the file value"
+        recall.max_injected_chars, 4000,
+        "a fractional variable gives the default, not the file value"
     );
-    assert_eq!(recall.timeout, Duration::from_secs(60));
+    assert_eq!(
+        recall.full_read_limit, 2,
+        "an unparsable variable gives the default, not the file value"
+    );
+    assert_eq!(
+        recall.timeout,
+        Duration::from_secs(4),
+        "a non-finite variable gives the default"
+    );
     assert_eq!(
         recall.score_threshold, 0.5,
         "an unset variable keeps the file value"
     );
-    assert!(!recall.prefer_abstract, "any other word is false");
+    assert!(
+        !recall.prefer_abstract,
+        "any other word gives the default, false"
+    );
     assert!(
         recall.include_resources,
         "an empty variable keeps the file value"
