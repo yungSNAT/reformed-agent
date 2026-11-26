@@ -328,7 +328,8 @@ async fn one_peer_holds_at_most_4_slots_and_others_still_get_one() {
     }
     let started = std::time::Instant::now();
     assert!(shared.take_slot(a).await.is_none());
-    assert!(started.elapsed() >= SLOT_WAIT);
+    let waited = started.elapsed();
+    assert!(waited >= SLOT_WAIT && waited < Duration::from_millis(6500), "{waited:?}");
     assert!(shared.take_slot(b).await.is_some());
     held.pop();
     assert!(shared.take_slot(a).await.is_some(), "a freed slot is reused");
@@ -352,10 +353,67 @@ async fn a_body_without_a_declared_length_is_refused() {
 }
 
 #[tokio::test]
+async fn neighbouring_addresses_share_one_groups_slots() {
+    // One host can hold several IPv4 addresses side by side and usually a
+    // whole IPv6 /64: limits count per /24 and per /64.
+    let shared = Shared {
+        config: config(SECRET, "127.0.0.1", false),
+        queue: Arc::new(Recorder::default()),
+        slots: Arc::new(Semaphore::new(MAX_SLOTS)),
+        peer_slots: PerPeer::new(),
+    };
+    let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+    let mut held = Vec::new();
+    for peer in ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"] {
+        held.push(shared.take_slot(ip(peer)).await.expect("a slot"));
+    }
+    for peer in ["2001:db8::1", "2001:db8::2", "2001:db8::3", "2001:db8::4"] {
+        held.push(shared.take_slot(ip(peer)).await.expect("a slot"));
+    }
+    let (v4, v6, mapped) = tokio::join!(
+        shared.take_slot(ip("192.0.2.200")),
+        shared.take_slot(ip("2001:db8::ffff:1")),
+        shared.take_slot(ip("::ffff:192.0.2.9")),
+    );
+    assert!(v4.is_none() && v6.is_none() && mapped.is_none());
+    assert!(shared.take_slot(ip("192.0.3.1")).await.is_some());
+    assert!(shared.take_slot(ip("2001:db8:0:1::1")).await.is_some());
+}
+
+#[tokio::test]
+async fn a_connection_closes_once_its_reply_is_sent() {
+    // One request per connection: without `Connection: close` the server
+    // still closes straight after replying.
+    let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let raw = "POST /other HTTP/1.1\r\nHost: t\r\nContent-Length: 0\r\n\r\n";
+    stream.write_all(raw.as_bytes()).await.unwrap();
+    let reply = closed_within(&mut stream, Duration::from_secs(1))
+        .await
+        .expect("the connection stayed open after the reply");
+    assert!(reply.starts_with(b"HTTP/1.1 404"), "{reply:?}");
+}
+
+#[test]
+fn the_limits_are_the_documented_ones() {
+    // The PR body's and module docs' table; change them together.
+    assert_eq!(
+        (MAX_SLOTS, MAX_PEER_SLOTS, MAX_CONNECTIONS, MAX_PEER_CONNECTIONS),
+        (16, 4, 128, 32)
+    );
+    let secs = Duration::from_secs;
+    assert_eq!(
+        (HEAD_TIMEOUT, BODY_TIMEOUT, SLOT_WAIT, CONNECTION_DEADLINE),
+        (secs(10), secs(10), secs(5), secs(60))
+    );
+    assert_eq!(MAX_BODY_BYTES, 25 * 1024 * 1024);
+}
+
+#[tokio::test]
 async fn slow_unsigned_bodies_from_one_peer_leave_a_signed_push_served() {
     let addr = start(SECRET, Arc::new(Recorder::default())).await;
-    let Some(probe) = connect_from("127.0.0.2", addr).await else {
-        eprintln!("skipped: 127.0.0.2 cannot be bound on this host");
+    let Some(probe) = connect_from("127.0.1.2", addr).await else {
+        eprintln!("skipped: 127.0.1.2 cannot be bound on this host");
         return;
     };
     drop(probe);
@@ -368,7 +426,7 @@ async fn slow_unsigned_bodies_from_one_peer_leave_a_signed_push_served() {
         held.push(stream);
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let github = connect_from("127.0.0.2", addr).await.unwrap();
+    let github = connect_from("127.0.1.2", addr).await.unwrap();
     let (status, body) = exchange(github, push(PUSH, "d-b1", None)).await;
     assert_eq!(status, 200, "{body}");
     assert!(body.contains(r#""queued": true"#), "{body}");
@@ -391,7 +449,8 @@ async fn an_unfinished_or_absent_request_head_is_dropped_after_10_seconds() {
     );
     assert!(partial.is_some(), "a half-sent head kept its connection open");
     assert!(silent.is_some(), "a connection that sent nothing stayed open");
-    assert!(started.elapsed() >= Duration::from_secs(9));
+    let waited = started.elapsed();
+    assert!(waited >= Duration::from_secs(9) && waited < Duration::from_secs(12), "{waited:?}");
 }
 
 #[tokio::test]
@@ -422,7 +481,8 @@ async fn a_body_that_stalls_gets_408_after_10_seconds() {
     let reply = closed_within(&mut stream, Duration::from_secs(15))
         .await
         .expect("no reply within 15 seconds");
-    assert!(started.elapsed() >= Duration::from_secs(9));
+    let waited = started.elapsed();
+    assert!(waited >= Duration::from_secs(9) && waited < Duration::from_secs(12), "{waited:?}");
     assert!(reply.starts_with(b"HTTP/1.1 408"), "{reply:?}");
 }
 
