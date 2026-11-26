@@ -27,4 +27,4 @@ Recursive run over all non-`pending` JSON: `hermes_parity_tests::run_all_active_
 cargo run -p hermes-parity-tests --bin record_fixtures
 ```
 
-Works without a Python checkout for checkpoint-manager pure helpers. With a Hermes Python checkout at `../hermes-agent` beside this repository, it also records the Anthropic adapter cases by calling upstream's `agent.anthropic_adapter` through `PARITY_PYTHON` (default `python3`).
+Works without a Python checkout for checkpoint-manager pure helpers. With a Hermes Python checkout at `../hermes-agent` beside this repository, it also records the Anthropic adapter cases by calling upstream's `agent.anthropic_adapter` through `PARITY_PYTHON` (default `python3`). The recorder's tests in `cargo test -p hermes-parity-tests` also run that interpreter, so on Windows set `PARITY_PYTHON=python` if `python3` is not Python 3.

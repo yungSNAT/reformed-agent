@@ -8,7 +8,7 @@
 //! Run with `cargo run -p hermes-parity-tests --bin record_fixtures`; set `PARITY_PYTHON`
 //! to choose the interpreter (default `python3`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Serialize;
@@ -19,10 +19,13 @@ use crate::harness::{
     CheckpointShortstat,
 };
 
-/// Calls upstream's adapter for each Anthropic case and prints the results as one JSON list.
+/// Calls upstream's adapter for each Anthropic case and prints the results as one JSON list
+/// on the last line. `-c` puts the working folder first on `sys.path`; the checkout replaces
+/// it before anything but the built-in `sys` is imported.
 const ANTHROPIC_SHIM: &str = r#"
-import json, sys
-sys.path.insert(0, sys.argv[1])
+import sys
+sys.path[0] = sys.argv[1]
+import json
 from agent import anthropic_adapter as aa
 print(json.dumps([
     aa.normalize_model_name("anthropic/claude-opus-4.6", False),
@@ -64,6 +67,8 @@ fn anthropic_inputs() -> [(&'static str, Value); 9] {
 
 /// A recorded value. Python keeps dictionary keys in insertion order, so a shortstat is
 /// serialised from its struct, whose field order matches, not through `Value`, which sorts keys.
+/// The adapter's results go through `Value`: every object they hold today is already in
+/// alphabetical order, so a new case returning a dict must keep to that or get a struct too.
 #[derive(Serialize)]
 #[serde(untagged)]
 enum Output {
@@ -150,9 +155,23 @@ pub fn python_from_env() -> String {
     std::env::var("PARITY_PYTHON").unwrap_or_else(|_| "python3".into())
 }
 
-/// The `hermes-agent` folder beside the repository at `repo_root`.
-pub fn python_checkout_beside(repo_root: &Path) -> std::path::PathBuf {
-    repo_root.parent().unwrap_or(repo_root).join("hermes-agent")
+/// The `hermes-agent` folder beside the repository at `repo_root`, resolved as the script's
+/// `Path(__file__).resolve()` was: links followed, and on Windows without the `\\?\` prefix.
+pub fn python_checkout_beside(repo_root: &Path) -> PathBuf {
+    let root = std::fs::canonicalize(repo_root)
+        .map_or_else(|_| repo_root.to_path_buf(), without_verbatim_prefix);
+    root.parent().unwrap_or(&root).join("hermes-agent")
+}
+
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{share}"));
+    }
+    text.strip_prefix(r"\\?\")
+        .map_or_else(|| path.clone(), PathBuf::from)
 }
 
 fn shim_command(python: &str, py_root: &Path) -> Command {
@@ -161,16 +180,28 @@ fn shim_command(python: &str, py_root: &Path) -> Command {
     command
 }
 
-fn upstream_results(python: &str, py_root: &Path) -> Result<Vec<Value>, Recorded> {
+/// What the shim printed ahead of its results, the results, and its stderr.
+struct Upstream {
+    printed: String,
+    results: Vec<Value>,
+    stderr: String,
+}
+
+fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> {
     let output = shim_command(python, py_root)
         .output()
         .map_err(|error| failure(format!("cannot run {python}: {error}\n")))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     if !output.status.success() {
-        return Err(failure(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
+        return Err(failure(stderr));
     }
-    let results: Vec<Value> = serde_json::from_slice(&output.stdout)
+    // The results are the last line; anything the adapter printed comes before it.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let body = stdout.trim_end_matches(['\r', '\n']);
+    let (printed, last) = body
+        .rfind('\n')
+        .map_or(("", body), |at| (&stdout[..=at], &body[at + 1..]));
+    let results: Vec<Value> = serde_json::from_str(last)
         .map_err(|error| failure(format!("unreadable output from {python}: {error}\n")))?;
     let expected = anthropic_inputs().len();
     if results.len() != expected {
@@ -179,7 +210,11 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Vec<Value>, Recorded
             results.len()
         )));
     }
-    Ok(results)
+    Ok(Upstream {
+        printed: printed.to_owned(),
+        results,
+        stderr,
+    })
 }
 
 /// Record the cases against the Python checkout at `py_root`, running `python` for the
@@ -187,29 +222,27 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Vec<Value>, Recorded
 pub fn record(py_root: &Path, python: &str) -> Recorded {
     let mut cases = checkpoint_cases();
     let source = py_root.display().to_string();
-    let mut stderr = String::new();
+    let (mut printed, mut stderr) = (String::new(), String::new());
     if py_root.join("agent").join("anthropic_adapter.py").is_file() {
-        let results = match upstream_results(python, py_root) {
-            Ok(results) => results,
+        let upstream = match upstream_results(python, py_root) {
+            Ok(upstream) => upstream,
             Err(failed) => return failed,
         };
-        cases.extend(
-            anthropic_inputs()
-                .into_iter()
-                .zip(results)
-                .map(|((op, input), py)| Case {
-                    op,
-                    input,
-                    py: Output::Json(py),
-                }),
-        );
+        (printed, stderr) = (upstream.printed, upstream.stderr);
+        cases.extend(anthropic_inputs().into_iter().zip(upstream.results).map(
+            |((op, input), py)| Case {
+                op,
+                input,
+                py: Output::Json(py),
+            },
+        ));
     } else {
         stderr = format!(
             "Note: Python Hermes not found at {source} \u{2014} only checkpoint hash cases emitted.\n"
         );
     }
     Recorded {
-        stdout: python_json(&Recording { source, cases }),
+        stdout: printed + &python_json(&Recording { source, cases }),
         stderr,
         code: 0,
     }

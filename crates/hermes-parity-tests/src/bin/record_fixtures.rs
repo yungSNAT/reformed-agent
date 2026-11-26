@@ -13,13 +13,11 @@ fn main() {
         .expect("crate sits two levels below the repository root");
     let py_root = recorder::python_checkout_beside(repo_root);
     let recorded = recorder::record(&py_root, &recorder::python_from_env());
-    std::io::stdout()
+    // A closed pipe (`| head`) ends the run with 1, as the script's BrokenPipeError did.
+    let written = std::io::stdout()
         .write_all(native_newlines(&recorded.stdout).as_bytes())
-        .expect("write stdout");
-    std::io::stderr()
-        .write_all(native_newlines(&recorded.stderr).as_bytes())
-        .expect("write stderr");
-    std::process::exit(recorded.code);
+        .and_then(|()| std::io::stderr().write_all(native_newlines(&recorded.stderr).as_bytes()));
+    std::process::exit(if written.is_ok() { recorded.code } else { 1 });
 }
 
 /// Python's text streams end lines with CRLF on Windows; match them byte for byte there.
