@@ -494,9 +494,10 @@ async fn image_attach_refuses_share_and_device_paths() {
     expect_refused(&mut client, &session, &paths).await;
 }
 
-/// A Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to
-/// `LPT9`), in any case and with or without an extension, is refused before it is opened, on
-/// every platform, even where a file of that name exists.
+/// A Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0` to
+/// `COM9`, `LPT0` to `LPT9`, and `COM` or `LPT` with a superscript 1, 2 or 3), in any case and
+/// with or without an extension, is refused before it is opened, on every platform, even where
+/// a file of that name exists.
 #[tokio::test]
 async fn image_attach_refuses_reserved_device_names() {
     let started = start().await;
@@ -512,6 +513,16 @@ async fn image_attach_refuses_reserved_device_names() {
         "COM1.png",
         "lpt9.webp",
         "nul",
+        "CONIN$.png",
+        "conout$.png",
+        "COM0.png",
+        "lpt0.png",
+        "COM\u{b9}.png",
+        "com\u{b2}.png",
+        "COM\u{b3}",
+        "LPT\u{b9}.png",
+        "lpt\u{b2}.png",
+        "LPT\u{b3}.jpg",
     ] {
         let path = folder.path().join(name);
         #[cfg(not(windows))]
@@ -522,11 +533,13 @@ async fn image_attach_refuses_reserved_device_names() {
     expect_refused(&mut client, &session, &paths).await;
 
     // A name that only starts like one is served.
-    let console = folder.path().join("console.png");
-    std::fs::write(&console, png("console")).unwrap();
-    let params = json!({"session_id": session, "path": console.display().to_string()});
-    let reply = client.call(40, "image.attach", params).await;
-    assert_eq!(reply["result"]["attached"], true, "{reply}");
+    for (n, name) in ["console.png", "com10.png", "lpt.png"].iter().enumerate() {
+        let path = folder.path().join(name);
+        std::fs::write(&path, png(name)).unwrap();
+        let params = json!({"session_id": session, "path": path.display().to_string()});
+        let reply = client.call(40 + n as u64, "image.attach", params).await;
+        assert_eq!(reply["result"]["attached"], true, "{name}: {reply}");
+    }
 }
 
 /// The read is bounded by what it reads, not by the size the file reports: the kernel's page
