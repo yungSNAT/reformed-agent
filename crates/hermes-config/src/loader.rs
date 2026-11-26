@@ -1387,7 +1387,7 @@ fn load_from_yaml_inner(path: &Path, expand_env_refs: bool) -> Result<GatewayCon
     Ok(config)
 }
 
-fn expand_env_vars_in_yaml(value: &mut serde_yaml::Value) {
+pub(crate) fn expand_env_vars_in_yaml(value: &mut serde_yaml::Value) {
     match value {
         serde_yaml::Value::String(s) => {
             *s = expand_env_refs_in_str(s);
