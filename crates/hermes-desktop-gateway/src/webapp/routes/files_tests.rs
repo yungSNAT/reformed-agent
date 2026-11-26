@@ -524,6 +524,29 @@ fn a_working_folder_holding_system_folders_is_not_a_root() {
 }
 
 #[test]
+fn a_working_folder_in_a_system_state_folder_is_not_a_root() {
+    let home = Some(Path::new("/home/u"));
+    for bad in [
+        "/run/secrets",
+        "/run/user/1000",
+        "/etc/ssl/private",
+        "/root/proj",
+        "/var/lib/docker",
+        "/var/home/other",
+        "/private/etc/ssh",
+        "/private/var/db",
+    ] {
+        assert!(!extra_root_allowed(Path::new(bad), home), "{bad}");
+    }
+    // A home under /var (as on some image-based systems) admits that home only.
+    let var_home = Some(Path::new("/var/home/u"));
+    assert!(extra_root_allowed(Path::new("/var/home/u/proj"), var_home));
+    for bad in ["/var/home/other/proj", "/var/lib/x", "/run/secrets"] {
+        assert!(!extra_root_allowed(Path::new(bad), var_home), "{bad}");
+    }
+}
+
+#[test]
 fn a_working_folder_in_a_kernel_file_system_is_never_a_root() {
     // `/proc/self/environ` and the like: refused wherever the folder sits, home included.
     for bad in [
