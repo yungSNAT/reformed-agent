@@ -7,6 +7,7 @@
 //! checked as `image.attach_bytes` checks bytes (signature and size), so the prompt sends what
 //! was attached even if the file changes afterwards.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
@@ -15,7 +16,7 @@ use super::{
     Chat, Handler, Reply, Request, RpcError, ATTACHMENT_REQUIRED, IMAGE_INVALID, IMAGE_TOO_LARGE,
     IMAGE_UNSUPPORTED, IMAGE_WRITE_FAILED, INVALID_PARAMS, SESSION_NOT_FOUND,
 };
-use crate::attach::{stage_image_bytes, ImageError, MAX_IMAGE_BYTES};
+use crate::attach::{stage_image_bytes, ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 pub(super) const METHODS: &[(&str, Handler)] =
     &[("image.attach", attach), ("image.detach", detach)];
@@ -25,6 +26,14 @@ pub(super) const METHODS: &[(&str, Handler)] =
 const IMAGE_EXTENSIONS: [&str; 10] = [
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "svg", "ico",
 ];
+
+/// Most images one session holds staged at once, and their total size. Upstream keeps the
+/// named paths uncopied and sets no limit; here each is a copy on the gateway's disk.
+const MAX_STAGED_IMAGES: usize = 16;
+const MAX_STAGED_BYTES: usize = 64 << 20;
+
+/// JSON-RPC's internal error, for a handler task that panicked.
+const INTERNAL_ERROR: i64 = -32603;
 
 fn attach(req: Request) -> Reply {
     blocking(req, attach_now)
@@ -39,7 +48,7 @@ fn blocking(req: Request, f: fn(&Chat, &Map<String, Value>) -> Result<Value, Rpc
     Box::pin(async move {
         tokio::task::spawn_blocking(move || f(&req.chat, &req.params))
             .await
-            .unwrap_or_else(|e| Err((IMAGE_WRITE_FAILED, e.to_string())))
+            .unwrap_or_else(|_| Err((INTERNAL_ERROR, "internal error".into())))
     })
 }
 
@@ -85,12 +94,21 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
             format!("image larger than {MAX_IMAGE_BYTES} bytes"),
         )
     };
-    let read_failed = |e: std::io::Error| (IMAGE_WRITE_FAILED, format!("cannot read {name}: {e}"));
-    let size = std::fs::metadata(&source).map_err(read_failed)?.len();
-    if size > MAX_IMAGE_BYTES as u64 {
-        return Err(too_large());
+    let full = || {
+        (
+            IMAGE_TOO_LARGE,
+            format!("a session holds at most {MAX_STAGED_IMAGES} images ({MAX_STAGED_BYTES} bytes)"),
+        )
+    };
+    if !room(&session.images(), 0) {
+        return Err(full());
     }
-    let data = std::fs::read(&source).map_err(read_failed)?;
+    let data = match read_image(&source) {
+        Ok(Some(data)) if data.len() > MAX_IMAGE_BYTES => return Err(too_large()),
+        Ok(Some(data)) => data,
+        Ok(None) => return Err((IMAGE_UNSUPPORTED, format!("image not found: {name}"))),
+        Err(e) => return Err((IMAGE_WRITE_FAILED, format!("cannot read {name}: {e}"))),
+    };
     let staged = stage_image_bytes(&chat.home.join("images"), &data).map_err(|e| match e {
         ImageError::Unsupported => unsupported(),
         ImageError::TooLarge => too_large(),
@@ -110,9 +128,38 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
         },
     });
     let mut queued = session.images();
+    if !room(&queued, staged.bytes) {
+        drop(queued);
+        let _ = std::fs::remove_file(&staged.path);
+        return Err(full());
+    }
     queued.push(staged);
     reply["count"] = queued.len().into();
     Ok(reply)
+}
+
+/// Whether a session holding `queued` can take one more image of `bytes`.
+fn room(queued: &[StagedImage], bytes: usize) -> bool {
+    let held: usize = queued.iter().map(|image| image.bytes).sum();
+    queued.len() < MAX_STAGED_IMAGES && held + bytes <= MAX_STAGED_BYTES
+}
+
+/// The bytes of the regular file at `path`, read through one handle and at most one byte past
+/// [`MAX_IMAGE_BYTES`] (a file may report a smaller size than it reads). `None` when the handle
+/// is not a regular file; a FIFO is opened without waiting for a writer.
+fn read_image(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Ok(None);
+    }
+    let mut data = Vec::new();
+    file.take(MAX_IMAGE_BYTES as u64 + 1)
+        .read_to_end(&mut data)?;
+    Ok(Some(data))
 }
 
 fn detach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcError> {
@@ -218,6 +265,8 @@ fn split_path_input(raw: &str) -> (String, String) {
 
 /// Upstream's `_resolve_attachment_path`: quotes, `\ ` escapes, `file://` and a leading `~`
 /// are undone, a relative path is taken from `cwd`, and only an existing file is returned.
+/// A network share or device namespace path (`\\host\share`, `\\?\`, `\\.\`, `//host`) is
+/// refused before anything touches it.
 fn resolve(raw: &str, cwd: &Path) -> Option<PathBuf> {
     let mut token = raw.trim();
     if token.len() >= 2 && token.starts_with(['"', '\'']) && token.ends_with(&token[..1]) {
@@ -240,6 +289,10 @@ fn resolve(raw: &str, cwd: &Path) -> Option<PathBuf> {
     } else {
         PathBuf::from(&token)
     };
+    let shown = path.as_os_str().to_string_lossy();
+    if shown.starts_with(r"\\") || shown.starts_with("//") {
+        return None;
+    }
     let path = cwd.join(path);
     std::fs::metadata(&path)
         .is_ok_and(|m| m.is_file())
