@@ -70,7 +70,29 @@ fn sign(body: &[u8]) -> String {
 
 /// Sends raw request bytes and returns the status and body.
 async fn send(addr: SocketAddr, raw: Vec<u8>) -> (u16, String) {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    exchange(tokio::net::TcpStream::connect(addr).await.unwrap(), raw).await
+}
+
+/// A connection from `local`, another loopback address; `None` where it
+/// cannot be bound (macOS configures only 127.0.0.1; Linux, where CI runs
+/// these tests, answers on all of 127.0.0.0/8).
+async fn connect_from(local: &str, addr: SocketAddr) -> Option<tokio::net::TcpStream> {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind(format!("{local}:0").parse().unwrap()).ok()?;
+    Some(socket.connect(addr).await.unwrap())
+}
+
+/// Reads until the server closes the connection; `None` if it is still open
+/// after `limit`.
+async fn closed_within(stream: &mut tokio::net::TcpStream, limit: Duration) -> Option<Vec<u8>> {
+    let mut rest = Vec::new();
+    match tokio::time::timeout(limit, stream.read_to_end(&mut rest)).await {
+        Ok(_) => Some(rest),
+        Err(_) => None,
+    }
+}
+
+async fn exchange(mut stream: tokio::net::TcpStream, raw: Vec<u8>) -> (u16, String) {
     stream.write_all(&raw).await.unwrap();
     let mut response = Vec::new();
     stream.read_to_end(&mut response).await.unwrap();
@@ -301,21 +323,106 @@ async fn a_body_without_a_declared_length_is_refused() {
 }
 
 #[tokio::test]
-async fn a_seventeenth_request_is_refused_while_16_are_open() {
+async fn slow_unsigned_bodies_from_one_peer_leave_a_signed_push_served() {
     let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let Some(probe) = connect_from("127.0.0.2", addr).await else {
+        eprintln!("skipped: 127.0.0.2 cannot be bound on this host");
+        return;
+    };
+    drop(probe);
+    // 16 requests from one address that promise a body and never send it.
     let mut held = Vec::new();
-    for _ in 0..MAX_IN_FLIGHT {
+    for _ in 0..16 {
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let head = format!("POST {PATH} HTTP/1.1\r\nHost: t\r\nContent-Length: 10\r\n\r\n");
         stream.write_all(head.as_bytes()).await.unwrap();
         held.push(stream);
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(
-        send(addr, push(PUSH, "d-17", None)).await,
-        (503, "busy".into())
-    );
+    let github = connect_from("127.0.0.2", addr).await.unwrap();
+    let (status, body) = exchange(github, push(PUSH, "d-b1", None)).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains(r#""queued": true"#), "{body}");
     drop(held);
+}
+
+#[tokio::test]
+async fn an_unfinished_or_absent_request_head_is_dropped_after_10_seconds() {
+    let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let mut partial = tokio::net::TcpStream::connect(addr).await.unwrap();
+    partial
+        .write_all(format!("POST {PATH} HTTP/1.1\r\nHost: t\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut silent = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let started = std::time::Instant::now();
+    let (partial, silent) = tokio::join!(
+        closed_within(&mut partial, Duration::from_secs(15)),
+        closed_within(&mut silent, Duration::from_secs(15)),
+    );
+    assert!(partial.is_some(), "a half-sent head kept its connection open");
+    assert!(silent.is_some(), "a connection that sent nothing stayed open");
+    assert!(started.elapsed() >= Duration::from_secs(9));
+}
+
+#[tokio::test]
+async fn one_peer_may_hold_32_connections_and_no_more() {
+    let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let mut held = Vec::new();
+    for _ in 0..32 {
+        held.push(tokio::net::TcpStream::connect(addr).await.unwrap());
+    }
+    let mut extra = tokio::net::TcpStream::connect(addr).await.unwrap();
+    assert!(
+        closed_within(&mut extra, Duration::from_secs(3))
+            .await
+            .is_some(),
+        "a 33rd connection from one address was kept open"
+    );
+    let (status, body) = exchange(held.pop().unwrap(), push(PUSH, "d-cap", None)).await;
+    assert_eq!(status, 200, "{body}");
+}
+
+#[tokio::test]
+async fn a_body_that_stalls_gets_408_after_10_seconds() {
+    let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let head = format!("POST {PATH} HTTP/1.1\r\nHost: t\r\nContent-Length: 10\r\n\r\n12345");
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let started = std::time::Instant::now();
+    let reply = closed_within(&mut stream, Duration::from_secs(15))
+        .await
+        .expect("no reply within 15 seconds");
+    assert!(started.elapsed() >= Duration::from_secs(9));
+    assert!(reply.starts_with(b"HTTP/1.1 408"), "{reply:?}");
+}
+
+#[tokio::test]
+async fn a_signed_body_resent_under_a_new_delivery_id_is_not_queued_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let queue = crate::queue::SqliteQueue::open(&dir.path().join("q.db")).unwrap();
+    let addr = start(SECRET, Arc::new(queue)).await;
+    let first = send(addr, push(PUSH, "d-r1", None)).await;
+    assert!(first.1.contains(r#""queued": true"#), "{}", first.1);
+    let replay = send(addr, push(PUSH, "d-r2", None)).await;
+    assert_eq!(replay.0, 200);
+    assert!(replay.1.contains(r#""queued": false"#), "{}", replay.1);
+    let next = PUSH.replace("bbb", "ccc");
+    let next = send(addr, push(&next, "d-r3", None)).await;
+    assert!(next.1.contains(r#""queued": true"#), "{}", next.1);
+}
+
+#[tokio::test]
+async fn an_absolute_form_target_does_not_match_the_path() {
+    // The script compared the raw target, so `http://host/path` was a 404.
+    let addr = start(SECRET, Arc::new(Recorder::default())).await;
+    let mut raw = push(PUSH, "d-abs", None);
+    let line_end = raw.iter().position(|&b| b == b'\r').unwrap();
+    raw.splice(
+        ..line_end,
+        format!("POST http://test{PATH} HTTP/1.1").into_bytes(),
+    );
+    assert_eq!(send(addr, raw).await, (404, "Not Found".into()));
 }
 
 #[tokio::test]

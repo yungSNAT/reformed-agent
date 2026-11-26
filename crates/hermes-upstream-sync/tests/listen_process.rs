@@ -45,6 +45,36 @@ fn refuses_to_start_when_the_secret_is_absent_or_empty() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn refuses_to_start_when_the_secret_is_set_but_not_unicode() {
+    // Read as unset, it would let --allow-unsigned run unsigned whilst a
+    // secret is configured.
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = listen(dir.path(), 0)
+        .env(
+            "GITHUB_WEBHOOK_SECRET",
+            std::ffi::OsStr::from_bytes(b"secret-\xff"),
+        )
+        .arg("--allow-unsigned")
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let code = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status.code();
+        }
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(code, Some(2), "the listener started");
+}
+
 fn post(port: u16, headers: &str, body: &str) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     write!(
