@@ -5,10 +5,11 @@
 //! connection holds the host-input capability ([`Conn::host_input`]): only a local-mode ticket
 //! connection does, as a token on the loopback listener cannot tell this machine's client from
 //! one tunnelled in. No refusal echoes request text, and nothing typed, run or printed is
-//! logged. Children run in their own process group with a cleared environment, and a supervisor
-//! task, not the handler, owns each one: it kills the group on exit, timeout or a dropped request
-//! (the connection closed), then reaps the child. Windows has no local mode yet and these
-//! supervisors kill process groups only, so there all 3 refuse.
+//! logged. Children lead their own session and process group with a cleared environment, and a
+//! supervisor task, not the handler, owns each one: on exit, timeout or a dropped request (the
+//! connection closed) it kills the group (on Linux, the session too), reaps the child and stops
+//! reading output soon after, whatever a descendant still holds. Windows has no local mode yet
+//! and these supervisors kill process groups only, so there all 3 refuse.
 
 use serde_json::{Map, Value};
 
@@ -102,7 +103,7 @@ mod unix {
     use serde_json::{json, Map, Value};
     use tokio::io::{AsyncRead, AsyncReadExt};
     use tokio::process::Command;
-    use tokio::sync::oneshot;
+    use tokio::sync::{oneshot, watch};
 
     use super::{text, RpcError, NOT_AVAILABLE};
     use crate::chat::{Chat, Request};
@@ -380,10 +381,17 @@ mod unix {
         NotStarted(std::io::ErrorKind),
     }
 
-    /// Starts `command` in its own process group, with stdin closed, a cleared environment and
-    /// `folder` as its working folder, under a supervisor task that owns it. The supervisor ends
-    /// the run when the child exits, `limit` passes or this future is dropped; it then kills the
-    /// whole group, so no descendant outlives the run, and reaps the child.
+    /// How long output is still read after the child exits: a descendant that escaped the kill
+    /// can hold the pipes open, and the answer does not wait for it.
+    const DRAIN: Duration = Duration::from_secs(2);
+
+    /// Starts `command` as the leader of its own session and process group, with stdin closed,
+    /// a cleared environment and `folder` as its working folder, under a supervisor task that
+    /// owns it. The supervisor ends the run when the child exits, `limit` passes or this future
+    /// is dropped. It then kills the group and, on Linux, every process left in the session
+    /// before reaping the child, so neither id can be reused under the kill; reads output for at
+    /// most [`DRAIN`] more; and gives the slot back. A descendant that starts its own session
+    /// (`setsid`), or on macOS its own process group, survives the run.
     pub(super) async fn supervise(
         mut command: Command,
         folder: PathBuf,
@@ -400,39 +408,55 @@ mod unix {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .process_group(0)
             .kill_on_drop(true);
+        // SAFETY: setsid is async-signal-safe and touches no memory of ours.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => return Ended::NotStarted(err.kind()),
         };
-        let group = child.id().and_then(|pid| i32::try_from(pid).ok());
-        let stdout = tokio::spawn(read_capped(child.stdout.take()));
-        let stderr = tokio::spawn(read_capped(child.stderr.take()));
+        let Some(leader) = child.id().and_then(|pid| i32::try_from(pid).ok()) else {
+            return Ended::NotStarted(std::io::ErrorKind::Other);
+        };
+        let (stop, stopped) = watch::channel(());
+        let stdout = tokio::spawn(read_capped(child.stdout.take(), stopped.clone()));
+        let stderr = tokio::spawn(read_capped(child.stderr.take(), stopped));
         let (mut answer, answered) = oneshot::channel();
         tokio::spawn(async move {
-            let _slot = slot;
-            let code = tokio::select! {
-                status = child.wait() => Some(status.ok().and_then(|s| s.code())),
-                () = tokio::time::sleep(limit) => None,
-                () = answer.closed() => None,
+            let exited = tokio::select! {
+                _ = tokio::task::spawn_blocking(move || wait_unreaped(leader)) => true,
+                () = tokio::time::sleep(limit) => false,
+                () = answer.closed() => false,
             };
-            // The group outlives its leader while a descendant holds it, so Linux does not
-            // reuse its id meanwhile; once it is empty the kill finds nothing.
-            kill_group(group);
-            let _ = child.wait().await;
-            let ended = match code {
-                Some(code) => Ended::Exited {
+            // The leader is not reaped yet, so its pid, group and session ids are still taken.
+            kill_run(leader);
+            let status = child.wait().await;
+            let ended = if exited {
+                let stopper = tokio::spawn(async move {
+                    tokio::time::sleep(DRAIN).await;
+                    drop(stop);
+                });
+                let ended = Ended::Exited {
                     stdout: stdout.await.unwrap_or_default(),
                     stderr: stderr.await.unwrap_or_default(),
-                    code,
-                },
-                None => {
-                    stdout.abort();
-                    stderr.abort();
-                    Ended::TimedOut
-                }
+                    code: status.ok().and_then(|s| s.code()),
+                };
+                stopper.abort();
+                ended
+            } else {
+                stdout.abort();
+                stderr.abort();
+                Ended::TimedOut
             };
+            drop(slot);
             let _ = answer.send(ended);
         });
         answered
@@ -440,29 +464,75 @@ mod unix {
             .unwrap_or(Ended::NotStarted(std::io::ErrorKind::Other))
     }
 
-    fn kill_group(group: Option<i32>) {
-        if let Some(group) = group.filter(|group| *group > 0) {
-            // SAFETY: killpg takes plain integers and touches no memory of ours.
-            unsafe {
-                libc::killpg(group, libc::SIGKILL);
+    /// Blocks until `pid` has exited, leaving it unreaped.
+    fn wait_unreaped(pid: i32) {
+        loop {
+            // SAFETY: waitid writes only into `info`, which lives on this stack.
+            let done = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                libc::waitid(
+                    libc::P_PID,
+                    pid.unsigned_abs(),
+                    &mut info,
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            };
+            if done == 0
+                || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+            {
+                return;
             }
         }
     }
 
-    /// Up to [`READ_CAP`] bytes of `stream`, read to its end, as lossy UTF-8.
-    async fn read_capped(stream: Option<impl AsyncRead + Unpin>) -> String {
+    /// Kills the process group led by `leader` and, on Linux, every process in its session.
+    fn kill_run(leader: i32) {
+        if leader <= 1 {
+            return;
+        }
+        // SAFETY: killpg takes plain integers and touches no memory of ours.
+        unsafe {
+            libc::killpg(leader, libc::SIGKILL);
+        }
+        #[cfg(target_os = "linux")]
+        for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.parse::<i32>().ok())
+            else {
+                continue;
+            };
+            // SAFETY: getsid and kill take plain integers and touch no memory of ours.
+            unsafe {
+                if pid != leader && libc::getsid(pid) == leader {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    /// Up to [`READ_CAP`] bytes of `stream`, read until its end or until `stop`'s sender is
+    /// dropped, as lossy UTF-8.
+    async fn read_capped(
+        stream: Option<impl AsyncRead + Unpin>,
+        mut stop: watch::Receiver<()>,
+    ) -> String {
         let Some(mut stream) = stream else {
             return String::new();
         };
         let mut kept = Vec::new();
         let mut buf = [0u8; 8192];
         loop {
-            match stream.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(read) => {
-                    let room = READ_CAP.saturating_sub(kept.len()).min(read);
-                    kept.extend_from_slice(&buf[..room]);
-                }
+            tokio::select! {
+                read = stream.read(&mut buf) => match read {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        let room = READ_CAP.saturating_sub(kept.len()).min(read);
+                        kept.extend_from_slice(&buf[..room]);
+                    }
+                },
+                _ = stop.changed() => break,
             }
         }
         String::from_utf8_lossy(&kept).into_owned()
