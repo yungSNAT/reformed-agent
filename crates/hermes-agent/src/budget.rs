@@ -26,7 +26,17 @@ pub fn truncate_result(content: &str, max_chars: usize) -> String {
 /// - Each result is individually truncated to `budget.max_result_size_chars`.
 /// - If the aggregate size exceeds `budget.max_aggregate_chars`, results are
 ///   further truncated proportionally until the total fits.
+///
+/// Each result is then handed to the file tools as the model will see it, so
+/// a file read counts only if it survived these cuts whole.
 pub fn enforce_budget(results: &mut [ToolResult], budget: &BudgetConfig) {
+    cut_to_budget(results, budget);
+    for result in results.iter() {
+        hermes_core::file_edit::settle_view(&result.tool_call_id, &result.content);
+    }
+}
+
+fn cut_to_budget(results: &mut [ToolResult], budget: &BudgetConfig) {
     // Step 1: Per-result truncation
     for result in results.iter_mut() {
         result.content = truncate_result(&result.content, budget.max_result_size_chars);
@@ -58,6 +68,41 @@ pub fn check_aggregate_budget(results: &[ToolResult], max_aggregate: usize) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enforce_budget_hands_the_file_tools_each_result_as_cut() {
+        static SEEN: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+        fn record(call_id: &str, shown: &str) {
+            SEEN.lock()
+                .unwrap()
+                .push((call_id.to_string(), shown.to_string()));
+        }
+        hermes_core::file_edit::set_view_settler(record);
+        let budget = BudgetConfig {
+            max_result_size_chars: 10,
+            ..BudgetConfig::default()
+        };
+        let mut results = vec![
+            ToolResult::ok("budget-call-a", "short"),
+            ToolResult::ok("budget-call-b", "a".repeat(50)),
+        ];
+        enforce_budget(&mut results, &budget);
+        let seen: Vec<(String, String)> = SEEN
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, _)| id.starts_with("budget-call-"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("budget-call-a".to_string(), "short".to_string()),
+                ("budget-call-b".to_string(), results[1].content.clone()),
+            ]
+        );
+        assert!(results[1].content.contains("truncated"));
+    }
 
     #[test]
     fn test_truncate_result_under_limit() {

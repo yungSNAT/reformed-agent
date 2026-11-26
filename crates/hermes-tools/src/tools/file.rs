@@ -243,7 +243,7 @@ impl ToolHandler for ReadFileHandler {
         }
 
         if let Some(file) = crate::file_state::tracked_file(path).await {
-            crate::file_state::note_read(&params, path, &file, offset, limit, &content).await;
+            crate::file_state::note_read(&params, &file, offset, limit, &content).await;
         }
         Ok(content)
     }
@@ -972,12 +972,13 @@ mod tests {
     /// Reads `path` whole through `backend` and settles the read as the
     /// registry does for a view shown unaltered, so `write_file` may replace it.
     async fn read_whole(backend: Arc<dyn TerminalBackend>, path: &str) {
-        let params = json!({ "path": path });
-        ReadFileHandler::new(backend)
+        let mut params = json!({ "path": path });
+        crate::file_state::prepare_call("read_file", &mut params);
+        let content = ReadFileHandler::new(backend)
             .execute(params.clone())
             .await
             .unwrap();
-        crate::file_state::settle_read("read_file", &params, true);
+        crate::file_state::delivered("read_file", &params, true, &content, false);
     }
 
     /// Counts its calls and keeps the last path it was given.

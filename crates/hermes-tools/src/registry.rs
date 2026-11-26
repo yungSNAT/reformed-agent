@@ -354,6 +354,8 @@ impl ToolRegistry {
         if let Some(refusal) = redacted_secret_refusal(&effective_params) {
             return refusal;
         }
+        let mut effective_params = effective_params;
+        let deferred = crate::file_state::prepare_call(name, &mut effective_params);
 
         // Use tokio to run the async handler
         let result = tokio::task::block_in_place(|| {
@@ -374,11 +376,18 @@ impl ToolRegistry {
                     rewrite_applied,
                 );
                 let shown = truncate_to_chars(&filtered, max_chars);
-                crate::file_state::settle_read(name, &effective_params, shown == raw);
-                Self::tool_result(&shown)
+                let returned = Self::tool_result(&shown);
+                crate::file_state::delivered(
+                    name,
+                    &effective_params,
+                    shown == raw,
+                    &returned,
+                    deferred,
+                );
+                returned
             }
             Err(e) => {
-                crate::file_state::settle_read(name, &effective_params, false);
+                crate::file_state::delivered(name, &effective_params, false, "", deferred);
                 let err_text = hermes_core::secret_values::mask(&e.to_string()).into_owned();
                 let filtered = rtk_filter.filter_and_log(
                     name,
@@ -435,6 +444,8 @@ impl ToolRegistry {
         if let Some(refusal) = redacted_secret_refusal(&effective_params) {
             return refusal;
         }
+        let mut effective_params = effective_params;
+        let deferred = crate::file_state::prepare_call(name, &mut effective_params);
 
         let output = match handler.execute(effective_params.clone()).await {
             Ok(raw) => {
@@ -449,11 +460,18 @@ impl ToolRegistry {
                     rewrite_applied,
                 );
                 let shown = truncate_to_chars(&filtered, max_chars);
-                crate::file_state::settle_read(name, &effective_params, shown == raw);
-                Self::tool_result(&shown)
+                let returned = Self::tool_result(&shown);
+                crate::file_state::delivered(
+                    name,
+                    &effective_params,
+                    shown == raw,
+                    &returned,
+                    deferred,
+                );
+                returned
             }
             Err(e) => {
-                crate::file_state::settle_read(name, &effective_params, false);
+                crate::file_state::delivered(name, &effective_params, false, "", deferred);
                 let err_text = hermes_core::secret_values::mask(&e.to_string()).into_owned();
                 let filtered = rtk_filter.filter_and_log(
                     name,

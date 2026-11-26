@@ -54,6 +54,15 @@ async fn call(registry: &ToolRegistry, tool: &str, session: &str, mut args: Valu
     serde_json::from_str(&out).unwrap_or_else(|_| json!({ "result": out }))
 }
 
+/// A `read_file` made by the agent loop's call `call_id`; returns the
+/// registry's result, which the loop then settles with what the model sees.
+async fn agent_read(registry: &ToolRegistry, session: &str, call_id: &str, path: &Path) -> String {
+    let mut args = json!({ "path": path });
+    args[SESSION] = json!(session);
+    args["_hermes_call"] = json!(call_id);
+    registry.dispatch_async("read_file", args).await
+}
+
 async fn read(registry: &ToolRegistry, session: &str, path: &Path) -> Value {
     call(registry, "read_file", session, json!({ "path": path })).await
 }
@@ -303,4 +312,84 @@ async fn a_link_and_its_target_share_one_record() {
         std::fs::read_to_string(&target).unwrap(),
         "changed elsewhere\n"
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_fresh_write_through_a_link_is_left_to_the_backend() {
+    let tools = registry();
+    let (dir, target) = fixture("target.txt", "original\n");
+    let link = dir.path().join("link.txt");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    ok(&read(&tools, "l2", &link).await);
+    // The guard passes; the local backend will not write through a leaf link.
+    let result = write(&tools, "l2", &link, "through the link\n").await;
+    let error = result["error"]
+        .as_str()
+        .unwrap_or_else(|| panic!("written: {result}"));
+    assert!(!error.contains("Refusing to overwrite"), "{error}");
+    assert!(error.contains("symlink"), "{error}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}
+
+#[tokio::test]
+async fn a_read_the_agent_cuts_does_not_bless_a_write() {
+    let tools = registry();
+    let (_dir, path) = fixture("cut.txt", "first line\nsecond line\n");
+    let returned = agent_read(&tools, "b1", "b1-cut", &path).await;
+    let cut = format!("{}\n[... truncated ...]", &returned[..10]);
+    hermes_core::file_edit::settle_view("b1-cut", &cut);
+    refused(&write(&tools, "b1", &path, "replacement\n").await);
+
+    let returned = agent_read(&tools, "b1", "b1-whole", &path).await;
+    // Not yet settled: the model has not been given it.
+    refused(&write(&tools, "b1", &path, "replacement\n").await);
+    hermes_core::file_edit::settle_view("b1-whole", &returned);
+    ok(&write(&tools, "b1", &path, "replacement\n").await);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "replacement\n");
+}
+
+#[tokio::test]
+async fn concurrent_reads_are_settled_each_by_its_own_call() {
+    let tools = registry();
+    let long: String = (0..3000)
+        .map(|n| format!("line {n:05} padding\n"))
+        .collect();
+    let (_dir, path) = fixture("concurrent.txt", &long);
+    // A whole read cut by the registry's cap beside an intact one-line page.
+    let (page, whole) = tokio::join!(
+        read_page(&tools, "b2", &path, 1, 1),
+        read(&tools, "b2", &path)
+    );
+    ok(&page);
+    ok(&whole);
+    refused(&write(&tools, "b2", &path, "replacement\n").await);
+
+    let (_dir, path) = fixture("pages.txt", "first\nsecond\n");
+    let (first, second) = tokio::join!(
+        read_page(&tools, "b2", &path, 1, 1),
+        read_page(&tools, "b2", &path, 2, 1)
+    );
+    ok(&first);
+    ok(&second);
+    ok(&write(&tools, "b2", &path, "replacement\n").await);
+}
+
+#[tokio::test]
+async fn a_file_that_is_not_utf8_is_refused_with_its_reason() {
+    let tools = registry();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("binary.dat");
+    std::fs::write(&path, [0xff, 0xfe, 0x00, 0x80]).unwrap();
+    read(&tools, "s2", &path).await;
+
+    let result = write(&tools, "s2", &path, "text\n").await;
+    refused(&result);
+    assert!(text(&result).contains("not UTF-8"), "{result}");
+    assert_eq!(std::fs::read(&path).unwrap(), [0xff, 0xfe, 0x00, 0x80]);
 }
