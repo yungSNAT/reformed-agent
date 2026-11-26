@@ -307,6 +307,48 @@ async fn copilot_responses_route_honours_disabled_reasoning_and_streams() {
 }
 
 #[tokio::test]
+async fn copilot_responses_route_sends_only_levels_the_model_is_known_to_accept() {
+    let server = MockServer::start().await;
+    mock_chat(&server).await;
+    mock_models(
+        &server,
+        ResponseTemplate::new(200).set_body_json(vec![model(
+            "gpt-5.1",
+            json!({"supports": {"reasoning_effort": ["low", "medium"]}}),
+        )]),
+    )
+    .await;
+    let catalogued = provider(&server);
+    let uncatalogued =
+        CopilotProvider::new(server.uri(), "synthetic-test-value").with_model("gpt-5.1");
+    let cases = [
+        // The lookup drops the `openai/` prefix and clamps to the catalogue.
+        (&catalogued, "openai/gpt-5.1", json!({"reasoning_effort": "xhigh"}), Some("medium")),
+        // No catalogue row, or no catalogue: the pattern list.
+        (&catalogued, "gpt-5.2", json!({"reasoning_effort": "xhigh"}), Some("high")),
+        (&uncatalogued, "gpt-5.1", json!({"reasoning_effort": "xhigh"}), Some("high")),
+        // A model no list covers gets no reasoning.
+        (&uncatalogued, "gpt-6", json!({"reasoning_effort": "high"}), None),
+        // No effort asked for: medium, as upstream sends.
+        (&uncatalogued, "gpt-5.1", json!({}), Some("medium")),
+        (&uncatalogued, "gpt-5.1", json!({"reasoning_effort": "none"}), None),
+    ];
+    for (provider, model, body, _) in &cases {
+        one_shot(provider, Some(model), body).await;
+    }
+
+    let bodies = chat_requests(&server, 1).await;
+    assert_eq!(bodies.len(), cases.len());
+    for (body, (_, model, _, expected)) in bodies.iter().zip(&cases) {
+        assert_eq!(body["model"], *model);
+        assert_eq!(effort(body), *expected, "{model}: {body}");
+        if expected.is_some() {
+            assert_eq!(body["reasoning"]["summary"], "auto", "{body}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn copilot_stream_and_plain_chat_share_catalog_cache() {
     let server = MockServer::start().await;
     mock_chat(&server).await;
