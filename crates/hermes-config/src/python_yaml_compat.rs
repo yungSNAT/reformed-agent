@@ -557,22 +557,17 @@ fn normalize_platform_toolsets(map: &mut Mapping) {
         normalized.insert(key(platform_name), Value::Sequence(out));
     }
 
-    let defaults: Vec<(Value, Value)> = crate::config::default_platform_toolsets()
-        .into_iter()
-        .map(|(platform, toolsets)| {
-            let toolsets = toolsets.into_iter().map(Value::String).collect();
-            (key(&platform), Value::Sequence(toolsets))
-        })
-        .collect();
     // Every release that wrote the defaults wrote at least these.
     let written_by_every_release = ["cli", "telegram", "discord", "whatsapp", "slack"];
     if written_by_every_release
         .iter()
         .all(|platform| normalized.contains_key(key(platform)))
     {
-        for (platform, toolsets) in &defaults {
-            if normalized.get(platform) == Some(toolsets) {
-                normalized.remove(platform);
+        for (platform, toolsets) in crate::config::default_platform_toolsets() {
+            let platform = key(&platform);
+            let toolsets = Value::Sequence(toolsets.into_iter().map(Value::String).collect());
+            if normalized.get(&platform) == Some(&toolsets) {
+                normalized.remove(&platform);
             }
         }
     }

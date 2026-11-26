@@ -287,9 +287,14 @@ fn requested_tool_names(
     }
 
     // Merge explicit tool toggles from config:
-    // - `enabled` acts as additive allow-list entries.
+    // - `enabled` acts as additive allow-list entries, except on a platform
+    //   whose saved list is empty, which offers no tool.
     // - `disabled` always removes entries.
-    for tool_name in &config.tools_config.enabled {
+    let enabled: &[String] = match config.platform_toolsets.get(&key) {
+        Some(saved) if saved.is_empty() => &[],
+        _ => &config.tools_config.enabled,
+    };
+    for tool_name in enabled {
         let trimmed = tool_name.trim();
         if trimmed.is_empty() {
             continue;

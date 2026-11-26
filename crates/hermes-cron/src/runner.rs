@@ -977,7 +977,12 @@ fn resolve_cron_platform_tool_names(
         }
     }
 
-    for tool_name in &config.tools_config.enabled {
+    // A saved empty cron list offers no tool, whatever the global allow-list says.
+    let enabled: &[String] = match config.platform_toolsets.get(CRON_PLATFORM) {
+        Some(saved) if saved.is_empty() => &[],
+        _ => &config.tools_config.enabled,
+    };
+    for tool_name in enabled {
         let trimmed = tool_name.trim();
         if !trimmed.is_empty() && live_names.contains(trimmed) {
             names.insert(trimmed.to_string());
