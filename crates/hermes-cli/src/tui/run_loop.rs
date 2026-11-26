@@ -619,6 +619,7 @@ fn spawn_tui_direct_agent_turn(
     state.status_message = "Processing...".to_string();
 
     let agent = app.agent.clone();
+    agent.set_session_spent_usd(app.session_cost_usd);
     let stream_enabled = app.config.streaming.enabled;
     let tool_schemas = app.tool_schemas.clone();
     let messages = app.messages.clone();
