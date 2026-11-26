@@ -153,7 +153,9 @@ impl Sandbox {
             .args(["rev-parse", "HEAD"])
             .output()
             .expect("git");
+        assert!(head.status.success(), "git rev-parse HEAD: {head:?}");
         let head = String::from_utf8(head.stdout).expect("head");
+        assert_eq!(head.trim().len(), 40, "sandbox head {head:?}");
         let text = text.replace(head.trim(), "<SHA>");
         let stamp = Regex::new(r"\d{8}T\d{6}Z").expect("regex");
         let text = stamp.replace_all(&text, "<STAMP>");
