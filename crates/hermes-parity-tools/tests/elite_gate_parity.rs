@@ -2,7 +2,11 @@
 //! `cargo` and `launchctl` on `PATH` and a throwaway git repository. Each case
 //! records stdout, stderr, the exit code, every file written and every fake
 //! tool call, with temporary paths and times masked, and compares that record
-//! with the one the replaced shell script produced.
+//! with `tests/fixtures/elite_gate/<case>.txt`. Those files are the records the
+//! replaced shell scripts (`scripts/run-nightly-elite-gate.sh` and the 3
+//! `*-elite-gate-launchd.sh` scripts) produced for the same cases, captured
+//! whilst both ran side by side; the plist's `ProgramArguments` is masked
+//! because it now starts this command instead of the script.
 #![cfg(unix)]
 
 use std::collections::BTreeMap;
@@ -17,18 +21,7 @@ fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_hermes-parity-tools")
 }
 
-fn source_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
 const FAKE_CARGO: &str = r#"#!/usr/bin/env bash
-for a in "$@"; do
-  if [[ "$a" == publish-automation-summary ]]; then
-    while [[ "$1" != "--" ]]; do shift; done
-    shift
-    exec "$HERMES_PARITY_BIN" "$@"
-  fi
-done
 printf 'cargo %s (cwd=%s)\n' "$*" "$PWD" >> "$FAKE_LOG"
 if [[ -n "${FAKE_CARGO_FAIL:-}" && "$*" == *"$FAKE_CARGO_FAIL"* ]]; then
   echo "fake cargo failing: $*" >&2
@@ -69,11 +62,7 @@ impl Sandbox {
             fs::write(&path, text).expect("write fake");
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
         }
-        fs::copy(
-            source_root().join("scripts/publish_automation_summary.py"),
-            root.join("repo/scripts/publish_automation_summary.py"),
-        )
-        .expect("copy publisher");
+        fs::write(root.join("repo/README.md"), "sandbox\n").expect("write readme");
         let sandbox = Self { _tmp: tmp, root };
         sandbox.git(&["init", "-q", "-b", "main"]);
         sandbox.git(&["add", "-A"]);
@@ -98,7 +87,6 @@ impl Sandbox {
             .env("HOME", self.path("home"))
             .env("FAKE_LOG", self.path("calls.log"))
             .env("FAKE_PRINT", self.path("print.txt"))
-            .env("HERMES_PARITY_BIN", bin())
             .env("AUTOMATION_SUMMARY_SINK_ORDER", "local")
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
@@ -194,40 +182,25 @@ struct Case {
     setup: fn(&Sandbox),
 }
 
-fn run_case(case: &Case) -> (String, String) {
-    let run = |shell: bool| {
-        let sandbox = Sandbox::new();
-        (case.setup)(&sandbox);
-        let mut cmd = if shell {
-            let mut c = sandbox.command("bash");
-            c.arg(source_root().join(format!("scripts/{}.sh", case.script)));
-            c
-        } else {
-            let mut c = sandbox.command(bin());
-            c.arg(case.script);
-            c
-        };
-        let args: Vec<String> = case
-            .args
-            .iter()
-            .map(|a| a.replace("<ROOT>", &sandbox.root.to_string_lossy()))
-            .collect();
-        cmd.args(&args);
-        for (k, v) in &case.env {
-            cmd.env(k, v.replace("<ROOT>", &sandbox.root.to_string_lossy()));
-        }
-        sandbox.record(cmd)
-    };
-    (run(true), run(false))
+fn run_case(case: &Case) -> String {
+    let sandbox = Sandbox::new();
+    (case.setup)(&sandbox);
+    let root = sandbox.root.to_string_lossy().into_owned();
+    let mut cmd = sandbox.command(bin());
+    cmd.arg(case.script);
+    cmd.args(case.args.iter().map(|a| a.replace("<ROOT>", &root)));
+    for (k, v) in &case.env {
+        cmd.env(k, v.replace("<ROOT>", &root));
+    }
+    sandbox.record(cmd)
 }
 
 fn check(case: Case) {
-    let (shell, rust) = run_case(&case);
-    if let Ok(dir) = std::env::var("ELITE_GATE_BLESS") {
-        fs::create_dir_all(&dir).expect("bless dir");
-        fs::write(Path::new(&dir).join(format!("{}.txt", case.name)), &shell).expect("bless");
-    }
-    assert_eq!(rust, shell, "case {}", case.name);
+    let expected = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/elite_gate")
+        .join(format!("{}.txt", case.name));
+    let expected = fs::read_to_string(&expected).expect("fixture");
+    assert_eq!(run_case(&case), expected, "case {}", case.name);
 }
 
 fn strings(items: &[&str]) -> Vec<String> {
@@ -340,17 +313,8 @@ fn install(name: &'static str, extra: &[&str], env: Vec<(&'static str, String)>)
         script: "install-elite-gate-launchd",
         args,
         env,
-        setup: install_runner,
+        setup: nothing,
     });
-}
-
-/// The script made its runner executable and failed without it.
-fn install_runner(s: &Sandbox) {
-    s.write(
-        "repo/scripts/run-nightly-elite-gate.sh",
-        "#!/bin/sh
-",
-    );
 }
 
 #[test]
