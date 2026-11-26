@@ -469,6 +469,10 @@ fn reject_symmetric_jwk(jwk: &Jwk) -> Result<(), CronError> {
     Ok(())
 }
 
+#[cfg(all(test, unix))]
+#[path = "chronos/tests/provision_contract.rs"]
+mod provision_contract;
+
 #[cfg(test)]
 mod tests {
     use super::*;

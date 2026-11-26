@@ -1196,3 +1196,7 @@ impl TuiState {
         self.pet_frame = self.pet_frame.wrapping_add(1);
     }
 }
+
+#[cfg(test)]
+#[path = "state_coverage_gen.rs"]
+mod coverage_gen_tui_state;

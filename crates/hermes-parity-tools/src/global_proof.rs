@@ -334,3 +334,7 @@ pub fn run(args: GlobalProofArgs) -> Result<i32, String> {
     )?;
     Ok(0)
 }
+
+#[cfg(test)]
+#[path = "global_proof_coverage_gen.rs"]
+mod coverage_gen;

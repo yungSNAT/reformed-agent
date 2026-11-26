@@ -698,6 +698,9 @@ mod tests {
         }
     }
 
+    #[path = "storage_contract_tests.rs"]
+    mod storage_contract_tests;
+
     #[cfg(unix)]
     #[tokio::test]
     async fn file_token_store_writes_through_a_symlink_and_keeps_it() {

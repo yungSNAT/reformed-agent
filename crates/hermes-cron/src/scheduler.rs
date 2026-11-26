@@ -1004,6 +1004,7 @@ mod tests {
     struct RecordingManagedProvider {
         reconciles: StdMutex<Vec<Vec<String>>>,
         cancels: StdMutex<Vec<String>>,
+        reject_requests: bool,
     }
 
     #[async_trait::async_trait]
@@ -1020,6 +1021,11 @@ mod tests {
             let mut ids = jobs.into_iter().map(|job| job.id).collect::<Vec<_>>();
             ids.sort();
             self.reconciles.lock().expect("reconciles").push(ids);
+            if self.reject_requests {
+                return Err(CronError::Scheduler(
+                    "fixture provider failed to respond".into(),
+                ));
+            }
             Ok(())
         }
 
@@ -1028,6 +1034,11 @@ mod tests {
                 .lock()
                 .expect("cancels")
                 .push(job_id.to_string());
+            if self.reject_requests {
+                return Err(CronError::Scheduler(
+                    "fixture provider failed to respond".into(),
+                ));
+            }
             Ok(())
         }
     }
@@ -1169,6 +1180,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn job_lifecycle_validates_transitions_and_persists_the_schedule() {
+        let executor = Arc::new(BlockingTestExecutor::default());
+        executor.release.add_permits(1);
+        let (scheduler, _dir) = make_executor_scheduler(executor.clone());
+        let mut job = CronJob::new("0 9 * * *", "Summarise the fixture");
+        job.id.clear();
+        let id = scheduler.create_job(job).await.unwrap();
+        assert!(!id.is_empty());
+        let created = scheduler.get_job(&id).await.unwrap();
+        assert!(created.next_run.is_some());
+        assert!(matches!(
+            scheduler.create_job(created.clone()).await,
+            Err(CronError::JobAlreadyExists(existing)) if existing == id
+        ));
+        assert!(scheduler.resume_job(&id).await.is_err());
+
+        scheduler.pause_job(&id).await.unwrap();
+        assert!(matches!(
+            scheduler.pause_job(&id).await,
+            Err(CronError::JobPaused(paused)) if paused == id
+        ));
+        assert!(!scheduler.fire_managed_job(&id, None).await.unwrap());
+        assert_eq!(
+            scheduler.persistence.load_jobs().await.unwrap()[0].status,
+            JobStatus::Paused
+        );
+
+        scheduler.resume_job(&id).await.unwrap();
+        let mut revised = scheduler.get_job(&id).await.unwrap();
+        assert_eq!(revised.status, JobStatus::Active);
+        assert!(revised.next_run.is_some());
+        revised.schedule = "0 12 * * *".into();
+        revised.next_run = None;
+        scheduler.update_job(&id, revised).await.unwrap();
+        let mut scheduled = scheduler.get_job(&id).await.unwrap();
+        assert_eq!(scheduled.schedule, "0 12 * * *");
+        assert!(scheduled.next_run.is_some());
+        assert_ne!(scheduled.next_run, created.next_run);
+        assert_eq!(
+            scheduler.persistence.load_jobs().await.unwrap(),
+            [scheduled.clone()]
+        );
+
+        scheduled.status = JobStatus::Completed;
+        scheduled.next_run = None;
+        scheduler.update_job(&id, scheduled).await.unwrap();
+        assert!(matches!(
+            scheduler.pause_job(&id).await,
+            Err(CronError::JobCompleted(completed)) if completed == id
+        ));
+        assert!(matches!(
+            scheduler.run_job(&id).await,
+            Err(CronError::JobCompleted(completed)) if completed == id
+        ));
+        assert_eq!(executor.started.load(Ordering::SeqCst), 0);
+        scheduler.remove_job(&id).await.unwrap();
+        assert!(scheduler.get_job(&id).await.is_none());
+        assert!(scheduler.persistence.load_jobs().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn tick_due_jobs_dispatches_without_waiting_for_completion() {
         let executor = Arc::new(BlockingTestExecutor::default());
         let (sched, _dir) = make_executor_scheduler(executor.clone());
@@ -1297,6 +1369,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn backend_lists_and_manually_runs_a_paused_job_then_removes_it() {
+        use crate::backend::ScheduledCronjobBackend;
+        use hermes_tools::CronjobBackend;
+        use serde_json::{json, Value};
+
+        let executor = Arc::new(BlockingTestExecutor::default());
+        executor.release.add_permits(1);
+        let provider = Arc::new(RecordingManagedProvider::default());
+        let (scheduler, dir) = make_executor_scheduler_with_provider(executor.clone(), provider);
+        let scheduler = Arc::new(scheduler);
+        let backend = ScheduledCronjobBackend::new(scheduler.clone());
+        let id = scheduler
+            .create_job(CronJob::new("0 * * * *", "Summarise the sample report"))
+            .await
+            .unwrap();
+
+        let paused: Value = serde_json::from_str(&backend.pause(&id).await.unwrap()).unwrap();
+        assert_eq!(paused, json!({"action": "paused", "id": id}));
+        let listing: Value = serde_json::from_str(&backend.list().await.unwrap()).unwrap();
+        assert_eq!(listing["count"], 1);
+        assert_eq!(listing["jobs"][0]["id"], id);
+        assert_eq!(listing["jobs"][0]["status"], "paused");
+
+        let ran = tokio::time::timeout(StdDuration::from_secs(5), backend.run(&id))
+            .await
+            .expect("manual run completed")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&ran).unwrap(),
+            json!({
+                "action": "ran", "id": id,
+                "finished_naturally": true, "turns": 1,
+                "output": format!("finished {id}"),
+            })
+        );
+        assert_eq!(executor.recorded_prompts(), ["Summarise the sample report"]);
+        let persisted = FileJobPersistence::with_dir(dir.path().to_path_buf());
+        let jobs = persisted.load_jobs().await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Paused);
+        assert_eq!(jobs[0].run_count, 0);
+        assert!(jobs[0].last_run.is_some());
+        assert_eq!(jobs[0].last_output, Some(format!("finished {id}")));
+
+        let resumed: Value = serde_json::from_str(&backend.resume(&id).await.unwrap()).unwrap();
+        assert_eq!(resumed, json!({"action": "resumed", "id": id}));
+        assert_eq!(
+            scheduler.get_job(&id).await.unwrap().status,
+            JobStatus::Active
+        );
+        let removed: Value = serde_json::from_str(&backend.remove(&id).await.unwrap()).unwrap();
+        assert_eq!(removed, json!({"action": "removed", "id": id}));
+        assert!(scheduler.get_job(&id).await.is_none());
+        assert!(persisted.load_jobs().await.unwrap().is_empty());
+        assert!(matches!(
+            backend.remove(&id).await,
+            Err(hermes_core::ToolError::ExecutionFailed(message))
+                if message == format!("cron job not found: {id}")
+        ));
+    }
+
+    #[tokio::test]
     async fn managed_provider_reconciles_mutations_and_cancels_disabled_jobs() {
         let executor = Arc::new(BlockingTestExecutor::default());
         let provider = Arc::new(RecordingManagedProvider::default());
@@ -1354,6 +1488,81 @@ mod tests {
         let stored = sched.get_job(&id).await.expect("stored");
         assert_ne!(stored.next_run, Some(fire_at));
         assert_eq!(stored.run_count, 1);
+    }
+
+    #[tokio::test]
+    async fn managed_provider_errors_keep_local_cron_mutations() {
+        let executor = Arc::new(BlockingTestExecutor::default());
+        let (mut sched, dir) = make_executor_scheduler(executor);
+        let provider = Arc::new(RecordingManagedProvider {
+            reject_requests: true,
+            ..RecordingManagedProvider::default()
+        });
+        sched.set_managed_provider(provider.clone());
+        let persistence = FileJobPersistence::with_dir(dir.path().to_path_buf());
+
+        let id = sched
+            .create_job(CronJob::new("0 * * * *", "collect local digest"))
+            .await
+            .expect("local creation and persistence should succeed");
+        assert_eq!(provider.reconcile_count(), 1);
+        assert!(matches!(persistence.load_jobs().await.unwrap().as_slice(), [job] if job.id == id));
+
+        sched
+            .remove_job(&id)
+            .await
+            .expect("local removal should succeed");
+        assert_eq!(provider.cancels(), vec![id.clone()]);
+        assert!(sched.get_job(&id).await.is_none());
+        assert!(persistence.load_jobs().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn cron_context_clips_unicode_and_skips_unavailable_digests() {
+        let digest = "é".repeat(MAX_CONTEXT_CHARS);
+        let source = CronJob {
+            last_output: Some(format!("  {digest}excess  ")),
+            ..CronJob::new("0 * * * *", "collect")
+        };
+        let blank = CronJob {
+            last_output: Some("   ".into()),
+            ..CronJob::new("0 * * * *", "collect other digest")
+        };
+        let target = CronJob {
+            context_from: Some(vec![
+                "missing-digest".into(),
+                blank.id.clone(),
+                source.id.clone(),
+            ]),
+            ..CronJob::new("0 * * * *", "summarize")
+        };
+        let source_id = source.id.clone();
+        let jobs = HashMap::from([(source.id.clone(), source), (blank.id.clone(), blank)]);
+
+        let context = build_context_prefix_for_job(&target, &jobs).expect("one digest");
+        assert!(context.starts_with(&format!("## Output from job '{source_id}'")));
+        assert_eq!(context.matches("## Output").count(), 1);
+        let clipped = format!("```\n{digest}…\n\n[... output truncated ...]\n```");
+        assert!(context.ends_with(&clipped));
+    }
+
+    #[test]
+    fn latest_cron_output_uses_the_last_nonblank_assistant_reply() {
+        let result = AgentResult {
+            messages: vec![
+                Message::assistant("first draft"),
+                Message::assistant("  final digest \n"),
+                Message::assistant_with_tool_calls(None, vec![]),
+                Message::assistant(" \t "),
+                Message::user("thanks"),
+            ],
+            ..AgentResult::default()
+        };
+        assert_eq!(
+            latest_assistant_output(&result).as_deref(),
+            Some("final digest")
+        );
+        assert_eq!(latest_assistant_output(&AgentResult::default()), None);
     }
 
     #[test]

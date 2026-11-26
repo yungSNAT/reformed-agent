@@ -1340,3 +1340,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tts_coverage_gen.rs"]
+mod coverage_gen;

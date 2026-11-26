@@ -516,3 +516,7 @@ async fn git_checkout_ref(repo_dir: &std::path::Path, git_ref: &str) -> Result<(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "plugins_coverage_gen.rs"]
+mod coverage_gen_commands_command_cli_plugins_memory_mcp_plugins;

@@ -354,3 +354,7 @@ pub fn run(args: ReadinessArgs) -> Result<i32, String> {
     println!("release_readiness={}", state(ok));
     Ok(i32::from(args.check && !ok))
 }
+
+#[cfg(test)]
+#[path = "release_readiness_coverage_gen.rs"]
+mod coverage_gen;

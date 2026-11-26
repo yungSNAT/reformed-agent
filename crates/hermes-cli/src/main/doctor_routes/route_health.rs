@@ -916,3 +916,7 @@ fn run_rotate_provenance_key(cli: Cli, json: bool) -> Result<(), AgentError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "route_health_coverage_gen.rs"]
+mod coverage_gen_main_doctor_routes_route_health;

@@ -1267,3 +1267,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "spotify_coverage_gen.rs"]
+mod coverage_gen;

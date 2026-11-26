@@ -407,3 +407,7 @@ pub fn save_oneshot_session(
     )?;
     Ok(path.exists())
 }
+
+#[cfg(test)]
+#[path = "session_snapshots_coverage_gen.rs"]
+mod coverage_gen_app_app_impl_interaction_session_snapshots;

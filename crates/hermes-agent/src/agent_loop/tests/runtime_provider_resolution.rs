@@ -169,46 +169,11 @@
 
     #[test]
     fn test_local_runtime_providers_allow_no_key_and_default_base_url() {
-        use futures::stream::BoxStream;
-
         let _guard = env_test_lock();
         let _llama_key = EnvVarGuard::remove("LLAMA_CPP_API_KEY");
         let _llama_url = EnvVarGuard::remove("LLAMA_CPP_BASE_URL");
         let _lmstudio_key = EnvVarGuard::remove("LMSTUDIO_API_KEY");
         let _lmstudio_url = EnvVarGuard::remove("LMSTUDIO_BASE_URL");
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
 
         let agent = AgentLoop::new(
             AgentConfig::default(),
@@ -502,41 +467,7 @@
 
     #[test]
     fn test_runtime_provider_copilot_env_aliases_and_base_url_default() {
-        use futures::stream::BoxStream;
         let _guard = env_test_lock();
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
 
         let _copilot_github = EnvVarGuard::remove("COPILOT_GITHUB_TOKEN");
         let _gh = EnvVarGuard::remove("GH_TOKEN");
@@ -558,41 +489,7 @@
 
     #[test]
     fn test_runtime_provider_direct_env_keys_and_base_url_defaults() {
-        use futures::stream::BoxStream;
         let _guard = env_test_lock();
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
 
         let _gemini = EnvVarGuard::remove("GEMINI_API_KEY");
         let _google = EnvVarGuard::remove("GOOGLE_API_KEY");
@@ -751,41 +648,6 @@
 
     #[test]
     fn runtime_provider_config_lookup_supports_delegation_aliases() {
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         let mut runtime_providers = HashMap::new();
         runtime_providers.insert(
             "kimi-coding".to_string(),

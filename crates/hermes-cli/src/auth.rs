@@ -1103,3 +1103,7 @@ include!("auth/provider_oauth.rs");
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "auth_coverage_gen.rs"]
+mod coverage_gen_auth;

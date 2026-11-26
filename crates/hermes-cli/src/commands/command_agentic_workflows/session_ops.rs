@@ -953,3 +953,7 @@ fn handle_mouse_command(app: &mut App, args: &[&str]) -> Result<CommandResult, A
 }
 
 include!("session_ops/catalog_readiness_walkthrough.rs");
+
+#[cfg(test)]
+#[path = "session_ops_coverage_gen.rs"]
+mod coverage_gen_commands_command_agentic_workflows_session_ops;

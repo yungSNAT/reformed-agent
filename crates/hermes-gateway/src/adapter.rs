@@ -191,7 +191,7 @@ impl BasePlatformAdapter {
         Ok(self.media_client.get_or_init(|| client))
     }
 
-    fn proxied_client_builder(&self) -> Result<ClientBuilder, GatewayError> {
+    pub(crate) fn proxied_client_builder(&self) -> Result<ClientBuilder, GatewayError> {
         let mut builder = platform_http_client_builder();
 
         if let Some(ref http_proxy) = self.proxy.http_proxy {

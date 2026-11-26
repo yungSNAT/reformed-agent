@@ -433,3 +433,7 @@ pub struct UiTranscriptMessage {
 // ---------------------------------------------------------------------------
 // App implementation
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[path = "app_types_coverage_gen.rs"]
+mod coverage_gen_app_app_types;

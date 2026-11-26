@@ -332,6 +332,65 @@ impl SmartModelRouter {
 mod tests {
     use super::*;
 
+    fn register_fixture(router: &mut SmartModelRouter, name: &str, context: usize, cost: f64) {
+        router.register(ModelInfo {
+            name: name.into(),
+            provider: "fixture".into(),
+            context_window: context,
+            cost_per_input_token: cost,
+            cost_per_output_token: 0.0,
+            capabilities: vec![ModelCapability::Chat],
+        });
+    }
+
+    #[test]
+    fn router_requires_context_and_estimated_cost_to_fit() {
+        let mut router = SmartModelRouter::default();
+        register_fixture(&mut router, "small", 32, 0.125);
+        register_fixture(&mut router, "large", 64, 0.25);
+        let mut requirements = ModelRequirements {
+            max_context: Some(64),
+            max_cost: Some(0.5),
+            ..Default::default()
+        };
+        assert_eq!(router.route("fixture!", &requirements).unwrap(), "large");
+
+        requirements.max_cost = Some(0.25);
+        assert!(matches!(
+            router.route("fixture!", &requirements),
+            Err(RouterError::NoModelMatched)
+        ));
+        requirements.max_cost = None;
+        requirements.max_context = Some(65);
+        assert!(matches!(
+            router.route("fixture!", &requirements),
+            Err(RouterError::NoModelMatched)
+        ));
+    }
+
+    #[test]
+    fn router_prefers_speed_among_equally_priced_models() {
+        let mut router = SmartModelRouter::default();
+        for name in ["fixture-mini", "fixture-haiku", "fixture-sonnet", "fixture"] {
+            register_fixture(&mut router, name, 32, 0.25);
+        }
+        let requirements = ModelRequirements {
+            prefer_fast: true,
+            ..Default::default()
+        };
+        assert_eq!(router.route("read", &requirements).unwrap(), "fixture-mini");
+        register_fixture(&mut router, "fixture-budget", 32, 0.125);
+        assert_eq!(
+            router.route("read", &requirements).unwrap(),
+            "fixture-budget"
+        );
+        assert_eq!(
+            router.get_model("fixture-budget").unwrap().provider,
+            "fixture"
+        );
+        assert_eq!(router.list_models().len(), 5);
+    }
+
     #[test]
     fn test_route_by_capability() {
         let router = SmartModelRouter::with_default_models();

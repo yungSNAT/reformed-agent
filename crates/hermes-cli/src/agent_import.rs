@@ -2375,3 +2375,7 @@ pub(crate) mod fifo_fixture {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "agent_import_coverage_gen.rs"]
+mod coverage_gen_agent_import;

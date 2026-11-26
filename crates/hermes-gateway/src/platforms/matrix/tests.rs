@@ -2,6 +2,11 @@ use super::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[path = "tests/native_runtime_contract.rs"]
+mod native_runtime_contract;
+#[path = "tests/room_contract.rs"]
+mod room_contract;
+
 #[test]
 fn test_markdown_to_html_bold() {
     let html = markdown_to_html("hello **world**");

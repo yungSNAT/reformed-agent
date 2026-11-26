@@ -7,3 +7,9 @@ engines:
       - "**/Cargo.lock"
       - "package-lock.json"
       - "**/package-lock.json"
+
+# Generated coverage tests sit beside their sources as *_coverage_gen.rs.
+# They hold fixtures and long test lists, not maintained code, so no engine
+# analyses them. This matches the Sonar exclusion.
+exclude_paths:
+  - "**/*_coverage_gen.rs"
