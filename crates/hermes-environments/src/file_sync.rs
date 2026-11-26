@@ -422,6 +422,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_watcher_reports_an_unavailable_local_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("missing-workspace");
+        let (writes, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let sync = FileSync::new(
+            root.clone(),
+            Arc::new(MockBackend {
+                files: HashMap::new(),
+                writes: Some(writes),
+            }),
+        );
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), sync.watch_and_sync())
+            .await
+            .expect("watcher reports the missing directory");
+        assert!(matches!(
+            result,
+            Err(AgentError::Io(message))
+                if message.starts_with("Failed to read directory")
+                    && message.contains("missing-workspace")
+        ));
+        assert_eq!(sync.local_root(), root);
+        assert!(matches!(
+            received.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
     async fn failed_download_preserves_destination_and_removes_temporary_file() {
         let root = tempfile::tempdir().unwrap();
         let occupied = root.path().join("occupied");

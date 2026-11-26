@@ -1017,63 +1017,124 @@ async fn gateway_background_task_lifecycle_commands_work() {
     let adapter = Arc::new(TestAdapter {
         messages: sent.clone(),
     });
-
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let mut dm_manager = DmManager::with_pair_behavior();
     dm_manager.authorize_user("user1");
     let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
     gw.register_adapter("test", adapter).await;
-    gw.set_message_handler(Arc::new(|messages| {
+
+    let finish = Arc::new(tokio::sync::Semaphore::new(0));
+    let permit = finish.clone();
+    gw.set_message_handler(Arc::new(move |messages| {
+        let permit = permit.clone();
         Box::pin(async move {
-            let prompt = messages
-                .last()
-                .and_then(|m| m.content.clone())
-                .unwrap_or_else(|| "none".to_string());
-            Ok(format!("done: {}", prompt))
+            match messages.last().and_then(|msg| msg.content.as_deref()) {
+                Some("prepare timetable") => {
+                    permit.acquire().await.unwrap().forget();
+                    Ok("The northbound train departs at 9:15.".to_string())
+                }
+                Some("check source") => Err(GatewayError::Platform(
+                    "timetable source unavailable".into(),
+                )),
+                other => panic!("unexpected background prompt: {other:?}"),
+            }
         })
     }))
     .await;
 
-    let start = IncomingMessage {
-        platform: "test".into(),
-        chat_id: "chat1".into(),
-        user_id: "user1".into(),
-        text: "/background ping".into(),
-        message_id: None,
-        thread_id: None,
-        is_dm: true,
+    let last_text = || {
+        let messages = sent.lock().unwrap();
+        let (chat, text) = messages.last().expect("gateway sent a reply");
+        assert_eq!(chat, "chat1");
+        text.clone()
     };
-    assert!(gw.route_message(&start).await.is_ok());
-
-    let task_id = {
-        let msgs = sent.lock().unwrap();
-        let queued = msgs
+    let task_id = |prompt: &str| {
+        let start = format!("🔄 Background task started: \"{prompt}\"\n");
+        let messages = sent.lock().unwrap();
+        let (_, ack) = messages
             .iter()
-            .find(|(_, text)| text.contains("Background task started"))
-            .expect("queue ack should exist");
-        queued
-            .1
-            .lines()
-            .find_map(|line| line.strip_prefix("Task ID: ").map(str::trim))
-            .expect("task id line")
+            .find(|(chat, text)| chat == "chat1" && text.starts_with(&start))
+            .expect("background task acknowledgement");
+        ack.lines()
+            .find_map(|line| line.strip_prefix("Task ID: "))
+            .expect("background task ID")
             .to_string()
     };
-
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-
-    let status = IncomingMessage {
-        platform: "test".into(),
-        chat_id: "chat1".into(),
-        user_id: "user1".into(),
-        text: format!("/background status {}", task_id),
-        message_id: None,
-        thread_id: None,
-        is_dm: true,
+    let wait_finished = |id: String| {
+        let tasks = gw.background_tasks.clone();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let status = tasks.get_status(&id).expect("known background task");
+                    if status != TaskStatus::Running {
+                        break status;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("background task finished")
+        }
     };
-    assert!(gw.route_message(&status).await.is_ok());
 
-    let msgs = sent.lock().unwrap();
-    assert!(msgs.iter().any(|(_, text)| text.contains("completed")));
+    gw.route_message(&test_incoming("/background list"))
+        .await
+        .unwrap();
+    assert_eq!(last_text(), "No background tasks.");
+    gw.route_message(&test_incoming("/background prepare timetable"))
+        .await
+        .unwrap();
+    let running = task_id("prepare timetable");
+    gw.route_message(&test_incoming(format!("/background status {running}")))
+        .await
+        .unwrap();
+    assert_eq!(last_text(), format!("Task {running} is running"));
+    gw.route_message(&test_incoming("/background list"))
+        .await
+        .unwrap();
+    assert!(last_text().contains(&format!("- {running} [Running] prepare timetable")));
+
+    finish.add_permits(1);
+    assert_eq!(wait_finished(running.clone()).await, TaskStatus::Completed);
+    assert_eq!(
+        last_text(),
+        format!("✅ Background task {running} completed:\nThe northbound train departs at 9:15.")
+    );
+    gw.route_message(&test_incoming(format!("/background status {running}")))
+        .await
+        .unwrap();
+    assert_eq!(
+        last_text(),
+        format!("Task {running} completed.\nThe northbound train departs at 9:15.")
+    );
+
+    gw.route_message(&test_incoming("/background check source"))
+        .await
+        .unwrap();
+    let failed = task_id("check source");
+    assert_eq!(
+        wait_finished(failed.clone()).await,
+        TaskStatus::Failed("Platform error: timetable source unavailable".into())
+    );
+    assert_eq!(
+        last_text(),
+        format!("❌ Background task {failed} failed: Platform error: timetable source unavailable")
+    );
+    gw.route_message(&test_incoming(format!("/background status {failed}")))
+        .await
+        .unwrap();
+    assert_eq!(
+        last_text(),
+        format!("Task {failed} failed: Platform error: timetable source unavailable")
+    );
+    gw.route_message(&test_incoming("/background status absent"))
+        .await
+        .unwrap();
+    assert_eq!(last_text(), "Task absent not found");
+    gw.route_message(&test_incoming("/background cancel absent"))
+        .await
+        .unwrap();
+    assert_eq!(last_text(), "Task absent was not running or not found");
 }
 
 #[tokio::test]

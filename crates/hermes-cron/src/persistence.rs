@@ -375,6 +375,34 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[test]
+    fn persistence_defaults_use_the_same_cron_directory() {
+        let files = FileJobPersistence::default();
+        let sqlite = SqliteJobPersistence::default();
+
+        assert_eq!(files.data_dir().file_name(), Some(OsStr::new("cron")));
+        assert_eq!(sqlite.db_path, files.data_dir().join("cron_jobs.db"));
+    }
+
+    #[tokio::test]
+    async fn both_backends_report_a_parent_file_without_replacing_it() {
+        let dir = tempdir().unwrap();
+        let parent = dir.path().join("cron");
+        std::fs::write(&parent, b"existing file").unwrap();
+        let files = FileJobPersistence::with_dir(parent.clone());
+        let sqlite = SqliteJobPersistence::with_path(parent.join("cron_jobs.db"));
+
+        assert!(matches!(
+            files.load_jobs().await,
+            Err(CronPersistenceError::Io(_))
+        ));
+        assert!(matches!(
+            sqlite.load_jobs().await,
+            Err(CronPersistenceError::Io(_))
+        ));
+        assert_eq!(std::fs::read(parent).unwrap(), b"existing file");
+    }
+
     #[tokio::test]
     async fn test_save_and_load_job() {
         let dir = tempdir().unwrap();
@@ -633,6 +661,41 @@ mod tests {
             std::fs::read_to_string(existing).unwrap(),
             "Existing fixture"
         );
+    }
+
+    #[tokio::test]
+    async fn sqlite_rejects_an_incompatible_schema_and_preserves_existing_jobs() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("jobs.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cron_jobs (id TEXT PRIMARY KEY);
+             INSERT INTO cron_jobs VALUES ('existing-job');",
+        )
+        .unwrap();
+        let persistence = SqliteJobPersistence::with_path(db_path);
+        let new_job = CronJob::new("0 9 * * *", "Review the weekly draft");
+
+        assert!(matches!(
+            persistence.load_jobs().await,
+            Err(CronPersistenceError::Sqlite(message)) if message.contains("no such column")
+        ));
+        assert!(matches!(
+            persistence.save_job(&new_job).await,
+            Err(CronPersistenceError::Sqlite(message)) if message.contains("no column named data")
+        ));
+        assert!(matches!(
+            persistence.save_jobs(&[new_job]).await,
+            Err(CronPersistenceError::Sqlite(message)) if message.contains("no column named data")
+        ));
+        let remaining = conn
+            .prepare("SELECT id FROM cron_jobs")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<String>, _>>()
+            .unwrap();
+        assert_eq!(remaining, ["existing-job"]);
     }
 
     #[tokio::test]

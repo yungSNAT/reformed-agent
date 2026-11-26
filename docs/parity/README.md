@@ -58,9 +58,9 @@ with `--check` to evaluate its gate without writing reports.
 - `adapter-feature-matrix.md`: human-readable adapter matrix
 - `divergence-validation.json`: ownership/review freshness and coverage checks for intentional divergences
 - `global-parity-thresholds.json`: machine-readable CI/release parity thresholds
-  - `ci_thresholds`: tree-drift observability gate
-  - `ci_thresholds.special_rules`: scoped exemptions for non-actionable upstream-only drift
-  - `release_thresholds`: functional parity gate (GPAR/workstream + divergence/test integrity + behavioral/deep problem-solving similarity)
+  - `ci_thresholds`: CI profile, functional regressions only, checked by the daily Parity Audit
+  - `release_thresholds`: release gate, every CI profile check at the same or a stricter limit plus every tracked row shown matching and GPAR-01 to GPAR-11 complete
+  - `drift_alert_thresholds`: upstream tree drift, reported and never gated (see [compatibility-policy.md](compatibility-policy.md#gates))
 - `global-parity-proof.json`: consolidated parity proof with gate results for tickets #19-#28
 - `global-parity-proof.md`: human-readable parity proof summary
 - `gpar-01-04-proof.json`: scoped proof for GPAR-01..04 queue closure parity release

@@ -254,6 +254,83 @@ async fn session_commands_restore_saved_messages_and_diagnose_invalid_snapshots(
 }
 
 #[tokio::test]
+async fn bare_resume_can_recover_legacy_and_empty_canonical_snapshots() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::session_mission_contract::bare_resume_can_recover_legacy_and_empty_canonical_snapshots",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let save = |name: &str, id: &str, messages: serde_json::Value| {
+        let snapshot = serde_json::json!({
+            "session_info": {"session_id": id},
+            "messages": messages,
+        });
+        std::fs::write(sessions.join(format!("{name}.json")), snapshot.to_string()).unwrap();
+    };
+    let empty = command_output(&mut app, "/resume", &[]).await;
+    assert!(empty.contains("No saved sessions found"), "{empty}");
+
+    let oneshot = "oneshot-00000000-0000-4000-8000-000000000001";
+    save(
+        oneshot,
+        oneshot,
+        serde_json::json!([{"role": "User", "content": "One-shot fixture"}]),
+    );
+    std::fs::write(sessions.join("broken.json"), "{").unwrap();
+    let active = app.session_id.clone();
+    app.messages = vec![hermes_core::Message::user("Active local message")];
+    let failure = command_output(&mut app, "/resume", &[]).await;
+    assert!(
+        failure.contains("No valid saved sessions found"),
+        "{failure}"
+    );
+    assert_eq!(app.session_id, active);
+    assert_eq!(
+        app.messages,
+        [hermes_core::Message::user("Active local message")]
+    );
+
+    let legacy = "legacy-session-id";
+    save(
+        "legacy-name",
+        legacy,
+        serde_json::json!([{"role": "User", "content": "Legacy local message"}]),
+    );
+    let restored = command_output(&mut app, "/resume", &[]).await;
+    assert!(
+        restored.contains("Resumed session 'legacy-name'"),
+        "{restored}"
+    );
+    assert_eq!(app.session_id, legacy);
+    assert_eq!(app.agent.config.session_id.as_deref(), Some(legacy));
+    assert_eq!(
+        app.messages,
+        [hermes_core::Message::user("Legacy local message")]
+    );
+
+    let canonical = "empty-canonical-id";
+    save(canonical, canonical, serde_json::json!([]));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(sessions.join(format!("{canonical}.json")))
+        .unwrap()
+        .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+        .unwrap();
+    let restored = command_output(&mut app, "/resume", &[]).await;
+    assert!(
+        restored.contains("Resumed session 'empty-canonical-id' (0 messages"),
+        "{restored}"
+    );
+    assert_eq!(app.session_id, canonical);
+    assert_eq!(app.agent.config.session_id.as_deref(), Some(canonical));
+    assert!(app.messages.is_empty());
+}
+
+#[tokio::test]
 async fn mission_commands_recover_and_deduplicate_the_isolated_queue() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::session_mission_contract::mission_commands_recover_and_deduplicate_the_isolated_queue",

@@ -45,6 +45,28 @@ async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adap
     let loopback = "http://127.0.0.1:1";
     let configured = [
         (
+            "telegram",
+            "telegram",
+            cfg!(feature = "gateway-telegram"),
+            serde_json::json!({
+                "token": value,
+                "extra": {
+                    "polling": false,
+                    "webhook_secret": "fixture-webhook-value",
+                    "command_menu": {"enabled": false},
+                },
+            }),
+        ),
+        (
+            "weixin",
+            "weixin",
+            cfg!(feature = "gateway-weixin"),
+            serde_json::json!({
+                "token": value,
+                "extra": {"account_id": "fixture-account", "base_url": loopback},
+            }),
+        ),
+        (
             "discord",
             "discord",
             cfg!(feature = "gateway-discord"),
@@ -200,6 +222,30 @@ async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adap
             }),
         ),
         (
+            "wecom_callback",
+            "wecom_callback",
+            cfg!(feature = "gateway-wecom-callback"),
+            serde_json::json!({
+                "token": value,
+                "extra": {
+                    "corp_id": "fixture-company",
+                    "corp_secret": value,
+                    "agent_id": "1",
+                    "encoding_aes_key": "a".repeat(43),
+                    "host": "127.0.0.1",
+                    "port": 0,
+                },
+            }),
+        ),
+        (
+            "bluebubbles",
+            "bluebubbles",
+            cfg!(feature = "gateway-bluebubbles"),
+            serde_json::json!({
+                "extra": {"server_url": loopback, "password": value},
+            }),
+        ),
+        (
             "webhook",
             "webhook",
             cfg!(feature = "gateway-webhook"),
@@ -255,6 +301,9 @@ async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adap
             + usize::from(cfg!(feature = "gateway-dingtalk"))
             + usize::from(cfg!(feature = "gateway-homeassistant"))
             + usize::from(cfg!(feature = "gateway-ntfy"))
+            + usize::from(cfg!(feature = "gateway-telegram"))
+            + usize::from(cfg!(feature = "gateway-weixin"))
+            + usize::from(cfg!(feature = "gateway-wecom-callback"))
     );
     for sidecar in sidecars {
         sidecar.abort();

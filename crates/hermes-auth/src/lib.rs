@@ -12,7 +12,6 @@ use hermes_core::AgentError;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use url::{form_urlencoded, Host, Url};
 
@@ -243,68 +242,22 @@ fn decode_store_key(encoded: &str) -> Result<[u8; TOKEN_STORE_KEY_BYTES], AgentE
 /// Atomically replaces the file at `path`, preserving any symbolic link to it.
 /// On Unix the staged file is created with owner-only permissions.
 pub async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
-    // A symlinked store keeps its link: the temp file is staged beside the
-    // link's target and renamed over it. A link whose folder is missing is
-    // refused, not given a new folder.
-    let path = &hermes_config::resolve_credential_link_target(path)
-        .map_err(|e| AgentError::Io(e.to_string()))?;
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| AgentError::Io(e.to_string()))?;
-    }
-    let tmp_path = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
-
-    let result = async {
-        let mut file = private_create_new_options()
-            .open(&tmp_path)
-            .await
-            .map_err(|e| AgentError::Io(e.to_string()))?;
-        file.write_all(content)
-            .await
-            .map_err(|e| AgentError::Io(e.to_string()))?;
-        file.sync_all()
-            .await
-            .map_err(|e| AgentError::Io(e.to_string()))?;
-        drop(file);
-        set_private_permissions(&tmp_path).await?;
-        tokio::fs::rename(&tmp_path, path)
-            .await
-            .map_err(|e| AgentError::Io(e.to_string()))?;
-        set_private_permissions(path).await
-    }
-    .await;
-
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-    }
-    result
+    let owned_path = path.to_path_buf();
+    let owned_content = content.to_vec();
+    tokio::task::spawn_blocking(move || {
+        hermes_config::atomic_write_owner_only(&owned_path, &owned_content)
+    })
+    .await
+    .map_err(|e| AgentError::Io(e.to_string()))?
+    .map_err(|e| AgentError::Io(e.to_string()))
 }
 
+#[cfg(all(test, unix))]
 fn private_create_new_options() -> tokio::fs::OpenOptions {
     let mut options = tokio::fs::OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
+    options.mode(0o600);
     options
-}
-
-async fn set_private_permissions(path: &Path) -> Result<(), AgentError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        tokio::fs::set_permissions(path, perms)
-            .await
-            .map_err(|e| AgentError::Io(e.to_string()))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
 }
 
 pub type RefreshHandler = Arc<
@@ -766,6 +719,7 @@ mod tests {
     #[tokio::test]
     async fn private_create_new_options_creates_owner_only_temp_before_write() {
         use std::os::unix::fs::PermissionsExt;
+        use tokio::io::AsyncWriteExt;
 
         let dir = tempdir().unwrap();
         let path = dir.path().join("tokens.json.tmp");
@@ -785,6 +739,13 @@ mod tests {
     async fn file_token_store_migrates_legacy_plaintext() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tokens.json");
+        let log = dir.path().join("migration.log");
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(std::fs::File::create(&log).unwrap())
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
 
         let mut legacy = HashMap::new();
         legacy.insert(
@@ -802,6 +763,10 @@ mod tests {
         assert!(!raw.contains("legacy-token"));
         let envelope: TokenStoreEnvelope = serde_json::from_str(&raw).unwrap();
         assert_eq!(envelope.version, TOKEN_STORE_ENVELOPE_VERSION);
+        let warning = std::fs::read_to_string(log).unwrap();
+        assert!(warning.contains("Legacy plaintext token store detected"));
+        assert!(warning.contains("tokens.json"));
+        assert!(!warning.contains("legacy-token"));
     }
 
     #[tokio::test]

@@ -1135,6 +1135,32 @@ pub fn detect_secrets(content: &str) -> Option<&'static str> {
     None
 }
 
+/// Detect secrets introduced or changed in `after` compared to `before`, so
+/// pre-existing matches elsewhere in a file cannot mask a newly completed one.
+pub fn detect_added_secret(before: &str, after: &str) -> Option<&'static str> {
+    use std::collections::HashMap;
+
+    let mut before_counts: HashMap<(&'static str, &str), usize> = HashMap::new();
+    for (name, regex) in SECRET_PATTERNS.iter() {
+        for matched in regex.find_iter(before) {
+            *before_counts.entry((*name, matched.as_str())).or_insert(0) += 1;
+        }
+    }
+    for (name, regex) in SECRET_PATTERNS.iter() {
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        for matched in regex.find_iter(after) {
+            let text = matched.as_str();
+            let count = seen.entry(text).or_insert(0);
+            *count += 1;
+            let prev = before_counts.get(&(*name, text)).copied().unwrap_or(0);
+            if *count > prev {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

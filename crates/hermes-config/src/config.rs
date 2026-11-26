@@ -62,7 +62,10 @@ pub struct GatewayConfig {
     pub platforms: HashMap<String, PlatformConfig>,
 
     /// Per-platform toolset selection (e.g. cli/hermes-cli, telegram/hermes-telegram).
-    #[serde(default = "default_platform_toolsets")]
+    /// Holds only the entries the config sets. An entry, even an empty list
+    /// or one equal to [`default_platform_toolsets`], is the user's choice;
+    /// a platform without one uses its default.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub platform_toolsets: HashMap<String, Vec<String>>,
 
     /// Sub-agent delegation controls.
@@ -197,7 +200,7 @@ impl Default for GatewayConfig {
             budget: BudgetConfig::default(),
             tool_output: ToolOutputConfig::default(),
             platforms: HashMap::new(),
-            platform_toolsets: default_platform_toolsets(),
+            platform_toolsets: HashMap::new(),
             delegation: DelegationConfig::default(),
             session: SessionConfig::default(),
             sessions: SessionsMaintenanceConfig::default(),

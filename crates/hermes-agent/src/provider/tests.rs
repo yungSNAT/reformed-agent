@@ -77,6 +77,8 @@ include!("tests/direct_providers.rs");
 
 include!("tests/openai_parsing.rs");
 
+include!("tests/openai_cache_usage.rs");
+
 include!("tests/anthropic_requests.rs");
 
 include!("tests/anthropic_openrouter_parsing.rs");

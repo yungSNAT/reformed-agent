@@ -75,6 +75,34 @@ async fn run_auth(
     api_key: Option<String>,
     qr: bool,
 ) -> Result<(), AgentError> {
+    run_auth_with_gemini_login(
+        cli,
+        action,
+        provider,
+        target,
+        auth_type,
+        label,
+        api_key,
+        qr,
+        login_google_gemini_cli_oauth(GeminiOAuthLoginOptions::default()),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_auth_with_gemini_login(
+    cli: Cli,
+    action: Option<String>,
+    provider: Option<String>,
+    target: Option<String>,
+    auth_type: Option<String>,
+    label: Option<String>,
+    api_key: Option<String>,
+    qr: bool,
+    gemini_login: impl std::future::Future<
+        Output = Result<hermes_cli::auth::GeminiRuntimeCredentials, AgentError>,
+    >,
+) -> Result<(), AgentError> {
     let provider = resolve_auth_provider(provider);
     let auth_store_path = secret_vault_path_for_cli(&cli);
     let token_store = FileTokenStore::new(auth_store_path).await?;
@@ -318,9 +346,7 @@ async fn run_auth(
                         return Ok(());
                     }
                     "google-gemini-cli" => {
-                        let creds =
-                            login_google_gemini_cli_oauth(GeminiOAuthLoginOptions::default())
-                                .await?;
+                        let creds = gemini_login.await?;
                         let access_token = creds.api_key.clone();
                         let refresh_token = creds.refresh_token.clone();
                         let expires_at_ms = creds.expires_at_ms;
@@ -560,7 +586,10 @@ async fn run_auth(
                     {
                         Ok(pair) => pair,
                         Err(e) => {
-                            println!("Weixin QR 登录失败，将回退到手动 token 输入: {}", e);
+                            println!(
+                                "Weixin QR login failed; falling back to manual token input: {}",
+                                e
+                            );
                             let fallback_account_id = if let Some(v) = account_id_opt.take() {
                                 v
                             } else {
@@ -840,8 +869,7 @@ async fn run_auth(
                 return Ok(());
             }
             if provider == "google-gemini-cli" {
-                let creds =
-                    login_google_gemini_cli_oauth(GeminiOAuthLoginOptions::default()).await?;
+                let creds = gemini_login.await?;
                 let access_token = creds.api_key.clone();
                 let refresh_token = creds.refresh_token.clone();
                 let expires_at_ms = creds.expires_at_ms;
