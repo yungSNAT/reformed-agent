@@ -51,13 +51,19 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
                 assert_eq!(context.platform, "webhook");
                 assert!(context.thread_id.is_none());
                 let text = messages.last().unwrap().content.as_deref().unwrap();
+                if text == "First count" {
+                    return Err(hermes_gateway::GatewayError::Platform(
+                        "fixture failure".into(),
+                    ));
+                }
                 Ok(format!("{} received {text}", context.user_id))
             })
         }))
         .await;
 
-    let (send, recv) = mpsc::channel(2);
+    let (send, recv) = mpsc::channel(3);
     for (chat, user, text) in [
+        ("survey-chat", Some("fixture-sender"), "First count"),
         ("survey-chat", Some("fixture-sender"), "Bird count"),
         ("weather-chat", None, "Rain count"),
     ] {
@@ -73,7 +79,7 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
     drop(send);
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        run_webhook_inbound_loop(gateway, recv),
+        run_webhook_inbound_loop(gateway.clone(), recv),
     )
     .await
     .expect("the webhook loop drains its closed channel");
@@ -90,4 +96,39 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
             ("weather-chat", "webhook-client received Rain count"),
         ]
     );
+
+    #[cfg(any(
+        feature = "gateway-dingtalk",
+        feature = "gateway-homeassistant",
+        feature = "gateway-ntfy",
+        feature = "gateway-weixin",
+    ))]
+    {
+        let (send, recv) = mpsc::channel(2);
+        for (id, text) in [("first", "First count"), ("second", "Cloud count")] {
+            send.send(GatewayIncomingMessage {
+                platform: "webhook".into(),
+                chat_id: "weather-chat".into(),
+                user_id: "fixture-sender".into(),
+                text: text.into(),
+                message_id: Some(id.into()),
+                thread_id: None,
+                is_dm: true,
+            })
+            .await
+            .unwrap();
+        }
+        drop(send);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_gateway_incoming_loop(gateway, recv, "webhook"),
+        )
+        .await
+        .expect("the shared inbound loop drains its closed channel");
+
+        let replies = adapter.drain_outbound().await;
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].chat_id, "weather-chat");
+        assert_eq!(replies[0].text, "fixture-sender received Cloud count");
+    }
 }
