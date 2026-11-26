@@ -219,3 +219,7 @@ impl App {
     }
 
 }
+
+#[cfg(test)]
+#[path = "lifecycle_streams_coverage_gen.rs"]
+mod coverage_gen_app_app_impl_lifecycle_streams;

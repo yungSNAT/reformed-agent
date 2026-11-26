@@ -1,6 +1,6 @@
 {
   "divergence_file": "docs/parity/intentional-divergence.json",
-  "generated_at_utc": "2026-11-23T12:39:04.870789+00:00",
+  "generated_at_utc": "2026-11-24T19:38:34.979424+00:00",
   "items": [
     {
       "errors": [],
@@ -91,7 +91,7 @@
     {
       "errors": [],
       "id": "rust-gateway-platform-plugin-parity",
-      "last_reviewed": "2026-11-10",
+      "last_reviewed": "2026-11-24",
       "matched_files": 135,
       "matched_sample": [
         "plugins/platforms/dingtalk/__init__.py",
@@ -250,18 +250,18 @@
     {
       "errors": [],
       "id": "rust-memory-provider-plugin-parity",
-      "last_reviewed": "2026-11-10",
+      "last_reviewed": "2026-11-23",
       "matched_files": 9,
       "matched_sample": [
+        "plugins/memory/byterover/README.md",
+        "plugins/memory/byterover/__init__.py",
+        "plugins/memory/byterover/plugin.yaml",
         "plugins/memory/honcho/README.md",
         "plugins/memory/honcho/__init__.py",
         "plugins/memory/honcho/cli.py",
         "plugins/memory/honcho/client.py",
         "plugins/memory/honcho/plugin.yaml",
-        "plugins/memory/honcho/session.py",
-        "plugins/memory/mem0/README.md",
-        "plugins/memory/mem0/__init__.py",
-        "plugins/memory/mem0/plugin.yaml"
+        "plugins/memory/honcho/session.py"
       ],
       "overdue": false,
       "owner": "yungSNAT",
@@ -545,7 +545,7 @@
   "summary": {
     "errors": 0,
     "items": 23,
-    "local_paths": 3486,
+    "local_paths": 3763,
     "review_overdue": 0,
     "unowned": 0,
     "upstream_paths": 26190,

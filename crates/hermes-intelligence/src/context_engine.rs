@@ -526,6 +526,114 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn compression_caps_a_multibyte_summary_and_keeps_the_recent_turn() {
+        let engine = DefaultContextEngine::new().with_keep_ratio(0.1);
+        let mut messages = Vec::new();
+        for role in ["user", "assistant", "tool"] {
+            for index in 1..=4 {
+                messages.push(json!({
+                    "role": role,
+                    "content": format!("{role}-{index} {}", "界".repeat(180)),
+                }));
+            }
+        }
+        messages.extend([
+            json!({"role":"tool","content":null}),
+            json!({"role":"user","content":"Recent question"}),
+            json!({"role":"assistant","content":"Recent answer"}),
+        ]);
+
+        let compressed = engine.compress(&messages, 1).await.unwrap();
+        let summary = compressed[0]["content"].as_str().unwrap();
+        assert!(summary.contains("13 earlier messages"));
+        assert!(summary.contains("User goals:\n- user-1"));
+        assert!(summary.contains("Assistant trajectory:\n- assistant-1"));
+        assert!(summary.contains("Tool outcomes:\n- tool-1"));
+        assert!(summary.ends_with("..."));
+        assert_eq!(summary.chars().count(), 1703);
+        assert_eq!(compressed[1..], messages[13..]);
+    }
+
+    #[tokio::test]
+    async fn default_compression_trims_again_when_the_first_result_exceeds_the_budget() {
+        let engine = DefaultContextEngine::new().with_keep_ratio(0.9);
+        let messages = make_messages(10);
+
+        let compressed = engine.compress(&messages, 1).await.unwrap();
+        assert_eq!(engine.name(), "default");
+        let summary = compressed[0]["content"].as_str().unwrap();
+        assert!(summary.contains("1 earlier messages"));
+        assert!(summary.contains("Additional compression: 7 more messages removed"));
+        assert_eq!(compressed[1..], messages[8..]);
+    }
+
+    #[tokio::test]
+    async fn importance_compression_keeps_priority_messages_in_their_original_order() {
+        let engine = ImportanceBasedEngine::default();
+        let messages = [
+            json!({"role":"tool","content":"old tool output"}),
+            json!({"role":"user","content":"Next"}),
+            json!({"role":"assistant","content":"old assistant reply"}),
+            json!({"role":"system","content":"Keep"}),
+        ];
+
+        assert_eq!(engine.name(), "importance");
+        assert!(matches!(
+            engine.compress(&messages[..2], 2).await,
+            Err(ContextError::TooSmall(2))
+        ));
+        assert!(matches!(
+            engine.compress(&messages, 0).await,
+            Err(ContextError::CompressionFailed(_))
+        ));
+
+        let compressed = engine.compress(&messages, 2).await.unwrap();
+        assert!(compressed[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("2 of 4 messages retained"));
+        assert_eq!(compressed[1], messages[1]);
+        assert_eq!(compressed[2], messages[3]);
+    }
+
+    #[tokio::test]
+    async fn compression_summarises_mixed_content_and_preserves_the_recent_turn() {
+        let engine = DefaultContextEngine::default().with_keep_ratio(0.1);
+        let long_outcome = "é".repeat(200);
+        let messages = [
+            json!({"role": "user", "content": "Review  the fixture"}),
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "Review"},
+                {"type": "image_url", "image_url": {"url": "fixture-image"}},
+                {"type": "text", "text": "the\nfixture"}
+            ]}),
+            json!({"role": "assistant", "content": [
+                {"type": "text", "text": "Use the local index."},
+                {"type": "text", "text": "Follow-up detail."}
+            ]}),
+            json!({"role": "tool", "content": long_outcome}),
+            json!({"role": "tool", "content": [{"type": "image_url"}]}),
+            json!({"role": "system", "content": "Uncategorised fixture"}),
+            json!({"role": "user", "content": "Recent question"}),
+            json!({"role": "assistant", "content": "Recent answer"}),
+        ];
+
+        let compressed = engine.compress(&messages, 1).await.unwrap();
+        assert_eq!(compressed[0]["role"], "system");
+        let summary = compressed[0]["content"].as_str().unwrap();
+        assert!(summary.contains("6 earlier messages"));
+        assert!(summary.contains("2 messages retained"));
+        assert!(summary.contains("User goals:\n- Review the fixture"));
+        assert_eq!(summary.matches("Review the fixture").count(), 1);
+        assert!(summary.contains("Assistant trajectory:\n- Use the local index."));
+        assert!(!summary.contains("Follow-up detail"));
+        assert!(summary.ends_with(&format!("Tool outcomes:\n- {}...", "é".repeat(180))));
+        assert!(!summary.contains("fixture-image"));
+        assert!(!summary.contains("Uncategorised fixture"));
+        assert_eq!(compressed[1..], messages[6..]);
+    }
+
     fn make_messages(count: usize) -> Vec<Value> {
         (0..count)
             .map(|i| {

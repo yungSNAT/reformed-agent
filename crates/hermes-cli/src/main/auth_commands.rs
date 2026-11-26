@@ -832,3 +832,7 @@ async fn run_auth_verify(
 }
 
 include!("auth_commands/portal_secrets.rs");
+
+#[cfg(test)]
+#[path = "auth_commands_coverage_gen.rs"]
+mod coverage_gen_main_auth_commands;

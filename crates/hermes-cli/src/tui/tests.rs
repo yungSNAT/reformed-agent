@@ -80,6 +80,81 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_picker_pages_filters_and_returns_actions() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut state = TuiState::default();
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Up)),
+            ModalAction::None
+        ));
+        let items = (1..=12)
+            .map(|index| PickerItem {
+                label: format!("Provider {index}"),
+                detail: String::new(),
+                value: index.to_string(),
+            })
+            .collect();
+        let mut modal = PickerModal::new(PickerKind::ModelProvider, "Fixture provider", items);
+        modal.page_size = 3;
+        state.open_modal(modal);
+
+        for (code, selected) in [
+            (KeyCode::End, 11),
+            (KeyCode::Down, 0),
+            (KeyCode::Up, 11),
+            (KeyCode::PageDown, 2),
+            (KeyCode::PageUp, 11),
+            (KeyCode::Home, 0),
+        ] {
+            assert!(matches!(
+                state.handle_modal_key(key(code)),
+                ModalAction::None
+            ));
+            assert_eq!(state.modal.as_ref().unwrap().selected_filtered, selected);
+        }
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Char('0'))),
+            ModalAction::Confirm
+        ));
+        assert_eq!(
+            state.modal.as_ref().unwrap().selected_item().unwrap().value,
+            "10"
+        );
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Char('d'))),
+            ModalAction::DisconnectProvider
+        ));
+
+        for character in "provider 12".chars().filter(|c| *c != ' ') {
+            assert!(matches!(
+                state.handle_modal_key(key(KeyCode::Char(character))),
+                ModalAction::None
+            ));
+        }
+        let filtered = state.modal.as_ref().unwrap();
+        assert_eq!(filtered.query, "provider12");
+        assert_eq!(filtered.filtered_indices.len(), 1);
+        assert_eq!(filtered.selected_item().unwrap().value, "12");
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Backspace)),
+            ModalAction::None
+        ));
+        assert!(state.modal.as_ref().unwrap().filtered_indices.len() > 1);
+
+        let clear = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert!(matches!(state.handle_modal_key(clear), ModalAction::None));
+        let reset = state.modal.as_ref().unwrap();
+        assert_eq!(reset.filtered_indices.len(), 12);
+        assert!(reset.query.is_empty());
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Esc)),
+            ModalAction::Close
+        ));
+    }
+
+    #[test]
     fn test_reformation_skin_renders_black_canvas() {
         use ratatui::backend::TestBackend;
 
@@ -101,6 +176,311 @@ mod tests {
             let header: String = cells[..width as usize].iter().map(|cell| cell.symbol()).collect();
             assert!(header.contains("Reformed Agent"), "header: {header}");
         }
+    }
+
+    fn rendered_frame(
+        width: u16,
+        height: u16,
+        draw: impl FnOnce(&mut Frame<'_>, &crate::theme::RatatuiColors),
+    ) -> String {
+        let backend = ratatui::backend::TestBackend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let colors = Theme::default_theme().colors.to_ratatui_colors();
+        terminal
+            .draw(|frame| draw(frame, &colors))
+            .expect("draw test frame");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn input_box_renders_editing_modes_and_history_search() {
+        let area = Rect::new(0, 0, 84, 5);
+        let mut state = TuiState {
+            mode: InputMode::Insert,
+            ..TuiState::default()
+        };
+        let mut cursor = None;
+        let empty = rendered_frame(area.width, area.height, |frame, colors| {
+            cursor = render_input(frame, &state, area, colors);
+        });
+        assert!(empty.contains("INSERT"));
+        assert!(empty.contains("Type a message"));
+        assert_eq!(cursor, Some(Position { x: 1, y: 1 }));
+
+        state.mode = InputMode::Command;
+        state.input = "/help\ncafé".into();
+        state.cursor_position = state.input.len();
+        state.history_search_active = true;
+        state.history_search_query = "café".into();
+        let searching = rendered_frame(area.width, area.height, |frame, colors| {
+            cursor = render_input(frame, &state, area, colors);
+        });
+        assert!(searching.contains("COMMAND"));
+        assert!(searching.contains("L2"));
+        assert!(searching.contains("/help"));
+        assert!(searching.contains("reverse-i-search: `café`"));
+        assert_eq!(cursor, Some(Position { x: 5, y: 2 }));
+
+        state.mode = InputMode::Normal;
+        let normal = rendered_frame(area.width, area.height, |frame, colors| {
+            cursor = render_input(frame, &state, area, colors);
+        });
+        assert!(normal.contains("NORMAL"));
+        assert_eq!(cursor, None);
+    }
+
+    #[test]
+    fn status_bar_renders_active_jobs_and_docks_the_pet() {
+        if !crate::isolated_test_profile::enter(
+            "tui::tests::status_bar_renders_active_jobs_and_docks_the_pet",
+        ) {
+            return;
+        }
+        let mut app = build_test_app(&hermes_config::hermes_home());
+        app.set_mouse_enabled(false);
+        app.pet_settings = crate::app::PetSettings {
+            enabled: true,
+            species: "bytecat".into(),
+            mood: "hyped".into(),
+            dock: crate::app::PetDock::Left,
+            ..crate::app::PetSettings::default()
+        };
+        let mut state = TuiState {
+            processing: true,
+            show_timestamps: true,
+            activity_lane_mode: ActivityLaneMode::Cockpit,
+            background_jobs_running: 2,
+            active_subagents_running: 3,
+            scroll_offset: 4,
+            sticky_prompt: "Keep the summary short".into(),
+            status_message: "Warning: fixture busy".into(),
+            ..TuiState::default()
+        };
+        let status = |app: &App, state: &TuiState| {
+            let area = Rect::new(0, 0, 240, 1);
+            rendered_frame(area.width, area.height, |frame, colors| {
+                render_status(frame, app, state, area, colors);
+            })
+        };
+        let active = status(&app, &state);
+        assert!(active.starts_with("=^x^= |"));
+        for text in [
+            "PROCESSING",
+            "ts:on",
+            "(cockpit)",
+            "bg:2",
+            "⛓:3",
+            "mouse:off",
+            "Keep the summary short",
+            "Warning: fixture busy (history +4)",
+        ] {
+            assert!(active.contains(text), "missing {text:?} from {active}");
+        }
+
+        state.processing = false;
+        app.pet_settings.dock = crate::app::PetDock::Right;
+        let idle = status(&app, &state);
+        assert!(idle.starts_with("✓"));
+        assert!(idle.trim_end().ends_with("| =^o^=!"));
+    }
+
+    fn rendered_activity_lane(state: &TuiState, area: Rect) -> String {
+        rendered_frame(80, 16, |frame, colors| {
+            render_live_details(frame, "fixture-model", state, area, colors);
+        })
+    }
+
+    #[test]
+    fn activity_lane_shows_processing_fallback_usage_and_recent_events() {
+        let _guard = env_test_lock();
+        let _reasoning = ReasoningFullGuard::set(false);
+        let area = Rect::new(0, 0, 80, 16);
+        let mut state = TuiState {
+            processing: true,
+            processing_degraded: true,
+            degraded_notes: vec!["using alternate provider".into()],
+            processing_phase: "route".into(),
+            processing_phase_progress: 35,
+            stream_chunk_count: 3,
+            stream_char_count: 25,
+            last_usage: Some((10, 5, 15)),
+            recent_activity: (0..20).map(|n| format!("activity-{n:02}")).collect(),
+            ..TuiState::default()
+        };
+        let waiting = rendered_activity_lane(&state, area);
+        for text in [
+            "Activity Lane",
+            "chunks:3 chars:25 phase:35% route",
+            "fallback active: using alternate provider",
+            "tools: awaiting tool events",
+            "usage: in=10 out=5 total=15",
+            "activity-19",
+        ] {
+            assert!(waiting.contains(text), "missing {text:?} from {waiting}");
+        }
+        assert!(!waiting.contains("activity-00"));
+        state.live_thinking = format!(
+            "Beginning of preview {} full-thinking-marker",
+            "x ".repeat(75)
+        );
+        let preview = rendered_activity_lane(&state, area);
+        assert!(preview.contains("Beginning of preview"));
+        assert!(!preview.contains("full-thinking-marker"));
+
+        state.active_tools = vec!["file_read".into(), "search".into()];
+        state.processing_phase_label = "routing fixture".into();
+        crate::commands::set_reasoning_full(true);
+        let active = rendered_activity_lane(&state, area);
+        assert!(active.contains("tools: file_read, search"));
+        assert!(active.contains("phase:35% routing fixture"));
+        assert!(active.contains("full-thinking-marker"));
+    }
+
+    #[test]
+    fn activity_lane_cockpit_shows_model_status_and_usage() {
+        let area = Rect::new(0, 0, 80, 16);
+        let mut state = TuiState {
+            activity_lane_mode: ActivityLaneMode::Cockpit,
+            ..TuiState::default()
+        };
+        let idle = rendered_activity_lane(&state, area);
+        for text in [
+            "Ops Cockpit",
+            "mode: idle",
+            "model: fixture-model",
+            "policy:",
+            "Ctrl+O live lane",
+        ] {
+            assert!(idle.contains(text), "missing {text:?} from {idle}");
+        }
+
+        state.processing = true;
+        state.last_usage = Some((7, 2, 9));
+        let active = rendered_activity_lane(&state, area);
+        assert!(active.contains("mode: processing"));
+        assert!(active.contains("usage: in=7 out=2 total=9"));
+
+        let empty = TuiState::default();
+        assert!(rendered_activity_lane(&empty, area).contains("waiting for activity"));
+        let collapsed = rendered_activity_lane(&empty, Rect::new(0, 0, 0, 16));
+        assert!(collapsed.trim().is_empty());
+    }
+
+    #[test]
+    fn picker_renders_search_results_and_multi_selection() {
+        let mut modal = PickerModal::new(
+            PickerKind::ModelProvider,
+            "Select fixture provider",
+            vec![
+                PickerItem {
+                    label: "Fixture One".into(),
+                    detail: "Local model".into(),
+                    value: "one".into(),
+                },
+                PickerItem {
+                    label: "Fixture Two".into(),
+                    detail: String::new(),
+                    value: "two".into(),
+                },
+            ],
+        );
+        let render = |modal: &PickerModal| {
+            rendered_frame(92, 20, |frame, colors| {
+                render_picker_modal(frame, modal, colors);
+            })
+        };
+        let initial = render(&modal);
+        for text in [
+            "Select fixture provider",
+            "Fixture One",
+            "Local model",
+            "Fixture Two",
+            "Search: (type to filter)",
+            "d disconnect",
+        ] {
+            assert!(initial.contains(text), "missing {text:?}: {initial}");
+        }
+
+        modal.allow_multi = true;
+        modal.toggle_selected();
+        modal.move_selection(1);
+        let multi = render(&modal);
+        assert!(multi.contains("■ Fixture One"));
+        assert!(multi.contains("□ Fixture Two"));
+        assert!(multi.contains("Space toggle"));
+
+        modal.query = "missing fixture".into();
+        modal.refresh_filter();
+        let empty = render(&modal);
+        assert!(empty.contains("No matches for current search query."));
+        assert!(empty.contains("Search: missing fixture"));
+        assert!(!empty.contains("Fixture Two"));
+    }
+
+    #[test]
+    fn picker_renders_question_prompt_and_respects_small_terminal() {
+        let mut modal = PickerModal::new(
+            PickerKind::InteractiveQuestion {
+                prompt: "Which fixture is ready?".into(),
+            },
+            "Fixture question",
+            vec![PickerItem {
+                label: "First fixture".into(),
+                detail: String::new(),
+                value: "first".into(),
+            }],
+        );
+        let text = rendered_frame(80, 16, |frame, colors| {
+            render_picker_modal(frame, &modal, colors);
+        });
+        assert!(text.contains("Question: Which fixture is ready?"));
+        assert!(text.contains("Enter insert answer"));
+        assert!(text.contains("First fixture"));
+
+        modal.kind = PickerKind::Skin;
+        let text = rendered_frame(80, 16, |frame, colors| {
+            render_picker_modal(frame, &modal, colors);
+        });
+        assert!(text.contains("quick-pick"));
+        let narrow = rendered_frame(16, 7, |frame, colors| {
+            render_picker_modal(frame, &modal, colors);
+        });
+        assert!(narrow.trim().is_empty());
+    }
+
+    #[test]
+    fn completions_popup_scrolls_to_the_current_match() {
+        let commands = (0..12)
+            .map(|n| format!("/fixture-{n:02}"))
+            .collect::<Vec<_>>();
+        let render = |commands: &[String], selected| {
+            rendered_frame(92, 23, |frame, colors| {
+                render_completions_popup(
+                    frame,
+                    commands,
+                    selected,
+                    Rect::new(0, 0, 92, 20),
+                    Rect::new(0, 19, 92, 3),
+                    colors,
+                );
+            })
+        };
+        assert!(render(&[], None).trim().is_empty());
+        let single = render(&["/help".into()], Some(0));
+        assert!(single.contains("Slash Commands"));
+        assert!(single.contains("/help"));
+
+        let scrolled = render(&commands, Some(11));
+        assert!(scrolled.contains("Slash Commands (12/12)"));
+        assert!(scrolled.contains("/fixture-02"));
+        assert!(scrolled.contains("/fixture-11"));
+        assert!(!scrolled.contains("/fixture-00"));
     }
 
     #[test]
@@ -442,6 +822,13 @@ mod tests {
             .any(|line| line.contains("MoA reference 1/2 ref-a")));
         assert!(state.live_thinking.contains("first reference answer"));
     }
+
+    #[cfg(unix)]
+    include!("streaming_tests.rs");
+    #[cfg(unix)]
+    include!("tests/modal_runtime_contract.rs");
+    #[cfg(unix)]
+    include!("tests/input_navigation_contract.rs");
 
     #[test]
     fn test_animated_processing_bar_width_and_motion() {
@@ -824,6 +1211,70 @@ mod tests {
     }
 
     #[test]
+    fn transcript_density_and_tool_expansion_preserve_the_turn() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let _guard = env_test_lock();
+        let theme = Theme::default_theme();
+        let styles = theme.resolved_styles();
+        let colors = theme.colors.to_ratatui_colors();
+        let mut assistant = Message::assistant_with_tool_calls(
+            Some("I checked the fixture.".into()),
+            vec![hermes_core::ToolCall {
+                id: "fixture-call".into(),
+                function: hermes_core::FunctionCall {
+                    name: "read_file".into(),
+                    arguments: r#"{"path":"fixture.txt"}"#.into(),
+                },
+                extra_content: None,
+            }],
+        );
+        assistant.reasoning_content = Some("Checking the fixture contents.  ".into());
+        let messages = [
+            assistant,
+            Message::tool_result("fixture-call", "one\ntwo\nthree\nfour\nfive\nsix"),
+        ];
+        let render = |state: &mut TuiState| {
+            build_transcript_lines(&messages, state, &styles, &colors, 80)
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let mut state = TuiState {
+            view_density: ViewDensity::Detailed,
+            ..TuiState::default()
+        };
+        let collapsed = render(&mut state);
+        assert!(collapsed.contains("I checked the fixture."));
+        assert!(collapsed.contains("Checking the fixture contents.\n"));
+        assert!(collapsed.contains("read_file"));
+        assert!(collapsed.contains("fixture.txt"));
+        assert!(collapsed.contains("tool card: collapsed | 6 lines"));
+        assert!(collapsed.contains("… 2 more lines"));
+        assert!(!collapsed.contains("    six"));
+
+        let toggle_card = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(state.handle_insert_control_chord(toggle_card));
+        let expanded = render(&mut state);
+        assert!(expanded.contains("tool card: expanded | 6 lines"));
+        assert!(expanded.contains("    six"));
+        assert!(!expanded.contains("more lines"));
+
+        assert!(state
+            .handle_insert_control_chord(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)));
+        let compact = render(&mut state);
+        assert!(compact.contains("I checked the fixture."));
+        assert!(compact.contains("    six"));
+        assert!(!compact.contains("Checking the fixture contents."));
+
+        assert!(state.handle_insert_control_chord(toggle_card));
+        let collapsed_again = render(&mut state);
+        assert!(collapsed_again.contains("tool card: collapsed | 6 lines"));
+        assert!(!collapsed_again.contains("    six"));
+    }
+
+    #[test]
     fn test_transcript_placeholder_shows_when_empty() {
         let theme = Theme::default_theme();
         let colors = theme.colors.to_ratatui_colors();
@@ -1063,6 +1514,94 @@ mod tests {
         assert!(!joined.contains('天'));
         assert!(!joined.contains('大'));
         assert!(joined.contains("regular line"));
+    }
+
+    #[test]
+    fn assistant_code_fence_preserves_text_and_styles_syntax_tokens() {
+        let theme = Theme::default_theme();
+        let colors = theme.colors.to_ratatui_colors();
+        let styles = theme.resolved_styles();
+        let code = "let note = (42, \"fixture text\");";
+        let content = format!("~~~rust\n{code}\n~~~");
+
+        let lines = render_assistant_markdown_lines(&content, &styles, &colors);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].to_string().contains("code (rust)"));
+        assert_eq!(lines[1].to_string(), format!("    │ {code}"));
+        assert!(lines[2].to_string().contains("end code"));
+
+        for (text, foreground) in [
+            ("let", colors.accent),
+            ("note", colors.status_bar_text),
+            (" ", colors.status_bar_text),
+            ("42", colors.status_bar_good),
+            ("\"fixture text\"", colors.status_bar_warn),
+            (";", colors.status_bar_dim),
+        ] {
+            let span = lines[1]
+                .spans
+                .iter()
+                .find(|span| span.content == text)
+                .unwrap_or_else(|| panic!("missing code token {text:?}"));
+            assert_eq!(span.style.fg, Some(foreground), "token {text:?}");
+            assert_eq!(span.style.bg, Some(colors.background), "token {text:?}");
+        }
+    }
+
+    #[test]
+    fn assistant_code_fence_styles_a_partially_streamed_string() {
+        let theme = Theme::default_theme();
+        let colors = theme.colors.to_ratatui_colors();
+        let styles = theme.resolved_styles();
+        let code = "let note = \"draft";
+        let lines = render_assistant_markdown_lines(&format!("~~~rust\n{code}"), &styles, &colors);
+
+        assert_eq!(lines[1].to_string(), format!("    │ {code}"));
+        let string = lines[1].spans.last().unwrap();
+        assert_eq!(string.content, "\"draft");
+        assert_eq!(
+            string.style.fg,
+            Some(colors.status_bar_warn),
+            "partial code string foreground"
+        );
+    }
+
+    #[test]
+    fn assistant_markdown_renders_headings_quotes_lists_and_tables() {
+        if !crate::isolated_test_profile::enter(
+            "tui::tests::assistant_markdown_renders_headings_quotes_lists_and_tables",
+        ) {
+            return;
+        }
+        std::env::set_var("HERMES_TUI_STRICT_DEFAULT_LANGUAGE", "off");
+        let theme = Theme::default_theme();
+        let colors = theme.colors.to_ratatui_colors();
+        let styles = theme.resolved_styles();
+        let content = concat!(
+            "## Checks\n",
+            "> Read `report.log`\n",
+            "- Confirm inputs\n",
+            "| Check | Outcome |\n",
+            "| :--- | ---: |\n",
+            "| Report | Ready |\n",
+            "1. Continue\n",
+            "2) Finish",
+        );
+        let lines = render_assistant_markdown_lines(content, &styles, &colors);
+        let text: Vec<_> = lines.iter().map(Line::to_string).collect();
+        assert_eq!(text.len(), 8, "{text:?}");
+        assert_eq!(text[0], "    ## Checks");
+        assert_eq!(lines[0].spans[1].style.fg, Some(colors.status_bar_strong));
+        assert_eq!(text[1], "    ▎ Read report.log");
+        let inline = lines[1].spans.last().unwrap();
+        assert_eq!(inline.content, "report.log");
+        assert_eq!(inline.style.fg, Some(colors.accent));
+        assert_eq!(text[2], "    • Confirm inputs");
+        assert_eq!(text[3], "    │ Check │ Outcome │");
+        assert!(text[4].starts_with("    ├─") && text[4].ends_with('┤'));
+        assert_eq!(text[5], "    │ Report │ Ready │");
+        assert_eq!(text[6], "    1. Continue");
+        assert_eq!(text[7], "    2) Finish");
     }
 
     #[test]

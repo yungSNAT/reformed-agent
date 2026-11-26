@@ -211,7 +211,10 @@ fn python_suite_skill_and_external_service_contracts_are_rust_owned() {
     let telemetry = read_text("crates/hermes-telemetry/src/lib.rs");
     assert!(telemetry.contains("langfuse_trace_config_from_env"));
     assert!(telemetry.contains("x-langfuse-ingestion-version"));
-    assert!(telemetry.contains("langfuse_config_resolves_endpoint_headers_and_resource_attrs"));
+    let telemetry_tests = read_text("crates/hermes-telemetry/src/tests.rs");
+    assert!(
+        telemetry_tests.contains("langfuse_config_resolves_endpoint_headers_and_resource_attrs")
+    );
 }
 
 #[test]

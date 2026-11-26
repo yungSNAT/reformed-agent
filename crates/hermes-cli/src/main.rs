@@ -181,4 +181,7 @@ include!("main/cron_webhook.rs");
 include!("main/setup_flow.rs");
 include!("main/doctor_routes.rs");
 include!("main/status_debug_profile.rs");
+#[cfg(all(test, unix))]
+mod isolated_test_profile;
+
 include!("main/tests.rs");

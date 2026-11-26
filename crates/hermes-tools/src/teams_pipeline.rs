@@ -240,6 +240,10 @@ pub struct GraphSubscription {
 }
 
 include!("teams_pipeline/store_records.rs");
+
+#[cfg(test)]
+#[path = "teams_pipeline/record_tests.rs"]
+mod record_tests;
 pub fn resolve_teams_pipeline_store_path(path: Option<&Path>) -> PathBuf {
     if let Some(path) = path {
         if !path.as_os_str().is_empty() {
@@ -1265,3 +1269,7 @@ include!("teams_pipeline/subscriptions.rs");
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "teams_pipeline_coverage_gen.rs"]
+mod coverage_gen_teams_pipeline;

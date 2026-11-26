@@ -577,6 +577,75 @@ mod tests {
     }
 
     #[test]
+    fn legacy_usage_preserves_counts_and_pin_across_state_changes() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path();
+        let path = usage_file(skills);
+        let legacy = br#"{"draft-review":{"view_count":3}}"#;
+        fs::write(&path, legacy).unwrap();
+
+        let record = get_record(skills, "draft-review");
+        assert_eq!(record.state, STATE_ACTIVE);
+        assert_eq!(record.view_count, 3);
+        assert!(!record.pinned);
+        set_state(skills, "draft-review", "unknown").unwrap();
+        forget(skills, " ").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), legacy);
+
+        set_pinned(skills, "draft-review", true).unwrap();
+        set_state(skills, "draft-review", STATE_ARCHIVED).unwrap();
+        let archived = get_record(skills, "draft-review");
+        assert_eq!(archived.state, STATE_ARCHIVED);
+        assert!(archived.archived_at.is_some());
+        assert!(archived.pinned);
+
+        set_state(skills, "draft-review", STATE_STALE).unwrap();
+        let stale = get_record(skills, "draft-review");
+        assert_eq!(stale.state, STATE_STALE);
+        assert_eq!(stale.view_count, 3);
+        assert!(stale.pinned);
+        assert_eq!(stale.archived_at, None);
+    }
+
+    #[test]
+    fn skills_archive_reports_blank_and_missing_names_without_creating_state() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        assert_eq!(
+            archive_skill(&skills, " ").unwrap(),
+            (false, "Skill name is required.".into())
+        );
+        assert_eq!(
+            restore_skill(&skills, " ").unwrap(),
+            (false, "Skill name is required.".into())
+        );
+        assert_eq!(
+            archive_skill(&skills, "missing").unwrap(),
+            (false, "Skill 'missing' not found.".into())
+        );
+        assert_eq!(
+            restore_skill(&skills, "missing").unwrap(),
+            (false, "Archived skill 'missing' not found.".into())
+        );
+        assert!(!skills.exists());
+    }
+
+    #[test]
+    fn empty_legacy_hub_lock_does_not_protect_local_skills() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path();
+        fs::create_dir(skills.join(".hub")).unwrap();
+        fs::write(skills.join(".hub/lock.json"), "{}").unwrap();
+        let local = write_skill(skills, "draft-review", Some("writing"));
+        assert!(!is_protected_skill(skills, " "));
+        assert!(!is_protected_skill(skills, "draft-review"));
+        assert!(archive_skill(skills, "draft-review").unwrap().0);
+        assert!(!local.exists());
+        assert!(restore_skill(skills, "draft-review").unwrap().0);
+        assert!(skills.join("draft-review/SKILL.md").is_file());
+    }
+
+    #[test]
     fn protected_skills_do_not_get_usage_records() {
         let dir = tempdir().unwrap();
         let skills = dir.path();

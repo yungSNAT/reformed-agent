@@ -171,6 +171,37 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_session_retains_unknown_model_and_zero_usage() {
+        let started_at = ts(1.0, 0.0);
+        let mut data = InMemorySessionData::new();
+        data.add_session(SessionRow {
+            id: "sample".into(),
+            model: Some(String::new()),
+            started_at: Some(started_at),
+            ..SessionRow::default()
+        })
+        .add_tool_message("sample", None, "read_draft", 0);
+
+        let report = SessionInsightsEngine::new(&data).generate(7, None, FIXED_NOW);
+        assert!(!report.empty);
+        assert_eq!(report.overview.total_sessions, 1);
+        assert_eq!(report.overview.total_hours, 0.0);
+        assert_eq!(report.overview.avg_session_duration, 0.0);
+        assert_eq!(report.overview.total_tokens, 0);
+        assert_eq!(report.overview.date_range_start, Some(started_at));
+        assert_eq!(report.overview.models_without_pricing, ["unknown"]);
+        assert_eq!(report.overview.unknown_cost_sessions, 1);
+        assert_eq!(report.models.len(), 1);
+        assert_eq!(report.models[0].model, "unknown");
+        assert_eq!(report.models[0].cost_status, "unknown");
+        assert_eq!(report.tools.len(), 1);
+        assert_eq!(report.tools[0].tool, "read_draft");
+        assert_eq!(report.tools[0].count, 0);
+        assert_eq!(report.tools[0].percentage, 0.0);
+        assert!(report.top_sessions.is_empty());
+    }
+
+    #[test]
     fn overview_categorises_models_by_pricing_availability() {
         let mut data = InMemorySessionData::new();
         data.add_session(session(
@@ -461,6 +492,56 @@ mod tests {
         assert!(out.contains("No sessions"));
         assert!(out.contains("14 days"));
         assert!(out.contains("discord"));
+    }
+
+    #[test]
+    fn formatters_report_filtered_activity_and_limit_tool_rows_by_audience() {
+        let report = InsightsReport {
+            days: 7,
+            source_filter: Some("telegram".into()),
+            platforms: vec![PlatformBreakdownRow {
+                platform: "telegram".into(),
+                sessions: 4,
+                messages: 24,
+                ..Default::default()
+            }],
+            activity: ActivityPatterns {
+                by_day: vec![DayCount {
+                    day: "Mon".into(),
+                    count: 3,
+                }],
+                by_hour: vec![HourCount { hour: 12, count: 3 }],
+                busiest_day: Some(DayCount {
+                    day: "Mon".into(),
+                    count: 3,
+                }),
+                busiest_hour: Some(HourCount { hour: 12, count: 3 }),
+                active_days: 2,
+                max_streak: 2,
+            },
+            tools: (1..=18)
+                .map(|i| ToolBreakdownRow {
+                    tool: format!("fixture-tool-{i:02}"),
+                    count: 25 - i,
+                    percentage: 2.5,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let terminal = format_terminal(&report);
+        assert!(terminal.contains("Last 7 days (telegram)"));
+        assert!(terminal.contains("📱 Platforms"));
+        assert!(terminal.contains("Peak hours: 12PM (3)"));
+        assert!(terminal.contains("Best streak: 2 consecutive days"));
+        assert!(terminal.contains("fixture-tool-15"));
+        assert!(!terminal.contains("fixture-tool-16"));
+        assert!(terminal.contains("... and 3 more tools"));
+
+        let gateway = format_gateway(&report);
+        assert!(gateway.contains("Busiest:** Mons (3 sessions), 12PM (3 sessions)"));
+        assert!(gateway.contains("**Best streak:** 2 consecutive days"));
+        assert!(gateway.contains("fixture-tool-08"));
+        assert!(!gateway.contains("fixture-tool-09"));
     }
 
     #[test]

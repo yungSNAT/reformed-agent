@@ -1476,3 +1476,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 }
 
 include!("tools/tests.rs");
+
+#[cfg(test)]
+#[path = "tools_coverage_gen.rs"]
+mod coverage_gen;

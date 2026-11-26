@@ -751,3 +751,6 @@ pub async fn login_google_gemini_cli_oauth(
     })
 }
 
+#[cfg(test)]
+#[path = "gemini_coverage_gen.rs"]
+mod coverage_gen_auth_provider_oauth_gemini;

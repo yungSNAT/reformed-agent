@@ -858,13 +858,24 @@
         }
     }
 
+    const STREAM_UNREPRESENTABLE_ARGUMENT: &str = r#"{"value":1e999}"#;
+
     #[derive(Clone, Copy)]
     enum StreamRetryScenario {
+        CostLimit,
+        UnknownTool,
+        SemanticRetry,
+        FinalizerRewrite,
+        EmptyStop,
+        PartialInterrupt,
         RecoverOnSecondAttempt,
         AlwaysFailMidToolCall,
         TextOnlyDrop,
         MemoryContextLeak,
+        BufferedContextTail { text: &'static str, finish: bool },
         MalformedToolArgs,
+        TruncatedToolArguments,
+        InvalidArgumentBatch,
         SlowStream,
         SlowRetry,
     }
@@ -872,6 +883,8 @@
     struct StreamRetryProvider {
         scenario: StreamRetryScenario,
         calls: std::sync::Mutex<u32>,
+        semantic_retries: std::sync::Mutex<u32>,
+        pending_stream_polled: Arc<tokio::sync::Notify>,
     }
 
     impl StreamRetryProvider {
@@ -879,6 +892,18 @@
             Self {
                 scenario,
                 calls: std::sync::Mutex::new(0),
+                semantic_retries: std::sync::Mutex::new(0),
+                pending_stream_polled: Arc::new(tokio::sync::Notify::new()),
+            }
+        }
+
+        fn cost_limit_usage() -> UsageStats {
+            UsageStats {
+                prompt_tokens: 3,
+                completion_tokens: 2,
+                total_tokens: 5,
+                estimated_cost: Some(0.5),
+                ..Default::default()
             }
         }
     }
@@ -887,19 +912,52 @@
     impl LlmProvider for StreamRetryProvider {
         async fn chat_completion(
             &self,
-            _messages: &[Message],
+            messages: &[Message],
             _tools: &[ToolSchema],
             _max_tokens: Option<u32>,
             _temperature: Option<f64>,
             _model: Option<&str>,
             _extra_body: Option<&serde_json::Value>,
         ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Err(AgentError::LlmApi("unused".to_string()))
+            if matches!(self.scenario, StreamRetryScenario::CostLimit) {
+                *self.calls.lock().expect("calls lock") += 1;
+                return Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("Fixture draft"),
+                    usage: Some(Self::cost_limit_usage()),
+                    model: "fixture-model".into(),
+                    finish_reason: Some("stop".into()),
+                });
+            }
+            if !matches!(self.scenario, StreamRetryScenario::SemanticRetry) {
+                return Err(AgentError::LlmApi("unused".to_string()));
+            }
+            assert!(messages.iter().any(|message| {
+                message.role == MessageRole::Assistant
+                    && message.reasoning_content.as_deref() == Some("Fixture draft reasoning")
+            }));
+            let mut retries = self.semantic_retries.lock().unwrap();
+            *retries += 1;
+            let (text, finish_reason, prompt_tokens, completion_tokens) = if *retries == 1 {
+                ("", "length", 4, 2)
+            } else {
+                ("Recovered answer", "stop", 16, 3)
+            };
+            Ok(hermes_core::LlmResponse {
+                message: Message::assistant(text),
+                usage: Some(hermes_core::UsageStats {
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens: prompt_tokens + completion_tokens,
+                    ..Default::default()
+                }),
+                model: "fixture-model".into(),
+                finish_reason: Some(finish_reason.into()),
+            })
         }
 
         fn chat_completion_stream(
             &self,
-            _messages: &[Message],
+            messages: &[Message],
             _tools: &[ToolSchema],
             _max_tokens: Option<u32>,
             _temperature: Option<f64>,
@@ -911,6 +969,69 @@
             let attempt = *calls;
 
             let events: Vec<Result<StreamChunk, AgentError>> = match self.scenario {
+                StreamRetryScenario::CostLimit => vec![
+                    Ok(stream_chunk_content("Fixture draft")),
+                    Ok(StreamChunk {
+                        usage: Some(Self::cost_limit_usage()),
+                        ..stream_chunk_finish("stop")
+                    }),
+                ],
+                StreamRetryScenario::UnknownTool => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        &format!("missing-fixture-{attempt}"),
+                        "missing_fixture_tool",
+                    )),
+                    Ok(stream_chunk_tool_args(0, "{}")),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::SemanticRetry => vec![
+                    Ok(StreamChunk {
+                        delta: Some(hermes_core::StreamDelta {
+                            content: None,
+                            tool_calls: None,
+                            extra: Some(serde_json::json!({"thinking":"Fixture draft reasoning"})),
+                        }),
+                        usage: Some(hermes_core::UsageStats {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                            ..Default::default()
+                        }),
+                        finish_reason: None,
+                    }),
+                    Ok(stream_chunk_finish("length")),
+                ],
+                StreamRetryScenario::FinalizerRewrite => {
+                    let text = if attempt == 1 {
+                        "Read the [fixture details](URL)."
+                    } else {
+                        assert_eq!(attempt, 2, "the corrected answer ends the turn");
+                        assert!(messages.iter().any(|message| {
+                            message.role == MessageRole::System
+                                && message.content.as_deref().is_some_and(|content| {
+                                    content.contains("Output quality contract")
+                                        && content.contains("no unresolved placeholders")
+                                })
+                        }));
+                        "The fixture contains two records."
+                    };
+                    vec![
+                        Ok(stream_chunk_content(text)),
+                        Ok(stream_chunk_finish("stop")),
+                    ]
+                }
+                StreamRetryScenario::EmptyStop => vec![Ok(stream_chunk_finish("stop"))],
+                StreamRetryScenario::PartialInterrupt => vec![Ok(StreamChunk {
+                    usage: Some(hermes_core::UsageStats {
+                        prompt_tokens: 2,
+                        completion_tokens: 1,
+                        total_tokens: 3,
+                        estimated_cost: Some(0.125),
+                        ..Default::default()
+                    }),
+                    ..stream_chunk_content("Partial answer")
+                })],
                 StreamRetryScenario::SlowStream => vec![
                     Ok(stream_chunk_content("first ")),
                     Ok(stream_chunk_content("second ")),
@@ -967,6 +1088,13 @@
                     Ok(stream_chunk_content("</memory-context> world")),
                     Ok(stream_chunk_finish("stop")),
                 ],
+                StreamRetryScenario::BufferedContextTail { text, finish } => {
+                    let mut events = vec![Ok(stream_chunk_content(text))];
+                    if finish {
+                        events.push(Ok(stream_chunk_finish("stop")));
+                    }
+                    events
+                }
                 StreamRetryScenario::MalformedToolArgs => vec![
                     Ok(stream_chunk_tool_name(0, "call_repair", "terminal")),
                     Ok(stream_chunk_tool_args(
@@ -975,9 +1103,64 @@
                     )),
                     Ok(stream_chunk_finish("tool_calls")),
                 ],
+                StreamRetryScenario::TruncatedToolArguments if attempt == 1 => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        "truncated-fixture",
+                        "fixture_tool",
+                    )),
+                    Ok(stream_chunk_tool_args(0, STREAM_UNREPRESENTABLE_ARGUMENT)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::TruncatedToolArguments if attempt == 2 => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        "recovered-fixture",
+                        "fixture_tool",
+                    )),
+                    Ok(stream_chunk_tool_args(0, r#"{"value":"complete"}"#)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::TruncatedToolArguments => vec![
+                    Ok(stream_chunk_content("Recorded the complete fixture.")),
+                    Ok(stream_chunk_finish("stop")),
+                ],
+                StreamRetryScenario::InvalidArgumentBatch if attempt <= 2 => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        &format!("invalid-fixture-{attempt}"),
+                        "fixture_invalid",
+                    )),
+                    Ok(stream_chunk_tool_args(0, STREAM_UNREPRESENTABLE_ARGUMENT)),
+                    Ok(stream_chunk_tool_name(
+                        1,
+                        &format!("skipped-fixture-{attempt}"),
+                        "fixture_valid",
+                    )),
+                    Ok(stream_chunk_tool_args(1, r#"{"value":"skipped"}"#)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::InvalidArgumentBatch if attempt == 3 => vec![
+                    Ok(stream_chunk_tool_name(0, "valid-fixture-3", "fixture_valid")),
+                    Ok(stream_chunk_tool_args(0, r#"{"value":"recovered"}"#)),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::InvalidArgumentBatch => vec![
+                    Ok(stream_chunk_content("Recovered after the tool result")),
+                    Ok(stream_chunk_finish("stop")),
+                ],
             };
 
             let events = futures::stream::iter(events);
+            if matches!(self.scenario, StreamRetryScenario::PartialInterrupt) {
+                let pending_stream_polled = Arc::clone(&self.pending_stream_polled);
+                return events
+                    .chain(futures::stream::poll_fn(move |_| {
+                        pending_stream_polled.notify_one();
+                        std::task::Poll::Pending
+                    }))
+                    .boxed();
+            }
             if matches!(self.scenario, StreamRetryScenario::SlowStream | StreamRetryScenario::SlowRetry) {
                 return events
                     .then(|event| async {
@@ -988,6 +1171,301 @@
             }
             events.boxed()
         }
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_retries_keep_reasoning_and_accumulate_all_usage() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            thinking_prefill_max_retries: 1,
+            empty_content_max_retries: 1,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SemanticRetry));
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&notices);
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone())
+            .with_callbacks(AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle" && message.contains("retrying") {
+                        captured.lock().unwrap().push(message.to_owned());
+                    }
+                })),
+                ..Default::default()
+            });
+        let result = agent
+            .run_stream(vec![Message::user("Show the answer")], None, Some(Box::new(|_| {})))
+            .await
+            .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(result.total_turns, 1);
+        assert_eq!(*provider.calls.lock().unwrap(), 1);
+        assert_eq!(*provider.semantic_retries.lock().unwrap(), 2);
+        let usage = result.usage.unwrap();
+        assert_eq!((usage.prompt_tokens, usage.completion_tokens, usage.total_tokens), (21, 6, 27));
+        assert_eq!(
+            result.messages.last().and_then(|message| message.content.as_deref()),
+            Some("Recovered answer")
+        );
+        let notices = notices.lock().unwrap();
+        assert_eq!(notices.len(), 2);
+        assert!(notices[0].starts_with("Reasoning-only response"));
+        assert!(notices[1].starts_with("Empty assistant response"));
+    }
+
+    #[tokio::test]
+    async fn stream_finalizer_requests_a_rewrite_before_finishing() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::FinalizerRewrite));
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let result = agent
+            .run_stream(
+                vec![Message::user("Summarise the fixture")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(result.total_turns, 2);
+        assert_eq!(*provider.calls.lock().unwrap(), 2);
+        assert_eq!(
+            result
+                .messages
+                .last()
+                .and_then(|message| message.content.as_deref()),
+            Some("The fixture contains two records.")
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_empty_stop_finishes_without_retry() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            empty_content_max_retries: 2,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::EmptyStop));
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let result = agent
+            .run_stream(vec![Message::user("Use an explicit stop")], None, Some(Box::new(|_| {})))
+            .await
+            .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(result.total_turns, 1);
+        assert_eq!(*provider.calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_interrupt_returns_partial_text_and_usage() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::PartialInterrupt));
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let interrupt = agent.interrupt.clone();
+        let pending_stream_polled = Arc::clone(&provider.pending_stream_polled);
+        let cancellation = tokio::spawn(async move {
+            pending_stream_polled.notified().await;
+            interrupt.interrupt(None);
+        });
+        let delivered = Arc::new(Mutex::new(String::new()));
+        let stream_text = Arc::clone(&delivered);
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            agent.run_stream(
+                vec![Message::user("Start a response")],
+                None,
+                Some(Box::new(move |chunk| {
+                    if let Some(text) = chunk.delta.and_then(|delta| delta.content) {
+                        stream_text.lock().unwrap().push_str(&text);
+                    }
+                })),
+            ),
+        )
+        .await
+        .expect("interrupt ends the stalled fixture stream")
+        .unwrap();
+        assert!(result.interrupted);
+        assert!(!result.finished_naturally);
+        cancellation.await.unwrap();
+        assert_eq!(*delivered.lock().unwrap(), "Partial answer");
+        assert_eq!(*provider.calls.lock().unwrap(), 1);
+        assert_eq!(result.usage.unwrap().total_tokens, 3);
+        assert_eq!(result.session_cost_usd, Some(0.125));
+        assert_eq!(
+            result.messages.last().and_then(|message| message.content.as_deref()),
+            Some("Partial answer")
+        );
+    }
+
+    #[tokio::test]
+    async fn nonstreaming_usage_stops_the_turn_at_the_session_cost_limit() {
+        for (degrade_model, warning) in [
+            (
+                Some(" anthropic:fixture-small "),
+                "Switching to cheaper model `anthropic:fixture-small`.",
+            ),
+            (None, "Cost guard warning: session spend is now"),
+        ] {
+            let home = tempfile::tempdir().expect("fixture home");
+            let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::CostLimit));
+            let agent = AgentLoop::new(
+                AgentConfig {
+                    model: "anthropic:fixture-model".into(),
+                    hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                    max_cost_usd: Some(0.25),
+                    cost_guard_degrade_model: degrade_model.map(str::to_owned),
+                    skip_memory: true,
+                    skip_context_files: true,
+                    code_index_enabled: false,
+                    ..AgentConfig::default()
+                },
+                Arc::new(ToolRegistry::new()),
+                provider.clone(),
+            );
+            let result = agent
+                .run(vec![Message::user("Fixture question")], None)
+                .await
+                .expect("cost guard returns the session state");
+
+            assert!(!result.finished_naturally);
+            assert!(!result.interrupted);
+            assert_eq!(result.total_turns, 1);
+            assert_eq!(result.session_cost_usd, Some(0.5));
+            assert_eq!(result.usage.expect("reported usage").total_tokens, 5);
+            assert_eq!(*provider.calls.lock().expect("calls lock"), 1);
+            let notices: Vec<_> = result
+                .messages
+                .iter()
+                .filter(|message| message.role == MessageRole::System)
+                .filter_map(|message| message.content.as_deref())
+                .collect();
+            assert!(notices.iter().any(|text| text.contains(warning)));
+            assert!(notices
+                .iter()
+                .any(|text| text.contains("Cost guard tripped")));
+            assert!(!result
+                .messages
+                .iter()
+                .any(|message| message.role == MessageRole::Assistant));
+        }
+    }
+
+    #[tokio::test]
+    async fn streamed_usage_stops_the_turn_at_the_session_cost_limit() {
+        let home = tempfile::tempdir().expect("fixture home");
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::CostLimit));
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: "openai:fixture-model".into(),
+                hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                max_cost_usd: Some(0.25),
+                cost_guard_degrade_model: Some("openai:fixture-small".into()),
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            provider.clone(),
+        );
+        let result = agent
+            .run_stream(
+                vec![Message::user("Fixture question")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .expect("cost guard returns the session state");
+        assert!(!result.finished_naturally);
+        assert!(!result.interrupted);
+        assert_eq!(result.total_turns, 1);
+        assert_eq!(result.session_cost_usd, Some(0.5));
+        assert_eq!(result.usage.expect("stream usage").total_tokens, 5);
+        assert_eq!(*provider.calls.lock().expect("calls lock"), 1);
+        assert!(result.messages.iter().any(|row| {
+            row.role == MessageRole::System
+                && row
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Cost guard tripped"))
+        }));
+        assert!(!result
+            .messages
+            .iter()
+            .any(|row| row.role == MessageRole::Assistant));
+    }
+
+    #[tokio::test]
+    async fn streamed_unknown_tool_calls_are_rejected_then_capped() {
+        let home = tempfile::tempdir().expect("fixture home");
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::UnknownTool));
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: "openai:fixture-model".into(),
+                hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                max_turns: 5,
+                invalid_tool_call_max_retries: 2,
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            provider.clone(),
+        );
+        let result = agent
+            .run_stream(
+                vec![Message::user("Fixture question")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .expect("unknown tool is reported to the agent");
+        assert!(!result.finished_naturally);
+        assert!(!result.interrupted);
+        assert_eq!(result.total_turns, 2);
+        assert_eq!(*provider.calls.lock().expect("calls lock"), 2);
+        assert!(result.tool_errors.is_empty());
+        assert!(result.messages.iter().any(|row| {
+            row.role == MessageRole::Tool
+                && row
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Tool 'missing_fixture_tool' does not exist."))
+        }));
+        assert!(result.messages.iter().any(|row| {
+            row.role == MessageRole::System
+                && row
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Max invalid tool retries reached (2)"))
+        }));
+        assert!(result.messages.iter().all(|row| {
+            row.tool_call_id.as_deref() != Some("missing-fixture-2")
+                && row
+                    .tool_calls
+                    .iter()
+                    .flatten()
+                    .all(|call| call.id != "missing-fixture-2")
+        }));
     }
 
     #[tokio::test(start_paused = true)]
@@ -1169,6 +1647,178 @@
     }
 
     #[tokio::test]
+    async fn streaming_retries_truncated_arguments_before_running_the_tool() {
+        let executed = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&executed);
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "fixture_tool",
+            ToolSchema::new(
+                "fixture_tool",
+                "Record fixture input",
+                hermes_core::JsonSchema::new("object"),
+            ),
+            Arc::new(move |args| {
+                captured.lock().unwrap().push(args.clone());
+                Ok("Fixture input recorded".into())
+            }),
+        );
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            max_turns: 5,
+            truncated_tool_call_max_retries: 1,
+            invalid_tool_json_max_retries: 0,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(
+            StreamRetryScenario::TruncatedToolArguments,
+        ));
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&notices);
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone()).with_callbacks(
+            AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle" && message.starts_with("Truncated tool arguments") {
+                        captured.lock().unwrap().push(message.to_owned());
+                    }
+                })),
+                ..AgentCallbacks::default()
+            },
+        );
+
+        let result = agent
+            .run_stream(
+                vec![Message::user("Use the local fixture tool")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.finished_naturally && !result.interrupted);
+        assert_eq!(*provider.calls.lock().unwrap(), 3);
+        assert_eq!(
+            executed.lock().unwrap().as_slice(),
+            [serde_json::json!({"value": "complete"})]
+        );
+        assert_eq!(
+            notices.lock().unwrap().as_slice(),
+            ["Truncated tool arguments — retrying (1/1)"]
+        );
+        assert!(result.messages.iter().all(|row| {
+            row.tool_call_id.as_deref() != Some("truncated-fixture")
+                && row
+                    .tool_calls
+                    .iter()
+                    .flatten()
+                    .all(|call| call.id != "truncated-fixture")
+        }));
+        assert!(result.messages.iter().any(|row| {
+            row.tool_call_id.as_deref() == Some("recovered-fixture")
+                && row.content.as_deref() == Some("Fixture input recorded")
+        }));
+        assert_eq!(
+            result
+                .messages
+                .last()
+                .and_then(|row| row.content.as_deref()),
+            Some("Recorded the complete fixture.")
+        );
+    }
+
+    #[tokio::test]
+    async fn streamed_tool_batches_retry_invalid_arguments_before_executing_siblings() {
+        assert!(serde_json::from_str::<serde::de::IgnoredAny>(STREAM_UNREPRESENTABLE_ARGUMENT)
+            .is_ok());
+        assert!(serde_json::from_str::<Value>(STREAM_UNREPRESENTABLE_ARGUMENT).is_err());
+
+        let executed = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = ToolRegistry::new();
+        for name in ["fixture_invalid", "fixture_valid"] {
+            let executed = Arc::clone(&executed);
+            registry.register(
+                name,
+                ToolSchema::new(name, "Record fixture input", hermes_core::JsonSchema::new("object")),
+                Arc::new(move |args| {
+                    executed.lock().unwrap().push((name, args.clone()));
+                    Ok("recorded fixture input".to_string())
+                }),
+            );
+        }
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            max_turns: 6,
+            invalid_tool_json_max_retries: 2,
+            truncated_tool_call_max_retries: 0,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::InvalidArgumentBatch));
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&notices);
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone())
+            .with_callbacks(AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle"
+                        && (message.starts_with("Invalid tool JSON")
+                            || message.starts_with("Max invalid JSON"))
+                    {
+                        captured.lock().unwrap().push(message.to_owned());
+                    }
+                })),
+                ..AgentCallbacks::default()
+            });
+        let result = agent
+            .run_stream(
+                vec![Message::user("Use the local fixture tool")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.finished_naturally && !result.interrupted);
+        assert_eq!(*provider.calls.lock().unwrap(), 4);
+        assert_eq!(
+            executed.lock().unwrap().as_slice(),
+            [("fixture_valid", serde_json::json!({"value":"recovered"}))]
+        );
+        assert_eq!(
+            notices.lock().unwrap().as_slice(),
+            [
+                "Invalid tool JSON arguments — retrying (1/2)",
+                "Max invalid JSON retries reached (2); returning tool errors",
+            ]
+        );
+        assert!(result.messages.iter().all(|row| {
+            !matches!(
+                row.tool_call_id.as_deref(),
+                Some("invalid-fixture-1" | "skipped-fixture-1")
+            ) && row.tool_calls.iter().flatten().all(|call| {
+                !matches!(call.id.as_str(), "invalid-fixture-1" | "skipped-fixture-1")
+            })
+        }));
+        for (id, expected) in [
+            ("invalid-fixture-2", "Error: Invalid JSON arguments"),
+            ("skipped-fixture-2", "Skipped: other tool call"),
+            ("valid-fixture-3", "recorded fixture input"),
+        ] {
+            assert!(result.messages.iter().any(|row| {
+                row.role == MessageRole::Tool
+                    && row.tool_call_id.as_deref() == Some(id)
+                    && row.content.as_deref().is_some_and(|text| text.contains(expected))
+            }));
+        }
+        assert_eq!(
+            result.messages.last().and_then(|row| row.content.as_deref()),
+            Some("Recovered after the tool result")
+        );
+    }
+
+    #[tokio::test]
     async fn a_stream_that_falls_back_from_its_route_is_labelled_with_the_model_streamed() {
         let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SlowStream));
         let cfg = AgentConfig {
@@ -1196,11 +1846,12 @@
     }
 
     #[tokio::test]
-    async fn a_call_that_falls_back_from_its_route_asks_the_primary_for_its_own_model() {
+    async fn primary_model_is_preserved_when_falling_back_or_retrying_without_tools() {
         use futures::stream::BoxStream;
 
         struct EchoProvider {
-            seen_models: Arc<std::sync::Mutex<Vec<String>>>,
+            seen_calls: std::sync::Mutex<Vec<(String, usize)>>,
+            retry_error: Option<&'static str>,
         }
 
         #[async_trait::async_trait]
@@ -1208,17 +1859,23 @@
             async fn chat_completion(
                 &self,
                 _messages: &[Message],
-                _tools: &[ToolSchema],
+                tools: &[ToolSchema],
                 _max_tokens: Option<u32>,
                 _temperature: Option<f64>,
                 model: Option<&str>,
                 _extra_body: Option<&serde_json::Value>,
             ) -> Result<hermes_core::LlmResponse, AgentError> {
                 let model = model.unwrap_or_default().to_string();
-                self.seen_models
+                self.seen_calls
                     .lock()
-                    .expect("seen model lock")
-                    .push(model.clone());
+                    .expect("seen calls lock")
+                    .push((model.clone(), tools.len()));
+                if !tools.is_empty() {
+                    return Err(AgentError::LlmApi("Invalid tools schema".into()));
+                }
+                if let Some(error) = self.retry_error {
+                    return Err(AgentError::LlmApi(error.into()));
+                }
                 // A server labels its reply with the model it was asked for.
                 Ok(hermes_core::LlmResponse {
                     message: Message::assistant("ok"),
@@ -1241,29 +1898,52 @@
             }
         }
 
-        let seen_models = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let provider = Arc::new(EchoProvider {
-            seen_models: seen_models.clone(),
-        });
-        let cfg = AgentConfig {
-            model: "primary-model".to_string(),
-            ..AgentConfig::default()
-        };
-        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider);
-        // A provider with no key and no local endpoint: the route cannot be built.
-        let mut route = agent.turn_route_cost_guard("routed-model".to_string());
-        route.provider = Some("no-such-provider-for-this-test".to_string());
-        let mut ctx = ContextManager::default_budget();
-        ctx.add_message(Message::system("system"));
-        ctx.add_message(Message::user("run"));
+        let tool = ToolSchema::new(
+            "fixture",
+            "Fixture tool",
+            hermes_core::JsonSchema::new("object"),
+        );
+        for (routed, tools, retry_error, expected_tool_counts) in [
+            (true, &[][..], None, &[0][..]),
+            (true, std::slice::from_ref(&tool), None, &[1, 0]),
+            (false, std::slice::from_ref(&tool), Some("Invalid request"), &[1, 0]),
+        ] {
+            let provider = Arc::new(EchoProvider {
+                seen_calls: std::sync::Mutex::new(Vec::new()),
+                retry_error,
+            });
+            let mut cfg = AgentConfig {
+                model: "primary-model".to_string(),
+                ..AgentConfig::default()
+            };
+            let _home = isolate_route_learning_home(&mut cfg);
+            let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+            let route = routed.then(|| {
+                let mut route = agent.turn_route_cost_guard("routed-model".to_string());
+                route.provider = Some("no-such-provider-for-this-test".to_string());
+                route
+            });
+            let mut ctx = ContextManager::default_budget();
+            ctx.add_message(Message::system("system"));
+            ctx.add_message(Message::user("run"));
 
-        let resp = agent
-            .call_llm_with_retry_inner(&ctx, &[], Some(&route), None)
-            .await
-            .expect("the primary should answer");
-
-        assert_eq!(*seen_models.lock().expect("seen model lock"), ["primary-model"]);
-        assert_eq!(resp.model, "primary-model");
+            let result = agent
+                .call_llm_with_retry_inner(&ctx, tools, route.as_ref(), None)
+                .await;
+            if let Some(error) = retry_error {
+                assert!(
+                    matches!(result, Err(AgentError::LlmApi(message)) if message.contains(error))
+                );
+            } else {
+                assert_eq!(result.expect("the primary should answer").model, "primary-model");
+            }
+            let calls = provider.seen_calls.lock().expect("seen calls lock");
+            assert!(calls.iter().all(|(model, _)| model == "primary-model"));
+            assert_eq!(
+                calls.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+                expected_tool_counts
+            );
+        }
     }
 
     #[tokio::test]
@@ -1418,4 +2098,69 @@
         assert_eq!(joined, "Hello\n world");
         assert!(!joined.contains("secret"));
         assert!(!joined.contains("memory-context"));
+    }
+
+    #[tokio::test]
+    async fn stream_flushes_visible_context_prefixes_and_discards_unclosed_blocks() {
+        for finish in [false, true] {
+            for (text, expected, deltas) in [
+                (
+                    "visible <memory-con",
+                    "visible <memory-con",
+                    &["visible ", "<memory-con"][..],
+                ),
+                (
+                    "visible\n<memory-context>\nprivate fixture",
+                    "visible\n",
+                    &["visible\n"][..],
+                ),
+            ] {
+                let mut config = AgentConfig::default();
+                let _home = isolate_route_learning_home(&mut config);
+                let provider = Arc::new(StreamRetryProvider::new(
+                    StreamRetryScenario::BufferedContextTail { text, finish },
+                ));
+                let callbacks = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let captured = callbacks.clone();
+                let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone())
+                    .with_callbacks(AgentCallbacks {
+                        on_stream_delta: Some(Box::new(move |delta: &str| {
+                            captured.lock().unwrap().push(delta.to_string());
+                        })),
+                        ..AgentCallbacks::default()
+                    });
+                let mut ctx = ContextManager::default_budget();
+                ctx.add_message(Message::user("fixture request"));
+                let chunks = std::sync::Mutex::new(Vec::new());
+                let result = agent
+                    .collect_stream_llm_response(
+                        &ctx,
+                        &[],
+                        None,
+                        "fixture-model",
+                        None,
+                        &|chunk| chunks.lock().unwrap().push(chunk),
+                    )
+                    .await
+                    .unwrap();
+                let StreamCollectOutcome::Complete(response) = result else {
+                    panic!("expected completed stream");
+                };
+                assert_eq!(response.message.content.as_deref(), Some(expected));
+                assert_eq!(response.finish_reason.as_deref(), finish.then_some("stop"));
+                assert_eq!(*callbacks.lock().unwrap(), deltas);
+                assert_eq!(*provider.calls.lock().unwrap(), 1);
+                let chunks = chunks.into_inner().unwrap();
+                assert_eq!(chunks.len(), deltas.len() + usize::from(finish));
+                for (chunk, expected) in chunks.iter().zip(deltas) {
+                    assert_eq!(
+                        chunk.delta.as_ref().and_then(|delta| delta.content.as_deref()),
+                        Some(*expected)
+                    );
+                }
+                if finish {
+                    assert_eq!(chunks.last().unwrap().finish_reason.as_deref(), Some("stop"));
+                }
+            }
+        }
     }

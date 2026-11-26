@@ -482,14 +482,129 @@ Let me run that.
 {bad json!!!}
 ```
 "#;
-        let result = parse_tool_calls(content);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AgentError::InvalidToolCall(msg) => {
-                assert!(msg.contains("Invalid JSON"));
-            }
-            other => panic!("expected InvalidToolCall, got {:?}", other),
+        let error = parse_tool_calls(content).unwrap_err();
+        assert!(
+            matches!(&error, AgentError::InvalidToolCall(message) if message.contains("Invalid JSON")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn loose_json_tool_call_recovers_nested_arguments_with_escaped_delimiters() {
+        let content = r#"<tool_call>
+preface {"name": "catalog", "arguments": {"query":{"text":"a \"quoted} {name\""}}} trailing text
+</tool_call>"#;
+        let calls = parse_tool_calls(content).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "catalog");
+        let arguments: serde_json::Value =
+            serde_json::from_str(&calls[0].function.arguments).unwrap();
+        assert_eq!(
+            arguments,
+            serde_json::json!({"query":{"text":"a \"quoted} {name\""}})
+        );
+    }
+
+    #[test]
+    fn loose_json_tool_call_skips_incomplete_payloads() {
+        for content in [
+            r#"<tool_call>42</tool_call>"#,
+            r#"<tool_call>{"name":0, "arguments":{}}</tool_call>"#,
+            r#"<tool_call>{"name": "unfinished</tool_call>"#,
+            r#"<tool_call>{"name":"catalog","args":</tool_call>"#,
+            r#"<tool_call>{"name":"catalog","arguments":[</tool_call>"#,
+            r#"<tool_call>{"name":"catalog","arguments":{"items": [</tool_call>"#,
+        ] {
+            assert!(parse_tool_calls(content).unwrap().is_empty(), "{content}");
         }
+    }
+
+    #[test]
+    fn tool_use_skips_nameless_calls_and_normalizes_scalar_arguments() {
+        let content = r#"
+<tool_use><description>ignored</description></tool_use>
+<tool_use><name> </name></tool_use>
+<tool_use><name>count</name><arguments>7</arguments></tool_use>
+<tool_use><name>status</name></tool_use>
+"#;
+        let calls = parse_tool_calls(content).unwrap();
+        let calls: Vec<_> = calls
+            .iter()
+            .map(|call| {
+                (
+                    call.function.name.as_str(),
+                    call.function.arguments.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(calls, [("count", r#"{"value":7}"#), ("status", "{}")]);
+    }
+
+    #[test]
+    fn fenced_tool_call_reports_a_missing_name() {
+        let fence = "```";
+        for payload in [
+            r#"{"arguments":{"n":1}}"#,
+            r#"{"name":"  ","arguments":{}}"#,
+        ] {
+            let content = format!("{fence}tool_call\n{payload}\n{fence}");
+            assert!(matches!(
+                parse_tool_calls(&content),
+                Err(AgentError::InvalidToolCall(message)) if message.contains("Missing 'name' field")
+            ));
+        }
+    }
+
+    #[test]
+    fn tool_call_attribute_preserves_scalar_arguments_through_a_round_trip() {
+        let content = r#"<tool_call name="measure"><arguments>7</arguments></tool_call>"#;
+        let calls = parse_tool_calls(content).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.arguments, r#"{"value":7}"#);
+        let rendered = format_tool_calls(&calls);
+        let reparsed = parse_tool_calls(&rendered).unwrap();
+        assert_eq!(reparsed[0].function.name, "measure");
+        assert_eq!(reparsed[0].function.arguments, r#"{"value":7}"#);
+    }
+
+    #[test]
+    fn xml_formatter_keeps_the_call_when_arguments_are_not_an_object() {
+        let input = r#"<tool_call>{"name":"status","arguments":[1,2]}</tool_call>"#;
+        let calls = parse_tool_calls(input).unwrap();
+        assert_eq!(calls[0].function.arguments, "[1,2]");
+        let formatted = format_tool_calls(&calls);
+        assert!(!formatted.contains("<parameter"));
+        let reparsed = parse_tool_calls(&formatted).unwrap();
+        assert_eq!(reparsed.len(), 1);
+        assert_eq!(reparsed[0].function.name, "status");
+        assert_eq!(reparsed[0].function.arguments, "{}");
+    }
+
+    #[test]
+    fn loose_json_scanner_skips_escape_pairs_and_rejects_non_object_openings() {
+        let raw = r#""name": "sample\"name""#;
+        assert_eq!(
+            extract_json_string_value_from_key(raw, 0).as_deref(),
+            Some(r#"sample\"name"#)
+        );
+        assert_eq!(find_balanced_json_object_bounds("prefix{}", 0), None);
+        assert_eq!(
+            find_balanced_json_object_bounds("prefix{}", 6),
+            Some((6, 8))
+        );
+    }
+
+    #[test]
+    fn registered_parser_is_retrievable_by_its_distinct_name() {
+        let name = "hermes-test-registry-contract";
+        assert!(get_parser(name).is_none());
+        register_parser(name, Box::new(HermesToolCallParser));
+        let parser = get_parser(name).unwrap();
+        let calls = parser
+            .parse(r#"<tool_call>{"name":"catalog"}</tool_call>"#)
+            .unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "catalog");
     }
 
     #[test]

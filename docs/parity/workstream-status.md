@@ -1,6 +1,6 @@
 # Workstream Status
 
-- Local HEAD: `aff366282dbe812cac50d18d6b02630e414786ba`
+- Local HEAD: `a01fde01c9422b49e1d88c6440b0abe27fa7c71a`
 - Upstream: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 
 | Workstream | Title | State |
@@ -34,7 +34,7 @@
 - State: **in_progress**
 - Upstream skills catalogs audited against local tree.
 - Intentional divergence documented for skills and optional-skills vendoring.
-- Metrics: `{"divergence_documented": false, "local_skill_files": 1002, "upstream_skill_files": 1127}`
+- Metrics: `{"divergence_documented": false, "local_skill_files": 1003, "upstream_skill_files": 1127}`
 
 ## WS5 — UX parity
 
@@ -42,7 +42,7 @@
 - Rust CLI/TUI runtime validated through e2e_cli and gateway e2e smoke tests.
 - Web/UI upstream trees classified as intentional divergence in Rust-first mode.
 - 155 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
-- Metrics: `{"divergence_documented": true, "e2e_cli_tests": 16, "rows_not_shown_matching": 155}`
+- Metrics: `{"divergence_documented": true, "e2e_cli_tests": 17, "rows_not_shown_matching": 155}`
 
 ## WS6 — Tests and CI parity
 

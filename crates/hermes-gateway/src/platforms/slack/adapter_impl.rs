@@ -7,6 +7,9 @@ pub struct SlackAdapter {
     base: BasePlatformAdapter,
     config: SlackConfig,
     client: Client,
+    api_base: String,
+    file_upload_origin: reqwest::Url,
+    file_upload_client: Client,
     stop_signal: Arc<Notify>,
     group_dm_scope_warned: Mutex<BTreeSet<String>>,
     user_token_warned: Mutex<BTreeSet<String>>,
@@ -25,11 +28,16 @@ impl SlackAdapter {
 
         base.validate_token()?;
         let client = base.build_client()?;
+        let file_upload_client = Self::build_file_upload_client(base.proxied_client_builder()?)?;
 
         Ok(Self {
             base,
             config,
             client,
+            api_base: SLACK_API_BASE.into(),
+            file_upload_origin: reqwest::Url::parse(SLACK_FILE_UPLOAD_ORIGIN)
+                .expect("built-in Slack file upload origin is a valid URL"),
+            file_upload_client,
             stop_signal: Arc::new(Notify::new()),
             group_dm_scope_warned: Mutex::new(BTreeSet::new()),
             user_token_warned: Mutex::new(BTreeSet::new()),
@@ -39,6 +47,13 @@ impl SlackAdapter {
     /// Get a reference to the configuration.
     pub fn config(&self) -> &SlackConfig {
         &self.config
+    }
+
+    fn build_file_upload_client(builder: reqwest::ClientBuilder) -> Result<Client, GatewayError> {
+        builder
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| GatewayError::ConnectionFailed(format!("Failed to build Slack file upload client: {e}")))
     }
 
     fn reactions_enabled(&self) -> bool {
@@ -62,25 +77,24 @@ impl SlackAdapter {
     ) -> Result<String, GatewayError> {
         let chunks = split_message(text, MAX_MESSAGE_LENGTH);
         let mut last_ts = String::new();
+        let mut reply_root = thread_ts.map(str::to_owned);
 
-        for (i, chunk) in chunks.iter().enumerate() {
+        for chunk in chunks {
             let mut body = serde_json::json!({
                 "channel": channel,
                 "text": chunk,
             });
 
-            // Thread the first chunk to the specified thread, subsequent
-            // chunks reply to the first chunk's ts.
-            if i == 0 {
-                if let Some(ts) = thread_ts {
-                    body["thread_ts"] = serde_json::Value::String(ts.to_string());
-                }
-            } else if !last_ts.is_empty() {
-                body["thread_ts"] = serde_json::Value::String(last_ts.clone());
+            if let Some(ts) = &reply_root {
+                body["thread_ts"] = serde_json::Value::String(ts.clone());
             }
 
             let resp = self.slack_post("chat.postMessage", &body).await?;
             if let Some(ts) = resp.ts {
+                // The first posted message becomes the root for a new thread.
+                if reply_root.is_none() && !ts.is_empty() {
+                    reply_root = Some(ts.clone());
+                }
                 last_ts = ts;
             }
         }
@@ -144,7 +158,7 @@ impl SlackAdapter {
     // Web API: File uploads
     // -----------------------------------------------------------------------
 
-    /// Upload a file to a Slack channel using `files.uploadV2` flow.
+    /// Upload a file to a Slack channel using the external upload flow.
     pub async fn upload_file(
         &self,
         channel: &str,
@@ -159,44 +173,61 @@ impl SlackAdapter {
         let file_name = std::path::Path::new(file_path)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
+            .unwrap_or("file");
 
-        let part = reqwest::multipart::Part::bytes(file_bytes).file_name(file_name.clone());
-
-        let mut form = reqwest::multipart::Form::new()
-            .text("channels", channel.to_string())
-            .text("filename", file_name.clone())
-            .part("file", part);
-
-        if let Some(t) = title {
-            form = form.text("title", t.to_string());
-        }
-        if let Some(ts) = thread_ts {
-            form = form.text("thread_ts", ts.to_string());
-        }
-
-        let url = format!("{}/files.upload", SLACK_API_BASE);
+        let length = file_bytes.len().to_string();
         let resp = self
             .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.token))
-            .multipart(form)
+            .post(format!("{}/files.getUploadURLExternal", self.api_base))
+            .bearer_auth(&self.config.token)
+            .form(&[("filename", file_name), ("length", length.as_str())])
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("Slack file upload failed: {}", e)))?;
+            .map_err(|e| GatewayError::SendFailed(format!("Slack upload URL request failed: {}", e)))?;
 
-        let result: SlackResponse = resp.json().await.map_err(|e| {
-            GatewayError::SendFailed(format!("Failed to parse Slack response: {}", e))
+        let result: SlackExternalUploadResponse = resp.json().await.map_err(|e| {
+            GatewayError::SendFailed(format!("Failed to parse Slack upload URL response: {}", e))
         })?;
 
         if !result.ok {
             return Err(GatewayError::SendFailed(format!(
-                "Slack files.upload error: {}",
+                "Slack files.getUploadURLExternal error: {}",
                 result.error.unwrap_or_else(|| "unknown".into())
             )));
         }
+        let (Some(file_id), Some(upload_url)) = (result.file_id, result.upload_url) else {
+            return Err(GatewayError::SendFailed("Slack upload response is missing the file ID or URL".into()));
+        };
+        let upload_url = reqwest::Url::parse(&upload_url)
+            .ok()
+            .filter(|url| {
+                url.origin() == self.file_upload_origin.origin()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+            })
+            .ok_or_else(|| GatewayError::SendFailed("Slack returned an invalid file upload URL".into()))?;
+        let status = self
+            .file_upload_client
+            .post(upload_url)
+            .header("Content-Type", "application/octet-stream")
+            .body(file_bytes)
+            .send()
+            .await
+            .map_err(|e| GatewayError::SendFailed(format!("Slack file upload failed: {}", e.without_url())))?
+            .status();
+        if status != reqwest::StatusCode::OK {
+            return Err(GatewayError::SendFailed(format!("Slack file upload failed: HTTP {status}")));
+        }
 
+        let mut file = serde_json::json!({ "id": file_id });
+        if let Some(title) = title {
+            file["title"] = serde_json::json!(title);
+        }
+        let mut body = serde_json::json!({ "files": [file], "channel_id": channel });
+        if let Some(ts) = thread_ts {
+            body["thread_ts"] = serde_json::json!(ts);
+        }
+        self.slack_post("files.completeUploadExternal", &body).await?;
         Ok(())
     }
 
@@ -212,7 +243,7 @@ impl SlackAdapter {
 
         let resp = self
             .client
-            .post(format!("{}/apps.connections.open", SLACK_API_BASE))
+            .post(format!("{}/apps.connections.open", self.api_base))
             .header("Authorization", format!("Bearer {}", app_token))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .send()
@@ -466,7 +497,7 @@ impl SlackAdapter {
     pub async fn get_user_info(&self, user_id: &str) -> Result<SlackUser, GatewayError> {
         let resp = self
             .client
-            .get(format!("{SLACK_API_BASE}/users.info"))
+            .get(format!("{}/users.info", self.api_base))
             .query(&[("user", user_id)])
             .header("Authorization", format!("Bearer {}", self.config.token))
             .send()
@@ -541,7 +572,7 @@ impl SlackAdapter {
 
     /// List channels visible to the bot user for channel-directory discovery.
     pub async fn list_user_conversations(&self) -> Result<Vec<ChannelEntry>, GatewayError> {
-        self.list_user_conversations_from_base(SLACK_API_BASE).await
+        self.list_user_conversations_from_base(&self.api_base).await
     }
 
     async fn list_user_conversations_from_base(
@@ -628,7 +659,7 @@ impl SlackAdapter {
     ) -> Result<String, GatewayError> {
         let url = format!(
             "{}/chat.getPermalink?channel={}&message_ts={}",
-            SLACK_API_BASE, channel, message_ts
+            self.api_base, channel, message_ts
         );
 
         let resp = self
@@ -667,7 +698,7 @@ impl SlackAdapter {
         method: &str,
         body: &serde_json::Value,
     ) -> Result<SlackResponse, GatewayError> {
-        let url = format!("{}/{}", SLACK_API_BASE, method);
+        let url = format!("{}/{}", self.api_base, method);
 
         let resp = self
             .client

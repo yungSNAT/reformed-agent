@@ -1004,10 +1004,11 @@ mod tests {
 
         async fn send_file(
             &self,
-            _chat_id: &str,
+            chat_id: &str,
             _file_path: &str,
             _caption: Option<&str>,
         ) -> Result<(), GatewayError> {
+            self.calls.lock().unwrap().push(chat_id.to_string());
             Err(GatewayError::SendFailed(self.error_text.to_string()))
         }
 
@@ -1233,6 +1234,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delivery_queues_local_items_and_text_for_unregistered_adapters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = DeadTargetRegistry::with_path(tmp.path().join("dead_targets.json"));
+        let router = DeliveryRouter::with_dead_target_registry(registry);
+        router
+            .register_adapter(
+                "test",
+                Arc::new(FileRecordingAdapter {
+                    files: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )
+            .await;
+        assert_eq!(router.registered_adapters().await, ["test"]);
+        assert!(router.unregister_adapter("test").await);
+        assert!(!router.unregister_adapter("test").await);
+        assert!(router.registered_adapters().await.is_empty());
+
+        let local = DeliveryTarget::local();
+        router
+            .route_delivery(&local, "local text", None, None)
+            .await
+            .unwrap();
+        router
+            .route_file_delivery(&local, "report.pdf", Some("Summary"), None, None)
+            .await
+            .unwrap();
+        let target = DeliveryTarget::platform_chat("test", "room-7");
+        let error = router
+            .route_delivery(&target, "queued text", None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            GatewayError::SendFailed(message) if message == "No adapter registered for platform 'test'"
+        ));
+
+        for (platform, chat, text) in [
+            ("local", "local", "local text"),
+            ("local", "local", "[file:report.pdf] Summary"),
+            ("test", "room-7", "queued text"),
+        ] {
+            let item = router.fallback_queue().dequeue().unwrap();
+            assert_eq!(item.platform, platform);
+            assert_eq!(item.chat_id, chat);
+            assert_eq!(item.text, text);
+        }
+        assert!(router.fallback_queue().is_empty());
+    }
+
+    #[tokio::test]
     async fn route_delivery_preserves_explicit_ntfy_topic() {
         let router = DeliveryRouter::new();
         let messages = Arc::new(Mutex::new(Vec::new()));
@@ -1315,6 +1366,86 @@ mod tests {
                 "{error_text} should not mark target dead"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn file_delivery_uses_the_dead_target_registry_for_later_attempts() {
+        const CHILD: &str = "HERMES_GATEWAY_FILE_DELIVERY_TEST";
+        const TEST: &str =
+            "delivery::tests::file_delivery_uses_the_dead_target_registry_for_later_attempts";
+        if std::env::var_os(CHILD).is_none() {
+            let tmp = tempfile::tempdir().unwrap();
+            let executable = std::env::current_exe().unwrap(); // nosemgrep: rust.lang.security.current-exe.current-exe
+            let mut command = tokio::process::Command::new(executable);
+            command
+                .env_clear()
+                .env(CHILD, "1")
+                .env("HOME", tmp.path())
+                .env("USERPROFILE", tmp.path())
+                .env("HERMES_HOME", tmp.path())
+                .env("HERMES_MEDIA_DELIVERY_STRICT", "1")
+                .env("HERMES_MEDIA_TRUST_RECENT_FILES", "0")
+                .current_dir(tmp.path())
+                .args(["--exact", TEST, "--color", "never"])
+                .kill_on_drop(true);
+            for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+                if let Some(value) = std::env::var_os(key) {
+                    command.env(key, value);
+                }
+            }
+            let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
+                .await
+                .expect("isolated file delivery test timed out")
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains(&format!("test {TEST} ... ok")),
+                "{output:?}"
+            );
+            return;
+        }
+
+        let root = std::env::current_dir().unwrap();
+        let store = root.join("dead_targets.json");
+        let registry = DeadTargetRegistry::with_path(store.clone());
+        let router = DeliveryRouter::with_dead_target_registry(registry.clone());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        router
+            .register_adapter(
+                "telegram",
+                Arc::new(FailingMessageAdapter {
+                    calls: calls.clone(),
+                    error_text: "Forbidden: bot was blocked by the user",
+                }),
+            )
+            .await;
+        let cache = root.join("document_cache");
+        std::fs::create_dir(&cache).unwrap();
+        let file = cache.join("summary.txt");
+        std::fs::write(&file, "fixture summary").unwrap();
+        let target = DeliveryTarget::platform_chat("telegram", "42");
+        let path = file.to_str().unwrap();
+
+        let first = router
+            .route_file_delivery(&target, path, None, None, None)
+            .await;
+        assert!(matches!(
+            first,
+            Err(GatewayError::SendFailed(message)) if message == "Forbidden: bot was blocked by the user"
+        ));
+        assert!(DeadTargetRegistry::with_path(store).is_dead("telegram", "42"));
+        router
+            .route_file_delivery(&target, path, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(calls.lock().unwrap().as_slice(), ["42"]);
+
+        registry.clear("telegram", "42");
+        assert!(router
+            .route_file_delivery(&target, path, None, None, None)
+            .await
+            .is_err());
+        assert_eq!(calls.lock().unwrap().as_slice(), ["42", "42"]);
     }
 
     #[tokio::test]
