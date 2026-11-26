@@ -1109,4 +1109,56 @@ mod tests {
             assert_eq!(schema_names(&cfg, &reg), Vec::<String>::new(), "{token}");
         }
     }
+
+    fn register_live_mcp_tool(reg: &Arc<ToolRegistry>) {
+        let schema = tool_schema("mcp_lattice_search", "search", JsonSchema::new("object"));
+        reg.register(
+            "mcp_lattice_search",
+            "mcp-lattice",
+            schema.clone(),
+            Arc::new(NoopTool { schema }),
+            Arc::new(|| true),
+            Vec::new(),
+            true,
+            "search",
+            "x",
+            None,
+        );
+    }
+
+    #[test]
+    fn an_explicit_empty_list_offers_no_tool() {
+        let reg = registry_with_minimal_tools();
+        register_live_mcp_tool(&reg);
+        let mut cfg = GatewayConfig::default();
+        cfg.platform_toolsets.insert("cli".to_string(), Vec::new());
+
+        assert_eq!(
+            configured_platform_toolsets(&cfg, "cli"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            resolve_platform_tool_names(&cfg, "cli", &reg),
+            Vec::<String>::new()
+        );
+        assert_eq!(schema_names(&cfg, &reg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_explicit_list_equal_to_the_default_is_the_users_choice() {
+        let reg = registry_with_minimal_tools();
+        register_live_mcp_tool(&reg);
+        let mut cfg = GatewayConfig::default();
+        assert_eq!(configured_platform_toolsets(&cfg, "cli"), ["hermes-cli"]);
+        // With no entry, live MCP tools join the default toolset.
+        assert!(resolve_platform_tool_names(&cfg, "cli", &reg)
+            .contains(&"mcp_lattice_search".to_string()));
+
+        cfg.platform_toolsets
+            .insert("cli".to_string(), vec!["hermes-cli".to_string()]);
+        let names = resolve_platform_tool_names(&cfg, "cli", &reg);
+        assert!(names.contains(&"terminal".to_string()));
+        // A saved list names its MCP tools, as any other saved list does.
+        assert!(!names.contains(&"mcp_lattice_search".to_string()));
+    }
 }

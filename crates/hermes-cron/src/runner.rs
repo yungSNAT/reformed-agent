@@ -1156,6 +1156,18 @@ tools_config:
     }
 
     #[test]
+    fn an_explicit_empty_cron_list_offers_no_tool() {
+        let mut cfg = GatewayConfig::default();
+        cfg.platform_toolsets.insert("cron".to_string(), Vec::new());
+        let live_names: HashSet<String> = ["terminal", "web_search"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert!(resolve_cron_platform_tool_names(&cfg, &live_names).is_empty());
+    }
+
+    #[test]
     fn test_build_messages_with_skills() {
         let mut job = CronJob::new("0 9 * * *", "Say hello");
         job.skills = Some(vec!["web_search".to_string(), "terminal".to_string()]);

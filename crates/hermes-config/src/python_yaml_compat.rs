@@ -1027,6 +1027,59 @@ platform_toolsets:
         assert_eq!(cron, &vec!["42".to_string()]);
     }
 
+    fn load(raw: &str) -> crate::config::GatewayConfig {
+        let mut root: Value = serde_yaml::from_str(raw).unwrap();
+        let Value::Mapping(ref mut m) = root else {
+            panic!();
+        };
+        normalize_config_yaml_root(m);
+        serde_yaml::from_value(root).unwrap()
+    }
+
+    #[test]
+    fn platform_toolsets_hold_only_the_entries_the_config_sets() {
+        assert!(load("model: x\n").platform_toolsets.is_empty());
+        assert!(crate::config::GatewayConfig::default()
+            .platform_toolsets
+            .is_empty());
+        let saved = serde_yaml::to_string(&crate::config::GatewayConfig::default()).unwrap();
+        assert!(!saved.contains("platform_toolsets"), "{saved}");
+
+        let cfg = load("platform_toolsets:\n  cli: []\n  cron: null\n  acp:\n    - hermes-acp\n");
+        assert_eq!(cfg.platform_toolsets.get("cli"), Some(&Vec::new()));
+        assert_eq!(cfg.platform_toolsets.get("cron"), None);
+        assert_eq!(
+            cfg.platform_toolsets.get("acp"),
+            Some(&vec!["hermes-acp".to_string()])
+        );
+        assert_eq!(cfg.platform_toolsets.len(), 2);
+    }
+
+    #[test]
+    fn a_map_carrying_every_default_entry_keeps_only_the_changed_ones() {
+        // Earlier releases wrote every default entry into config.yaml.
+        let mut raw = String::from("platform_toolsets:\n");
+        for (platform, toolsets) in crate::config::default_platform_toolsets() {
+            let toolsets = match platform.as_str() {
+                "telegram" => vec!["web".to_string()],
+                _ => toolsets,
+            };
+            raw.push_str(&format!("  {platform}: [{}]\n", toolsets.join(", ")));
+        }
+        raw.push_str("  matrix: [hermes-cli]\n");
+        let cfg = load(&raw);
+
+        let mut kept: Vec<_> = cfg.platform_toolsets.into_iter().collect();
+        kept.sort();
+        assert_eq!(
+            kept,
+            [
+                ("matrix".to_string(), vec!["hermes-cli".to_string()]),
+                ("telegram".to_string(), vec!["web".to_string()]),
+            ]
+        );
+    }
+
     #[test]
     fn fallback_providers_and_legacy_model_are_merged() {
         let raw = r#"
