@@ -153,6 +153,7 @@ fn router(auth: Auth, port: u16, chat: Chat) -> Router {
     let private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
         .route("/api/hermes/update/check", get(update_check))
+        .route("/api/profiles", get(profiles))
         .layer(middleware::from_fn_with_state(gateway.clone(), token_guard));
     Router::new()
         .route("/api/health", get(health))
@@ -245,6 +246,15 @@ async fn update_check() -> Json<Value> {
         "update_command": "",
         "message": "This gateway does not check for updates; update it the way it was installed.",
     }))
+}
+
+/// The install's profiles; reading them walks folders, so off the runtime's threads.
+async fn profiles(State(gw): State<Arc<Gateway>>) -> Response {
+    let chat = Arc::clone(&gw.chat);
+    match tokio::task::spawn_blocking(move || chat.profiles_route()).await {
+        Ok(listing) => Json(listing).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 fn token_matches(given: Option<&str>, token: &str) -> bool {
