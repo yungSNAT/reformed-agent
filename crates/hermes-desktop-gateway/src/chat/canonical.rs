@@ -7,17 +7,17 @@
 //!
 //! One profile is served, `default`, so a request naming any other is refused. A session's
 //! metadata cannot be changed here, so its revision stays 0.
-// shortcut: a prompt sent whilst a turn runs is refused (session busy), not queued; a session
-// resumed on a second connection gets only the turns started there; `session.create` keeps no
-// record of its `request_id`, so a retry after a lost reply makes a second empty session.
-// Upgrade path: a per-session queue and event fan-out, as upstream's session authority keeps.
+//!
+//! A prompt sent whilst a turn runs is queued (its receipt says `queued`), a session resumed on
+//! another connection streams there too, and a retried `session.create` with the same
+//! `request_id` gets the same session while the gateway remembers it (its last
+//! [`super::CREATE_RECORDS`] creates).
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
-use super::{Chat, LiveSession, Outbox, RpcError, INVALID_PARAMS};
+use super::{ready, Chat, Conn, Handler, LiveSession, RpcError, Taken, CREATE_RECORDS};
 use crate::CANONICAL_PROTOCOL;
 
 /// Upstream's code for every canonical refusal (its `data.reason` names the cause).
@@ -33,10 +33,39 @@ const PROFILE: &str = "default";
 /// working folder, toolsets) is refused rather than dropped.
 const CREATE_KEYS: [&str; 4] = ["request_id", "source", "profile", "service_tier"];
 
+/// The methods a canonical connection answers its own way; the rest are the legacy wire's.
+pub(super) const METHODS: &[(&str, Handler)] = &[
+    ("session.create", |r| {
+        ready(r.chat.canonical_create(&r.params, &r.conn))
+    }),
+    ("session.resume", |r| {
+        ready(r.chat.canonical_resume(&r.params, &r.conn))
+    }),
+    ("prompt.submit", |r| {
+        ready(r.chat.canonical_submit(&r.params, &r.conn))
+    }),
+];
+
+/// Refuses a request that names a profile other than the one served.
+pub(super) fn refuse_profile(params: &Map<String, Value>) -> Option<RpcError> {
+    params
+        .get("profile")
+        .is_some_and(|p| p != PROFILE)
+        .then(|| {
+            (
+                REFUSED,
+                "profile_mismatch: this gateway serves the default profile only".into(),
+            )
+        })
+}
+
 /// A turn admitted on the canonical wire, stamped on each of its events.
 #[derive(Clone)]
 pub(super) struct Admission {
     pub(super) id: String,
+    /// Prompts admitted in its session up to and including this one.
+    pub(super) sequence: u64,
+    /// Its turn's number among the session's turns, once it starts.
     pub(super) generation: u64,
     replay_epoch: String,
     input_id: Option<String>,
@@ -63,7 +92,7 @@ impl Admission {
             json!([{
                 "admission_id": self.id,
                 "ref": self.reference(session_id),
-                "sequence": self.generation,
+                "sequence": self.sequence,
                 "status": "started",
                 "outcome": null,
                 "authority_epoch": AUTHORITY_EPOCH,
@@ -98,38 +127,12 @@ impl Admission {
 }
 
 impl Chat {
-    /// Answers one request on a canonical connection; `replay_epoch` is the gateway's.
-    pub(crate) fn call_canonical(
-        self: &Arc<Self>,
-        method: &str,
-        params: &Value,
-        outbox: &Outbox,
-        replay_epoch: &str,
-    ) -> Result<Value, RpcError> {
-        let empty = Map::new();
-        let named = match params {
-            Value::Object(map) => map,
-            Value::Null => &empty,
-            _ => return Err((INVALID_PARAMS, "params must be an object".into())),
-        };
-        if named.get("profile").is_some_and(|p| p != PROFILE) {
-            return Err((
-                REFUSED,
-                "profile_mismatch: this gateway serves the default profile only".into(),
-            ));
-        }
-        match method {
-            "session.create" => self.canonical_create(named, replay_epoch),
-            "session.resume" => self.canonical_resume(named, replay_epoch),
-            "prompt.submit" => self.canonical_submit(named, outbox, replay_epoch),
-            _ => self.call(method, params, outbox),
-        }
-    }
-
+    /// Creates a session, or answers again for the one an earlier request with the same
+    /// `request_id` made, and streams it to `conn`.
     fn canonical_create(
         &self,
         params: &Map<String, Value>,
-        replay_epoch: &str,
+        conn: &Conn,
     ) -> Result<Value, RpcError> {
         if let Some(key) = params.keys().find(|k| !CREATE_KEYS.contains(&k.as_str())) {
             return Err((
@@ -137,12 +140,15 @@ impl Chat {
                 format!("invalid_params: {key} is not a session option this gateway serves"),
             ));
         }
-        if !matches!(params.get("request_id"), Some(Value::String(r)) if !r.is_empty()) {
-            return Err((
-                REFUSED,
-                "invalid_params: request_id must be a non-empty string".into(),
-            ));
-        }
+        let request_id = match params.get("request_id") {
+            Some(Value::String(r)) if !r.is_empty() => r,
+            _ => {
+                return Err((
+                    REFUSED,
+                    "invalid_params: request_id must be a non-empty string".into(),
+                ))
+            }
+        };
         if params.get("source").is_some_and(|s| !s.is_string()) {
             return Err((REFUSED, "invalid_params: source must be a string".into()));
         }
@@ -153,18 +159,44 @@ impl Chat {
                 "invalid_params: only the normal service tier is served".into(),
             ));
         }
-        let id = uuid::Uuid::new_v4().to_string();
-        let session = Arc::new(LiveSession::default());
-        self.lock_sessions()
-            .insert(id.clone(), Arc::clone(&session));
-        Ok(self.snapshot(&id, &session, replay_epoch, Vec::new(), false))
+        // One lock over the lookup, the creation and the record, so 2 requests with one id
+        // make one session.
+        let mut created = self.created.lock().unwrap_or_else(|e| e.into_inner());
+        let earlier = created
+            .iter()
+            .find(|(request, _)| request == request_id)
+            .and_then(|(_, id)| Some((id.clone(), self.lock_sessions().get(id).cloned()?)));
+        let repeat = earlier.is_some();
+        let (id, session) = match earlier {
+            Some(found) => found,
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                let session = self.new_session();
+                self.lock_sessions()
+                    .insert(id.clone(), Arc::clone(&session));
+                created.retain(|(request, _)| request != request_id);
+                created.push_back((request_id.clone(), id.clone()));
+                if created.len() > CREATE_RECORDS {
+                    created.pop_front();
+                }
+                (id, session)
+            }
+        };
+        drop(created);
+        session.subscribe(conn.id, &conn.outbox);
+        // A repeated create answers with what the session holds by now.
+        let rows = match repeat.then(|| self.history(&id)).flatten() {
+            Some(Ok(rows)) => rows,
+            _ => Vec::new(),
+        };
+        Ok(self.snapshot(&id, &session, rows, false))
     }
 
-    /// Attaches to a live session, or to one saved earlier (a restarted gateway's).
+    /// Attaches `conn` to a live session, or to one saved earlier (a restarted gateway's).
     fn canonical_resume(
         &self,
         params: &Map<String, Value>,
-        replay_epoch: &str,
+        conn: &Conn,
     ) -> Result<Value, RpcError> {
         let Some(Value::String(id)) = params.get("session_id") else {
             return Err((
@@ -183,18 +215,22 @@ impl Chat {
             match sessions.get(id) {
                 Some(session) => Arc::clone(session),
                 None if rows.is_empty() => return Err(not_found()),
-                None => Arc::clone(sessions.entry(id.clone()).or_default()),
+                None => Arc::clone(
+                    sessions
+                        .entry(id.clone())
+                        .or_insert_with(|| self.new_session()),
+                ),
             }
         };
+        session.subscribe(conn.id, &conn.outbox);
         let omit = params.get("omit_messages") == Some(&Value::Bool(true));
-        Ok(self.snapshot(id, &session, replay_epoch, rows, omit))
+        Ok(self.snapshot(id, &session, rows, omit))
     }
 
     fn canonical_submit(
         self: &Arc<Self>,
         params: &Map<String, Value>,
-        outbox: &Outbox,
-        replay_epoch: &str,
+        conn: &Conn,
     ) -> Result<Value, RpcError> {
         let (id, text) = super::turn_request(params)?;
         // The desktop names its input `submission_id`; upstream's wire calls it `input_id`.
@@ -210,20 +246,28 @@ impl Chat {
         };
         let admission = Admission {
             id: uuid::Uuid::new_v4().simple().to_string(),
+            sequence: 0,
             generation: 0,
-            replay_epoch: replay_epoch.to_string(),
+            replay_epoch: self.replay_epoch().to_string(),
             input_id,
             text: text.clone(),
             profile_id: self.home.display().to_string(),
         };
         let reference = admission.reference(id);
         let admission_id = admission.id.clone();
-        let generation = self.start_turn(id, text, outbox, Some(admission))?;
+        let (status, sequence, generation) =
+            match self.start_turn(id, text, conn, Some(admission))? {
+                Taken::Started {
+                    generation,
+                    sequence,
+                } => ("started", sequence, Some(generation)),
+                Taken::Queued { sequence } => ("queued", sequence, None),
+            };
         Ok(json!({
             "admission_id": admission_id,
             "ref": reference,
-            "sequence": generation,
-            "status": "started",
+            "sequence": sequence,
+            "status": status,
             "outcome": null,
             "authority_epoch": AUTHORITY_EPOCH,
             "execution_generation": generation,
@@ -232,14 +276,8 @@ impl Chat {
 
     /// A session's snapshot, as upstream's `session.create` and `session.resume` answer: its saved
     /// user and assistant `rows`, or only their count when `omit` is set.
-    fn snapshot(
-        &self,
-        id: &str,
-        session: &LiveSession,
-        replay_epoch: &str,
-        rows: Vec<Value>,
-        omit: bool,
-    ) -> Value {
+    fn snapshot(&self, id: &str, session: &LiveSession, rows: Vec<Value>, omit: bool) -> Value {
+        let (running, last_sequence, generation) = session.state();
         let mut info = self.session_info();
         info["desktop_protocol"] = CANONICAL_PROTOCOL.into();
         info["profile_name"] = PROFILE.into();
@@ -249,12 +287,12 @@ impl Chat {
             "stored_session_id": id,
             "messages": if omit { Vec::new() } else { rows },
             "message_count": count,
-            "running": session.busy.load(Ordering::Acquire),
+            "running": running,
             "authority_epoch": AUTHORITY_EPOCH,
-            "replay_epoch": replay_epoch,
-            "last_sequence": session.seq.load(Ordering::Acquire),
+            "replay_epoch": self.replay_epoch(),
+            "last_sequence": last_sequence,
             "revision": 0,
-            "execution_generation": session.generation.load(Ordering::Acquire),
+            "execution_generation": generation,
             "pending": [],
             "prompts": [],
             "info": info,

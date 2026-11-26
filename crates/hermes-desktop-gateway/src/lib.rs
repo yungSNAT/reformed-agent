@@ -23,6 +23,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -44,7 +45,7 @@ pub mod local;
 mod tickets;
 
 pub use chat::Chat;
-use chat::{Outgoing, RpcError};
+use chat::{Conn, Outgoing, Reply};
 use tickets::{Purpose, Tickets};
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
@@ -109,9 +110,11 @@ enum Auth {
 struct Gateway {
     auth: Auth,
     port: u16,
-    replay_epoch: String,
     chat: Arc<Chat>,
 }
+
+/// Numbers each connection, so a session knows which ones it streams to.
+static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// A new random token: 64 hexadecimal characters from 2 version 4 UUIDs (244 random bits).
 pub fn new_token() -> String {
@@ -136,7 +139,6 @@ fn router(auth: Auth, port: u16, chat: Chat) -> Router {
     let gateway = Arc::new(Gateway {
         auth,
         port,
-        replay_epoch: uuid::Uuid::new_v4().simple().to_string(),
         chat: Arc::new(chat),
     });
     let private = Router::new()
@@ -343,7 +345,6 @@ async fn upgrade(
     ) {
         return status.into_response();
     }
-    let epoch = gw.replay_epoch.clone();
     let chat = Arc::clone(&gw.chat);
     let canonical = offered.is_some();
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
@@ -354,7 +355,7 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, epoch, chat, canonical))
+        .on_upgrade(move |socket| session(socket, chat, canonical))
 }
 
 /// The ticket a native dial offers as its `hermes-gateway-ticket.` subprotocol: `None` when it
@@ -380,7 +381,7 @@ fn protocol_ticket(headers: &HeaderMap) -> Result<Option<&str>, ()> {
 
 /// One connection. A `canonical` one ([`CANONICAL_PROTOCOL`]) announces the session authority in
 /// its `gateway.ready` and answers the session verbs as [`chat`]'s `canonical` module does.
-async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>, canonical: bool) {
+async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool) {
     let mut ready = json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -389,14 +390,15 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>, c
             // the desktop on its own polling until this backend broadcasts changes.
             "skin": {},
             "change_events": false,
-            "replay_epoch": replay_epoch,
+            "replay_epoch": chat.replay_epoch(),
         }},
     });
     if canonical {
         ready["params"]["payload"]["session_authority"] = true.into();
     }
-    // Turns stream their events through this connection's outbox, after `gateway.ready`;
-    // replies go out first, as each is written before the next outbox frame is read. Queued
+    // Turns stream their events through the outbox of each connection on their session,
+    // after `gateway.ready`; replies go out first, as each is written before the next outbox
+    // frame is read. A request is answered before the next frame is read. Queued
     // events are written before the next request is read, so a client that reads slowly cannot
     // start more turns while finished ones wait. A turn keeps its slot until its last event is
     // written, so the turn cap bounds the replies waiting across all connections. A frame not
@@ -405,23 +407,26 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>, c
     let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
     // Cannot fail: `events` lives until the session ends.
     let _ = outbox.send(Outgoing::from(ready));
-    let call = |method: &str, params: &Value| {
-        if canonical {
-            chat.call_canonical(method, params, &outbox, &replay_epoch)
-        } else {
-            chat.call(method, params, &outbox)
-        }
+    let conn = Conn {
+        id: CONNECTIONS.fetch_add(1, Ordering::Relaxed),
+        outbox,
+        canonical,
     };
+    let call = |method: &str, params: Value| chat.call(&conn, method, params);
     loop {
-        let frame = tokio::select! {
+        let inbound = tokio::select! {
             biased;
-            Some(event) = events.recv() => Some(event),
-            inbound = socket.recv() => match inbound {
+            Some(event) = events.recv() => Ok(event),
+            inbound = socket.recv() => Err(inbound),
+        };
+        let frame = match inbound {
+            Ok(event) => Some(event),
+            Err(inbound) => match inbound {
                 Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
-                    reply_to(&text, &call).map(Outgoing::from)
+                    reply_to(&text, &call).await.map(Outgoing::from)
                 }
                 Some(Ok(Message::Text(text))) => match attach_request(&text) {
-                    Some(request) => reply_to_one(&request, &call).map(Outgoing::from),
+                    Some(request) => reply_to_one(request, &call).await.map(Outgoing::from),
                     None => break,
                 },
                 Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,
@@ -430,13 +435,14 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>, c
             },
         };
         if let Some(outgoing) = frame {
-            let text = outgoing.frame.to_string();
             let deadline = outgoing.queued + chat.write_timeout();
-            if !write_by(deadline, socket.send(Message::Text(text.into()))).await {
+            let text = axum::extract::ws::Utf8Bytes::from(&*outgoing.text);
+            if !write_by(deadline, socket.send(Message::Text(text))).await {
                 break;
             }
         }
     }
+    chat.disconnect(conn.id);
 }
 
 /// Runs `write` until it finishes or `deadline` passes: true if it finished first. `write` is
@@ -466,10 +472,10 @@ fn rpc_error(id: Value, code: i64, message: String) -> Value {
 }
 
 /// Runs one request's method; the error is a JSON-RPC code and message.
-type Call<'a> = dyn Fn(&str, &Value) -> Result<Value, RpcError> + 'a;
+type Call<'a> = dyn Fn(&str, Value) -> Reply + 'a;
 
-/// The reply to one inbound frame: one request or a JSON-RPC batch of them.
-fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
+/// The reply to one inbound frame: one request or a JSON-RPC batch of them, run in order.
+async fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return Some(rpc_error(Value::Null, -32700, "parse error".into()));
     };
@@ -485,13 +491,13 @@ fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
             format!("invalid request: a batch holds at most {MAX_BATCH} requests"),
         )),
         Value::Array(items) => {
-            let replies: Vec<Value> = items
-                .iter()
-                .filter_map(|item| reply_to_one(item, call))
-                .collect();
+            let mut replies = Vec::new();
+            for item in items {
+                replies.extend(reply_to_one(item, call).await);
+            }
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
-        single => reply_to_one(&single, call),
+        single => reply_to_one(single, call).await,
     }
 }
 
@@ -615,11 +621,12 @@ fn attach_request(text: &str) -> Option<Value> {
 /// -32600, where the specification allows no reply to any notification. Upstream's gateway
 /// (`_normalize_request` in tui_gateway/server.py) answers an empty method that way with or
 /// without an id, and Hermes Desktop never sends one.
-fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
+async fn reply_to_one(frame: Value, call: &Call<'_>) -> Option<Value> {
     let invalid = |id: Value| Some(rpc_error(id, -32600, "invalid request".into()));
-    let Some(request) = frame.as_object() else {
+    let Value::Object(mut request) = frame else {
         return invalid(Value::Null);
     };
+    let params = request.remove("params");
     let id = request.get("id");
     let id_valid = matches!(
         id,
@@ -629,18 +636,15 @@ fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
         Some(id) if id_valid => id.clone(),
         _ => Value::Null,
     };
-    let params_valid = matches!(
-        request.get("params"),
-        None | Some(Value::Array(_) | Value::Object(_))
-    );
+    let params_valid = matches!(params, None | Some(Value::Array(_) | Value::Object(_)));
+    let params = params.unwrap_or(Value::Null);
     let version_2 = request.get("jsonrpc").and_then(Value::as_str) == Some("2.0");
     match request.get("method") {
         Some(Value::String(method))
             if version_2 && !method.is_empty() && id_valid && params_valid =>
         {
             id?;
-            let params = request.get("params").unwrap_or(&Value::Null);
-            Some(match call(method, params) {
+            Some(match call(method, params).await {
                 Ok(result) => json!({"jsonrpc": "2.0", "id": reply_id, "result": result}),
                 Err((code, message)) => rpc_error(reply_id, code, message),
             })
@@ -739,19 +743,23 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    #[test]
-    fn notifications_and_responses_get_no_reply_and_run_nothing() {
+    #[tokio::test]
+    async fn notifications_and_responses_get_no_reply_and_run_nothing() {
         let call: &Call<'_> = &|method, _| panic!("{method} was run");
-        assert_eq!(reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#, call), None);
         assert_eq!(
-            reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#, call),
+            reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#, call).await,
+            None
+        );
+        assert_eq!(
+            reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#, call).await,
             None
         );
         assert_eq!(
             reply_to(
                 r#"[{"jsonrpc":"2.0","method":"x"},{"id":2,"result":{}}]"#,
                 call
-            ),
+            )
+            .await,
             None
         );
     }

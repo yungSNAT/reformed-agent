@@ -7,10 +7,17 @@
 //! (`image.attach_bytes`) under `<home>/images`, which the next prompt sends the model. The agent
 //! expands a prompt's `@file:` references, confined to the working folder, so the model reads
 //! an attachment's text. Tool calls and their approval prompts come with a later change.
+//!
+//! Every connection that creates, resumes or prompts a session gets its events (see
+//! [`session`]); a prompt sent during a turn waits for it.
+//!
+//! Methods are looked up in [`AREAS`]: each area is a module with a `METHODS` table of names
+//! and [`Handler`]s, and a canonical connection looks in `canonical::METHODS` first.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::future::Future;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,7 +33,10 @@ use tokio::time::Instant;
 use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
+mod session;
 use canonical::Admission;
+pub(crate) use session::LiveSession;
+use session::{Admitted, Budget, Queued, Refused};
 
 /// Marks a message whose content is a JSON array of text and image parts, which the agent's
 /// providers send as such (`ACP_MULTIMODAL_PREFIX` in hermes-agent).
@@ -36,23 +46,78 @@ const PARTS_PREFIX: &str = "__hermes_acp_parts_json__:";
 pub(crate) type Outbox = UnboundedSender<Outgoing>;
 
 /// A frame for the connection to write and when it was queued. A turn's last event carries
-/// the turn's slot, so the slot frees once that event is written or dropped with a closed
-/// connection.
+/// the turn's slot, shared by every connection's copy, so the slot frees once each copy is
+/// written or dropped with a closed connection.
 pub(crate) struct Outgoing {
-    pub(crate) frame: Value,
+    pub(crate) text: Arc<str>,
     pub(crate) queued: Instant,
-    _slot: Option<OwnedSemaphorePermit>,
+    _slot: Option<Arc<OwnedSemaphorePermit>>,
+}
+
+impl Outgoing {
+    pub(crate) fn shared(
+        text: Arc<str>,
+        queued: Instant,
+        slot: Option<Arc<OwnedSemaphorePermit>>,
+    ) -> Self {
+        Self {
+            text,
+            queued,
+            _slot: slot,
+        }
+    }
 }
 
 impl From<Value> for Outgoing {
     fn from(frame: Value) -> Self {
-        Self {
-            frame,
-            queued: Instant::now(),
-            _slot: None,
-        }
+        Self::shared(frame.to_string().into(), Instant::now(), None)
     }
 }
+
+/// One WebSocket connection.
+#[derive(Clone)]
+pub(crate) struct Conn {
+    /// Unique within the process.
+    pub(crate) id: u64,
+    pub(crate) outbox: Outbox,
+    /// Speaks the canonical wire ([`crate::CANONICAL_PROTOCOL`]).
+    pub(crate) canonical: bool,
+}
+
+/// One request as a handler gets it. Absent params arrive as an empty map.
+pub(crate) struct Request {
+    pub(crate) chat: Arc<Chat>,
+    pub(crate) conn: Conn,
+    pub(crate) params: Map<String, Value>,
+}
+
+/// A method's result, ready now or later.
+pub(crate) type Reply = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + Send>>;
+
+/// Runs one method.
+pub(crate) type Handler = fn(Request) -> Reply;
+
+/// A reply that is ready now.
+pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
+    Box::pin(std::future::ready(result))
+}
+
+/// Every area's methods; a new area adds its table here.
+const AREAS: &[&[(&str, Handler)]] = &[METHODS];
+
+/// The methods served on both wires.
+const METHODS: &[(&str, Handler)] = &[
+    ("setup.runtime_check", |r| ready(Ok(r.chat.runtime_check()))),
+    ("wake.status", |_| ready(Ok(wake_status()))),
+    ("session.create", |r| ready(Ok(r.chat.create(&r.conn)))),
+    ("file.attach", |r| ready(r.chat.attach(&r.params))),
+    ("image.attach_bytes", |r| {
+        ready(r.chat.attach_image(&r.params))
+    }),
+    ("prompt.submit", |r| {
+        ready(r.chat.submit(&r.params, &r.conn))
+    }),
+];
 
 /// A JSON-RPC error: code and message.
 pub(crate) type RpcError = (i64, String);
@@ -86,15 +151,23 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest session id a request may name.
 const MAX_SESSION_ID: usize = 128;
 
+/// Most `session.create` request ids remembered, so a retried create gets its session back.
+const CREATE_RECORDS: usize = 1024;
+
 /// The model, the sessions database and the live sessions.
 pub struct Chat {
     config: GatewayConfig,
     home: PathBuf,
-    // shortcut: sessions live until the gateway exits (about 100 bytes each, created only by
-    // a token holder); dropping idle ones comes with session close and resume.
+    // shortcut: sessions live until the gateway exits (a few hundred bytes each plus their
+    // event logs, which the budget bounds; created only by a token holder); dropping idle ones
+    // comes with session close.
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
+    /// Canonical `session.create` request ids and the sessions they made, oldest first.
+    created: Mutex<VecDeque<(String, String)>>,
+    budget: Arc<Budget>,
     turns: Arc<Semaphore>,
     write_timeout: Duration,
+    replay_epoch: Arc<str>,
 }
 
 /// The reply streamed so far and its length in UTF-16 units, the desktop's offsets.
@@ -104,30 +177,21 @@ struct Streamed {
     units: usize,
 }
 
-#[derive(Default)]
-struct LiveSession {
-    /// Last event number sent for this session; the desktop orders and deduplicates by it.
-    seq: AtomicU64,
-    /// Turns started in this session; the canonical wire's execution generation.
-    generation: AtomicU64,
-    busy: AtomicBool,
-    /// Images staged by `image.attach_bytes` for the next prompt.
-    images: Mutex<Vec<StagedImage>>,
+/// A prompt taken for a session: its turn started, or it waits behind the running turn.
+enum Taken {
+    Started { generation: u64, sequence: u64 },
+    Queued { sequence: u64 },
 }
 
-impl LiveSession {
-    fn images(&self) -> std::sync::MutexGuard<'_, Vec<StagedImage>> {
-        // Pushes and takes only, so a poisoned lock is still whole.
-        self.images.lock().unwrap_or_else(|e| e.into_inner())
-    }
-}
+/// Leaves a session idle, dropping its waiting prompts, if its turn task ends before it has
+/// run them all (a panic, or the runtime shutting down).
+struct DrainGuard(Option<Arc<LiveSession>>);
 
-/// Clears a session's busy flag when its turn ends, panics included.
-struct TurnGuard(Arc<LiveSession>);
-
-impl Drop for TurnGuard {
+impl Drop for DrainGuard {
     fn drop(&mut self) {
-        self.0.busy.store(false, Ordering::Release);
+        if let Some(session) = self.0.take() {
+            session.abandon();
+        }
     }
 }
 
@@ -143,8 +207,28 @@ impl Chat {
             config,
             home,
             sessions: Mutex::default(),
+            created: Mutex::default(),
+            budget: Arc::default(),
             turns: Arc::new(Semaphore::new(MAX_TURNS)),
             write_timeout: WRITE_TIMEOUT,
+            replay_epoch: uuid::Uuid::new_v4().simple().to_string().into(),
+        }
+    }
+
+    /// Identifies this process's event numbering (`gateway.ready`'s `replay_epoch`).
+    pub(crate) fn replay_epoch(&self) -> &str {
+        &self.replay_epoch
+    }
+
+    fn new_session(&self) -> Arc<LiveSession> {
+        Arc::new(LiveSession::new(Arc::clone(&self.budget)))
+    }
+
+    /// Stops streaming to connection `id`, which has closed.
+    pub(crate) fn disconnect(&self, id: u64) {
+        let sessions: Vec<Arc<LiveSession>> = self.lock_sessions().values().cloned().collect();
+        for session in sessions {
+            session.unsubscribe(id);
         }
     }
 
@@ -167,28 +251,43 @@ impl Chat {
             .filter(|m| !m.is_empty())
     }
 
-    /// Answers one JSON-RPC request whose `params` are absent (null) or an object; `outbox`
-    /// receives the events a turn streams later.
-    pub(crate) fn call(
-        self: &Arc<Self>,
-        method: &str,
-        params: &Value,
-        outbox: &Outbox,
-    ) -> Result<Value, RpcError> {
-        let empty = Map::new();
-        let named = match params {
+    /// Answers one JSON-RPC request on `conn`, whose `params` must be absent (null) or an
+    /// object. A canonical connection checks the params and profile first, as upstream's
+    /// session authority does; the legacy wire names an unknown method before bad params.
+    pub(crate) fn call(self: &Arc<Self>, conn: &Conn, method: &str, params: Value) -> Reply {
+        let params = match params {
             Value::Object(map) => Ok(map),
-            Value::Null => Ok(&empty),
+            Value::Null => Ok(Map::new()),
             _ => Err((INVALID_PARAMS, "params must be an object".to_string())),
         };
-        match method {
-            "setup.runtime_check" => named.map(|_| self.runtime_check()),
-            "wake.status" => named.map(|_| wake_status()),
-            "session.create" => named.map(|_| self.create()),
-            "file.attach" => self.attach(named?),
-            "image.attach_bytes" => self.attach_image(named?),
-            "prompt.submit" => self.submit(named?, outbox),
-            _ => Err((METHOD_NOT_FOUND, format!("method not found: {method}"))),
+        if conn.canonical {
+            let refused = match &params {
+                Err(e) => Some(e.clone()),
+                Ok(params) => canonical::refuse_profile(params),
+            };
+            if let Some(refused) = refused {
+                return ready(Err(refused));
+            }
+        }
+        let canonical = conn.canonical.then_some(canonical::METHODS);
+        let handler = canonical
+            .into_iter()
+            .chain(AREAS.iter().copied())
+            .flatten()
+            .find(|(name, _)| *name == method);
+        let Some((_, handler)) = handler else {
+            return ready(Err((
+                METHOD_NOT_FOUND,
+                format!("method not found: {method}"),
+            )));
+        };
+        match params {
+            Ok(params) => handler(Request {
+                chat: Arc::clone(self),
+                conn: conn.clone(),
+                params,
+            }),
+            Err(e) => ready(Err(e)),
         }
     }
 
@@ -210,10 +309,11 @@ impl Chat {
         }
     }
 
-    fn create(&self) -> Value {
+    fn create(&self, conn: &Conn) -> Value {
         let id = uuid::Uuid::new_v4().to_string();
-        self.lock_sessions()
-            .insert(id.clone(), Arc::new(LiveSession::default()));
+        let session = self.new_session();
+        session.subscribe(conn.id, &conn.outbox);
+        self.lock_sessions().insert(id.clone(), session);
         json!({
             "session_id": id,
             "stored_session_id": id,
@@ -338,7 +438,7 @@ impl Chat {
     fn submit(
         self: &Arc<Self>,
         params: &Map<String, Value>,
-        outbox: &Outbox,
+        conn: &Conn,
     ) -> Result<Value, RpcError> {
         // The desktop sends a submission id first and, on this refusal, the prompt without
         // one; upstream's `hermes serve` answers the same way, as it keeps no submission log.
@@ -350,51 +450,105 @@ impl Chat {
             ));
         }
         let (id, text) = turn_request(params)?;
-        self.start_turn(id, text, outbox, None)?;
-        Ok(json!({"status": "streaming"}))
+        Ok(match self.start_turn(id, text, conn, None)? {
+            Taken::Started { .. } => json!({"status": "streaming"}),
+            Taken::Queued { .. } => json!({"status": "queued"}),
+        })
     }
 
-    /// Starts a turn in session `id` that streams its events to `outbox`, stamped with
-    /// `admission` on the canonical wire; returns the turn's execution generation.
+    /// Takes a prompt for session `id` and streams its turn's events to every connection on
+    /// the session, `conn` included, stamped with `admission` on the canonical wire. An idle
+    /// session starts the turn now; a busy one runs it after the turns before it (upstream's
+    /// `queue` busy mode: our turns cannot be redirected).
+    // shortcut: a waiting prompt is held in memory only, so it is lost if the gateway exits
+    // before it runs (upstream saves its user row when it is accepted).
     fn start_turn(
         self: &Arc<Self>,
         id: &str,
         text: String,
-        outbox: &Outbox,
-        mut admission: Option<Admission>,
-    ) -> Result<u64, RpcError> {
+        conn: &Conn,
+        admission: Option<Admission>,
+    ) -> Result<Taken, RpcError> {
         let Some(session) = self.lock_sessions().get(id).cloned() else {
             return Err((SESSION_NOT_FOUND, "session not found".into()));
         };
-        let Ok(slot) = Arc::clone(&self.turns).try_acquire_owned() else {
-            return Err((
-                NO_TURN_SLOT,
-                format!("{MAX_TURNS} turns are running; send again when one ends"),
-            ));
-        };
-        if session.busy.swap(true, Ordering::AcqRel) {
-            return Err((SESSION_BUSY, "session busy".into()));
-        }
-        // The prompt takes every image staged so far; one staged during its turn waits for the
-        // next prompt.
+        session.subscribe(conn.id, &conn.outbox);
+        // The prompt takes every image staged so far; one staged after it waits for the next
+        // prompt.
         let images = std::mem::take(&mut *session.images());
-        let generation = session.generation.fetch_add(1, Ordering::AcqRel) + 1;
-        if let Some(admission) = admission.as_mut() {
-            admission.generation = generation;
-        }
-        let guard = TurnGuard(session);
-        let turn = Turn {
-            chat: Arc::clone(self),
-            id: id.to_string(),
-            turn_id: uuid::Uuid::new_v4().simple().to_string(),
-            outbox: outbox.clone(),
-            slot: Some(slot),
+        let prompt = Queued {
+            text,
+            images,
             admission,
         };
+        let slot = || Arc::clone(&self.turns).try_acquire_owned().ok();
+        let (refused, prompt) = match session.admit(slot, prompt) {
+            Ok(Admitted::Start {
+                generation,
+                sequence,
+                slot,
+                prompt,
+            }) => {
+                self.drain(id, session, prompt, slot);
+                return Ok(Taken::Started {
+                    generation,
+                    sequence,
+                });
+            }
+            Ok(Admitted::Queued { sequence }) => return Ok(Taken::Queued { sequence }),
+            Err(refusal) => refusal,
+        };
+        // Refused: the images wait for the next prompt again.
+        session.images().splice(0..0, prompt.images);
+        Err(match refused {
+            Refused::NoSlot => (
+                NO_TURN_SLOT,
+                format!("{MAX_TURNS} turns are running; send again when one ends"),
+            ),
+            Refused::QueueFull => (
+                SESSION_BUSY,
+                "session busy: its queue of prompts is full; send again when a turn ends".into(),
+            ),
+        })
+    }
+
+    /// Runs `prompt` as session `id`'s turn holding `slot`, then each prompt that waits for
+    /// the session, in order, each with a turn slot as one frees. This task is the session's
+    /// only runner until its queue is empty.
+    fn drain(
+        self: &Arc<Self>,
+        id: &str,
+        session: Arc<LiveSession>,
+        prompt: Queued,
+        slot: OwnedSemaphorePermit,
+    ) {
+        let chat = Arc::clone(self);
+        let id = id.to_string();
         tokio::spawn(async move {
-            turn.run(text, images, &guard.0).await;
+            let mut guard = DrainGuard(Some(Arc::clone(&session)));
+            let mut next = Some((prompt, slot));
+            while let Some((prompt, slot)) = next {
+                let turn = Turn {
+                    chat: Arc::clone(&chat),
+                    id: id.clone(),
+                    turn_id: uuid::Uuid::new_v4().simple().to_string(),
+                    slot: Some(Arc::new(slot)),
+                    admission: prompt.admission,
+                };
+                turn.run(prompt.text, prompt.images, &session).await;
+                next = match session.next() {
+                    // The prompt was accepted, so it waits for a slot rather than failing.
+                    Some((prompt, _)) => match Arc::clone(&chat.turns).acquire_owned().await {
+                        Ok(slot) => Some((prompt, slot)),
+                        Err(_) => None,
+                    },
+                    None => {
+                        guard.0 = None;
+                        None
+                    }
+                };
+            }
         });
-        Ok(generation)
     }
 
     /// Runs `work` on the sessions database on the blocking pool. A turn's store calls block,
@@ -549,9 +703,8 @@ struct Turn {
     chat: Arc<Chat>,
     id: String,
     turn_id: String,
-    outbox: Outbox,
     /// The turn's slot, sent with its last event.
-    slot: Option<OwnedSemaphorePermit>,
+    slot: Option<Arc<OwnedSemaphorePermit>>,
     /// Set on the canonical wire.
     admission: Option<Admission>,
 }
@@ -562,20 +715,14 @@ impl Turn {
         session: &LiveSession,
         kind: &str,
         payload: Value,
-        slot: Option<OwnedSemaphorePermit>,
+        slot: Option<Arc<OwnedSemaphorePermit>>,
     ) {
-        let seq = session.seq.fetch_add(1, Ordering::AcqRel) + 1;
-        let mut params =
-            json!({"type": kind, "session_id": self.id, "payload": payload, "seq": seq});
+        let mut params = json!({"type": kind, "session_id": self.id, "payload": payload});
         if let Some(admission) = &self.admission {
             admission.stamp(&mut params);
         }
-        // A closed socket drops the frame, and with it any slot; the turn still runs and is
-        // saved.
-        let _ = self.outbox.send(Outgoing {
-            _slot: slot,
-            ..Outgoing::from(json!({"jsonrpc": "2.0", "method": "event", "params": params}))
-        });
+        // With no connection left the turn still runs and is saved.
+        session.publish(params, slot);
     }
 
     async fn run(mut self, text: String, images: Vec<StagedImage>, session: &Arc<LiveSession>) {
@@ -748,7 +895,6 @@ impl Turn {
         let agent = AgentLoop::new(agent_config, Arc::new(ToolRegistry::new()), provider);
 
         let delta = DeltaSink {
-            outbox: self.outbox.clone(),
             id: self.id.clone(),
             turn_id: self.turn_id.clone(),
             session: Arc::clone(session),
@@ -775,7 +921,6 @@ fn streamed_text(streamed: &Mutex<Streamed>) -> String {
 /// Sends each streamed piece of the reply as `message.delta`, stamped with the turn, segment
 /// and UTF-16 offset the desktop uses to drop a piece it already has.
 struct DeltaSink {
-    outbox: Outbox,
     id: String,
     turn_id: String,
     session: Arc<LiveSession>,
@@ -799,19 +944,15 @@ impl DeltaSink {
             streamed.text.push_str(&text);
             offset
         };
-        let seq = self.session.seq.fetch_add(1, Ordering::AcqRel) + 1;
         let mut params = json!({
             "type": "message.delta",
             "session_id": self.id,
             "payload": {"text": text, "turn_id": self.turn_id, "segment": 0, "offset": offset},
-            "seq": seq,
         });
         if let Some(admission) = &self.admission {
             admission.stamp(&mut params);
         }
-        let _ = self.outbox.send(Outgoing::from(
-            json!({"jsonrpc": "2.0", "method": "event", "params": params}),
-        ));
+        self.session.publish(params, None);
     }
 }
 
