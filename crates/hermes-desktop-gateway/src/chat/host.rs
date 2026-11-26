@@ -835,6 +835,96 @@ mod unix {
             panic!("the slot was never given back");
         }
 
+        /// A shell that starts a background `perl` running `escape`, waits until it has escaped
+        /// and written its pid to `pid`, then exits. The `perl` keeps both output pipes open.
+        fn escapee(escape: &str) -> Command {
+            let mut command = Command::new("/bin/sh");
+            command.arg("-c").arg(format!(
+                "perl -MPOSIX -e '{escape}; open my $f, \">\", \"pid.tmp\"; print $f \"$$\\n\"; \
+                 close $f; rename \"pid.tmp\", \"pid\"; sleep 300' & \
+                 while [ ! -e pid ]; do sleep 0.05; done"
+            ));
+            command
+        }
+
+        fn held(conn: u64) -> usize {
+            let running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+            running
+                .as_ref()
+                .and_then(|running| running.get(&conn).copied())
+                .unwrap_or(0)
+        }
+
+        /// A slot for `conn`, waiting while other tests hold the process's 4.
+        async fn slot(conn: u64) -> Slot {
+            for _ in 0..100 {
+                if let Ok(slot) = Slot::take(conn) {
+                    return slot;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            panic!("no slot came free");
+        }
+
+        fn kill(pid: i32) {
+            // SAFETY: kill takes plain integers and touches no memory of ours.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+
+        #[tokio::test]
+        async fn a_child_that_leaves_its_session_holds_neither_the_answer_nor_its_slot() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut escaped = Vec::new();
+            // 5 in a row: more than the process's 4 slots, so a leaked slot fails the fifth.
+            for run in 0..5 {
+                let folder = dir.path().join(run.to_string());
+                std::fs::create_dir(&folder).unwrap();
+                let ended = tokio::time::timeout(
+                    Duration::from_secs(15),
+                    supervise(
+                        escapee("POSIX::setsid()"),
+                        folder.clone(),
+                        Duration::from_secs(30),
+                        slot(9005).await,
+                    ),
+                )
+                .await;
+                if folder.join("pid").exists() {
+                    escaped.push(background_pid(&folder.join("pid")));
+                }
+                let ended = ended.unwrap_or_else(|_| {
+                    escaped.iter().copied().for_each(kill);
+                    panic!("the answer waited on a descendant that left the session")
+                });
+                assert!(matches!(ended, Ended::Exited { code: Some(0), .. }));
+                assert_eq!(held(9005), 0, "the slot was not given back");
+            }
+            escaped.into_iter().for_each(kill);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[tokio::test]
+        async fn a_child_that_leaves_its_group_but_not_its_session_is_killed() {
+            let dir = tempfile::tempdir().unwrap();
+            let ended = tokio::time::timeout(
+                Duration::from_secs(15),
+                supervise(
+                    escapee("POSIX::setpgid(0, 0)"),
+                    dir.path().to_path_buf(),
+                    Duration::from_secs(30),
+                    slot(9006).await,
+                ),
+            )
+            .await;
+            let pid = background_pid(&dir.path().join("pid"));
+            let survived = !gone(pid).await;
+            kill(pid);
+            assert!(ended.is_ok(), "the answer waited on a descendant");
+            assert!(!survived, "a descendant in the run's session outlived it");
+        }
+
         #[test]
         fn a_connection_runs_at_most_2_children() {
             let first = Slot::take(9004).unwrap();
