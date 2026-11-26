@@ -712,6 +712,17 @@ async fn completion_endpoints_validate_input_and_clean_up_when_inbound_is_unavai
             serde_json::json!({"messages": [{"role": "user", "content": "Fixture chat request"}]}),
         ),
     ] {
+        let malformed = state
+            .roundtrip(json_request("POST", path, serde_json::json!(42)), None)
+            .await;
+        assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+        let error = &json_body(&malformed)["error"];
+        assert_eq!(error["type"], "invalid_request_error");
+        assert!(error["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Invalid request:"));
+
         let invalid = state
             .roundtrip(json_request("POST", path, invalid), None)
             .await;
@@ -1450,11 +1461,24 @@ async fn runs_approval_without_pending_returns_conflict() {
     sender.send("done".to_string()).await.expect("send reply");
     let _record = wait_for_run_status(&state.run_store, &run_id, "completed").await;
 
+    let path = format!("/v1/runs/{run_id}/approval");
+    let invalid_approval = state
+        .roundtrip(
+            json_request("POST", &path, serde_json::json!({"choice": 42})),
+            None,
+        )
+        .await;
+    assert!(invalid_approval.starts_with("HTTP/1.1 400 Bad Request"));
+    assert_eq!(
+        json_body(&invalid_approval)["error"]["type"],
+        "invalid_request_error"
+    );
+
     let approval_response = state
         .roundtrip(
             json_request(
                 "POST",
-                &format!("/v1/runs/{run_id}/approval"),
+                &path,
                 serde_json::json!({"choice": "once", "all": "false"}),
             ),
             None,
