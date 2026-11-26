@@ -345,29 +345,112 @@ fn default_container_for(tail: &[String]) -> serde_yaml::Value {
 }
 
 fn save_env_key_value(path: &Path, key: &str, value: &str) -> Result<(), ConfigError> {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
-    let sanitized_value = value.replace('\n', "\\n");
-    let mut lines = Vec::new();
-    let mut replaced = false;
+    let (out, _) = env_text_with(path, key, Some(value));
+    // `.env` holds provider keys: a link whose folder is missing is refused.
+    resolve_credential_link_target(path).map_err(io_to_config_error)?;
+    atomic_write_bytes(path, out.as_bytes())
+}
 
+/// The `.env` text at `path` with `key` set once to `value` in place of its first line (a
+/// newline escaped), or with every `key` line removed when `value` is `None`; and whether that
+/// changes anything.
+fn env_text_with(path: &Path, key: &str, value: Option<&str>) -> (String, bool) {
+    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let assignment = |value: &str| format!("{key}={}", value.replace('\n', "\\n"));
+    let mut lines = Vec::new();
+    let mut found = false;
     for line in original.lines() {
         if dotenv_assignment(line).is_some_and(|(line_key, _)| line_key == key) {
-            if !replaced {
-                lines.push(format!("{key}={sanitized_value}"));
-                replaced = true;
+            if let Some(value) = value.filter(|_| !found) {
+                lines.push(assignment(value));
             }
+            found = true;
         } else {
             lines.push(line.to_string());
         }
     }
-
-    if !replaced {
-        lines.push(format!("{key}={sanitized_value}"));
+    if let (Some(value), false) = (value, found) {
+        lines.push(assignment(value));
     }
-
     let mut out = lines.join("\n");
     out.push('\n');
-    // `.env` holds provider keys: a link whose folder is missing is refused.
+    (out, value.is_some() || found)
+}
+
+/// Whether `key=value` reads back from a `.env` file as exactly `value` under `key`: no control
+/// character (a newline would start another assignment, a NUL stops every later load), nothing
+/// the start-up sanitiser would split into another assignment and no quotes or `${...}` the
+/// reader would take off or resolve.
+pub fn env_value_round_trips(key: &str, value: &str) -> bool {
+    let line = format!("{key}={value}");
+    !value.chars().any(char::is_control)
+        && value.trim() == value
+        && !(value.starts_with("${") && value.ends_with('}'))
+        && sanitize_env_lines(&line) == line
+        && dotenv_assignment(&line)
+            .is_some_and(|(k, v)| k == key && strip_quotes(v.trim()) == value)
+}
+
+/// Sets `key` to `value` in the `.env` file at `path`, or removes it when `value` is `None`, as
+/// `hermes config set` writes it, leaving the file owner-only. A value that would not read back
+/// as itself ([`env_value_round_trips`]) is refused before anything is written. Gives whether
+/// the file changed: removing an absent key writes nothing.
+pub fn set_env_file_value(path: &Path, key: &str, value: Option<&str>) -> Result<bool, ConfigError> {
+    if value.is_some_and(|value| !env_value_round_trips(key, value)) {
+        return Err(ConfigError::ValidationError(format!(
+            "the value for {key} cannot be stored in a .env file"
+        )));
+    }
+    let (out, changed) = env_text_with(path, key, value);
+    if !changed {
+        return Ok(false);
+    }
     resolve_credential_link_target(path).map_err(io_to_config_error)?;
-    atomic_write_bytes(path, out.as_bytes())
+    atomic_write_owner_only(path, out.as_bytes())?;
+    Ok(true)
+}
+
+/// The values [`load_dotenv`] sets for `home`, worked out without changing the process
+/// environment, in its order: the home `.env` over the environment, the project `.env` only
+/// where neither sets one (over the environment when there is no home `.env`), and the
+/// administrator-pinned managed `.env` over everything. The home and project files are
+/// sanitised first, as at start-up.
+pub fn dotenv_values_in(home: &Path) -> std::collections::BTreeMap<String, String> {
+    fn read(
+        path: &Path,
+        values: &mut std::collections::BTreeMap<String, String>,
+        fill_only: bool,
+    ) {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return;
+        };
+        for (key, value) in contents.lines().filter_map(dotenv_assignment) {
+            if fill_only && (values.contains_key(key) || std::env::var_os(key).is_some()) {
+                continue;
+            }
+            values.insert(key.to_string(), strip_quotes(value.trim()).to_string());
+        }
+    }
+    let mut values = std::collections::BTreeMap::new();
+    let env_file = home.join(".env");
+    let has_home_env = env_file.exists();
+    if has_home_env {
+        sanitize_env_file_if_needed(&env_file);
+        read(&env_file, &mut values, false);
+    }
+    if let Some(project_env) = std::env::current_dir()
+        .ok()
+        .map(|p| p.join(".env"))
+        .filter(|p| p.exists())
+    {
+        sanitize_env_file_if_needed(&project_env);
+        read(&project_env, &mut values, has_home_env);
+    }
+    if let Some(managed_env) = managed_scope_dir()
+        .map(|dir| dir.join(".env"))
+        .filter(|path| path.exists())
+    {
+        read(&managed_env, &mut values, false);
+    }
+    values
 }
