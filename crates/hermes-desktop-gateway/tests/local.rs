@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -705,6 +705,27 @@ async fn staging_folders_a_killed_bind_left_are_removed_at_start() {
     let _runtime = start(&home);
     assert!(!stale.exists(), "the stale staging folder stayed");
     assert!(unrelated.exists(), "a folder outside the staging pattern went");
+}
+
+/// A FIFO in the log's place is refused, not opened for the runtime's output.
+#[test]
+fn ensure_refuses_a_stdio_log_that_is_not_a_regular_file() {
+    let (_dir, home) = private_home();
+    std::fs::create_dir(home.join("logs")).unwrap();
+    let log = home.join("logs").join("gateway-stdio.log");
+    assert!(Command::new("mkfifo").arg(&log).status().unwrap().success());
+    // A reader keeps the FIFO's open from blocking, so the old code would start the runtime.
+    let reader = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&log)
+        .unwrap();
+    let mut command = Command::new("sh");
+    command.args(["-c", "echo written; exit 3"]);
+    let (verdict, text, code) = ensure(&home, Duration::from_secs(10), command);
+    drop(reader);
+    assert_eq!(code, 7, "{text}");
+    assert_eq!(verdict["reason_code"], "runtime_start_failed", "{text}");
 }
 
 #[test]

@@ -351,10 +351,22 @@ fn sweep_staging(home: &Path) {
             continue;
         }
         let dir = entry.path();
-        if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && m.uid() == own_uid()) {
-            let _ = std::fs::remove_file(dir.join(SOCKET));
-            let _ = std::fs::remove_dir(&dir);
+        // The socket is unlinked through the folder this opened without following a link, so a
+        // folder swapped for a link after the check cannot point the unlink elsewhere; rmdir
+        // follows no link either.
+        let Ok(folder) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(&dir)
+        else {
+            continue;
+        };
+        if !folder.metadata().is_ok_and(|m| m.uid() == own_uid()) {
+            continue;
         }
+        // SAFETY: unlinkat on a descriptor `folder` keeps open, with a NUL-terminated name.
+        unsafe { libc::unlinkat(folder.as_raw_fd(), c"gateway.sock".as_ptr(), 0) };
+        let _ = std::fs::remove_dir(&dir);
     }
 }
 
