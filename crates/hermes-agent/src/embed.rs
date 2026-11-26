@@ -134,6 +134,16 @@ impl AgentBuilder {
             (None, Some(path)) => Home::Named(path.into()),
             (None, None) => Home::Scratch(scratch_home()?),
         };
+        if let Home::Named(path) = &home {
+            if path.as_os_str().is_empty() {
+                return Err(AgentError::Config(
+                    "an embedded agent home cannot be empty".into(),
+                ));
+            }
+            std::fs::create_dir_all(path).map_err(|e| {
+                AgentError::Config(format!("cannot create {}: {e}", path.display()))
+            })?;
+        }
         config.hermes_home = Some(home.path().display().to_string());
         let schemas = tools.schemas();
         Ok(Agent {

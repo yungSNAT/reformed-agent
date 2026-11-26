@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -21,18 +22,42 @@ type StatusFn<'a> = Option<&'a dyn Fn(&HashSet<usize>) -> String>;
 /// The TUI event pump must pause reads during this interval to avoid
 /// concurrent consumers on the same crossterm input stream.
 static EMBEDDED_PICKER_ACTIVE: AtomicBool = AtomicBool::new(false);
+static TERMINAL_INPUT: Mutex<()> = Mutex::new(());
 
 /// Return whether an embedded picker is currently active.
 pub fn embedded_picker_active() -> bool {
     EMBEDDED_PICKER_ACTIVE.load(Ordering::SeqCst)
 }
 
-struct EmbeddedPickerGuard;
+fn lock_terminal_input() -> MutexGuard<'static, ()> {
+    TERMINAL_INPUT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(crate) fn tui_event_reader() -> Option<MutexGuard<'static, ()>> {
+    if embedded_picker_active() {
+        return None;
+    }
+    let reader = match TERMINAL_INPUT.try_lock() {
+        Ok(reader) => reader,
+        Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(TryLockError::WouldBlock) => return None,
+    };
+    (!embedded_picker_active()).then_some(reader)
+}
+
+struct EmbeddedPickerGuard {
+    _reader: MutexGuard<'static, ()>,
+}
 
 impl EmbeddedPickerGuard {
     fn enter() -> Self {
         EMBEDDED_PICKER_ACTIVE.store(true, Ordering::SeqCst);
-        Self
+        // Wait for any TUI poll and its matching read before drawing the picker.
+        Self {
+            _reader: lock_terminal_input(),
+        }
     }
 }
 

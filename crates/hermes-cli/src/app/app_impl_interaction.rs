@@ -134,6 +134,11 @@ impl App {
     /// Reset the current session (clear messages but keep session ID).
     pub fn reset_session(&mut self) {
         let session_id = self.session_id.clone();
+        if let Err(err) = SessionPersistence::new(&self.state_root).reset_session_spend(&session_id)
+        {
+            self.push_ui_message(hermes_core::Message::system(format!("Session reset failed: {err}")));
+            return;
+        }
         self.invoke_session_lifecycle_hook(HookType::OnSessionFinalize, &session_id);
         self.notify_memory_session_switch(&session_id, "", true);
         self.messages.clear();
@@ -446,6 +451,12 @@ impl App {
     /// rebuilt for it, so they read and write that session's records.
     pub fn resume_session_id(&mut self, session_id: String) {
         self.session_id = session_id;
+        if self.config.agent.max_session_cost_usd.is_some() {
+            match SessionPersistence::new(&self.state_root).session_spend_usd(&self.session_id) {
+                Ok(spent) => self.session_cost_usd = spent,
+                Err(err) => self.push_ui_message(hermes_core::Message::system(format!("Cannot read session spend: {err}"))),
+            }
+        }
         self.rebuild_agent_for_active_session();
     }
 
@@ -496,6 +507,7 @@ impl App {
                 agent_tool_registry,
                 provider,
             ))
+            .with_session_budget_root(self.state_root.clone())
             .with_callbacks(Self::stream_callbacks(self.stream_handle_shared.clone()));
             let orchestrator = Arc::new(SubAgentOrchestrator::from_parent(
                 &agent_inner,
@@ -623,7 +635,7 @@ impl App {
     }
 
     async fn run_messages_with_current_agent(
-        &self,
+        &mut self,
         messages: Vec<hermes_core::Message>,
         stream_enabled: bool,
     ) -> Result<hermes_core::AgentResult, AgentError> {
@@ -649,12 +661,30 @@ impl App {
     }
 
     pub(crate) async fn run_messages_with_current_agent_tools(
-        &self,
+        &mut self,
         messages: Vec<hermes_core::Message>,
         stream_enabled: bool,
         include_tools: bool,
     ) -> Result<hermes_core::AgentResult, AgentError> {
         self.check_tool_snapshot_sync(include_tools)?;
+        self.agent.set_session_spent_usd(self.session_cost_usd);
+        let result = self
+            .run_messages_on_agent(messages, stream_enabled, include_tools)
+            .await;
+        // Counted here, not when a result is applied: objective continuations
+        // and quorum voters never apply theirs.
+        if let Ok(result) = &result {
+            self.count_run_cost(result);
+        }
+        result
+    }
+
+    async fn run_messages_on_agent(
+        &self,
+        messages: Vec<hermes_core::Message>,
+        stream_enabled: bool,
+        include_tools: bool,
+    ) -> Result<hermes_core::AgentResult, AgentError> {
         // `None` would offer every tool the agent holds.
         let tool_schemas = Some(if include_tools {
             self.tool_schemas.clone()
@@ -830,6 +860,13 @@ impl App {
                             "Agent stopped after {} turns (did not finish naturally)",
                             total_turns
                         );
+                        if let Some(note) = self.cost_guard_note().map(str::to_string) {
+                            if self.stream_handle.is_some() {
+                                self.push_ui_assistant(format!("[{note}]"));
+                            } else {
+                                println!("[{note}]");
+                            }
+                        }
                     }
                     break;
                 }

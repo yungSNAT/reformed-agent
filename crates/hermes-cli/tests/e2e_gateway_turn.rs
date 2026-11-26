@@ -196,7 +196,9 @@ async fn exercise_gateway_turns(scenario: TurnScenario) {
             let reservation = TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let address = reservation.local_addr().unwrap();
             let base = format!("http://{address}");
-            let token = format!("local-gateway-fixture-{}", address.port());
+            // A different fixture can acquire this address after the reservation drops.
+            // The health check must authenticate to this launch, even if the port is reused.
+            let token = format!("local-gateway-fixture-{}", uuid::Uuid::new_v4());
             let enabled = !via_dashboard;
             let saved_host = if via_dashboard {
                 "localhost"

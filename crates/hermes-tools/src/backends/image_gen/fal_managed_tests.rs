@@ -556,6 +556,7 @@ fn openrouter_reference_images_inline_local_files_and_clamp() {
 
 #[test]
 fn openrouter_capabilities_advertise_reference_grounding() {
+    let _g = EnvScope::new();
     let backend = OpenRouterCompatImageGenBackend::unconfigured(
         OpenRouterCompatImageProviderKind::OpenRouter,
     );
