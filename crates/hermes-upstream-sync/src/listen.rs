@@ -3,7 +3,8 @@
 //! Stricter than the script: it will not start without a secret unless told
 //! to accept unsigned deliveries on a loopback address; bodies are capped at
 //! GitHub's 25 MB payload limit and must arrive within 30 seconds; at most
-//! 16 requests are handled at once; the delivery id must be file-name safe.
+//! 16 requests are handled at once (more get 503); a body must declare its
+//! length; the delivery id must be file-name safe.
 //! The secret, headers and bodies are never logged or echoed.
 
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -84,10 +85,10 @@ pub fn verify_signature(body: &[u8], secret: &str, header: Option<&[u8]>) -> boo
             b - b'a' + 10
         }
     };
-    let digest: Vec<u8> = hex
-        .chunks(2)
-        .map(|p| (nibble(p[0]) << 4) | nibble(p[1]))
-        .collect();
+    let mut digest = [0u8; 32];
+    for (byte, pair) in digest.iter_mut().zip(hex.chunks(2)) {
+        *byte = (nibble(pair[0]) << 4) | nibble(pair[1]);
+    }
     let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else {
         return false;
     };
@@ -148,10 +149,11 @@ async fn handle(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request,
 ) -> Response {
+    // The path without its query string: a query can carry anything.
     let request_line = format!(
         "{} {} {:?}",
         request.method(),
-        request.uri(),
+        request.uri().path(),
         request.version()
     );
     let response = respond(&shared, request).await;
@@ -167,8 +169,8 @@ async fn handle(
 }
 
 async fn respond(shared: &Shared, request: Request) -> Response {
-    let Ok(_permit) = shared.in_flight.acquire().await else {
-        return text(StatusCode::SERVICE_UNAVAILABLE, "shutting down");
+    let Ok(_permit) = shared.in_flight.try_acquire() else {
+        return text(StatusCode::SERVICE_UNAVAILABLE, "busy");
     };
     let config = &shared.config;
     if request.method() != Method::POST {
@@ -236,10 +238,7 @@ async fn respond(shared: &Shared, request: Request) -> Response {
             ("ref", Py::from(event.git_ref)),
         ])),
         Ok(Err(e)) => {
-            log(
-                Level::Error,
-                &format!("could not queue delivery {delivery_id}: {e}"),
-            );
+            log(Level::Error, &format!("could not queue a delivery: {e}"));
             text(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "could not queue delivery",
@@ -259,7 +258,10 @@ async fn read_body(headers: &HeaderMap, body: Body) -> Result<Bytes, (StatusCode
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok());
-    if declared.is_some_and(|n| n > MAX_BODY_BYTES as u64) {
+    let Some(declared) = declared else {
+        return Err((StatusCode::LENGTH_REQUIRED, "length required"));
+    };
+    if declared > MAX_BODY_BYTES as u64 {
         return Err((StatusCode::PAYLOAD_TOO_LARGE, "payload too large"));
     }
     match tokio::time::timeout(BODY_TIMEOUT, Limited::new(body, MAX_BODY_BYTES).collect()).await {
