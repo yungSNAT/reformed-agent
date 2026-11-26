@@ -9,7 +9,9 @@
 //! supervisor task, not the handler, owns each one: on exit, timeout or a dropped request (the
 //! connection closed) it kills the group (on Linux, the session too), reaps the child and stops
 //! reading output soon after, whatever a descendant still holds. Windows has no local mode yet
-//! and these supervisors kill process groups only, so there all 3 refuse.
+//! and these supervisors kill process groups only, so there all 3 refuse. `shell.exec`'s pattern
+//! checks are a guard, not a sandbox: shell quoting can hide a command from them, and the
+//! capability, not the patterns, is the boundary.
 
 use serde_json::{Map, Value};
 
@@ -24,15 +26,17 @@ pub(super) const METHODS: &[(&str, Handler)] = &[
 /// A connection without the host-input capability, or a host that cannot serve the method.
 const NOT_AVAILABLE: i64 = 4030;
 const NOT_AVAILABLE_TEXT: &str = "not available to this client";
-#[cfg(not(unix))]
 const NOT_ON_THIS_HOST: &str = "not available on this host yet";
 
-/// The capability check, first in every handler here.
-fn admit(conn: &Conn) -> Result<(), RpcError> {
-    if conn.host_input && conn.origin == Origin::Local {
-        Ok(())
-    } else {
+/// The capability check, first in every handler here, then whether this host serves these
+/// methods at all (`host_serves`, `cfg!(unix)` outside tests).
+fn admit(conn: &Conn, host_serves: bool) -> Result<(), RpcError> {
+    if !(conn.host_input && conn.origin == Origin::Local) {
         Err((NOT_AVAILABLE, NOT_AVAILABLE_TEXT.into()))
+    } else if !host_serves {
+        Err((NOT_AVAILABLE, NOT_ON_THIS_HOST.into()))
+    } else {
+        Ok(())
     }
 }
 
@@ -51,7 +55,7 @@ fn text<'a>(params: &'a Map<String, Value>, key: &str, max: usize) -> Result<&'a
 }
 
 async fn shell_exec(req: Request) -> Result<Value, RpcError> {
-    admit(&req.conn)?;
+    admit(&req.conn, cfg!(unix))?;
     #[cfg(unix)]
     {
         unix::shell_exec(req).await
@@ -63,7 +67,7 @@ async fn shell_exec(req: Request) -> Result<Value, RpcError> {
 }
 
 async fn cli_exec(req: Request) -> Result<Value, RpcError> {
-    admit(&req.conn)?;
+    admit(&req.conn, cfg!(unix))?;
     #[cfg(unix)]
     {
         unix::cli_exec(req).await
@@ -75,7 +79,7 @@ async fn cli_exec(req: Request) -> Result<Value, RpcError> {
 }
 
 async fn complete_path(req: Request) -> Result<Value, RpcError> {
-    admit(&req.conn)?;
+    admit(&req.conn, cfg!(unix))?;
     #[cfg(unix)]
     {
         unix::complete_path(req).await
@@ -239,7 +243,8 @@ mod unix {
             .map(|item| item.as_str().map(str::to_string))
             .collect::<Option<Vec<_>>>()
             .ok_or_else(bad)?;
-        if argv.len() > 64
+        if argv.is_empty()
+            || argv.len() > 64
             || argv
                 .iter()
                 .any(|arg| arg.is_empty() || arg.len() > 4096 || arg.contains('\0'))
