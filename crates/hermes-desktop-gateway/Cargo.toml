@@ -15,13 +15,17 @@ path = "src/main.rs"
 axum = { version = "0.8", features = ["ws"] }
 base64 = { workspace = true }
 clap = { workspace = true }
+getrandom = "0.3"
 hermes-agent = { workspace = true }
 hermes-app-runtime = { workspace = true }
 hermes-config = { workspace = true }
 hermes-core = { workspace = true }
 hermes-provider-runtime = { workspace = true }
+percent-encoding = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = "0.10"
 subtle = "2.6"
 tokio = { workspace = true }
 tracing = { workspace = true }
