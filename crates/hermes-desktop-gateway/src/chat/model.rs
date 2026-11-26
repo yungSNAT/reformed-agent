@@ -294,12 +294,11 @@ fn parse_switch(value: &str) -> Option<(String, Option<String>)> {
 impl Chat {
     /// `model.options`: `{providers, model, provider}`.
     fn model_options(&self, include_unconfigured: bool) -> Value {
-        let model = self.model().unwrap_or_default().to_string();
-        let current = if model.is_empty() {
-            String::new()
-        } else {
-            hermes_provider_runtime::provider_runtime_diagnostic(&self.config, &model)
-                .requested_provider
+        // The configured model may carry its provider (`provider:model`); the picker shows them
+        // apart, as upstream does.
+        let (current, model) = match self.model() {
+            Some(model) => hermes_provider_runtime::resolve_provider_and_model(&self.config, model),
+            None => (String::new(), String::new()),
         };
         let providers = option_rows(&self.config, &current, include_unconfigured);
         json!({"providers": providers, "model": model, "provider": current})
