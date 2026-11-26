@@ -13,10 +13,20 @@ fn main() {
     let python = std::env::var("PARITY_PYTHON").unwrap_or_else(|_| "python3".into());
     let recorded = hermes_parity_tests::recorder::record(&py_root, &python);
     std::io::stdout()
-        .write_all(recorded.stdout.as_bytes())
+        .write_all(native_newlines(&recorded.stdout).as_bytes())
         .expect("write stdout");
     std::io::stderr()
-        .write_all(recorded.stderr.as_bytes())
+        .write_all(native_newlines(&recorded.stderr).as_bytes())
         .expect("write stderr");
     std::process::exit(recorded.code);
+}
+
+/// Python's text streams end lines with CRLF on Windows; match them byte for byte there.
+fn native_newlines(text: &str) -> String {
+    let text = text.replace("\r\n", "\n");
+    if cfg!(windows) {
+        text.replace('\n', "\r\n")
+    } else {
+        text
+    }
 }
