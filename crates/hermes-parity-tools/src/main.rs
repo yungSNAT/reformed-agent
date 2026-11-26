@@ -18,6 +18,7 @@ mod deep_problem_solving;
 mod differential_parity;
 mod divergence;
 mod elite_sync_gate;
+mod elite_gate_launchd;
 mod eval_trend_gate;
 mod fork_carry;
 mod git;
@@ -28,6 +29,7 @@ mod gpar_closure;
 mod harness_hardening;
 mod hotpath_bench;
 mod llms_txt;
+mod nightly_elite_gate;
 mod parity_matrix;
 mod performance_autopilot;
 mod readme_sync_status;
@@ -213,6 +215,18 @@ enum Command {
     /// Golden parity harness for CLI command surface and key TUI flow contracts.
     #[command(name = "run-golden-parity-harness")]
     RunGoldenParityHarness(golden_parity::GoldenParityArgs),
+    /// Run the nightly elite validation gate on local main.
+    #[command(name = "run-nightly-elite-gate")]
+    RunNightlyEliteGate(nightly_elite_gate::NightlyEliteGateArgs),
+    /// Install or update the launchd user agent that runs the nightly elite gate.
+    #[command(name = "install-elite-gate-launchd")]
+    InstallEliteGateLaunchd(elite_gate_launchd::InstallArgs),
+    /// Show launchd status and logs for the nightly elite gate.
+    #[command(name = "status-elite-gate-launchd")]
+    StatusEliteGateLaunchd(elite_gate_launchd::StatusArgs),
+    /// Unload and remove the nightly elite gate launchd agent.
+    #[command(name = "uninstall-elite-gate-launchd")]
+    UninstallEliteGateLaunchd(elite_gate_launchd::UninstallArgs),
 }
 
 fn main() {
@@ -268,6 +282,10 @@ fn main() {
         Command::RunEliteSyncGate(args) => elite_sync_gate::run(args),
         Command::PublishAutomationSummary(args) => automation_summary::run(args),
         Command::RunGoldenParityHarness(args) => golden_parity::run(args),
+        Command::RunNightlyEliteGate(args) => nightly_elite_gate::run(args),
+        Command::InstallEliteGateLaunchd(args) => elite_gate_launchd::run_install(args),
+        Command::StatusEliteGateLaunchd(args) => elite_gate_launchd::run_status(args),
+        Command::UninstallEliteGateLaunchd(args) => elite_gate_launchd::run_uninstall(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
