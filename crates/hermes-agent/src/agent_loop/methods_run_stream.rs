@@ -15,6 +15,9 @@ impl AgentLoop {
                 let _cache_use =
                     tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
                 self.cancel_cache_keep_alive();
+                if let Some(refused) = self.session_cap_refusal(&messages) {
+                    return Ok(refused);
+                }
                 let result =
                     Self::complete_memory_flush(self.run_stream_inner(messages, tools, on_chunk))
                         .await;
@@ -246,6 +249,7 @@ impl AgentLoop {
         let mut total_turns: u32 = 0;
         let mut accumulated_usage: Option<UsageStats> = None;
         let mut session_cost_usd: f64 = 0.0;
+        let spent_before_run_usd = self.session_spent_usd();
         let mut cost_warned = false;
         let mut forced_runtime_route: Option<TurnRuntimeRoute> = None;
         let mut last_checkpoint_messages: Option<Vec<Message>> = None;
@@ -670,6 +674,8 @@ impl AgentLoop {
             }
 
             if let Some(limit) = self.config.max_cost_usd {
+                // The whole session's spend; the result still reports this run's.
+                let session_cost_usd = spent_before_run_usd + session_cost_usd;
                 if !cost_warned
                     && session_cost_usd >= limit * self.config.cost_guard_degrade_at_ratio
                 {
@@ -700,7 +706,7 @@ impl AgentLoop {
                         serde_json::json!({
                             "reason": "cost_guard",
                             "total_turns": total_turns,
-                            "session_cost_usd": session_cost_usd,
+                            "session_cost_usd": session_cost_usd - spent_before_run_usd,
                         }),
                     );
                     return Ok(AgentResult {
@@ -714,7 +720,7 @@ impl AgentLoop {
                         tool_errors,
                         usage: accumulated_usage,
                         interrupted: false,
-                        session_cost_usd: Some(session_cost_usd),
+                        session_cost_usd: Some(session_cost_usd - spent_before_run_usd),
                         session_started_hooks_fired,
                         compressed_transcripts: ctx.take_compressed_transcripts(),
                     });
@@ -1290,7 +1296,7 @@ impl AgentLoop {
                     contextlattice_connect_intent,
                     self.config
                         .max_cost_usd
-                        .map(|limit| (limit - session_cost_usd).max(0.0)),
+                        .map(|limit| (limit - spent_before_run_usd - session_cost_usd).max(0.0)),
                     &mut tool_errors,
                 )
                 .await;

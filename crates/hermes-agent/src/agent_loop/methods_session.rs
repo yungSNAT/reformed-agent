@@ -150,6 +150,19 @@ impl AgentLoop {
         }
     }
 
+    /// Tell the cost guard what earlier runs of this session spent, so
+    /// `max_cost_usd` caps the session rather than each run. A run's result
+    /// still reports only its own spend. Negative or non-finite values count
+    /// as nothing.
+    pub fn set_session_spent_usd(&self, usd: f64) {
+        let usd = if usd.is_finite() && usd > 0.0 { usd } else { 0.0 };
+        self.session_spent_usd.store(usd.to_bits(), Ordering::Relaxed);
+    }
+
+    fn session_spent_usd(&self) -> f64 {
+        f64::from_bits(self.session_spent_usd.load(Ordering::Relaxed))
+    }
+
     /// Create a new agent loop.
     pub fn new(
         config: AgentConfig,
@@ -175,6 +188,7 @@ impl AgentLoop {
             code_index,
             lsp_context,
             route_learning,
+            session_spent_usd: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -204,6 +218,7 @@ impl AgentLoop {
             code_index,
             lsp_context,
             route_learning,
+            session_spent_usd: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -463,6 +478,9 @@ impl AgentLoop {
             code_index: self.code_index.clone(),
             lsp_context: self.lsp_context.clone(),
             route_learning: self.route_learning.clone(),
+            session_spent_usd: std::sync::atomic::AtomicU64::new(
+                self.session_spent_usd.load(Ordering::Relaxed),
+            ),
         }
     }
 }
