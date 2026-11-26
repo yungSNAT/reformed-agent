@@ -50,12 +50,15 @@ use tokio::sync::mpsc;
 
 mod attach;
 pub mod chat;
+mod children;
 #[cfg(unix)]
 pub mod local;
 mod tickets;
 
 pub use chat::Chat;
 use chat::{Conn, Origin, Outgoing, Reply};
+pub use children::{ChildGateways, MAX_CHILDREN};
+use children::{Children, Forwards, Lease, Refused};
 use tickets::{Purpose, Tickets};
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
@@ -121,6 +124,10 @@ struct Gateway {
     auth: Auth,
     port: u16,
     chat: Arc<Chat>,
+    /// Gateways for the install's other profiles, when this one starts them.
+    children: Option<Arc<Children>>,
+    /// A child of another gateway: a dial with its token may select the canonical wire.
+    child: bool,
 }
 
 /// Numbers each connection, so a session knows which ones it streams to.
@@ -145,11 +152,53 @@ pub async fn serve(
     axum::serve(listener, router(Auth::Token(token), port, chat)).await
 }
 
+/// As [`serve`], also serving the install's other profiles, each from a child gateway that
+/// `children` starts: a socket opened with `?profile=<name>`, a request whose params name a
+/// profile, and the history route's `profile`.
+pub async fn serve_with_profiles(
+    listener: tokio::net::TcpListener,
+    token: String,
+    chat: Chat,
+    children: ChildGateways,
+) -> std::io::Result<()> {
+    let port = listener.local_addr()?.port();
+    let children = Children::start(children, &chat);
+    let app = router_with(Auth::Token(token), port, chat, Some(children), false);
+    axum::serve(listener, app).await
+}
+
+/// As [`serve`] for a child of [`serve_with_profiles`]: the parent's dial with `token` that
+/// offers `hermes-gateway-v1` (and no ticket) speaks the canonical wire.
+pub async fn serve_child(
+    listener: tokio::net::TcpListener,
+    token: String,
+    chat: Chat,
+) -> std::io::Result<()> {
+    let port = listener.local_addr()?.port();
+    axum::serve(
+        listener,
+        router_with(Auth::Token(token), port, chat, None, true),
+    )
+    .await
+}
+
 fn router(auth: Auth, port: u16, chat: Chat) -> Router {
+    router_with(auth, port, chat, None, false)
+}
+
+fn router_with(
+    auth: Auth,
+    port: u16,
+    chat: Chat,
+    children: Option<Arc<Children>>,
+    child: bool,
+) -> Router {
     let gateway = Arc::new(Gateway {
         auth,
         port,
         chat: Arc::new(chat),
+        children,
+        child,
     });
     let private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
@@ -309,8 +358,9 @@ fn admit(
 }
 
 /// A session's saved user and assistant messages, oldest first: the first `limit` with
-/// `order=oldest` (the default), the last `limit` with `order=latest`. Unknown query keys,
-/// such as the desktop's `profile`, are ignored.
+/// `order=oldest` (the default), the last `limit` with `order=latest`. A `profile` naming
+/// another of the install's profiles reads that profile's sessions (404 for one not listed);
+/// other query keys are ignored.
 async fn messages(
     State(gw): State<Arc<Gateway>>,
     Path(session_id): Path<String>,
@@ -321,7 +371,14 @@ async fn messages(
         .and_then(|l| l.parse::<usize>().ok())
         .unwrap_or(MAX_HISTORY)
         .clamp(1, MAX_HISTORY);
-    let mut rows = match gw.chat.history(&session_id) {
+    let history = match query.get("profile").map(String::as_str) {
+        Some(name) if !gw.chat.serves(name) => match gw.chat.named_profile(name) {
+            Some(home) => chat::profiles::history_in(&home, &session_id),
+            None => return StatusCode::NOT_FOUND.into_response(),
+        },
+        _ => gw.chat.history(&session_id),
+    };
+    let mut rows = match history {
         None => return StatusCode::NOT_FOUND.into_response(),
         Some(Err(err)) => {
             return (
@@ -365,8 +422,21 @@ async fn upgrade(
     ) {
         return status.into_response();
     }
+    let scope = match query.get("profile") {
+        Some(name) if !gw.chat.serves(name) => match &gw.children {
+            Some(children) => match children.lease(name).await {
+                Ok(lease) => Some(lease),
+                Err(Refused::Unknown) => return StatusCode::NOT_FOUND.into_response(),
+                Err(Refused::Busy) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+                Err(Refused::Failed(_)) => return StatusCode::BAD_GATEWAY.into_response(),
+            },
+            None => return StatusCode::NOT_FOUND.into_response(),
+        },
+        _ => None,
+    };
     let chat = Arc::clone(&gw.chat);
-    let canonical = offered.is_some();
+    let children = gw.children.clone();
+    let canonical = offered.is_some() || (gw.child && offers_canonical(&headers));
     // Both listeners take loopback connections only: the token one checks `Host` and `Origin`,
     // and the ticket one is local mode's. A new kind of listener must choose here.
     let origin = match gw.auth {
@@ -380,7 +450,17 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, chat, canonical, origin))
+        .on_upgrade(move |socket| session(socket, chat, canonical, origin, scope, children))
+}
+
+/// True when the dial offers `hermes-gateway-v1`.
+fn offers_canonical(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|p| p.trim() == CANONICAL_PROTOCOL)
 }
 
 /// The ticket a native dial offers as its `hermes-gateway-ticket.` subprotocol: `None` when it
@@ -406,7 +486,14 @@ fn protocol_ticket(headers: &HeaderMap) -> Result<Option<&str>, ()> {
 
 /// One connection. A `canonical` one ([`CANONICAL_PROTOCOL`]) announces the session authority in
 /// its `gateway.ready` and answers the session verbs as [`chat`]'s `canonical` module does.
-async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool, origin: Origin) {
+async fn session(
+    mut socket: WebSocket,
+    chat: Arc<Chat>,
+    canonical: bool,
+    origin: Origin,
+    scope: Option<Lease>,
+    children: Option<Arc<Children>>,
+) {
     let mut ready = json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -432,7 +519,8 @@ async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool, origin
         canonical,
     );
     conn.origin = origin;
-    let call = |method: &str, params: Value| chat.call(&conn, method, params);
+    let forwards = Forwards::new(Arc::clone(&chat), conn.clone(), scope, children);
+    let call = |method: &str, params: Value| forwards.call(method, params);
     serve_socket(&mut socket, &mut events, &call, chat.write_timeout()).await;
     chat.disconnect(conn.id);
 }
@@ -659,6 +747,7 @@ fn attach_request(text: &str) -> Option<Value> {
         name: Option<String>,
         content_base64: Option<String>,
         data: Option<String>,
+        profile: Option<String>,
     }
     /// A string, number or null id. Not an untagged enum, which would buffer an array or
     /// object id whole before refusing it.
@@ -699,6 +788,7 @@ fn attach_request(text: &str) -> Option<Value> {
         name,
         content_base64,
         data,
+        profile,
     }) = request.params;
     let fields = match request.method.as_str() {
         "file.attach" if data_url.is_some() => [("data_url", data_url), ("name", name)],
@@ -709,6 +799,9 @@ fn attach_request(text: &str) -> Option<Value> {
     };
     let mut params = serde_json::Map::new();
     params.insert("session_id".into(), Value::String(session_id));
+    if let Some(profile) = profile {
+        params.insert("profile".into(), Value::String(profile));
+    }
     for (key, value) in fields {
         if let Some(value) = value {
             params.insert(key.into(), Value::String(value));

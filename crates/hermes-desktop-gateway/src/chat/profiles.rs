@@ -290,7 +290,37 @@ fn rows(root: &Path) -> impl Iterator<Item = Row> {
         })
 }
 
+/// The saved messages of session `id` in the profile whose home is `home`, read without loading
+/// that profile's configuration.
+pub(crate) fn history_in(home: &Path, id: &str) -> Option<Result<Vec<Value>, String>> {
+    let config = hermes_config::GatewayConfig {
+        home_dir: Some(home.display().to_string()),
+        ..Default::default()
+    };
+    Chat::new(config).history(id)
+}
+
 impl Chat {
+    pub(crate) fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// Whether this chat serves profile `name`: `default` when it runs in the install's root,
+    /// else the named profile it runs in.
+    pub(crate) fn serves(&self, name: &str) -> bool {
+        let root = install_root(&self.home);
+        if name == "default" {
+            root == self.home
+        } else {
+            named_profile_home(&root, name).as_deref() == Some(self.home.as_path())
+        }
+    }
+
+    /// The home of the install's named profile `name`, when it is listed.
+    pub(crate) fn named_profile(&self, name: &str) -> Option<PathBuf> {
+        named_profile_home(&install_root(&self.home), name)
+    }
+
     /// `GET /api/profiles`: `{profiles}` in upstream's `_profile_to_dict` shape.
     pub(crate) fn profiles_route(&self) -> Value {
         let rows: Vec<Value> = rows(&install_root(&self.home))

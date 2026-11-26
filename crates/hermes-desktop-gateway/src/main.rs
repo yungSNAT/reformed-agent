@@ -5,7 +5,10 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::process::ExitCode;
 
 use clap::Parser;
-use hermes_desktop_gateway::{new_token, serve, Chat, MIN_TOKEN_LEN, TOKEN_ENV};
+use hermes_desktop_gateway::{
+    new_token, serve, serve_child, serve_with_profiles, Chat, ChildGateways, MIN_TOKEN_LEN,
+    TOKEN_ENV,
+};
 
 /// Preview: a backend Hermes Desktop can attach to with 'Connect to existing Hermes' and chat
 /// through, with the model and sessions of the Hermes home (HERMES_HOME, else ~/.hermes).
@@ -27,6 +30,11 @@ struct Args {
     /// launcher is killed or crashes.
     #[arg(long, hide = true)]
     exit_when_stdin_closes: bool,
+    /// Serve one named profile for a parent gateway, which starts this with the profile's home
+    /// and a private token. The parent's connections may then speak the canonical wire with
+    /// that token alone.
+    #[arg(long, hide = true)]
+    child: bool,
 }
 
 #[tokio::main]
@@ -45,6 +53,11 @@ async fn main() -> ExitCode {
             }
         },
     };
+    // Taken before any configuration is loaded, so children start from this environment.
+    let children = (!args.child)
+        .then(std::env::current_exe)
+        .and_then(Result::ok)
+        .map(ChildGateways::new);
     let (token, generated) = match std::env::var(TOKEN_ENV) {
         Ok(token) if !token.is_empty() => {
             if token.chars().count() < MIN_TOKEN_LEN {
@@ -55,6 +68,10 @@ async fn main() -> ExitCode {
         }
         Err(std::env::VarError::NotUnicode(_)) => {
             eprintln!("{TOKEN_ENV} is set but not valid Unicode");
+            return ExitCode::FAILURE;
+        }
+        _ if args.child => {
+            eprintln!("--child needs {TOKEN_ENV}");
             return ExitCode::FAILURE;
         }
         _ => (new_token(), true),
@@ -99,8 +116,16 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let stdin_closed = stdin_closed(args.exit_when_stdin_closes);
+    let chat = Chat::new(config);
+    let served = async {
+        match children {
+            Some(children) => serve_with_profiles(listener, token, chat, children).await,
+            None if args.child => serve_child(listener, token, chat).await,
+            None => serve(listener, token, chat).await,
+        }
+    };
     tokio::select! {
-        served = serve(listener, token, Chat::new(config)) => match served {
+        served = served => match served {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
                 let _ = writeln!(std::io::stderr(), "server stopped: {err}");

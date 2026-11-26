@@ -33,7 +33,7 @@ use tokio::time::Instant;
 use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
-mod profiles;
+pub(crate) mod profiles;
 mod relay;
 mod session;
 use canonical::Admission;
