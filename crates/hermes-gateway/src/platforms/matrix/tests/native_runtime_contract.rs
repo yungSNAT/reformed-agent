@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 use std::time::Duration;
-use wiremock::matchers::{body_partial_json, header, path_regex};
+use wiremock::matchers::{body_json, body_partial_json, header, path_regex};
 
 fn adapter_for_matrix_fixture(server: &MockServer) -> MatrixAdapter {
     let mut adapter = MatrixAdapter::new(MatrixConfig {
@@ -17,6 +17,7 @@ fn adapter_for_matrix_fixture(server: &MockServer) -> MatrixAdapter {
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
+    adapter.e2ee.client = adapter.client.clone();
     adapter.decrypt_ffi = None;
     adapter.native_decrypt = Some(MatrixNativeDecryptConfig {
         device_id_override: None,
@@ -411,4 +412,107 @@ async fn matrix_sync_validates_each_crypto_field_and_uses_device_override_offlin
         ));
     }
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn matrix_encryption_state_caches_only_confirmed_rooms() {
+    let server = MockServer::start().await;
+    let adapter = adapter_for_matrix_fixture(&server);
+    for (room, response, requests) in [
+        (
+            "encrypted",
+            ResponseTemplate::new(200).set_body_json(json!({"algorithm": "m.megolm.v1.aes-sha2"})),
+            1,
+        ),
+        ("missing", ResponseTemplate::new(404), 2),
+        (
+            "unconfigured",
+            ResponseTemplate::new(200).set_body_json(json!({"algorithm": ""})),
+            2,
+        ),
+        (
+            "unavailable",
+            ResponseTemplate::new(503).set_body_string("fixture unavailable"),
+            2,
+        ),
+        (
+            "invalid",
+            ResponseTemplate::new(200).set_body_string("invalid JSON"),
+            2,
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/_matrix/client/v3/rooms/{room}/state/m.room.encryption/"
+            )))
+            .and(header("Authorization", "Bearer matrix-fixture"))
+            .respond_with(response)
+            .expect(requests)
+            .mount(&server)
+            .await;
+    }
+
+    for _ in 0..2 {
+        assert!(adapter.e2ee.is_encrypted_room("encrypted").await.unwrap());
+        assert!(!adapter.e2ee.is_encrypted_room("missing").await.unwrap());
+        assert!(!adapter
+            .e2ee
+            .is_encrypted_room("unconfigured")
+            .await
+            .unwrap());
+        assert!(matches!(
+            adapter.e2ee.is_encrypted_room("unavailable").await,
+            Err(GatewayError::ConnectionFailed(message)) if message.contains("fixture unavailable")
+        ));
+        assert!(matches!(
+            adapter.e2ee.is_encrypted_room("invalid").await,
+            Err(GatewayError::ConnectionFailed(message)) if message.contains("encryption state parse failed")
+        ));
+    }
+    assert!(adapter.e2ee.is_room_marked_encrypted("encrypted"));
+    for room in ["missing", "unconfigured", "unavailable", "invalid"] {
+        assert!(!adapter.e2ee.is_room_marked_encrypted(room), "{room}");
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 9);
+}
+
+#[tokio::test]
+async fn matrix_room_key_claims_skip_rooms_without_joined_peer_devices() {
+    let server = MockServer::start().await;
+    let adapter = adapter_for_matrix_fixture(&server);
+    let own_member = json!({"state_key": "@fixture:test", "content": {"membership": "join"}});
+    let left_member = json!({"state_key": "@left:test", "content": {"membership": "leave"}});
+    let peer_member = json!({"state_key": "@peer:test", "content": {"membership": "join"}});
+    for (room, members) in [
+        ("no-peers", vec![own_member.clone(), left_member]),
+        ("no-devices", vec![own_member, peer_member]),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/_matrix/client/v3/rooms/{room}/members")))
+            .and(header("Authorization", "Bearer matrix-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk": members})))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(path("/_matrix/client/v3/keys/query"))
+        .and(header("Authorization", "Bearer matrix-fixture"))
+        .and(body_json(json!({"device_keys": {"@peer:test": []}})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"device_keys": {}})))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    assert_eq!(adapter.e2ee.share_room_keys("no-peers").await.unwrap(), 0);
+    assert_eq!(adapter.e2ee.share_room_keys("no-devices").await.unwrap(), 0);
+    assert!(matches!(
+        adapter.e2ee.verify_device_keys("@peer:test").await,
+        Err(GatewayError::Platform(message)) if message == "No device keys published for user @peer:test"
+    ));
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 4);
+    assert!(!requests
+        .iter()
+        .any(|request| request.url.path().ends_with("/keys/claim")));
 }
