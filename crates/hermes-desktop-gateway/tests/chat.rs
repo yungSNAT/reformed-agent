@@ -385,14 +385,83 @@ async fn prompt_submit_refuses_bad_requests() {
     }
     assert!(started.requests.lock().unwrap().is_empty());
 
-    // One turn at a time per session: a second submit while the first runs is refused.
+    // One turn at a time per session: a second submit while the first runs waits for it.
     let reply = client.submit(30, &session, "one").await;
     assert_eq!(reply["result"]["status"], "streaming");
     let reply = client.submit(31, &session, "two").await;
-    assert_eq!(reply["error"]["code"], 4009, "{reply}");
+    assert_eq!(reply["result"]["status"], "queued", "{reply}");
+    client.turn_events(&session).await;
     client.turn_events(&session).await;
     let reply = client.submit(32, &session, "three").await;
     assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+}
+
+/// A prompt sent during a turn runs after it, with the first turn's reply in its context, and
+/// both are saved in order.
+#[tokio::test]
+async fn a_prompt_sent_during_a_turn_runs_after_it() {
+    let started = start(vec!["re", "ply"], Duration::from_millis(500)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let reply = client.submit(2, &session, "first").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    let reply = client.submit(3, &session, "second").await;
+    assert_eq!(reply["result"]["status"], "queued", "{reply}");
+    let first = client.turn_events(&session).await;
+    let second = client.turn_events(&session).await;
+    assert!(first.last().unwrap().2 < second[0].2);
+    assert_eq!(second[0].0, "message.start");
+    assert_eq!(second.last().unwrap().1["text"], "reply");
+    let requests = started.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2);
+    let context = requests[1]["messages"].to_string();
+    assert!(
+        context.contains("first") && context.contains("reply"),
+        "{context}"
+    );
+    assert_eq!(
+        history(started.addr, &session).await,
+        [
+            ("user".to_string(), "first".to_string()),
+            ("assistant".to_string(), "reply".to_string()),
+            ("user".to_string(), "second".to_string()),
+            ("assistant".to_string(), "reply".to_string()),
+        ]
+    );
+}
+
+/// A session holds at most 16 prompts behind its running turn; the next is refused as busy.
+#[tokio::test]
+async fn a_full_queue_refuses_the_next_prompt() {
+    let started = start(vec!["ok"], Duration::from_millis(3000)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let reply = client.submit(2, &session, "running").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    for n in 0..16 {
+        let reply = client
+            .submit(10 + n, &session, &format!("waiting {n}"))
+            .await;
+        assert_eq!(reply["result"]["status"], "queued", "{n}: {reply}");
+    }
+    let reply = client.submit(30, &session, "one too many").await;
+    assert_eq!(reply["error"]["code"], 4009, "{reply}");
+}
+
+/// Every connection that prompts a session gets its turns' events, each with the same seq.
+#[tokio::test]
+async fn a_turn_streams_to_every_connection_on_its_session() {
+    let started = start(vec!["shared"], Duration::ZERO).await;
+    let mut owner = connect(started.addr).await;
+    let session = owner.create().await;
+    let mut other = connect(started.addr).await;
+    let reply = other.submit(2, &session, "from the other window").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    let seen_by_other = other.turn_events(&session).await;
+    let seen_by_owner = owner.turn_events(&session).await;
+    let seqs = |events: &[(String, Value, u64)]| events.iter().map(|e| e.2).collect::<Vec<_>>();
+    assert_eq!(seqs(&seen_by_owner), seqs(&seen_by_other));
+    assert_eq!(seen_by_owner.last().unwrap().1["text"], "shared");
 }
 
 /// `file.attach` (staging is tested in the crate, as it writes under the working folder):
@@ -1051,8 +1120,8 @@ async fn an_unreadable_staged_image_fails_the_turn_and_keeps_its_words() {
     assert!(started.requests.lock().unwrap().is_empty());
 }
 
-/// Each session's staged images go with its own next prompt only, once, and a prompt refused
-/// as busy leaves them staged.
+/// Each session's staged images go with its own next prompt only, once, a prompt queued behind
+/// a turn included.
 #[tokio::test]
 async fn staged_images_go_with_their_own_sessions_next_prompt_once() {
     let native = "agent:\n  image_input_mode: native\n";
@@ -1072,8 +1141,9 @@ async fn staged_images_go_with_their_own_sessions_next_prompt_once() {
     client
         .call(13, "image.attach_bytes", attach(&a, "a2"))
         .await;
-    let busy = client.submit(14, &a, "A again").await;
-    assert_eq!(busy["error"]["code"], 4009, "{busy}");
+    let queued = client.submit(14, &a, "A again").await;
+    assert_eq!(queued["result"]["status"], "queued", "{queued}");
+    client.turn_events(&a).await;
     client.turn_events(&a).await;
     client.submit(15, &a, "A2").await;
     client.turn_events(&a).await;
@@ -1097,5 +1167,8 @@ async fn staged_images_go_with_their_own_sessions_next_prompt_once() {
         .iter()
         .map(images)
         .collect();
-    assert_eq!(seen, [vec![url("a1")], vec![url("a2")], vec![url("b1")]]);
+    assert_eq!(
+        seen,
+        [vec![url("a1")], vec![url("a2")], vec![], vec![url("b1")]]
+    );
 }

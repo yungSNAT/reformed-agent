@@ -416,7 +416,7 @@ async fn a_refused_request_leaves_the_connection_and_session_usable() {
         .await;
     assert_eq!(refused["error"]["code"], 4001, "{refused}");
 
-    // ... then a slow turn, and a prompt sent whilst it runs is refused as busy.
+    // ... then a slow turn, and a prompt sent whilst it runs is queued behind it.
     let first = client
         .request(
             "prompt.submit",
@@ -424,29 +424,29 @@ async fn a_refused_request_leaves_the_connection_and_session_usable() {
         )
         .await;
     assert_eq!(first["result"]["execution_generation"], 1, "{first}");
-    let busy = client
+    assert_eq!(first["result"]["sequence"], 1, "{first}");
+    let queued = client
         .request(
             "prompt.submit",
             json!({"session_id": session, "text": "U2", "submission_id": "s-2"}),
         )
         .await;
-    assert_eq!(busy["error"]["code"], 4009, "{busy}");
+    let receipt = &queued["result"];
+    assert_eq!(receipt["status"], "queued", "{queued}");
+    assert_eq!(receipt["sequence"], 2, "{queued}");
+    assert_eq!(receipt["execution_generation"], Value::Null, "{queued}");
     let events = client.events_until("message.complete").await;
     assert!(events
         .iter()
         .all(|e| e["params"]["execution_generation"] == 1));
-    let idle = client.events_until("session.info").await;
-    assert_eq!(idle[0]["params"]["payload"]["running"], false);
+    client.events_until("session.info").await;
 
-    // The corrected retry is generation 2 and streams in full.
-    let retried = client
-        .request(
-            "prompt.submit",
-            json!({"session_id": session, "text": "U2", "submission_id": "s-2"}),
-        )
-        .await;
-    assert_eq!(retried["result"]["execution_generation"], 2, "{retried}");
+    // The queued prompt then runs as generation 2 and streams in full.
     let events = client.events_until("message.complete").await;
+    assert_eq!(events[0]["params"]["admission_id"], receipt["admission_id"]);
+    let running = &events[1]["params"]["payload"]["pending"][0];
+    assert_eq!(running["sequence"], 2, "{running}");
+    assert_eq!(running["input_id"], "s-2", "{running}");
     let done = &events.last().unwrap()["params"];
     assert_eq!(done["execution_generation"], 2);
     assert_eq!(done["payload"]["text"], REPLY.concat().as_str());
@@ -457,4 +457,73 @@ async fn a_refused_request_leaves_the_connection_and_session_usable() {
         )
         .await;
     assert_eq!(resumed["result"]["message_count"], 4, "{resumed}");
+}
+
+/// A create retried after a lost reply, on a new connection, gets the same session, and a turn
+/// started on either connection streams on both in one order.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retried_create_gets_the_same_session_and_both_connections_stream_it() {
+    let (_dir, home, runtime) = start().await;
+    let (mut first, _) = connect(&home, &runtime).await;
+    let create = json!({"request_id": "r-lost", "source": "gui"});
+    let made = first.request("session.create", create.clone()).await;
+    let session = made["result"]["session_id"].as_str().unwrap().to_string();
+    let (mut second, _) = connect(&home, &runtime).await;
+    let again = second.request("session.create", create).await;
+    assert_eq!(again["result"]["session_id"], session.as_str(), "{again}");
+    let other = second
+        .request("session.create", json!({"request_id": "r-other"}))
+        .await;
+    assert_ne!(other["result"]["session_id"], session.as_str(), "{other}");
+
+    first
+        .request(
+            "prompt.submit",
+            json!({"session_id": session, "text": "U1 hello"}),
+        )
+        .await;
+    let on_first = first.events_until("message.complete").await;
+    let on_second = second.events_until("message.complete").await;
+    let seqs = |events: &[Value]| -> Vec<u64> {
+        events
+            .iter()
+            .map(|e| e["params"]["seq"].as_u64().unwrap())
+            .collect()
+    };
+    assert_eq!(seqs(&on_first), seqs(&on_second));
+    let done = &on_second.last().unwrap()["params"]["payload"];
+    assert_eq!(done["text"], REPLY.concat().as_str());
+}
+
+/// A session resumed on another connection gets the turns started on the first.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_session_streams_turns_started_on_another_connection() {
+    let (_dir, home, runtime) = start().await;
+    let (mut owner, _) = connect(&home, &runtime).await;
+    let made = owner
+        .request("session.create", json!({"request_id": "r-1"}))
+        .await;
+    let session = made["result"]["session_id"].as_str().unwrap().to_string();
+    let (mut viewer, _) = connect(&home, &runtime).await;
+    let resumed = viewer
+        .request("session.resume", json!({"session_id": session}))
+        .await;
+    assert_eq!(
+        resumed["result"]["session_id"],
+        session.as_str(),
+        "{resumed}"
+    );
+
+    owner
+        .request(
+            "prompt.submit",
+            json!({"session_id": session, "text": "U1 from the owner"}),
+        )
+        .await;
+    let seen = viewer.events_until("message.complete").await;
+    assert_eq!(seen[0]["params"]["type"], "message.start", "{:?}", seen[0]);
+    assert_eq!(
+        seen.last().unwrap()["params"]["payload"]["text"],
+        REPLY.concat().as_str()
+    );
 }
