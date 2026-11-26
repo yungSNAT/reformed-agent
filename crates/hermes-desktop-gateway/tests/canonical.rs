@@ -599,3 +599,118 @@ async fn a_resumed_session_streams_turns_started_on_another_connection() {
         REPLY.concat().as_str()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn canonical_session_validation_preserves_saved_messages_and_generation() {
+    let (_dir, home, runtime) = start().await;
+    let saved_id = "fixture-saved-session";
+    let persistence = hermes_agent::SessionPersistence::new(&home);
+    persistence
+        .persist_session(
+            saved_id,
+            &[
+                hermes_core::Message::user("Saved question"),
+                hermes_core::Message::assistant("Saved answer"),
+            ],
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let (mut client, _) = connect(&home, &runtime).await;
+    for (method, params, code, reason) in [
+        (
+            "session.create",
+            json!([]),
+            4000,
+            "params must be an object",
+        ),
+        (
+            "session.create",
+            json!({"request_id": ""}),
+            4001,
+            "request_id must be a non-empty string",
+        ),
+        (
+            "session.create",
+            json!({"request_id": "r-1", "source": true}),
+            4001,
+            "source must be a string",
+        ),
+        (
+            "session.create",
+            json!({"request_id": "r-2", "service_tier": "fast"}),
+            4001,
+            "only the normal service tier",
+        ),
+        (
+            "session.resume",
+            json!({"session_id": 2}),
+            4001,
+            "session_id must be a string",
+        ),
+        (
+            "prompt.submit",
+            json!({"session_id": saved_id, "text": "Fixture follow-up", "submission_id": 3}),
+            4001,
+            "submission_id must be a string",
+        ),
+    ] {
+        let reply = client.request(method, params).await;
+        assert_eq!(reply["error"]["code"], code, "{reply}");
+        assert!(
+            reply["error"]["message"].as_str().unwrap().contains(reason),
+            "{reply}"
+        );
+    }
+    assert!(client.events.is_empty());
+
+    let missing = client
+        .request("session.resume", json!({"session_id": "fixture-session"}))
+        .await;
+    assert_eq!(missing["error"]["code"], 4001, "{missing}");
+    assert_eq!(
+        missing["error"]["message"], "session_not_found",
+        "{missing}"
+    );
+
+    let resumed = client
+        .request("session.resume", json!({"session_id": saved_id}))
+        .await;
+    let session = &resumed["result"];
+    assert_eq!(session["stored_session_id"], saved_id, "{resumed}");
+    assert_eq!(session["message_count"], 2);
+    assert_eq!(session["execution_generation"], 0);
+    assert_eq!(session["messages"][0]["content"], "Saved question");
+    assert_eq!(session["messages"][1]["content"], "Saved answer");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn canonical_resume_reports_storage_failure_without_treating_it_as_missing() {
+    let (_dir, home, runtime) = start().await;
+    let persistence = hermes_agent::SessionPersistence::new(&home);
+    std::fs::create_dir(persistence.db_path()).unwrap();
+    let (mut client, _) = connect(&home, &runtime).await;
+
+    let unavailable = client
+        .request("session.resume", json!({"session_id": "fixture-session"}))
+        .await;
+    assert_eq!(unavailable["error"]["code"], 5001, "{unavailable}");
+    assert!(
+        unavailable["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("storage_unavailable:"),
+        "{unavailable}"
+    );
+    assert!(persistence.db_path().is_dir());
+
+    let created = client
+        .request(
+            "session.create",
+            json!({"request_id": "fixture-create", "service_tier": "normal"}),
+        )
+        .await;
+    assert_eq!(created["result"]["message_count"], 0, "{created}");
+}
