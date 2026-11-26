@@ -16,7 +16,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(name = "hermes-upstream-sync", about = "Webhook-driven upstream sync")]
 struct Cli {
-    /// Logging level: DEBUG, INFO, WARNING or ERROR (others mean INFO).
+    /// Logging level: DEBUG, INFO, WARNING, ERROR or CRITICAL (others mean
+    /// INFO).
     #[arg(long, default_value = "INFO")]
     log_level: String,
     #[command(subcommand)]
@@ -75,6 +76,8 @@ pub(crate) enum Level {
     Info = 20,
     Warning = 30,
     Error = 40,
+    /// A threshold only, as in Python's logging: hides ERROR lines too.
+    Critical = 50,
 }
 
 static LOG_LEVEL: AtomicU8 = AtomicU8::new(Level::Info as u8);
@@ -89,6 +92,7 @@ pub(crate) fn log(level: Level, message: &str) {
         Level::Info => "INFO",
         Level::Warning => "WARNING",
         Level::Error => "ERROR",
+        Level::Critical => "CRITICAL",
     };
     let now = jiff::Zoned::now();
     eprintln!(
@@ -98,15 +102,19 @@ pub(crate) fn log(level: Level, message: &str) {
     );
 }
 
-fn main() -> ExitCode {
-    let cli = Cli::parse();
-    let level = match cli.log_level.to_ascii_uppercase().as_str() {
+fn parse_level(name: &str) -> Level {
+    match name.to_ascii_uppercase().as_str() {
         "DEBUG" => Level::Debug,
         "WARNING" | "WARN" => Level::Warning,
-        "ERROR" | "CRITICAL" => Level::Error,
+        "ERROR" => Level::Error,
+        "CRITICAL" => Level::Critical,
         _ => Level::Info,
-    };
-    LOG_LEVEL.store(level as u8, Ordering::Relaxed);
+    }
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    LOG_LEVEL.store(parse_level(&cli.log_level) as u8, Ordering::Relaxed);
     let result = match cli.command {
         Command::Listen(args) => listen(args),
     };
@@ -158,17 +166,46 @@ fn listen(args: ListenArgs) -> Result<(), (u8, String)> {
         host: args.host,
         port: args.port,
         path: args.path,
-        secret: std::env::var("GITHUB_WEBHOOK_SECRET").unwrap_or_default(),
+        secret: read_secret(std::env::var_os("GITHUB_WEBHOOK_SECRET")).map_err(|e| (2, e))?,
         allow_unsigned: args.allow_unsigned,
         expected_repo: args.expected_repo,
         expected_ref: args.expected_ref,
         backend_name: "sqlite".to_string(),
     };
-    listen::check_secret(&config).map_err(|e| (2, e))?;
+    let addrs = listen::resolve(&config.host, config.port).map_err(|e| (1, e))?;
+    listen::check_secret(&config, &addrs).map_err(|e| (2, e))?;
     let queue = queue::SqliteQueue::open(&args.sqlite_path).map_err(|e| (1, e))?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| (1, format!("could not start the runtime: {e}")))?;
     runtime
-        .block_on(listen::serve(config, Arc::new(queue)))
+        .block_on(listen::serve(&addrs, config, Arc::new(queue)))
         .map_err(|e| (1, e))
+}
+
+/// Unset or empty means no secret; set but not Unicode is refused rather
+/// than read as unset.
+fn read_secret(value: Option<std::ffi::OsString>) -> Result<String, String> {
+    value.map_or(Ok(String::new()), |v| {
+        v.into_string().map_err(|_| {
+            "GITHUB_WEBHOOK_SECRET is set but is not valid Unicode: refusing to start".to_string()
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn critical_is_above_error_as_in_python() {
+        assert!(parse_level("critical") > Level::Error);
+        assert!(parse_level("error") == Level::Error);
+        assert!(parse_level("verbose") == Level::Info);
+    }
+
+    #[test]
+    fn a_secret_is_read_only_when_it_is_unicode() {
+        assert_eq!(read_secret(None), Ok(String::new()));
+        assert_eq!(read_secret(Some("s".into())), Ok("s".to_string()));
+    }
 }

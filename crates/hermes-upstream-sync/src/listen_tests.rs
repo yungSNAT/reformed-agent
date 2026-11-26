@@ -21,17 +21,22 @@ fn config(secret: &str, host: &str, allow_unsigned: bool) -> ListenConfig {
     }
 }
 
-/// Records deliveries in memory; a second delivery id is a duplicate.
+/// Records deliveries in memory; a delivery id or body seen before is a
+/// duplicate.
 #[derive(Default)]
-struct Recorder(Mutex<Vec<SyncEvent>>);
+struct Recorder(Mutex<Vec<SyncEvent>>, Mutex<Vec<String>>);
 
 impl Publisher for Recorder {
-    fn enqueue(&self, event: &SyncEvent) -> Result<bool, String> {
+    fn enqueue(&self, event: &SyncEvent, body_sha256: &str) -> Result<bool, String> {
         let mut seen = self.0.lock().unwrap();
-        if seen.iter().any(|e| e.delivery_id == event.delivery_id) {
+        let mut bodies = self.1.lock().unwrap();
+        if seen.iter().any(|e| e.delivery_id == event.delivery_id)
+            || bodies.iter().any(|b| b == body_sha256)
+        {
             return Ok(false);
         }
         seen.push(event.clone());
+        bodies.push(body_sha256.to_string());
         Ok(true)
     }
 }
@@ -39,7 +44,7 @@ impl Publisher for Recorder {
 struct Failing;
 
 impl Publisher for Failing {
-    fn enqueue(&self, _: &SyncEvent) -> Result<bool, String> {
+    fn enqueue(&self, _: &SyncEvent, _: &str) -> Result<bool, String> {
         Err("disk full".to_string())
     }
 }
@@ -291,18 +296,42 @@ async fn oversized_bodies_are_refused_without_reading_them() {
 #[tokio::test]
 async fn the_cap_applies_whilst_the_body_is_read() {
     // Even a body longer than its declared length stops at the cap.
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_LENGTH, MAX_BODY_BYTES.into());
-    let body = Body::from(vec![b'x'; MAX_BODY_BYTES + 1]);
+    let body = Full::new(Bytes::from(vec![b'x'; MAX_BODY_BYTES + 1]));
     assert_eq!(
-        read_body(&headers, body).await.unwrap_err().0,
+        read_body(body, MAX_BODY_BYTES).await.unwrap_err().0,
         StatusCode::PAYLOAD_TOO_LARGE
     );
-    let body = Body::from(vec![b'x'; MAX_BODY_BYTES]);
+    let body = Full::new(Bytes::from(vec![b'x'; MAX_BODY_BYTES]));
+    let read = read_body(body, MAX_BODY_BYTES).await.unwrap();
+    // One buffer of the declared length: no second copy, no spare room.
+    assert_eq!((read.len(), read.capacity()), (MAX_BODY_BYTES, MAX_BODY_BYTES));
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_LENGTH, (MAX_BODY_BYTES + 1).into());
     assert_eq!(
-        read_body(&headers, body).await.unwrap().len(),
-        MAX_BODY_BYTES
+        declared_length(&headers),
+        Err((StatusCode::PAYLOAD_TOO_LARGE, "payload too large"))
     );
+}
+
+#[tokio::test]
+async fn one_peer_holds_at_most_4_slots_and_others_still_get_one() {
+    let shared = Shared {
+        config: config(SECRET, "127.0.0.1", false),
+        queue: Arc::new(Recorder::default()),
+        slots: Arc::new(Semaphore::new(MAX_SLOTS)),
+        peer_slots: PerPeer::new(),
+    };
+    let (a, b): (IpAddr, IpAddr) = ("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+    let mut held = Vec::new();
+    for _ in 0..MAX_PEER_SLOTS {
+        held.push(shared.take_slot(a).await.expect("a slot"));
+    }
+    let started = std::time::Instant::now();
+    assert!(shared.take_slot(a).await.is_none());
+    assert!(started.elapsed() >= SLOT_WAIT);
+    assert!(shared.take_slot(b).await.is_some());
+    held.pop();
+    assert!(shared.take_slot(a).await.is_some(), "a freed slot is reused");
 }
 
 #[tokio::test]
@@ -450,15 +479,21 @@ async fn unsigned_mode_accepts_deliveries_without_a_signature() {
 
 #[test]
 fn an_empty_secret_needs_allow_unsigned_and_a_loopback_host() {
-    assert!(check_secret(&config(SECRET, "0.0.0.0", false)).is_ok());
-    let refused = check_secret(&config("", "127.0.0.1", false)).unwrap_err();
+    let check = |secret: &str, host: &str, allow_unsigned: bool| {
+        check_secret(
+            &config(secret, host, allow_unsigned),
+            &resolve(host, 8099).unwrap(),
+        )
+    };
+    assert!(check(SECRET, "0.0.0.0", false).is_ok());
+    let refused = check("", "127.0.0.1", false).unwrap_err();
     assert!(
         refused.contains("GITHUB_WEBHOOK_SECRET is not set"),
         "{refused}"
     );
-    assert!(check_secret(&config("", "127.0.0.1", true)).is_ok());
-    assert!(check_secret(&config("", "::1", true)).is_ok());
-    assert!(check_secret(&config("", "0.0.0.0", true))
+    assert!(check("", "127.0.0.1", true).is_ok());
+    assert!(check("", "::1", true).is_ok());
+    assert!(check("", "0.0.0.0", true)
         .unwrap_err()
         .contains("not loopback"));
 }

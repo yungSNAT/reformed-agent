@@ -8,11 +8,12 @@ description = "GitHub webhook listener and queue worker for unattended upstream 
 publish = false
 
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 clap = { workspace = true }
 hermes-py = { workspace = true }
 hmac = "0.12"
 http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 jiff = { workspace = true }
 rusqlite = { workspace = true }
 sha2 = "0.10"

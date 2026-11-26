@@ -2183,11 +2183,12 @@ dependencies = [
 name = "hermes-upstream-sync"
 version = "0.22.0"
 dependencies = [
- "axum",
  "clap",
  "hermes-py",
  "hmac 0.12.1",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "jiff",
  "rusqlite",
  "sha2 0.10.9",

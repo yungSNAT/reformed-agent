@@ -11,8 +11,9 @@ use crate::event::SyncEvent;
 
 /// Where the listener puts accepted deliveries.
 pub trait Publisher: Send + Sync {
-    /// Queues the event; `Ok(false)` when its delivery id was already queued.
-    fn enqueue(&self, event: &SyncEvent) -> Result<bool, String>;
+    /// Queues the event; `Ok(false)` when its delivery id, or a body with the
+    /// same SHA-256, was already queued.
+    fn enqueue(&self, event: &SyncEvent, body_sha256: &str) -> Result<bool, String>;
 }
 
 #[derive(Debug, PartialEq)]
@@ -51,6 +52,12 @@ CREATE TABLE IF NOT EXISTS queue_events (
 CREATE INDEX IF NOT EXISTS idx_queue_events_status_created ON queue_events(status, id);
 ";
 
+/// Added beside the script's schema: the SHA-256 of the body each delivery
+/// came with, unique where known. The script writes NULL there and reads
+/// rows by column name, so it still shares the file.
+const BODY_HASH_COLUMN: &str = "ALTER TABLE queue_events ADD COLUMN body_sha256 TEXT";
+const BODY_HASH_INDEX: &str = "CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_events_body_sha256      ON queue_events(body_sha256) WHERE body_sha256 IS NOT NULL";
+
 #[allow(dead_code)] // the worker's side lands next
 impl SqliteQueue {
     pub fn open(path: &Path) -> Result<SqliteQueue, String> {
@@ -61,7 +68,22 @@ impl SqliteQueue {
         let queue = SqliteQueue {
             path: path.to_path_buf(),
         };
-        queue.connect()?.execute_batch(SCHEMA).map_err(db_error)?;
+        let mut conn = queue.connect()?;
+        // One writer at a time, so a listener and worker opening the same
+        // file cannot both add the column.
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        tx.execute_batch(SCHEMA).map_err(db_error)?;
+        let has_hash = tx
+            .prepare("SELECT 1 FROM pragma_table_info('queue_events') WHERE name = 'body_sha256'")
+            .and_then(|mut s| s.exists([]))
+            .map_err(db_error)?;
+        if !has_hash {
+            tx.execute_batch(BODY_HASH_COLUMN).map_err(db_error)?;
+        }
+        tx.execute_batch(BODY_HASH_INDEX).map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
         Ok(queue)
     }
 
@@ -158,13 +180,14 @@ impl SqliteQueue {
 }
 
 impl Publisher for SqliteQueue {
-    fn enqueue(&self, event: &SyncEvent) -> Result<bool, String> {
+    fn enqueue(&self, event: &SyncEvent, body_sha256: &str) -> Result<bool, String> {
         let now = hermes_py::utc_isoformat();
         let result = self.connect()?.execute(
             "INSERT INTO queue_events(
                delivery_id, event_name, repository, ref, before_sha, after_sha,
-               compare_url, pushed_at, payload_json, status, attempts, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', 0, ?10, ?10)",
+               compare_url, pushed_at, payload_json, status, attempts, created_at, updated_at,
+               body_sha256
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', 0, ?10, ?10, ?11)",
             params![
                 event.delivery_id,
                 event.event_name,
@@ -176,11 +199,13 @@ impl Publisher for SqliteQueue {
                 event.pushed_at,
                 hermes_py::dumps(&event.payload, None, false),
                 now,
+                body_sha256,
             ],
         );
         match result {
             Ok(_) => Ok(true),
-            // A repeated GitHub delivery id is accepted without a second row.
+            // A repeated GitHub delivery id or body is accepted without a
+            // second row.
             Err(rusqlite::Error::SqliteFailure(e, _))
                 if e.code == ErrorCode::ConstraintViolation =>
             {
@@ -220,9 +245,9 @@ mod tests {
         let db = scratch.path().join("queue.sqlite");
         let (first, second) = (push_event("first"), push_event("second"));
         let listener = SqliteQueue::open(&db).unwrap();
-        assert!(listener.enqueue(&first).unwrap());
-        assert!(!listener.enqueue(&first).unwrap());
-        assert!(listener.enqueue(&second).unwrap());
+        assert!(listener.enqueue(&first, "h1").unwrap());
+        assert!(!listener.enqueue(&first, "h1").unwrap());
+        assert!(listener.enqueue(&second, "h2").unwrap());
 
         let worker = SqliteQueue::open(&db).unwrap();
         let item = worker.claim_next().unwrap().unwrap();
@@ -254,7 +279,7 @@ mod tests {
 
         let reopened = SqliteQueue::open(&db).unwrap();
         assert!(reopened.claim_next().unwrap().is_none());
-        assert!(!reopened.enqueue(&second).unwrap());
+        assert!(!reopened.enqueue(&second, "h2").unwrap());
         let statuses: Vec<(String, Option<String>)> = Connection::open(&db)
             .unwrap()
             .prepare("SELECT status, last_error FROM queue_events ORDER BY id")
@@ -274,15 +299,17 @@ mod tests {
 
     // tests/test_upstream_webhook_queues.py::test_sqlite_releases_connections_after_commit_and_duplicate_rollback:
     // no connection outlives a call, so the file can be removed straight
-    // after (Windows refuses to delete a file a connection still holds).
+    // after. Only Windows refuses to delete a file a connection still holds,
+    // so only there can this fail; elsewhere it holds by construction
+    // (`SqliteQueue` keeps a path, not a connection).
     #[test]
     fn sqlite_releases_connections_after_commit_and_duplicate() {
         let scratch = tempfile::tempdir().unwrap();
         let db = scratch.path().join("queue.sqlite");
         let queue = SqliteQueue::open(&db).unwrap();
         let event = push_event("closed");
-        assert!(queue.enqueue(&event).unwrap());
-        assert!(!queue.enqueue(&event).unwrap());
+        assert!(queue.enqueue(&event, "h").unwrap());
+        assert!(!queue.enqueue(&event, "h").unwrap());
         std::fs::remove_file(&db).unwrap();
     }
 
@@ -293,12 +320,47 @@ mod tests {
         let queue = SqliteQueue::open(&db).unwrap();
         let mut event = push_event("unicode");
         event.payload = hermes_py::loads(r#"{"b":1,"a":"é"}"#).unwrap();
-        queue.enqueue(&event).unwrap();
+        queue.enqueue(&event, "h").unwrap();
         let stored: String = Connection::open(&db)
             .unwrap()
             .query_row("SELECT payload_json FROM queue_events", [], |r| r.get(0))
             .unwrap();
         let backslash = char::from(92u8);
         assert_eq!(stored, format!(r#"{{"b": 1, "a": "{backslash}u00e9"}}"#));
+    }
+
+    #[test]
+    fn a_file_the_script_made_gains_the_body_column_and_keeps_its_rows() {
+        let scratch = tempfile::tempdir().unwrap();
+        let db = scratch.path().join("script.db");
+        let script = Connection::open(&db).unwrap();
+        script.execute_batch(SCHEMA).unwrap();
+        // The script's INSERT, which names no body column.
+        let insert = "INSERT INTO queue_events(delivery_id, event_name, repository, ref,
+              before_sha, after_sha, compare_url, pushed_at, payload_json, status, attempts,
+              created_at, updated_at)
+            VALUES (?1, 'push', 'r', 'refs/heads/main', 'a', 'b', 'c', 'p', '{}', 'pending', 0, 't', 't')";
+        script.execute(insert, ["by-script"]).unwrap();
+        drop(script);
+        let queue = SqliteQueue::open(&db).unwrap();
+        SqliteQueue::open(&db).unwrap(); // a second open adds nothing twice
+        assert!(queue.enqueue(&push_event("one"), "same-body").unwrap());
+        assert!(!queue.enqueue(&push_event("two"), "same-body").unwrap());
+        assert!(queue.enqueue(&push_event("three"), "other-body").unwrap());
+        // The script keeps writing rows with no body hash after the change.
+        let script = Connection::open(&db).unwrap();
+        script.execute(insert, ["by-script-2"]).unwrap();
+        let ids: Vec<String> = script
+            .prepare("SELECT delivery_id FROM queue_events ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(ids, ["by-script", "one", "three", "by-script-2"]);
+        assert_eq!(
+            queue.claim_next().unwrap().unwrap().event.delivery_id,
+            "by-script"
+        );
     }
 }

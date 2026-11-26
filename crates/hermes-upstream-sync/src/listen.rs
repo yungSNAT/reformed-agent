@@ -1,25 +1,41 @@
 //! `listen`: the GitHub webhook receiver (`serve_webhook` in the script).
 //!
-//! Stricter than the script: it will not start without a secret unless told
-//! to accept unsigned deliveries on a loopback address; bodies are capped at
-//! GitHub's 25 MB payload limit and must arrive within 30 seconds; at most
-//! 16 requests are handled at once (more get 503); a body must declare its
-//! length; the delivery id must be file-name safe.
+//! Stricter than the script, which gave every connection a thread with no
+//! time limit:
+//!
+//! - it will not start without a secret unless told to accept unsigned
+//!   deliveries on a loopback address;
+//! - a request head must arrive within 10 seconds of the connection opening
+//!   and its body within 10 seconds of a body slot being taken (GitHub gives
+//!   up on a delivery after 10 seconds); one request per connection;
+//! - at most 128 connections are open, 32 of them from any one address;
+//! - a body slot is taken only once the head is read and the method, path
+//!   and length pass; there are 16 slots, at most 4 held by one address, and
+//!   a request waits up to 5 seconds for one before 503;
+//! - bodies are capped at GitHub's 25 MB payload limit, must declare their
+//!   length and are read into one buffer of that length;
+//! - a body already queued under another delivery id is not queued again;
+//! - the delivery id must be file-name safe.
+//!
 //! The secret, headers and bodies are never logged or echoed.
 
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
-use axum::body::{Body, Bytes};
-use axum::extract::{ConnectInfo, Request, State};
-use axum::http::{header, HeaderMap, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
 use hermes_py::Py;
 use hmac::{Hmac, Mac};
-use http_body_util::{BodyExt, LengthLimitError, Limited};
-use sha2::Sha256;
-use tokio::sync::Semaphore;
+use http_body_util::{BodyExt, Full};
+use hyper::body::{Body, Bytes, Incoming};
+use hyper::header::{self, HeaderValue};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{HeaderMap, Method, Request, Response, StatusCode};
+use hyper_util::rt::{TokioIo, TokioTimer};
+use sha2::{Digest, Sha256};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::event::{valid_delivery_id, SyncEvent};
 use crate::queue::Publisher;
@@ -27,8 +43,18 @@ use crate::{log, Level};
 
 /// GitHub caps webhook payloads at 25 MB.
 pub const MAX_BODY_BYTES: usize = 25 * 1024 * 1024;
-const BODY_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_IN_FLIGHT: usize = 16;
+/// GitHub ends a delivery that has had no reply for 10 seconds.
+const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+const BODY_TIMEOUT: Duration = Duration::from_secs(10);
+const SLOT_WAIT: Duration = Duration::from_secs(5);
+const MAX_SLOTS: usize = 16;
+const MAX_PEER_SLOTS: usize = 4;
+const MAX_CONNECTIONS: usize = 128;
+const MAX_PEER_CONNECTIONS: usize = 32;
+/// A backstop: no connection outlives this, whatever it is waiting on.
+const CONNECTION_DEADLINE: Duration = Duration::from_secs(60);
+
+type Reply = Response<Full<Bytes>>;
 
 pub struct ListenConfig {
     pub host: String,
@@ -41,10 +67,23 @@ pub struct ListenConfig {
     pub backend_name: String,
 }
 
+/// The addresses `--host` names, resolved once: the listener binds exactly
+/// the addresses [`check_secret`] approved.
+pub fn resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
+    let addrs: Vec<SocketAddr> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("could not resolve --host {host}: {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("could not resolve --host {host}: no addresses"));
+    }
+    Ok(addrs)
+}
+
 /// Refuses an empty secret unless unsigned deliveries were asked for and
-/// every address the host resolves to is loopback. The script accepted every
-/// request unsigned whenever `GITHUB_WEBHOOK_SECRET` was unset.
-pub fn check_secret(config: &ListenConfig) -> Result<(), String> {
+/// every address is loopback. The script accepted every request unsigned
+/// whenever `GITHUB_WEBHOOK_SECRET` was unset.
+pub fn check_secret(config: &ListenConfig, addrs: &[SocketAddr]) -> Result<(), String> {
     if !config.secret.is_empty() {
         return Ok(());
     }
@@ -55,10 +94,6 @@ pub fn check_secret(config: &ListenConfig) -> Result<(), String> {
                 .to_string(),
         );
     }
-    let addrs: Vec<SocketAddr> = (config.host.as_str(), config.port)
-        .to_socket_addrs()
-        .map_err(|e| format!("could not resolve --host {}: {e}", config.host))?
-        .collect();
     if addrs.is_empty() || !addrs.iter().all(|a| a.ip().is_loopback()) {
         return Err(format!(
             "--allow-unsigned needs a loopback --host; {} is not loopback",
@@ -96,14 +131,57 @@ pub fn verify_signature(body: &[u8], secret: &str, header: Option<&[u8]>) -> boo
     mac.verify_slice(&digest).is_ok()
 }
 
+/// One shared value per peer address, alive whilst anything holds it: the
+/// number of holders is what that peer has open.
+struct PerPeer<T>(Mutex<HashMap<IpAddr, Weak<T>>>);
+
+impl<T> PerPeer<T> {
+    fn new() -> Self {
+        PerPeer(Mutex::new(HashMap::new()))
+    }
+
+    fn get(&self, peer: IpAddr, make: impl FnOnce() -> T) -> Arc<T> {
+        let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        map.retain(|_, held| held.strong_count() > 0);
+        if let Some(held) = map.get(&peer).and_then(Weak::upgrade) {
+            return held;
+        }
+        let held = Arc::new(make());
+        map.insert(peer, Arc::downgrade(&held));
+        held
+    }
+}
+
 struct Shared {
     config: ListenConfig,
     queue: Arc<dyn Publisher>,
-    in_flight: Semaphore,
+    slots: Arc<Semaphore>,
+    peer_slots: PerPeer<Semaphore>,
 }
 
-pub async fn serve(config: ListenConfig, queue: Arc<dyn Publisher>) -> Result<(), String> {
-    let listener = tokio::net::TcpListener::bind((config.host.as_str(), config.port))
+impl Shared {
+    /// One of the peer's own slots, then one of all; `None` after
+    /// [`SLOT_WAIT`].
+    async fn take_slot(&self, peer: IpAddr) -> Option<[OwnedSemaphorePermit; 2]> {
+        let own = self
+            .peer_slots
+            .get(peer, || Semaphore::new(MAX_PEER_SLOTS));
+        let slots = Arc::clone(&self.slots);
+        let wait = async move {
+            let own = own.acquire_owned().await.ok()?;
+            let any = slots.acquire_owned().await.ok()?;
+            Some([own, any])
+        };
+        tokio::time::timeout(SLOT_WAIT, wait).await.ok().flatten()
+    }
+}
+
+pub async fn serve(
+    addrs: &[SocketAddr],
+    config: ListenConfig,
+    queue: Arc<dyn Publisher>,
+) -> Result<(), String> {
+    let listener = tokio::net::TcpListener::bind(addrs)
         .await
         .map_err(|e| format!("could not listen on {}:{}: {e}", config.host, config.port))?;
     run(listener, config, queue).await
@@ -129,26 +207,55 @@ pub async fn run(
     let shared = Arc::new(Shared {
         config,
         queue,
-        in_flight: Semaphore::new(MAX_IN_FLIGHT),
+        slots: Arc::new(Semaphore::new(MAX_SLOTS)),
+        peer_slots: PerPeer::new(),
     });
-    let app = axum::Router::new().fallback(handle).with_state(shared);
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
-        log(Level::Info, "webhook server interrupted; exiting");
-    })
-    .await
-    .map_err(|e| format!("webhook server failed: {e}"))
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let peer_connections = PerPeer::<()>::new();
+    let interrupted = tokio::signal::ctrl_c();
+    tokio::pin!(interrupted);
+    loop {
+        // At the cap, new connections wait in the listen backlog.
+        let Ok(open) = Arc::clone(&connections).acquire_owned().await else {
+            return Ok(());
+        };
+        let (stream, peer) = tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok(accepted) => accepted,
+                Err(e) => {
+                    // Out of file descriptors, most likely: let some close.
+                    log(Level::Warning, &format!("could not accept a connection: {e}"));
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            },
+            _ = &mut interrupted => {
+                log(Level::Info, "webhook server interrupted; exiting");
+                return Ok(());
+            }
+        };
+        let from_peer = peer_connections.get(peer.ip(), || ());
+        if Arc::strong_count(&from_peer) > MAX_PEER_CONNECTIONS {
+            continue; // dropping the stream closes it
+        }
+        let shared = Arc::clone(&shared);
+        tokio::spawn(async move {
+            let _held = (open, from_peer);
+            let service = service_fn(move |request| {
+                let shared = Arc::clone(&shared);
+                async move { Ok::<_, Infallible>(handle(&shared, peer, request).await) }
+            });
+            let connection = http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEAD_TIMEOUT)
+                .keep_alive(false)
+                .serve_connection(TokioIo::new(stream), service);
+            let _ = tokio::time::timeout(CONNECTION_DEADLINE, connection).await;
+        });
+    }
 }
 
-async fn handle(
-    State(shared): State<Arc<Shared>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    request: Request,
-) -> Response {
+async fn handle(shared: &Shared, peer: SocketAddr, request: Request<Incoming>) -> Reply {
     // The path without its query string: a query can carry anything.
     let request_line = format!(
         "{} {} {:?}",
@@ -156,7 +263,7 @@ async fn handle(
         request.uri().path(),
         request.version()
     );
-    let response = respond(&shared, request).await;
+    let response = respond(shared, peer.ip(), request).await;
     log(
         Level::Info,
         &format!(
@@ -168,10 +275,7 @@ async fn handle(
     response
 }
 
-async fn respond(shared: &Shared, request: Request) -> Response {
-    let Ok(_permit) = shared.in_flight.try_acquire() else {
-        return text(StatusCode::SERVICE_UNAVAILABLE, "busy");
-    };
+async fn respond(shared: &Shared, peer: IpAddr, request: Request<Incoming>) -> Reply {
     let config = &shared.config;
     if request.method() != Method::POST {
         return text(
@@ -179,12 +283,21 @@ async fn respond(shared: &Shared, request: Request) -> Response {
             &format!("Unsupported method ('{}')", request.method()),
         );
     }
+    // The script compared the raw request target, so an absolute-form target
+    // (`POST http://host/path`) never matched.
     let target = request.uri().path_and_query().map_or("", |p| p.as_str());
-    if target != config.path {
+    if request.uri().authority().is_some() || target != config.path {
         return text(StatusCode::NOT_FOUND, "Not Found");
     }
     let (parts, body) = request.into_parts();
-    let body = match read_body(&parts.headers, body).await {
+    let declared = match declared_length(&parts.headers) {
+        Ok(declared) => declared,
+        Err((status, message)) => return text(status, message),
+    };
+    let Some(_slot) = shared.take_slot(peer).await else {
+        return text(StatusCode::SERVICE_UNAVAILABLE, "busy");
+    };
+    let body = match read_body(body, declared).await {
         Ok(body) => body,
         Err((status, message)) => return text(status, message),
     };
@@ -225,9 +338,14 @@ async fn respond(shared: &Shared, request: Request) -> Response {
             ("ref", Py::from(event.git_ref)),
         ]));
     }
+    // The signature covers the body but not the delivery id, so a captured
+    // body resent under a new id is a replay.
+    let body_sha256 = format!("{:x}", Sha256::digest(&body));
     let queue = Arc::clone(&shared.queue);
-    let queued =
-        tokio::task::spawn_blocking(move || queue.enqueue(&event).map(|q| (q, event))).await;
+    let queued = tokio::task::spawn_blocking(move || {
+        queue.enqueue(&event, &body_sha256).map(|q| (q, event))
+    })
+    .await;
     match queued {
         Ok(Ok((queued, event))) => json(Py::dict([
             ("accepted", Py::from(true)),
@@ -251,27 +369,46 @@ async fn respond(shared: &Shared, request: Request) -> Response {
     }
 }
 
-/// The body, at most [`MAX_BODY_BYTES`], read within [`BODY_TIMEOUT`]. A
-/// declared length over the cap is refused before anything is read.
-async fn read_body(headers: &HeaderMap, body: Body) -> Result<Bytes, (StatusCode, &'static str)> {
+/// The declared `Content-Length`; refused when absent or over the cap, before
+/// any of the body is read.
+fn declared_length(headers: &HeaderMap) -> Result<usize, (StatusCode, &'static str)> {
     let declared = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok());
-    let Some(declared) = declared else {
-        return Err((StatusCode::LENGTH_REQUIRED, "length required"));
-    };
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or((StatusCode::LENGTH_REQUIRED, "length required"))?;
     if declared > MAX_BODY_BYTES as u64 {
         return Err((StatusCode::PAYLOAD_TOO_LARGE, "payload too large"));
     }
-    match tokio::time::timeout(BODY_TIMEOUT, Limited::new(body, MAX_BODY_BYTES).collect()).await {
-        Err(_) => Err((StatusCode::REQUEST_TIMEOUT, "request timeout")),
-        Ok(Err(e)) if e.downcast_ref::<LengthLimitError>().is_some() => {
-            Err((StatusCode::PAYLOAD_TOO_LARGE, "payload too large"))
+    Ok(declared as usize)
+}
+
+/// The body, read within [`BODY_TIMEOUT`] into one buffer of the declared
+/// length; more than [`MAX_BODY_BYTES`] is refused whilst reading.
+async fn read_body<B>(mut body: B, declared: usize) -> Result<Vec<u8>, (StatusCode, &'static str)>
+where
+    B: Body<Data = Bytes> + Unpin,
+{
+    let read = async {
+        let mut bytes = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|_| (StatusCode::BAD_REQUEST, "invalid body"))?;
+            let Ok(chunk) = frame.into_data() else {
+                continue; // trailers
+            };
+            if bytes.len() + chunk.len() > MAX_BODY_BYTES {
+                return Err((StatusCode::PAYLOAD_TOO_LARGE, "payload too large"));
+            }
+            if bytes.capacity() == 0 {
+                bytes.reserve_exact(declared.max(chunk.len()));
+            }
+            bytes.extend_from_slice(&chunk);
         }
-        Ok(Err(_)) => Err((StatusCode::BAD_REQUEST, "invalid body")),
-        Ok(Ok(collected)) => Ok(collected.to_bytes()),
-    }
+        Ok(bytes)
+    };
+    tokio::time::timeout(BODY_TIMEOUT, read)
+        .await
+        .unwrap_or(Err((StatusCode::REQUEST_TIMEOUT, "request timeout")))
 }
 
 fn header_text(headers: &HeaderMap, name: &str) -> String {
@@ -281,23 +418,26 @@ fn header_text(headers: &HeaderMap, name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn text(status: StatusCode, message: &str) -> Response {
-    (
-        status,
-        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        message.to_string(),
-    )
-        .into_response()
+fn reply(status: StatusCode, content_type: &'static str, body: String) -> Reply {
+    let mut response = Response::new(Full::new(Bytes::from(body)));
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response
+}
+
+fn text(status: StatusCode, message: &str) -> Reply {
+    reply(status, "text/plain; charset=utf-8", message.to_string())
 }
 
 /// 200 with `json.dumps(payload)`'s bytes, as the script answered.
-fn json(payload: Py) -> Response {
-    (
+fn json(payload: Py) -> Reply {
+    reply(
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
+        "application/json",
         hermes_py::dumps(&payload, None, false),
     )
-        .into_response()
 }
 
 #[cfg(test)]

@@ -108,13 +108,20 @@ task to port blocked upstream changes.
 
 ## Quick Start (SQLite)
 
+The listener speaks plain HTTP and has no TLS of its own, and GitHub signs
+only the body, so anyone who can read the traffic can resend a delivery. Keep
+it on a loopback address, as below, and let GitHub reach it through a
+TLS-terminating reverse proxy or tunnel on the same machine. Use
+`--host 0.0.0.0` only when that proxy runs on another host and the network
+between them is private.
+
 Start listener:
 
 ```bash
 python3 scripts/upstream_webhook_sync.py listen \
   --backend sqlite \
   --sqlite-path .sync-queue/upstream-events.db \
-  --host 0.0.0.0 \
+  --host 127.0.0.1 \
   --port 8099 \
   --path /github/upstream-sync \
   --expected-repo NousResearch/hermes-agent \
