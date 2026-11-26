@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+use serde_json::{json, Value};
 use support::isolated_hermes;
 
 async fn command(sandbox: &Path, args: &[&str], expected_exit: i32) -> String {
@@ -170,4 +171,93 @@ async fn diagnostics_list_and_remove_local_reports_and_read_recent_logs() {
     assert!(!recent.contains("First sample"));
     assert!(recent.contains("Second sample\nThird sample"));
     assert!(recent.contains("Showing last 2 of 3 lines"));
+}
+
+#[tokio::test]
+async fn doctor_snapshot_verification_detects_tampering_and_key_rotation() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let home = root.join("hermes");
+    fs::create_dir(&home).unwrap();
+    let server = MockServer::start().await;
+    let ready = "ollama-local";
+    let backends = hermes_provider_runtime::local_backend_specs();
+    let providers: serde_json::Map<String, Value> = backends
+        .iter()
+        .map(|spec| {
+            let endpoint = if spec.provider == ready {
+                "ready"
+            } else {
+                "unavailable"
+            };
+            (
+                spec.provider.to_string(),
+                json!({"base_url": format!("{}/{endpoint}", server.uri())}),
+            )
+        })
+        .collect();
+    fs::write(
+        home.join("config.yaml"),
+        json!({"llm_providers": providers}).to_string(),
+    )
+    .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/ready/models"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/unavailable/models"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect((backends.len() - 1) as u64)
+        .mount(&server)
+        .await;
+
+    let snapshot = "doctor.json";
+    let signed = command(
+        root,
+        &["doctor", "--snapshot", "--snapshot-path", snapshot],
+        0,
+    )
+    .await;
+    assert!(signed.contains("Doctor snapshot: doctor.json"));
+    assert!(signed.contains("Snapshot signature: doctor.json.sig.json"));
+    let snapshot_path = root.join(snapshot);
+    let original = fs::read(&snapshot_path).unwrap();
+    let report: Value = serde_json::from_slice(&original).unwrap();
+    let checks = report["checks"].as_array().unwrap();
+    for (name, reachable) in [
+        ("local_backend_ollama-local", true),
+        ("local_backend_vllm", false),
+    ] {
+        let check = checks.iter().find(|check| check["name"] == name).unwrap();
+        assert_eq!(check["reachable"], reachable, "{name}");
+    }
+
+    let verify = ["verify-provenance", snapshot, "--json"];
+    let verified: Value = serde_json::from_str(&command(root, &verify, 0).await).unwrap();
+    assert_eq!(verified["ok"], true);
+    assert_eq!(verified["code"], "ok");
+
+    fs::write(&snapshot_path, b"{}\n").unwrap();
+    let changed: Value = serde_json::from_str(&command(root, &verify, 0).await).unwrap();
+    assert_eq!(changed["ok"], false);
+    assert_eq!(changed["code"], "artifact_sha256_mismatch");
+    assert!(
+        command(root, &["verify-provenance", snapshot, "--strict"], 1)
+            .await
+            .contains("artifact_sha256 mismatch")
+    );
+    fs::write(&snapshot_path, original).unwrap();
+
+    let rotation = command(root, &["rotate-provenance-key"], 0).await;
+    assert!(rotation.contains("Rotated provenance signing key."));
+    assert!(rotation.contains("Archived previous key:"));
+    let after_rotation: Value = serde_json::from_str(&command(root, &verify, 0).await).unwrap();
+    assert_eq!(after_rotation["ok"], false);
+    assert_eq!(after_rotation["code"], "signature_mismatch");
 }
