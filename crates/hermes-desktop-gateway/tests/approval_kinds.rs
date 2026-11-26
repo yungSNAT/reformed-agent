@@ -202,6 +202,18 @@ fn the_offered_choices_are_always_sent_and_never_broader_than_the_request_allows
         offered(json!({"command": "ls", "choices": ["once", "deny"], "allow_permanent": true})),
         json!(["once", "deny"])
     );
+    // A named choice the request bars is refused, not sent.
+    for broader in [
+        json!({"command": "rm -rf /", "allow_session": false,
+               "choices": ["once", "session", "always", "deny"]}),
+        json!({"command": "rm -rf /", "smart_denied": true, "choices": ["session"]}),
+        json!({"command": "ls", "allow_permanent": false, "choices": ["always", "deny"]}),
+    ] {
+        assert!(
+            request(broader.clone()).unwrap().params().is_err(),
+            "{broader}"
+        );
+    }
 }
 
 #[test]
