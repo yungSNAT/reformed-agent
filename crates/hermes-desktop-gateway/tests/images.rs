@@ -451,18 +451,9 @@ async fn image_attach_keeps_each_session_within_its_limits() {
     assert_eq!(staged_images(started.home.path()).len(), 18);
 }
 
-/// A network share or device namespace path is refused without being opened.
-#[tokio::test]
-async fn image_attach_refuses_share_and_device_paths() {
-    let started = start().await;
-    let mut client = connect(started.addr).await;
-    let session = client.create().await;
-    let paths = [
-        r"\nohost.invalid\share\a.png",
-        r"\?\C:\a.png",
-        r"\.\pipe\a.png",
-        "file://nohost.invalid/share/a.png",
-    ];
+/// Sends each of `paths` to `image.attach` and expects the refusal for a path that is never
+/// read, at once.
+async fn expect_refused(client: &mut Client, session: &str, paths: &[String]) {
     for (n, path) in paths.iter().enumerate() {
         let params = json!({"session_id": session, "path": path});
         let reply = tokio::time::timeout(
@@ -472,7 +463,70 @@ async fn image_attach_refuses_share_and_device_paths() {
         .await
         .expect("refused at once");
         assert_eq!(reply["error"]["code"], 4016, "{path}: {reply}");
+        let message = reply["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.starts_with("image path refused:"),
+            "{path}: {reply}"
+        );
     }
+}
+
+/// A network share or device namespace path, with 2 leading separators in any mix or the
+/// `\??\` prefix, is refused without being opened. The strings hold real doubled backslashes.
+#[tokio::test]
+async fn image_attach_refuses_share_and_device_paths() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let paths = [
+        r"\\nohost.invalid\share\a.png",
+        r"\\?\C:\a.png",
+        r"\\.\pipe\a.png",
+        r"\??\UNC\nohost.invalid\share\a.png",
+        r"/\nohost.invalid\share\a.png",
+        r"\/nohost.invalid/share/a.png",
+        "//nohost.invalid/share/a.png",
+        r#""\\nohost.invalid\share\a b.png" and words"#,
+        "file://nohost.invalid/share/a.png",
+    ];
+    assert!(paths[0].starts_with("\\\\") && paths[0].as_bytes()[..2] == [b'\\', b'\\']);
+    let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+    expect_refused(&mut client, &session, &paths).await;
+}
+
+/// A Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to
+/// `LPT9`), in any case and with or without an extension, is refused before it is opened, on
+/// every platform, even where a file of that name exists.
+#[tokio::test]
+async fn image_attach_refuses_reserved_device_names() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let mut paths = Vec::new();
+    for name in [
+        "NUL.png",
+        "con.png",
+        "Aux.jpg",
+        "prn.gif",
+        "COM1.png",
+        "lpt9.webp",
+        "nul",
+    ] {
+        let path = folder.path().join(name);
+        #[cfg(not(windows))]
+        std::fs::write(&path, png(name)).unwrap();
+        paths.push(path.display().to_string());
+    }
+    paths.push("NUL.png".to_string());
+    expect_refused(&mut client, &session, &paths).await;
+
+    // A name that only starts like one is served.
+    let console = folder.path().join("console.png");
+    std::fs::write(&console, png("console")).unwrap();
+    let params = json!({"session_id": session, "path": console.display().to_string()});
+    let reply = client.call(40, "image.attach", params).await;
+    assert_eq!(reply["result"]["attached"], true, "{reply}");
 }
 
 /// The read is bounded by what it reads, not by the size the file reports: the kernel's page
