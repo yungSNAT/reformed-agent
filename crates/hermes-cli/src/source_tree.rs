@@ -3,6 +3,9 @@
 //! to its folder's open descriptor, without following a link and without
 //! blocking, and is classed by what was opened, so the entry that was checked
 //! is the one that is read: one swapped for a link in between is not followed.
+//! On Windows each entry is opened relative to its folder's open handle
+//! (`NtCreateFile` with a root directory) without following a reparse point,
+//! and is classed from that handle, which is the one read.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, Permissions};
@@ -24,11 +27,8 @@ pub(crate) enum Entry {
 pub(crate) struct SourceDir {
     #[cfg(unix)]
     fd: std::os::fd::OwnedFd,
-    // shortcut: off Unix an entry is looked up by path and then opened, so an
-    // entry swapped for a link in between is followed. Closing that needs
-    // handle-relative opens (NtCreateFile with a root directory).
-    #[cfg(not(unix))]
-    path: PathBuf,
+    #[cfg(windows)]
+    handle: File,
 }
 
 impl SourceDir {
@@ -43,12 +43,17 @@ impl SourceDir {
                 fd: rustix::fs::open(path, flags, Mode::empty())?,
             })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            if std::fs::metadata(path)?.is_dir() {
-                Ok(Self {
-                    path: path.to_path_buf(),
-                })
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+            // A folder opens only with backup semantics.
+            let handle = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(path)?;
+            if handle.metadata()?.is_dir() {
+                Ok(Self { handle })
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::NotADirectory,
@@ -107,32 +112,20 @@ impl SourceDir {
                 },
             ))
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let path = self.path.join(name);
-            let meta = match std::fs::symlink_metadata(&path) {
-                Ok(meta) => meta,
-                Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-                Err(err) => return Err(err),
-            };
             #[cfg(test)]
             tests::BETWEEN.with(|between| {
                 if let Some(between) = &*between.borrow() {
                     between(name);
                 }
             });
-            Ok(Some(if meta.file_type().is_symlink() {
-                Entry::Link
-            } else if meta.is_dir() {
-                Entry::Dir(Self { path })
-            } else if meta.is_file() {
-                Entry::File(File::open(&path).map_err(|err| match err.kind() {
-                    io::ErrorKind::NotFound => gone(),
-                    _ => err,
-                })?)
-            } else {
-                Entry::Other
-            }))
+            // One open, which classes the entry too: there is no lookup
+            // before it for the entry to change after.
+            match win::open_relative(&self.handle, name)? {
+                Some(handle) => win::class(handle).map(Some),
+                None => Ok(None),
+            }
         }
     }
 
@@ -152,10 +145,8 @@ impl SourceDir {
             }
             names
         };
-        #[cfg(not(unix))]
-        let mut names = std::fs::read_dir(&self.path)?
-            .map(|entry| entry.map(|entry| entry.file_name()))
-            .collect::<io::Result<Vec<_>>>()?;
+        #[cfg(windows)]
+        let mut names = win::names(&self.handle)?;
         names.sort();
         Ok(names)
     }
@@ -163,6 +154,7 @@ impl SourceDir {
 
 /// An entry that went away between its classing and its open. Not of kind
 /// `NotFound`, which callers read as a folder that was never there.
+#[cfg(unix)]
 fn gone() -> io::Error {
     io::Error::other("it went away while it was read")
 }
@@ -277,6 +269,206 @@ impl Tree {
             }
         }
         std::fs::rename(&staged, destination)
+    }
+}
+
+#[cfg(windows)]
+mod win {
+    use super::{Entry, SourceDir};
+    use std::ffi::{OsStr, OsString};
+    use std::fs::File;
+    use std::io;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        NtCreateFile, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Foundation::{
+        RtlNtStatusToDosError, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
+        OBJ_CASE_INSENSITIVE, STATUS_OBJECT_NAME_NOT_FOUND, UNICODE_STRING,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileAttributeTagInfo, FileFullDirectoryInfo, FileFullDirectoryRestartInfo,
+        GetFileInformationByHandleEx, ReOpenFile, FILE_ATTRIBUTE_DIRECTORY,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FULL_DIR_INFO, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
+    };
+    use windows_sys::Win32::System::SystemServices::IO_REPARSE_TAG_AF_UNIX;
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+    const SHARE: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    /// Set on the tags of links, junctions and other reparse points that
+    /// name another file (`IsReparseTagNameSurrogate`).
+    const NAME_SURROGATE: u32 = 0x2000_0000;
+
+    /// Opens the entry `name` of the folder `dir` without following a
+    /// reparse point, or `None` when there is none. A name that is not a
+    /// single entry of the folder is refused.
+    pub(super) fn open_relative(dir: &File, name: &OsStr) -> io::Result<Option<OwnedHandle>> {
+        let mut wide: Vec<u16> = name.encode_wide().collect();
+        let single = !wide.is_empty()
+            && wide.len() <= usize::from(u16::MAX / 2)
+            && name != OsStr::new(".")
+            && name != OsStr::new("..")
+            && !wide
+                .iter()
+                .any(|&c| matches!(c, 0 | 0x2f /* / */ | 0x3a /* : */ | 0x5c /* \ */));
+        if !single {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not a single folder entry",
+            ));
+        }
+        let bytes = (wide.len() * 2) as u16;
+        let object_name = UNICODE_STRING {
+            Length: bytes,
+            MaximumLength: bytes,
+            Buffer: wide.as_mut_ptr(),
+        };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: dir.as_raw_handle() as HANDLE,
+            ObjectName: &object_name,
+            // As every Win32 open is.
+            Attributes: OBJ_CASE_INSENSITIVE,
+            SecurityDescriptor: std::ptr::null(),
+            SecurityQualityOfService: std::ptr::null(),
+        };
+        let mut handle: HANDLE = std::ptr::null_mut();
+        let mut status_block = IO_STATUS_BLOCK::default();
+        // SAFETY: every pointer is to a live local; `object_name` borrows
+        // `wide`, which outlives the call.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                FILE_GENERIC_READ,
+                &attributes,
+                &mut status_block,
+                std::ptr::null(),
+                0,
+                SHARE,
+                FILE_OPEN,
+                FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+                std::ptr::null(),
+                0,
+            )
+        };
+        if status == STATUS_OBJECT_NAME_NOT_FOUND {
+            return Ok(None);
+        }
+        if status < 0 {
+            // SAFETY: a plain status-code translation.
+            let code = unsafe { RtlNtStatusToDosError(status) };
+            return Err(io::Error::from_raw_os_error(code as i32));
+        }
+        // SAFETY: a successful NtCreateFile returns a handle the caller owns.
+        Ok(Some(unsafe { OwnedHandle::from_raw_handle(handle) }))
+    }
+
+    /// Classes an entry opened by [`open_relative`] from its own handle.
+    /// A link is never read. Another reparse point (a cloud placeholder or a
+    /// deduplicated file) is reopened from the same handle, so its filter
+    /// serves the data without a second lookup by name.
+    pub(super) fn class(handle: OwnedHandle) -> io::Result<Entry> {
+        let mut tag = FILE_ATTRIBUTE_TAG_INFO::default();
+        // SAFETY: `tag` is a writable buffer of the size passed.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                handle.as_raw_handle() as HANDLE,
+                FileAttributeTagInfo,
+                (&mut tag as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+                std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let folder = tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        let mut handle = handle;
+        if tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            if tag.ReparseTag & NAME_SURROGATE != 0 {
+                return Ok(Entry::Link);
+            }
+            if tag.ReparseTag == IO_REPARSE_TAG_AF_UNIX {
+                return Ok(Entry::Other);
+            }
+            let flags = if folder {
+                FILE_FLAG_BACKUP_SEMANTICS
+            } else {
+                0
+            };
+            // SAFETY: `handle` is open; the result is checked below.
+            let reopened = unsafe {
+                ReOpenFile(
+                    handle.as_raw_handle() as HANDLE,
+                    FILE_GENERIC_READ,
+                    SHARE,
+                    flags,
+                )
+            };
+            if reopened == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: a successful ReOpenFile returns a handle the caller owns.
+            handle = unsafe { OwnedHandle::from_raw_handle(reopened) };
+        }
+        let handle = File::from(handle);
+        Ok(if folder {
+            Entry::Dir(SourceDir { handle })
+        } else {
+            Entry::File(handle)
+        })
+    }
+
+    /// The names in the open folder `dir`, read from its handle.
+    pub(super) fn names(dir: &File) -> io::Result<Vec<OsString>> {
+        // u64 words keep each record 8-byte aligned.
+        let mut buffer = vec![0u64; 8 * 1024];
+        let mut kind = FileFullDirectoryRestartInfo;
+        let mut names = Vec::new();
+        loop {
+            // SAFETY: `buffer` is writable for the size passed.
+            if unsafe {
+                GetFileInformationByHandleEx(
+                    dir.as_raw_handle() as HANDLE,
+                    kind,
+                    buffer.as_mut_ptr().cast(),
+                    (buffer.len() * 8) as u32,
+                )
+            } == 0
+            {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                    return Ok(names);
+                }
+                return Err(err);
+            }
+            kind = FileFullDirectoryInfo;
+            let base = buffer.as_ptr().cast::<u8>();
+            let mut offset = 0;
+            loop {
+                // SAFETY: the system filled the buffer with a chain of
+                // FILE_FULL_DIR_INFO records, each name inside the buffer.
+                let (next, name) = unsafe {
+                    let record = base.add(offset).cast::<FILE_FULL_DIR_INFO>();
+                    let len = (*record).FileNameLength as usize / 2;
+                    let start = std::ptr::addr_of!((*record).FileName).cast::<u16>();
+                    (
+                        (*record).NextEntryOffset as usize,
+                        std::slice::from_raw_parts(start, len),
+                    )
+                };
+                if name != [0x2e] && name != [0x2e, 0x2e] {
+                    names.push(OsString::from_wide(name));
+                }
+                if next == 0 {
+                    break;
+                }
+                offset += next;
+            }
+        }
     }
 }
 
