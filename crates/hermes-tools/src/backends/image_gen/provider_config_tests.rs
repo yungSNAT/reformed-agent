@@ -7,6 +7,10 @@ const AUTH_FILE: &str = "fixture-image-auth.json";
 async fn image_provider_selection_preserves_scoped_settings() {
     if let Some(home) = std::env::var_os(CHILD_HOME) {
         let home = PathBuf::from(home);
+        assert_eq!(
+            ImageGenRuntimeBackend::from_env_or_managed().provider_label(),
+            "fal"
+        );
         assert_openai_image_config(&home);
         assert_xai_image_config(&home);
         assert_nous_image_config(&home);
