@@ -120,7 +120,7 @@ jobs:
           cp crates/hermes-cli/release-sbom.json release-sbom.cdx.json
           test -s release-sbom.cdx.json
       - name: Upload security gate artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom-and-secret-scan
           path: |
@@ -175,7 +175,7 @@ jobs:
           cp target/${{ matrix.target }}/release/${{ matrix.binary }} dist/${{ matrix.packaged }}
           cd dist && zip ../${{ matrix.artifact }} ${{ matrix.packaged }}
       - name: Upload build artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
           path: ${{ matrix.artifact }}
@@ -210,7 +210,7 @@ jobs:
           cp target/${{ matrix.target }}/release/hermes-agent-ultra dist/hermes
           tar -C dist -czf ${{ matrix.artifact }} hermes
       - name: Upload build artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
           path: ${{ matrix.artifact }}
@@ -253,7 +253,7 @@ jobs:
           (cd dist && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS dist/
           cat dist/SHA256SUMS
       - name: Upload staged assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: staged-release
           path: dist/
@@ -288,7 +288,7 @@ jobs:
             --output-json "${RUNNER_TEMP}/release-smoke.json"
       - name: Upload staged smoke failure diagnostics
         if: ${{ failure() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-smoke-failure-${{ matrix.runner }}
           path: ${{ runner.temp }}/release-smoke.json
@@ -398,7 +398,7 @@ jobs:
             --version "${VERSION}" \
             --asset-dir dist
       - name: Upload signed assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed-release
           path: dist/
@@ -456,7 +456,7 @@ jobs:
             --output-json .sync-reports/release-artifact-smoke.json
       - name: Upload release smoke report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-artifact-smoke
           path: .sync-reports/release-artifact-smoke.json
