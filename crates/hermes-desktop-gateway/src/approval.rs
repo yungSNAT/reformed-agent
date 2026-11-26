@@ -94,7 +94,7 @@ impl ApprovalRequest {
     /// The request's JSON params, always with the offered `choices`. A folder request without
     /// a folder, or a site request without a site, is refused: the desktop would show a card
     /// the user cannot read. So is a key in `extra` that names a field, which would replace
-    /// that field on the wire.
+    /// that field on the wire, and a named choice the request bars.
     pub fn params(&self) -> Result<Value, &'static str> {
         let mut params =
             serde_json::to_value(self).map_err(|_| "approval request does not serialise")?;
@@ -112,9 +112,12 @@ impl ApprovalRequest {
             }
             _ => {}
         }
+        let allowed = self.allowed_choices();
         if self.choices.is_empty() {
-            params["choices"] = serde_json::to_value(self.allowed_choices())
-                .map_err(|_| "approval request does not serialise")?;
+            params["choices"] =
+                serde_json::to_value(allowed).map_err(|_| "approval request does not serialise")?;
+        } else if self.choices.iter().any(|choice| !allowed.contains(choice)) {
+            return Err("a named choice is one the request bars");
         }
         Ok(params)
     }
