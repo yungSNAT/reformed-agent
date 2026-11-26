@@ -576,6 +576,7 @@ async fn run_gateway(
                             .run(messages, Some(tool_schemas))
                             .await
                             .map_err(|e| hermes_gateway::GatewayError::Platform(e.to_string()))?;
+                        ctx.add_session_spent_usd(result.session_cost_usd);
                         persist_gateway_result(
                             ctx.home.as_deref().or(config.home_dir.as_deref()),
                             &ctx.session_key,
@@ -900,6 +901,7 @@ async fn run_gateway(
                             .run_stream(messages, Some(tool_schemas), Some(stream_cb))
                             .await
                             .map_err(|e| hermes_gateway::GatewayError::Platform(e.to_string()))?;
+                        ctx.add_session_spent_usd(result.session_cost_usd);
                         persist_gateway_result(
                             ctx.home.as_deref().or(config.home_dir.as_deref()),
                             &ctx.session_key,

@@ -234,6 +234,25 @@ pub struct GatewayRuntimeContext {
     pub deferred_post_delivery_released: Option<Arc<AtomicBool>>,
 }
 
+impl GatewayRuntimeContext {
+    /// What this conversation's earlier turns spent, in US dollars: seed the
+    /// agent's cost guard with it so `max_session_cost_usd` caps the
+    /// conversation, not each message. `/new`, a reset policy and switching
+    /// sessions start it again.
+    pub fn session_spent_usd(&self) -> f64 {
+        self.session_generation
+            .as_ref()
+            .map_or(0.0, SessionGeneration::spent_usd)
+    }
+
+    /// Count a finished turn's spend toward this conversation.
+    pub fn add_session_spent_usd(&self, usd: Option<f64>) {
+        if let (Some(generation), Some(usd)) = (&self.session_generation, usd) {
+            generation.add_spent_usd(usd);
+        }
+    }
+}
+
 /// Context-aware callback type for processing messages through the agent loop.
 pub type MessageHandlerWithContext = Arc<
     dyn Fn(
