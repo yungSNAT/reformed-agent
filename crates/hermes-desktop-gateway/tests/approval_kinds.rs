@@ -90,6 +90,15 @@ fn a_folder_or_site_request_that_names_none_is_never_sent() {
 }
 
 #[test]
+fn extra_keys_cannot_stand_in_for_the_checked_fields() {
+    for (key, value) in [("kind", json!("access")), ("kind", json!("printer"))] {
+        let mut approval = request(json!({"command": "ls"})).unwrap();
+        approval.extra.insert(key.into(), value.clone());
+        assert!(approval.params().is_err(), "{key}={value} was accepted");
+    }
+}
+
+#[test]
 fn tool_context_the_card_may_render_rides_along() {
     let approval =
         request(json!({"command": "ls", "pattern_key": "ls", "pattern_keys": ["ls"]})).unwrap();
