@@ -675,6 +675,92 @@ fn split_slash_command_normalizes_ios_dashes_in_args_only() {
 }
 
 #[tokio::test]
+async fn gateway_metadata_commands_are_scoped_to_the_addressed_session() {
+    let missing_home = format!("fixture-missing-home-{}", uuid::Uuid::new_v4());
+    assert!(!std::path::Path::new(&missing_home).exists());
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(sessions.clone(), dm, GatewayConfig::default());
+    let replies = Arc::new(Mutex::new(Vec::new()));
+    gateway
+        .register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: replies.clone(),
+            }),
+        )
+        .await;
+
+    let invalid_home = format!("/sethome {missing_home}");
+    let cases = [
+        (
+            "chat2",
+            "/title Coast notes",
+            "Session title set to: Coast notes",
+        ),
+        (
+            "chat2",
+            "/persona analyst",
+            "Personality switched to: analyst",
+        ),
+        ("chat2", "/sethome ..", "Home directory set to:"),
+        ("chat1", "/title", "No explicit title set"),
+        (
+            "chat1",
+            "/title Field notes",
+            "Session title set to: Field notes",
+        ),
+        ("chat1", "/title", "Current session title: Field notes"),
+        ("chat2", "/title", "Current session title: Coast notes"),
+        (
+            "chat1",
+            "/persona writer",
+            "Personality switched to: writer",
+        ),
+        ("chat1", "/sethome .", "Home directory set to:"),
+        (
+            "chat1",
+            invalid_home.as_str(),
+            "Path not found or not a directory",
+        ),
+    ];
+    for (chat_id, text, _) in cases {
+        gateway
+            .route_message(&IncomingMessage {
+                chat_id: chat_id.into(),
+                ..test_incoming(text)
+            })
+            .await
+            .unwrap();
+    }
+    let primary = sessions.compose_session_key("test", "chat1", "user1");
+    let other = sessions.compose_session_key("test", "chat2", "user1");
+    assert_eq!(
+        sessions.get_title(&primary).await.as_deref(),
+        Some("Field notes")
+    );
+    assert_eq!(
+        sessions.get_title(&other).await.as_deref(),
+        Some("Coast notes")
+    );
+    let runtime = gateway.runtime_state.read().await;
+    let selected = runtime.get(&primary).unwrap();
+    assert_eq!(selected.personality.as_deref(), Some("writer"));
+    assert_eq!(selected.home.as_deref(), Some("."));
+    let unaffected = runtime.get(&other).unwrap();
+    assert_eq!(unaffected.personality.as_deref(), Some("analyst"));
+    assert_eq!(unaffected.home.as_deref(), Some(".."));
+
+    let replies = replies.lock().unwrap();
+    assert_eq!(replies.len(), cases.len());
+    for ((chat_id, reply), (expected_chat, _, expected_reply)) in replies.iter().zip(cases) {
+        assert_eq!(chat_id, expected_chat);
+        assert!(reply.contains(expected_reply), "{reply}");
+    }
+}
+
+#[tokio::test]
 async fn gateway_unknown_slash_invokes_installed_skill_command() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let _home_guard = HermesHomeEnvGuard::set(tmp.path());
