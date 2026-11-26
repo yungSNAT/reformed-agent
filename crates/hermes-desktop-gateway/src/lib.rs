@@ -457,10 +457,9 @@ async fn serve_socket(
     call: &Call<'_>,
     write_timeout: std::time::Duration,
 ) {
-    let mut in_flight: FuturesUnordered<InFlight<'_>> = FuturesUnordered::new();
     // A handler that would wait is dropped before its first wait, which the handler contract
     // makes safe (`chat::Handler`).
-    let at_once: &Call<'_> = &|method, params| {
+    let answer_at_once = |method: &str, params: Value| {
         match call(method, params).now_or_never() {
         Some(result) => chat::ready(result),
         None => chat::ready(Err((
@@ -471,6 +470,9 @@ async fn serve_socket(
         ))),
     }
     };
+    let at_once: &Call<'_> = &answer_at_once;
+    // Declared after the handlers it borrows, so it is dropped first.
+    let mut in_flight: FuturesUnordered<InFlight<'_>> = FuturesUnordered::new();
     loop {
         let frame = tokio::select! {
             biased;
