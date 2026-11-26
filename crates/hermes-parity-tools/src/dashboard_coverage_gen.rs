@@ -294,7 +294,7 @@ fn run_writes_full_dashboard() {
     assert!(written.contains("- CI gate failures: none"));
     assert!(written.contains("- CI gate warnings: lag (actual=2, limit=1)"));
     assert!(written.contains("| Tracked behavior coverage ratio | 0.9000 |"));
-    assert!(written.contains("| Rust test functions | 100 |"));
+    assert!(!written.contains("Rust test functions"));
     assert!(written.contains("| Domain coverage ratio | 0.8000 |"));
     assert!(written.contains("| Critical gaps | 2 |"));
     assert!(written.contains("| Similarity ratio | 0.9500 |"));
