@@ -5,6 +5,7 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,7 +21,8 @@ use tokio_tungstenite::tungstenite::{self, Message};
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef-children-token";
 const BIN: &str = env!("CARGO_BIN_EXE_hermes-desktop-gateway");
-/// The key variable every profile's provider reads; each profile's `.env` sets its own value.
+/// The stem of the key variable every profile's provider reads; each profile's `.env` sets its
+/// own value.
 const KEY_ENV: &str = "DESKTOP_PROFILE_CHILDREN_TEST_KEY";
 /// A key only the parent has (the root's `.env`); no named profile sets it.
 const PARENT_KEY_ENV: &str = "DESKTOP_PROFILE_CHILDREN_PARENT_ONLY_KEY";
@@ -77,11 +79,15 @@ async fn start_at(limit: Option<usize>, at: &str) -> Started {
         .with_state(Arc::clone(&keys));
     tokio::spawn(async move { axum::serve(model_listener, app).await });
 
+    // Tests share this process's environment and each gateway loads its home's `.env` into it,
+    // so each install gets its own key variable.
+    static INSTALLS: AtomicUsize = AtomicUsize::new(0);
+    let key_env = format!("{KEY_ENV}_{}", INSTALLS.fetch_add(1, Ordering::Relaxed));
     let root = tempfile::tempdir().unwrap();
     let config = format!(
         "model:\n  default: mock-model\n  provider: mock\nproviders:\n  mock:\n    \
          api: http://{model_addr}/v1\n    name: Mock\n    api_mode: chat_completions\n    \
-         key_env: {KEY_ENV}\n    models:\n      mock-model: {{}}\n"
+         key_env: {key_env}\n    models:\n      mock-model: {{}}\n"
     );
     for (home, key) in [
         (root.path().to_path_buf(), "root-key"),
@@ -89,13 +95,13 @@ async fn start_at(limit: Option<usize>, at: &str) -> Started {
         (root.path().join("profiles/research"), "research-key"),
     ] {
         write(&home.join("config.yaml"), &config);
-        write(&home.join(".env"), &format!("{KEY_ENV}={key}\n"));
+        write(&home.join(".env"), &format!("{key_env}={key}\n"));
     }
-    let root_env = format!("{KEY_ENV}=root-key\n{PARENT_KEY_ENV}=parent-secret\n");
+    let root_env = format!("{key_env}=root-key\n{PARENT_KEY_ENV}=parent-secret\n");
     write(&root.path().join(".env"), &root_env);
     write(
         &root.path().join("profiles/bare/config.yaml"),
-        &config.replace(KEY_ENV, PARENT_KEY_ENV),
+        &config.replace(&key_env, PARENT_KEY_ENV),
     );
     let home = root.path().join(at);
     let loaded = hermes_config::load_config(home.to_str()).unwrap();
@@ -504,7 +510,14 @@ async fn a_crashed_child_fails_the_next_request_at_once_and_the_one_after_restar
         .status()
         .unwrap();
     assert!(killed.success());
-    assert_gone(pids[0]).await;
+    // Dead; its exit is collected when the profile is next leased.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while std::fs::read_to_string(format!("/proc/{}/stat", pids[0]))
+        .is_ok_and(|stat| !stat.contains(") Z "))
+    {
+        assert!(tokio::time::Instant::now() < deadline, "child not dead");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     let started_at = tokio::time::Instant::now();
     let failed = client
