@@ -159,6 +159,16 @@ fn what_the_adapter_prints_without_a_newline_comes_before_the_json() {
 }
 
 #[test]
+fn what_the_adapter_prints_before_failing_is_kept_with_its_exit_code() {
+    let adapter = "import sys\nprint('loading')\nsys.exit(3)\n";
+    let dir = checkout("prints-then-fails", adapter);
+    let recorded = record(&dir.path().join("hermes-agent"), &python());
+    assert_eq!(recorded.stdout, "loading\n");
+    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.code, 3);
+}
+
+#[test]
 fn the_checkout_beside_is_found_from_the_resolved_repository_root() {
     let dir = Scratch::new("resolve");
     let repo = dir.path().join("reformed-agent");

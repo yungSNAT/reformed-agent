@@ -201,11 +201,16 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
         .map_err(|error| failure(format!("cannot run {python}: {error}\n")))?;
     // Python ends lines with CRLF on Windows; `Recorded` holds LF, as the binary restores them.
     let stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n");
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     if !output.status.success() {
-        return Err(failure(stderr));
+        // As the script did, keep what the adapter printed before it failed, and its exit code.
+        return Err(Recorded {
+            stdout,
+            stderr,
+            code: output.status.code().unwrap_or(1),
+        });
     }
     // The results follow the marker; anything the adapter printed comes before it.
-    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     let unreadable = |error: String| failure(format!("unreadable output from {python}: {error}\n"));
     let (printed, last) = stdout
         .rsplit_once(RESULTS_MARKER)
