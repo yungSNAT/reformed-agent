@@ -321,6 +321,40 @@ mod non_anthropic_cache_pricing_tests {
         assert!((cost.unwrap() - 0.073).abs() < 1e-9, "{cost:?}");
     }
 
+    #[test]
+    fn a_model_routed_through_openrouter_takes_its_vendors_cached_price() {
+        // OpenRouter passes gpt-4o through at OpenAI's prices: $2.50 input, $1.25 cached.
+        let usage = UsageStats {
+            prompt_tokens: 100_000,
+            completion_tokens: 1_000,
+            cache_read_tokens: 90_000,
+            ..UsageStats::default()
+        };
+        let config = AgentConfig {
+            provider: Some("openrouter".into()),
+            ..AgentConfig::default()
+        };
+        for model in ["openai/gpt-4o", "openai:gpt-4o", "openrouter:openai/gpt-4o"] {
+            let cost = estimate_usage_cost_usd(&usage, model, &config);
+            assert!((cost.unwrap() - 0.1475).abs() < 1e-9, "{model}: {cost:?}");
+        }
+    }
+
+    #[test]
+    fn a_subscription_route_is_not_priced_at_zero() {
+        let usage = UsageStats {
+            prompt_tokens: 100_000,
+            completion_tokens: 1_000,
+            ..UsageStats::default()
+        };
+        let config = AgentConfig {
+            provider: Some("openai-codex".into()),
+            ..AgentConfig::default()
+        };
+        let cost = estimate_usage_cost_usd(&usage, "gpt-4o", &config);
+        assert!(cost.unwrap() > 0.0, "{cost:?}");
+    }
+
     /// What the cost guard and the session cap are given is never below the list price
     /// of a listed model, cached or not.
     #[test]
