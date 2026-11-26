@@ -1586,6 +1586,62 @@
     }
 
     #[test]
+    fn blank_stored_prompt_builds_from_local_settings_and_available_tools() {
+        let _lock = env_test_lock();
+        let _enforcement = EnvVarGuard::remove("HERMES_DISABLE_TOOL_ENFORCEMENT_PROMPT");
+        let home = tempfile::tempdir().unwrap();
+        let memories = home.path().join("memories");
+        std::fs::create_dir(&memories).unwrap();
+        std::fs::write(memories.join("USER.md"), "Prefers a weekly summary.").unwrap();
+        let config = AgentConfig {
+            model: "alibaba/qwen-fixture".to_string(),
+            provider: Some("alibaba".into()),
+            personality: Some("Patient field archivist".into()),
+            platform: Some("email".into()),
+            session_id: Some("  weekly-summary  ".into()),
+            pass_session_id: true,
+            stored_system_prompt: Some(" \t\n".into()),
+            code_index_enabled: false,
+            hermes_home: Some(home.path().to_str().unwrap().to_string()),
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DummyProvider),
+        );
+        let schemas = [ToolSchema::new(
+            "contextlattice_search",
+            "Look up local notes",
+            JsonSchema::new("object"),
+        )];
+        let (prompt, restored) = agent.resolve_initial_system_prompt("", &schemas);
+
+        assert!(!restored);
+        for expected in [
+            "Personality: Patient field archivist",
+            "Prefers a weekly summary.",
+            "Session ID: weekly-summary",
+            "You are powered by the model named qwen-fixture.",
+            "The exact model ID is alibaba/qwen-fixture.",
+            "You are responding over email.",
+            CONTEXTLATTICE_OPERATIONAL_GUIDANCE,
+        ] {
+            assert!(
+                prompt.contains(expected),
+                "missing prompt section: {expected}"
+            );
+        }
+        assert!(!agent
+            .build_system_prompt("", &[], "alibaba/qwen-fixture")
+            .contains(CONTEXTLATTICE_OPERATIONAL_GUIDANCE));
+        assert!(agent
+            .build_system_prompt("", &schemas, "gemini-fixture")
+            .contains(GOOGLE_MODEL_OPERATIONAL_GUIDANCE));
+    }
+
+    #[test]
     fn steer_channel_note_is_gated_on_tool_availability() {
         use hermes_core::JsonSchema;
 

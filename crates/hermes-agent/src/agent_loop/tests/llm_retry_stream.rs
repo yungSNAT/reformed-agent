@@ -480,6 +480,148 @@
         }
     }
 
+    #[tokio::test]
+    async fn rejected_tools_try_a_compatible_model_then_retry_the_original_without_tools() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        if run_isolated_agent_test(
+            "agent_loop::tests::rejected_tools_try_a_compatible_model_then_retry_the_original_without_tools",
+        ) {
+            return;
+        }
+
+        const PRIMARY: &str = "openai/fixture-primary";
+        const ROUTED: &str = "openai/fixture-routed";
+        const FALLBACK: &str = "fixture/compatible-model";
+        const TOOL: &str = "lookup_weekly_summary";
+        let _fallback = EnvVarGuard::set("HERMES_TOOL_PAYLOAD_FALLBACK_MODEL", FALLBACK);
+
+        let home = tempfile::tempdir().unwrap();
+        let default_server = MockServer::start().await;
+        let routed_server = MockServer::start().await;
+        let default_url = format!("{}/v1", default_server.uri());
+        let routed_url = format!("{}/v1", routed_server.uri());
+        let primary = Arc::new(
+            NousProvider::new("fixture-only")
+                .with_base_url(&default_url)
+                .with_optional_request_timeout_seconds(Some(5.0)),
+        );
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: format!("nous:{PRIMARY}"),
+                provider: Some("nous".into()),
+                hermes_home: Some(home.path().to_str().unwrap().into()),
+                isolated: true,
+                code_index_enabled: false,
+                runtime_providers: HashMap::from([(
+                    "nous".into(),
+                    RuntimeProviderConfig {
+                        api_key: Some("fixture-only".into()),
+                        base_url: Some(default_url),
+                        request_timeout_seconds: Some(5.0),
+                        ..RuntimeProviderConfig::default()
+                    },
+                )]),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            primary,
+        );
+        let mut route = agent.turn_route_reliability_guard(format!("nous:{ROUTED}"));
+        route.provider = Some("nous".into());
+        route.base_url = Some(routed_url);
+        let mut ctx = ContextManager::new(1_000);
+        ctx.add_message(Message::user("Find the weekly summary."));
+        let schemas = [ToolSchema::new(
+            TOOL,
+            "Look up the weekly summary",
+            hermes_core::JsonSchema::new("object"),
+        )];
+
+        for (use_route, accept_fallback, accept_without_tools) in [
+            (false, true, false),
+            (true, false, true),
+            (false, false, false),
+        ] {
+            let (server, unused) = if use_route {
+                (&routed_server, &default_server)
+            } else {
+                (&default_server, &routed_server)
+            };
+            let requested = if use_route { ROUTED } else { PRIMARY };
+            let count = if accept_fallback { 2 } else { 3 };
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .respond_with(move |request: &wiremock::Request| {
+                    let body: Value = request.body_json().unwrap();
+                    let model = body["model"].as_str().unwrap();
+                    let has_tools = body["tools"].as_array().is_some_and(|tools| !tools.is_empty());
+                    let (status, text) = match (model, has_tools) {
+                        (model, true) if model == requested => (400, "Invalid tools payload"),
+                        (FALLBACK, true) if accept_fallback => (200, "Compatible model handled the tools"),
+                        (FALLBACK, true) => (400, "Compatible model refused the tools"),
+                        (model, false) if model == requested && accept_without_tools => {
+                            (200, "Original model replied without tools")
+                        }
+                        (model, false) if model == requested => {
+                            (503, "Original model unavailable without tools")
+                        }
+                        _ => (422, "Unexpected model or tools"),
+                    };
+                    if status == 200 {
+                        ResponseTemplate::new(status).set_body_json(json!({
+                            "id": "fixture-completion",
+                            "model": model,
+                            "choices": [{
+                                "message": {"role": "assistant", "content": text},
+                                "finish_reason": "stop"
+                            }]
+                        }))
+                    } else {
+                        ResponseTemplate::new(status).set_body_json(json!({"error": {"message": text}}))
+                    }
+                })
+                .expect(count as u64)
+                .mount(server)
+                .await;
+
+            let result = agent
+                .call_llm_with_retry_inner(&ctx, &schemas, use_route.then_some(&route), None)
+                .await;
+            if accept_fallback || accept_without_tools {
+                let expected = if accept_fallback {
+                    "Compatible model handled the tools"
+                } else {
+                    "Original model replied without tools"
+                };
+                assert_eq!(result.unwrap().message.content.as_deref(), Some(expected));
+            } else {
+                let error = result.unwrap_err();
+                assert!(matches!(&error, AgentError::LlmApi(message) if message.contains("503") && message.contains("Original model unavailable without tools")), "{error}");
+            }
+
+            let requests = server.received_requests().await.unwrap();
+            assert_eq!(requests.len(), count);
+            assert!(unused.received_requests().await.unwrap().is_empty());
+            let bodies: Vec<Value> = requests
+                .iter()
+                .map(|request| request.body_json().unwrap())
+                .collect();
+            assert_eq!(bodies[0]["model"], requested);
+            assert_eq!(bodies[1]["model"], FALLBACK);
+            for body in &bodies[..2] {
+                assert_eq!(body["tools"].as_array().map(Vec::len), Some(1));
+                assert_eq!(body["tools"][0]["function"]["name"], TOOL);
+            }
+            if let Some(last) = bodies.get(2) {
+                assert_eq!(last["model"], requested);
+                assert!(last["tools"].is_null() || last["tools"].as_array().is_some_and(Vec::is_empty));
+            }
+            server.reset().await;
+        }
+    }
+
     #[test]
     fn chaos_harness_fixture_is_seeded_and_unique() {
         let fixture = load_chaos_harness_fixture();
