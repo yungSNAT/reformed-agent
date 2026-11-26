@@ -794,6 +794,65 @@ mod tests {
         assert!(report.contains("unmapped_test_intents"));
         assert!(root.join("reports/audit.md").is_file());
     }
+
+    /// Open pull requests conflicted on these committed reports whenever any of them added a
+    /// test or a file, so the reports leave out the time and the counts that move with the tree.
+    #[test]
+    fn reports_stay_byte_identical_when_a_test_or_evidence_file_is_added() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("docs/parity")).unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        for input in MANIFESTS
+            .into_iter()
+            .chain([MATRIX, QUEUE, DIVERGENCES, INTENT_REPORT])
+        {
+            fs::write(root.join(input), "{}").unwrap();
+        }
+        fs::write(
+            root.join(DOMAIN_SPECS),
+            r#"[{"id":"alpha","upstream_scope":"a","local_evidence_globs":["tests/*.rs"]}]"#,
+        )
+        .unwrap();
+        let reports = || {
+            let args = CoverageAuditArgs {
+                repo_root: root.to_str().unwrap().into(),
+                out_json: "audit.json".into(),
+                out_md: "audit.md".into(),
+                check: false,
+            };
+            assert_eq!(run(args).unwrap(), 0);
+            (
+                fs::read_to_string(root.join("audit.json")).unwrap(),
+                fs::read_to_string(root.join("audit.md")).unwrap(),
+            )
+        };
+        fs::write(
+            root.join("tests/first.rs"),
+            "#[test]
+fn first() {}
+",
+        )
+        .unwrap();
+        let (json, markdown) = reports();
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(
+            root.join("tests/second.rs"),
+            "#[test]
+fn second() {}
+",
+        )
+        .unwrap();
+        let (json_after, markdown_after) = reports();
+
+        assert_eq!(json_after, json);
+        assert_eq!(markdown_after, markdown);
+        for volatile in ["generated_at_utc", "rust_test_functions", "evidence_count"] {
+            assert!(!json.contains(volatile), "{volatile} in {json}");
+        }
+        assert!(json.contains("\"classification\": \"direct_rust_test\""));
+    }
 }
 
 #[cfg(test)]
