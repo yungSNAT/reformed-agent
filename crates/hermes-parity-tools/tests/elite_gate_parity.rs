@@ -148,7 +148,11 @@ impl Sandbox {
         let text = program.replace_all(&text, "<PROGRAM>");
         // The sandbox head's id depends on the sandbox's files, not on the
         // command; any other commit id stays and fails the case.
-        let head = self.command("git").args(["rev-parse", "HEAD"]).output().expect("git");
+        let head = self
+            .command("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git");
         let head = String::from_utf8(head.stdout).expect("head");
         let text = text.replace(head.trim(), "<SHA>");
         let stamp = Regex::new(r"\d{8}T\d{6}Z").expect("regex");
