@@ -46,6 +46,7 @@ const MAX_TITLE_CHARS: usize = 200;
 const MAX_NAME_CHARS: usize = 100;
 const MAX_TEXT_BYTES: usize = 8 * 1024;
 const MAX_LIST_ITEMS: usize = 50;
+const MAX_RECORD_BYTES: usize = 16 * 1024;
 
 /// The board, task and run a dispatched worker was started for. Any of the 3
 /// variables set makes the process a worker; a missing value then refuses
@@ -253,7 +254,87 @@ impl ToolHandler for KanbanTool {
 pub fn kanban_toolset_named(config: &GatewayConfig, platform: &str) -> bool {
     hermes_tool_planning::configured_platform_toolsets(config, platform)
         .iter()
-        .any(|name| name.trim().eq_ignore_ascii_case(KANBAN_TOOLSET))
+        .any(|name| {
+            let name = name.trim().to_ascii_lowercase();
+            let name = name
+                .strip_suffix("_tools")
+                .or_else(|| name.strip_suffix("-tools"))
+                .unwrap_or(&name);
+            name == KANBAN_TOOLSET
+        })
+}
+
+/// The folder `/background` keeps its job status files in.
+fn background_jobs_path() -> PathBuf {
+    hermes_config::hermes_home().join("background_jobs")
+}
+
+/// The checks `hermes kanban done`, `block` and `move` make before changing
+/// `task`. A process holding a worker binding is held to the tools' scope:
+/// its own running task only, and no `force`. Any other caller may not
+/// change a doing task whose run is live unless it passes `force`, as
+/// upstream's CLI refuses a live claim (`LiveClaimError`, `--force`).
+/// Finishing a task (`completes`) also needs every parent done, `force` or
+/// not.
+pub fn check_cli_lifecycle(
+    board: &KanbanBoard,
+    task: &KanbanTask,
+    verb: &str,
+    completes: bool,
+    force: bool,
+) -> Result<(), String> {
+    check_cli_lifecycle_with(
+        board,
+        task,
+        verb,
+        completes,
+        force,
+        KanbanWorkerBinding::from_env().as_ref(),
+        &background_jobs_path(),
+    )
+}
+
+fn check_cli_lifecycle_with(
+    board: &KanbanBoard,
+    task: &KanbanTask,
+    verb: &str,
+    completes: bool,
+    force: bool,
+    binding: Option<&KanbanWorkerBinding>,
+    jobs_dir: &Path,
+) -> Result<(), String> {
+    let command = format!("kanban {verb}");
+    match binding {
+        Some(_) if force => {
+            return Err(format!(
+                "Refusing `{command} --force`: this process is a dispatched kanban worker, and --force is for operators."
+            ))
+        }
+        Some(binding) => {
+            check_worker_owns(binding, task, &command).map_err(|error| error.to_string())?
+        }
+        None => {
+            if let Some(run) = task.background_job_id.as_deref() {
+                if !force && task.lane == KanbanLane::Doing && run_is_live(jobs_dir, run) {
+                    return Err(format!(
+                        "Refusing `{command}` on {}: a live worker is running it (background job {run}). Wait for the worker, stop that job, or re-run with --force.",
+                        task.id
+                    ));
+                }
+            }
+        }
+    }
+    if completes {
+        let open = unsatisfied_parents(board, task);
+        if !open.is_empty() {
+            return Err(format!(
+                "Refusing to mark {} done: unfinished parent(s) {}.",
+                task.id,
+                unsatisfied_parents_text(&open)
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Register the kanban tools on `registry`: bound to `binding` when this
@@ -268,7 +349,7 @@ pub fn register_kanban_tools(
     let ctx = KanbanToolContext {
         store_path: super::kanban_store_path(),
         // The folder `/background` keeps its job status files in.
-        jobs_dir: hermes_config::hermes_home().join("background_jobs"),
+        jobs_dir: background_jobs_path(),
         binding,
         checkpoint: true,
     };
@@ -577,9 +658,8 @@ fn require_task(
 fn check_worker_owns(
     binding: &KanbanWorkerBinding,
     task: &KanbanTask,
-    tool: Tool,
+    name: &str,
 ) -> Result<(), ToolError> {
-    let name = tool.name();
     if !task.id.eq_ignore_ascii_case(&binding.task) {
         return Err(refused(format!(
             "{name} refused: this worker is bound to task {}, not {}. Use kanban_create for follow-up work.",
@@ -821,7 +901,7 @@ fn lifecycle_target(
     let idx = task_index(board, &id)?;
     let task = &board.tasks[idx];
     match &ctx.binding {
-        Some(binding) => check_worker_owns(binding, task, tool)?,
+        Some(binding) => check_worker_owns(binding, task, name)?,
         None => {
             if let Some(run) = task.background_job_id.as_deref() {
                 if task.lane == KanbanLane::Doing && run_is_live(&ctx.jobs_dir, run) {
@@ -889,10 +969,12 @@ fn complete(
             .find(|task| task.id.eq_ignore_ascii_case(id));
         match found {
             Some(task) => created_ids.push(task.id.clone()),
-            None => return Err(refused(format!(
+            None => {
+                return Err(refused(format!(
                 "kanban_complete refused: created_cards names {id}, which is not on board `{}`.",
                 board.id
-            ))),
+            )))
+            }
         }
     }
     let mut record = summary;
@@ -904,6 +986,12 @@ fn complete(
     }
     if let Some(metadata) = metadata {
         record.push_str(&format!("\nMetadata: {metadata}"));
+    }
+    if record.len() > MAX_RECORD_BYTES {
+        return Err(refused(format!(
+            "the completion record (summary, artifacts, created_cards and metadata) is {} bytes; the most is {MAX_RECORD_BYTES}.",
+            record.len()
+        )));
     }
     let record = redact_sensitive_text(record);
     let task = &mut board.tasks[idx];

@@ -11,7 +11,7 @@ metadata:
 
 # Kanban Worker — Pitfalls and Examples
 
-> You're seeing this skill because the Hermes Kanban dispatcher spawned you as a worker with `--skills kanban-worker` — it's loaded automatically for every dispatched worker. The **lifecycle** (6 steps: orient → work → heartbeat → block/complete) also lives in the `KANBAN_GUIDANCE` block that's auto-injected into your system prompt. This skill is the deeper detail: good handoff shapes, retry diagnostics, edge cases.
+> You're seeing this skill because the Hermes Kanban dispatcher spawned you as a worker with `--skills kanban-worker` — it's loaded automatically for every dispatched worker. The **lifecycle** (orient → work → block/complete) also lives in the `KANBAN_GUIDANCE` block that's auto-injected into your system prompt. This skill is the deeper detail: good handoff shapes, retry diagnostics, edge cases.
 
 ## Workspace handling
 
@@ -78,7 +78,7 @@ Shape `metadata` so downstream parsers (reviewers, aggregators, schedulers) can 
 
 ## Shipping deliverables (`artifacts=[...]`)
 
-If your task produced files a human actually wants — a chart, a PDF, a spreadsheet, a generated image, an archive — pass their **absolute paths** to `kanban_complete(artifacts=[...])`. The gateway notifier uploads each one as a native attachment to whoever subscribed to the task, so the deliverable lands in their chat alongside the completion message instead of being a path they have to go fetch.
+If your task produced files a human actually wants — a chart, a PDF, a spreadsheet, a generated image, an archive — pass their **absolute paths** to `kanban_complete(artifacts=[...])`. The paths are kept with your summary on the task, so whoever reads the task next finds the deliverables without searching for them.
 
 ```python
 kanban_complete(
@@ -88,14 +88,11 @@ kanban_complete(
 )
 ```
 
-Images and video embed inline; PDFs, docx, csv/xlsx/json/yaml, pptx, zip/tar/gz, audio, and html upload as files. Rules:
+Rules:
 
 - **Absolute paths only**, and the file must still exist when you complete — don't point at a scratch file you already deleted.
 - **Only real deliverables.** Skip intermediate logs, scratch files, and inputs the human already has.
-- `artifacts` is the **top-level** parameter the notifier reads. Do not bury deliverable paths in `metadata` (e.g. `metadata.codex_lane.artifacts`) and expect them to upload — the notifier only scans the top-level `artifacts` list, with a best-effort fallback over your `summary`/`result` text. Metadata paths are for downstream-worker bookkeeping, not delivery.
-- A bare string is auto-promoted to a one-element list, and it merges with any pre-existing `metadata.artifacts` without dupes.
-
-Same primitive works outside kanban: any agent surface delivers a file just by writing its absolute path into the response, and Slack/Discord/Telegram/etc. upload it natively — the `artifacts` param is the structured kanban entry point.
+- At most 50 paths. A bare string counts as a one-element list.
 
 ## Claiming cards you actually created
 
@@ -127,23 +124,13 @@ If a `kanban_create` call fails (exception, tool_error), the card was NOT create
 
 Bad: `"stuck"` — the human has no context.
 
-Good: one sentence naming the specific decision you need. Leave longer context as a comment instead.
+Good: lead with the specific decision you need, then the context a human needs to make it, in the same reason (up to 8 KiB).
 
 ```python
-kanban_comment(
-    task_id=os.environ["HERMES_KANBAN_TASK"],
-    body="Full context: I have user IPs from Cloudflare headers but some users are behind NATs with thousands of peers. Keying on IP alone causes false positives.",
-)
-kanban_block(reason="Rate limit key choice: IP (simple, NAT-unsafe) or user_id (requires auth, skips anonymous endpoints)?")
+kanban_block(reason="Rate limit key choice: IP (simple, NAT-unsafe) or user_id (requires auth, skips anonymous endpoints)? Context: user IPs come from Cloudflare headers, and some users sit behind NATs with thousands of peers, so keying on IP alone gives false positives.")
 ```
 
-The block message is what appears in the dashboard / gateway notifier. The comment is the deeper context a human reads when they open the task.
-
-## Heartbeats worth sending
-
-Good heartbeats name progress: `"epoch 12/50, loss 0.31"`, `"scanned 1.2M/2.4M rows"`, `"uploaded 47/120 videos"`.
-
-Bad heartbeats: `"still working"`, empty notes, sub-second intervals. Every few minutes max; skip entirely for tasks under ~2 minutes.
+The first sentence is what a human scanning the board reads; the rest is there when they open the task.
 
 ## Retry scenarios
 

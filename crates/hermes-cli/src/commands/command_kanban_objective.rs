@@ -180,6 +180,15 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
         .copied()
         .unwrap_or("status")
         .to_ascii_lowercase();
+    // `done`, `block` and `move` take `--force` to act on a task a live
+    // worker is running.
+    let force = matches!(action.as_str(), "done" | "block" | "move") && args.contains(&"--force");
+    let kept: Vec<&str> = args
+        .iter()
+        .copied()
+        .filter(|arg| !(force && *arg == "--force"))
+        .collect();
+    let args = kept.as_slice();
     let store_lock = lock_store()?;
     let mut store = store_lock.load()?;
 
@@ -388,13 +397,13 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
         "move" => {
             let Some(task_ref) = args.get(1).copied() else {
                 return Ok(
-                    "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary]"
+                    "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary] [--force]"
                         .to_string(),
                 );
             };
             let Some(raw_lane) = args.get(2).copied() else {
                 return Ok(
-                    "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary]"
+                    "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary] [--force]"
                         .to_string(),
                 );
             };
@@ -406,6 +415,16 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
             let summary = args.get(3..).unwrap_or_default().join(" ");
             let maybe_update = {
                 let board = ensure_board(&mut store, None);
+                if let Some(task) = find_task_mut(board, task_ref).map(|task| task.clone()) {
+                    crate::kanban::check_cli_lifecycle(
+                        board,
+                        &task,
+                        "move",
+                        lane == KanbanLane::Done,
+                        force,
+                    )
+                    .map_err(AgentError::Config)?;
+                }
                 let task_meta = if let Some(task) = find_task_mut(board, task_ref) {
                     move_task(
                         task,
@@ -478,7 +497,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
         }
         "block" => {
             let Some(task_ref) = args.get(1).copied() else {
-                return Ok("Usage: kanban block <task-id|title> <reason>".to_string());
+                return Ok("Usage: kanban block <task-id|title> <reason> [--force]".to_string());
             };
             let reason = args
                 .get(2..)
@@ -487,10 +506,14 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 .trim()
                 .to_string();
             if reason.is_empty() {
-                return Ok("Usage: kanban block <task-id|title> <reason>".to_string());
+                return Ok("Usage: kanban block <task-id|title> <reason> [--force]".to_string());
             }
             let maybe_update = {
                 let board = ensure_board(&mut store, None);
+                if let Some(task) = find_task_mut(board, task_ref).map(|task| task.clone()) {
+                    crate::kanban::check_cli_lifecycle(board, &task, "block", false, force)
+                        .map_err(AgentError::Config)?;
+                }
                 let task_id = if let Some(task) = find_task_mut(board, task_ref) {
                     set_blocked(task, Some(reason.clone()));
                     Some(task.id.clone())
@@ -517,21 +540,14 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
         }
         "done" => {
             let Some(task_ref) = args.get(1).copied() else {
-                return Ok("Usage: kanban done <task-id|title> [summary]".to_string());
+                return Ok("Usage: kanban done <task-id|title> [summary] [--force]".to_string());
             };
             let summary = args.get(2..).unwrap_or_default().join(" ");
             let maybe_update = {
                 let board = ensure_board(&mut store, None);
-                let target = find_task_mut(board, task_ref).map(|task| task.clone());
-                if let Some(task) = target {
-                    let parents = crate::kanban::unsatisfied_parents(board, &task);
-                    if !parents.is_empty() {
-                        return Err(AgentError::Config(format!(
-                            "Refusing to mark {} done: unfinished parent(s) {}.",
-                            task.id,
-                            crate::kanban::unsatisfied_parents_text(&parents)
-                        )));
-                    }
+                if let Some(task) = find_task_mut(board, task_ref).map(|task| task.clone()) {
+                    crate::kanban::check_cli_lifecycle(board, &task, "done", true, force)
+                        .map_err(AgentError::Config)?;
                 }
                 let task_id = if let Some(task) = find_task_mut(board, task_ref) {
                     move_task(
@@ -603,7 +619,8 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                     } else {
                         override_msg.clone()
                     };
-                    let job = queue_background_job_bound(&task_message, Some((&board_id, &task.id)))?;
+                    let job =
+                        queue_background_job_bound(&task_message, Some((&board_id, &task.id)))?;
                     // The store lock is held until the save below, so the
                     // worker's first kanban tool call waits for this run id.
                     move_task(task, KanbanLane::Doing, None);
@@ -671,7 +688,7 @@ async fn handle_kanban_command(app: &mut App, args: &[&str]) -> Result<CommandRe
 }
 
 fn kanban_help_text() -> &'static str {
-    "Kanban commands:\n  hermes kanban status [board]\n  hermes kanban boards\n  hermes kanban init <name> [project-path]\n  hermes kanban use <name-or-id>\n  hermes kanban add <title> [--lane <triage|todo|doing|blocked|done>] [--priority <1..5>] [--assignee <name>] [--tenant <name>] [--depends K-0001,K-0002] [--desc <text>] [--goal] [--goal-max-turns N]\n  hermes kanban specify <task-id> | --all [--tenant <name>]\n    Sends triage titles and descriptions to the configured auxiliary provider.\n  hermes kanban attach <task-id|title> <file-path>\n  hermes kanban attachments <task-id|title>\n  hermes kanban detach <task-id|title> <attachment-id|filename>\n  hermes kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary]\n  hermes kanban claim <task-id|title> [assignee]\n  hermes kanban block <task-id|title> <reason>\n  hermes kanban done <task-id|title> [summary]\n  hermes kanban archive-done\n  hermes kanban dispatch <task-id|title> [background-task-override]\n  hermes kanban sync\n\nInteractive alias: /kanban <command>"
+    "Kanban commands:\n  hermes kanban status [board]\n  hermes kanban boards\n  hermes kanban init <name> [project-path]\n  hermes kanban use <name-or-id>\n  hermes kanban add <title> [--lane <triage|todo|doing|blocked|done>] [--priority <1..5>] [--assignee <name>] [--tenant <name>] [--depends K-0001,K-0002] [--desc <text>] [--goal] [--goal-max-turns N]\n  hermes kanban specify <task-id> | --all [--tenant <name>]\n    Sends triage titles and descriptions to the configured auxiliary provider.\n  hermes kanban attach <task-id|title> <file-path>\n  hermes kanban attachments <task-id|title>\n  hermes kanban detach <task-id|title> <attachment-id|filename>\n  hermes kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary] [--force]\n  hermes kanban claim <task-id|title> [assignee]\n  hermes kanban block <task-id|title> <reason> [--force]\n  hermes kanban done <task-id|title> [summary] [--force]\n    move, block and done refuse a doing task whose dispatched worker is still running; --force acts anyway. done, and move to done, refuse a task with an unfinished dependency.\n    In a dispatched worker's process they act only on its own running task.\n  hermes kanban archive-done\n  hermes kanban dispatch <task-id|title> [background-task-override]\n  hermes kanban sync\n\nInteractive alias: /kanban <command>"
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

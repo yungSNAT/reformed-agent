@@ -1254,3 +1254,87 @@ fn oversized_input_is_refused_without_a_trace() {
     );
     assert_eq!(std::fs::read(&fx.path).unwrap(), before);
 }
+
+// ---- the human CLI's lifecycle checks ----
+
+#[test]
+fn the_cli_holds_a_bound_process_to_its_own_task_and_others_to_live_runs() {
+    let fx = fixture();
+    let store = store(&fx);
+    let board = &store.boards[0];
+    let (own, other) = (&board.tasks[0], &board.tasks[2]);
+    let bound = worker("run-a");
+    let check = |task: &KanbanTask, force: bool, binding: Option<&KanbanWorkerBinding>| {
+        check_cli_lifecycle_with(board, task, "done", true, force, binding, &fx.jobs)
+    };
+    assert!(check(own, false, bound.as_ref()).is_ok());
+    let foreign = check(other, false, bound.as_ref()).unwrap_err();
+    assert!(foreign.contains("bound to task K-0001"), "{foreign}");
+    let forced = check(own, true, bound.as_ref()).unwrap_err();
+    assert!(forced.contains("--force is for operators"), "{forced}");
+    // No binding: run-z has no status file, so it is not live.
+    assert!(check(other, false, None).is_ok());
+    fx.job_status("run-z", "running");
+    let live = check(other, false, None).unwrap_err();
+    assert!(
+        live.contains("a live worker is running it (background job run-z)"),
+        "{live}"
+    );
+    assert!(check(other, true, None).is_ok());
+}
+
+#[test]
+fn the_cli_refuses_open_parents_even_with_force() {
+    let fx = fixture_with_open_parent();
+    let store = store(&fx);
+    let board = &store.boards[0];
+    let error =
+        check_cli_lifecycle_with(board, &board.tasks[0], "done", true, true, None, &fx.jobs)
+            .unwrap_err();
+    assert!(
+        error.contains("unfinished parent(s) K-0002 (todo)"),
+        "{error}"
+    );
+    assert!(check_cli_lifecycle_with(
+        board,
+        &board.tasks[0],
+        "block",
+        false,
+        false,
+        None,
+        &fx.jobs
+    )
+    .is_ok());
+}
+
+#[test]
+fn a_completion_record_has_an_overall_cap() {
+    let fx = fixture();
+    let artifacts: Vec<String> = (0..3)
+        .map(|i| format!("/{i}{}", "p".repeat(8000)))
+        .collect();
+    assert_refused(
+        as_worker(
+            &fx,
+            Tool::Complete,
+            json!({"summary": "x", "artifacts": artifacts}),
+        ),
+        "the completion record",
+    );
+}
+
+#[test]
+fn a_toolset_list_may_name_kanban_in_its_tools_form() {
+    for name in ["kanban", "KANBAN", "kanban_tools", "kanban-tools"] {
+        let mut config = hermes_config::GatewayConfig::default();
+        config
+            .platform_toolsets
+            .insert("cli".to_string(), vec![name.to_string()]);
+        assert!(kanban_toolset_named(&config, "cli"), "{name}");
+    }
+    let mut config = hermes_config::GatewayConfig::default();
+    config
+        .platform_toolsets
+        .insert("cli".to_string(), vec!["kanbanish".to_string()]);
+    assert!(!kanban_toolset_named(&config, "cli"));
+}
