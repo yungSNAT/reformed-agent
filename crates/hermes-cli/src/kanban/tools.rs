@@ -10,18 +10,21 @@
 //! the worker's process and registry, so the agent loop marks each call with
 //! its delegate depth and the tools refuse any call made below the top level.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use hermes_config::GatewayConfig;
 use hermes_core::{ToolError, ToolHandler, ToolSchema};
+use hermes_intelligence::redact::redact_sensitive_text;
 use hermes_tools::ToolRegistry;
 use serde_json::{json, Map, Value};
 
 use super::store::KanbanStoreLock;
 use super::{
     add_task, build_worker_context, maybe_checkpoint_to_contextlattice, move_task, set_blocked,
-    KanbanActionInput, KanbanBoard, KanbanLane, KanbanStore, KanbanTask, NewKanbanTaskInput,
+    unsatisfied_parents, unsatisfied_parents_text, KanbanActionInput, KanbanBoard, KanbanLane,
+    KanbanStore, KanbanTask, NewKanbanTaskInput,
 };
 
 /// Toolset the kanban tools register under.
@@ -37,6 +40,12 @@ pub const KANBAN_WORKER_ENV: [&str; 3] = [ENV_BOARD, ENV_TASK, ENV_RUN_ID];
 
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 200;
+/// Caps on what a call may store: every stored field reaches later workers'
+/// prompts.
+const MAX_TITLE_CHARS: usize = 200;
+const MAX_NAME_CHARS: usize = 100;
+const MAX_TEXT_BYTES: usize = 8 * 1024;
+const MAX_LIST_ITEMS: usize = 50;
 
 /// The board, task and run a dispatched worker was started for. Any of the 3
 /// variables set makes the process a worker; a missing value then refuses
@@ -124,10 +133,10 @@ impl Tool {
         match self {
             Self::Show => "Read a kanban task: title, details, lane, dependencies, attachments and a ready-made worker_context. A dispatched worker may omit task_id to read its own task.",
             Self::List => "List kanban tasks on a board so an orchestrator can find work to route, filtered by lane, assignee or tenant. Returns at most 50 rows by default, 200 at most. Not available to dispatched workers.",
-            Self::Complete => "Mark a task done with a short summary of what was done. A dispatched worker may complete only its own running task.",
-            Self::Block => "Move a task to blocked with the reason work stopped. A dispatched worker may block only its own running task.",
+            Self::Complete => "Mark a task done with a short summary of what was done. Refused while a task it depends on is not done. A dispatched worker may complete only its own running task; another session may not complete a task whose run is still live.",
+            Self::Block => "Move a todo or doing task to blocked with the reason work stopped. A dispatched worker may block only its own running task.",
             Self::Create => "Create a follow-up task on the board, in triage or todo, and return its id.",
-            Self::Link => "Make child_id depend on parent_id. Refuses a link that would form a cycle.",
+            Self::Link => "Make child_id depend on parent_id. Refuses a link that would form a cycle, and a running child unless the caller is its run.",
             Self::Unblock => "Move a blocked task back to todo. Not available to dispatched workers.",
             Self::Attachments => "List a task's attachments with the absolute path of each file.",
         }
@@ -139,6 +148,7 @@ impl Tool {
             Self::Show | Self::Attachments => json!({"task_id": task_id}),
             Self::List => json!({
                 "lane": {"type": "string", "enum": ["triage", "todo", "doing", "blocked", "done"], "description": "Only tasks in this lane."},
+                "status": {"type": "string", "description": "Same as lane; ready means todo and running means doing."},
                 "assignee": {"type": "string", "description": "Only tasks with this assignee."},
                 "tenant": {"type": "string", "description": "Only tasks with this tenant."},
                 "include_archived": {"type": "boolean", "description": "Include archived tasks. Defaults to false."},
@@ -147,7 +157,10 @@ impl Tool {
             Self::Complete => json!({
                 "task_id": task_id,
                 "summary": {"type": "string", "description": "What was done, in 1 to 3 sentences."},
-                "result": {"type": "string", "description": "A short result line, used when summary is absent."}
+                "result": {"type": "string", "description": "A short result line, used when summary is absent."},
+                "metadata": {"type": "object", "description": "Structured facts about the run (changed files, tests run, decisions), kept with the summary."},
+                "artifacts": {"type": "array", "items": {"type": "string"}, "description": "Absolute paths of files the run produced, kept with the summary."},
+                "created_cards": {"type": "array", "items": {"type": "string"}, "description": "Ids of tasks this run created; each must be on the board."}
             }),
             Self::Block => json!({
                 "task_id": task_id,
@@ -156,11 +169,13 @@ impl Tool {
             Self::Create => json!({
                 "title": {"type": "string", "description": "Task title."},
                 "description": {"type": "string", "description": "Details a worker needs."},
+                "body": {"type": "string", "description": "Same as description."},
                 "lane": {"type": "string", "enum": ["triage", "todo"], "description": "Starting lane. Defaults to todo."},
                 "priority": {"type": "integer", "description": "1 (highest) to 5. Defaults to 3."},
                 "assignee": {"type": "string", "description": "Assignee or profile name."},
                 "tenant": {"type": "string", "description": "Tenant or project namespace."},
                 "depends_on": {"type": "array", "items": {"type": "string"}, "description": "Ids of tasks on the same board this task waits for."},
+                "parents": {"type": "array", "items": {"type": "string"}, "description": "Same as depends_on."},
                 "goal_mode": {"type": "boolean", "description": "Run the task in goal mode when dispatched."},
                 "goal_max_turns": {"type": "integer", "description": "Turn budget for goal mode."}
             }),
@@ -206,6 +221,8 @@ impl Tool {
 
 struct KanbanToolContext {
     store_path: PathBuf,
+    /// Background job status files, read to tell whether a task's run is live.
+    jobs_dir: PathBuf,
     binding: Option<KanbanWorkerBinding>,
     checkpoint: bool,
 }
@@ -231,24 +248,39 @@ impl ToolHandler for KanbanTool {
     }
 }
 
-/// Register the kanban tools on `registry`, bound to `binding` when this
-/// process is a dispatched worker.
-pub fn register_kanban_tools(registry: &ToolRegistry, binding: Option<KanbanWorkerBinding>) {
-    register_kanban_tools_at(registry, super::kanban_store_path(), binding, true);
+/// Whether `platform`'s toolset list in `config` names `kanban` itself. The
+/// `all` and `*` wildcards do not count: the tools act on every board.
+pub fn kanban_toolset_named(config: &GatewayConfig, platform: &str) -> bool {
+    hermes_tool_planning::configured_platform_toolsets(config, platform)
+        .iter()
+        .any(|name| name.trim().eq_ignore_ascii_case(KANBAN_TOOLSET))
 }
 
-fn register_kanban_tools_at(
+/// Register the kanban tools on `registry`: bound to `binding` when this
+/// process is a dispatched worker, otherwise only when the CLI's toolset list
+/// names `kanban`.
+pub fn register_kanban_tools(
     registry: &ToolRegistry,
-    store_path: PathBuf,
+    config: &GatewayConfig,
     binding: Option<KanbanWorkerBinding>,
-    checkpoint: bool,
 ) {
-    let worker = binding.is_some();
-    let ctx = Arc::new(KanbanToolContext {
-        store_path,
+    let opted_in = kanban_toolset_named(config, "cli");
+    let ctx = KanbanToolContext {
+        store_path: super::kanban_store_path(),
+        // The folder `/background` keeps its job status files in.
+        jobs_dir: hermes_config::hermes_home().join("background_jobs"),
         binding,
-        checkpoint,
-    });
+        checkpoint: true,
+    };
+    register_kanban_tools_at(registry, ctx, opted_in);
+}
+
+fn register_kanban_tools_at(registry: &ToolRegistry, ctx: KanbanToolContext, opted_in: bool) {
+    let worker = ctx.binding.is_some();
+    if !worker && !opted_in {
+        return;
+    }
+    let ctx = Arc::new(ctx);
     for tool in TOOLS {
         let visible = !(worker && tool.orchestrator_only());
         registry.register(
@@ -575,10 +607,115 @@ fn check_worker_owns(
     Ok(())
 }
 
+/// A string argument of at most `max` characters.
+fn capped_str(
+    args: &Map<String, Value>,
+    key: &str,
+    max: usize,
+) -> Result<Option<String>, ToolError> {
+    let value = opt_str(args, key)?;
+    if let Some(value) = &value {
+        let chars = value.chars().count();
+        if chars > max {
+            return Err(refused(format!(
+                "{key} is {chars} characters; the most is {max}."
+            )));
+        }
+    }
+    Ok(value)
+}
+
+/// A text argument of at most [`MAX_TEXT_BYTES`].
+fn text_arg(args: &Map<String, Value>, key: &str) -> Result<Option<String>, ToolError> {
+    let value = opt_str(args, key)?;
+    if let Some(value) = &value {
+        if value.len() > MAX_TEXT_BYTES {
+            return Err(refused(format!(
+                "{key} is {} bytes; the most is {MAX_TEXT_BYTES}.",
+                value.len()
+            )));
+        }
+    }
+    Ok(value)
+}
+
+/// A list of at most [`MAX_LIST_ITEMS`] non-blank strings; one string is a
+/// list of one.
+fn str_list(args: &Map<String, Value>, key: &str) -> Result<Vec<String>, ToolError> {
+    let items: Vec<String> = match args.get(key) {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::String(one)) => vec![one.trim().to_string()],
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(|s| s.trim().to_string())
+                    .ok_or_else(|| refused(format!("{key} must be a list of strings.")))
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err(refused(format!("{key} must be a list of strings."))),
+    };
+    let items: Vec<String> = items.into_iter().filter(|s| !s.is_empty()).collect();
+    if items.len() > MAX_LIST_ITEMS {
+        return Err(refused(format!(
+            "{key} has {} items; the most is {MAX_LIST_ITEMS}.",
+            items.len()
+        )));
+    }
+    if let Some(long) = items.iter().find(|s| s.len() > MAX_TEXT_BYTES) {
+        return Err(refused(format!(
+            "an item of {key} is {} bytes; the most is {MAX_TEXT_BYTES}.",
+            long.len()
+        )));
+    }
+    Ok(items)
+}
+
+/// The key a call used: `key` or its upstream `alias`; both at once is refused.
+fn aliased(
+    args: &Map<String, Value>,
+    key: &'static str,
+    alias: &'static str,
+) -> Result<&'static str, ToolError> {
+    let given = |k: &str| !matches!(args.get(k), None | Some(Value::Null));
+    match (given(key), given(alias)) {
+        (true, true) => Err(refused(format!("pass {key} or {alias}, not both."))),
+        (false, true) => Ok(alias),
+        _ => Ok(key),
+    }
+}
+
+/// Whether background job `run` may still be working: its status file says
+/// queued or running, or cannot be read. A run id that is not a plain job id
+/// counts as live, as no status file can be trusted for it.
+fn run_is_live(jobs_dir: &Path, run: &str) -> bool {
+    let plain = !run.is_empty()
+        && run
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !plain {
+        return true;
+    }
+    match std::fs::read_to_string(jobs_dir.join(format!("{run}.json"))) {
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        Ok(text) => serde_json::from_str::<Value>(&text).map_or(true, |status| {
+            matches!(
+                status.get("status").and_then(Value::as_str),
+                Some("queued" | "running")
+            )
+        }),
+    }
+}
+
 fn task_json(board: &KanbanBoard, task: &KanbanTask) -> Value {
     let mut value = serde_json::to_value(task).unwrap_or(Value::Null);
     if let Some(map) = value.as_object_mut() {
         map.insert("board".to_string(), json!(board.id));
+        let open: Vec<Value> = unsatisfied_parents(board, task)
+            .into_iter()
+            .map(|(id, lane)| json!({"id": id, "status": lane.as_str()}))
+            .collect();
+        map.insert("unsatisfied_parents".to_string(), json!(open));
         map.insert(
             "worker_context".to_string(),
             json!(build_worker_context(task)),
@@ -606,21 +743,26 @@ fn show(
 }
 
 fn list(board: &KanbanBoard, args: &Map<String, Value>) -> Result<Outcome, ToolError> {
-    let lane = match opt_str(args, "lane")? {
-        Some(raw) => Some(
-            KanbanLane::parse(&raw)
-                .ok_or_else(|| refused(format!("lane `{raw}` is not a kanban lane.")))?,
-        ),
+    let lane_key = aliased(args, "lane", "status")?;
+    let lane = match opt_str(args, lane_key)? {
+        Some(raw) => Some(match raw.to_ascii_lowercase().as_str() {
+            "ready" => KanbanLane::Todo,
+            "running" => KanbanLane::Doing,
+            other => KanbanLane::parse(other)
+                .ok_or_else(|| refused(format!("{lane_key} `{raw}` is not a kanban lane.")))?,
+        }),
         None => None,
     };
     let assignee = opt_str(args, "assignee")?;
     let tenant = opt_str(args, "tenant")?;
     let include_archived = opt_bool(args, "include_archived")?.unwrap_or(false);
     let limit = opt_u64(args, "limit")?.unwrap_or(LIST_DEFAULT_LIMIT);
-    if limit == 0 {
-        return Err(refused("limit must be at least 1."));
+    if !(1..=LIST_MAX_LIMIT).contains(&limit) {
+        return Err(refused(format!(
+            "limit must be 1 to {LIST_MAX_LIMIT}, not {limit}."
+        )));
     }
-    let limit = limit.min(LIST_MAX_LIMIT) as usize;
+    let limit = limit as usize;
     let matches = |task: &&KanbanTask| {
         lane.is_none_or(|lane| task.lane == lane)
             && assignee
@@ -666,26 +808,38 @@ fn list(board: &KanbanBoard, args: &Map<String, Value>) -> Result<Outcome, ToolE
     })))
 }
 
-fn lifecycle_target<'a>(
-    board: &'a mut KanbanBoard,
+/// The index of the task a lifecycle call may change: a worker's own running
+/// task, or for any other caller a task no live run is working on.
+fn lifecycle_target(
+    board: &KanbanBoard,
     ctx: &KanbanToolContext,
     args: &Map<String, Value>,
     tool: Tool,
-) -> Result<&'a mut KanbanTask, ToolError> {
+) -> Result<usize, ToolError> {
+    let name = tool.name();
     let id = require_task(args, ctx, tool)?;
     let idx = task_index(board, &id)?;
-    let task = &mut board.tasks[idx];
-    if let Some(binding) = &ctx.binding {
-        check_worker_owns(binding, task, tool)?;
+    let task = &board.tasks[idx];
+    match &ctx.binding {
+        Some(binding) => check_worker_owns(binding, task, tool)?,
+        None => {
+            if let Some(run) = task.background_job_id.as_deref() {
+                if task.lane == KanbanLane::Doing && run_is_live(&ctx.jobs_dir, run) {
+                    return Err(refused(format!(
+                        "{name} refused: task {} is running under live run {run}; let its worker finish or stop the job first.",
+                        task.id
+                    )));
+                }
+            }
+        }
     }
     if task.lane == KanbanLane::Done {
         return Err(refused(format!(
-            "{}: task {} is already done.",
-            tool.name(),
+            "{name}: task {} is already done.",
             task.id
         )));
     }
-    Ok(task)
+    Ok(idx)
 }
 
 fn complete(
@@ -693,14 +847,69 @@ fn complete(
     ctx: &KanbanToolContext,
     args: &Map<String, Value>,
 ) -> Result<Outcome, ToolError> {
-    let summary = opt_str(args, "summary")?.or(opt_str(args, "result")?);
-    let Some(summary) = summary else {
+    let summary_key = if matches!(args.get("summary"), None | Some(Value::Null)) {
+        "result"
+    } else {
+        "summary"
+    };
+    let Some(summary) = text_arg(args, summary_key)? else {
         return Err(refused("kanban_complete needs summary or result."));
     };
-    let task = lifecycle_target(board, ctx, args, Tool::Complete)?;
-    move_task(task, KanbanLane::Done, Some(summary.clone()));
+    let metadata = match args.get("metadata") {
+        None | Some(Value::Null) => None,
+        Some(meta @ Value::Object(_)) => {
+            let text = meta.to_string();
+            if text.len() > MAX_TEXT_BYTES {
+                return Err(refused(format!(
+                    "metadata is {} bytes as JSON; the most is {MAX_TEXT_BYTES}.",
+                    text.len()
+                )));
+            }
+            Some(text)
+        }
+        Some(_) => return Err(refused("metadata must be a JSON object.")),
+    };
+    let artifacts = str_list(args, "artifacts")?;
+    let created = str_list(args, "created_cards")?;
+    let idx = lifecycle_target(board, ctx, args, Tool::Complete)?;
+    let open = unsatisfied_parents(board, &board.tasks[idx]);
+    if !open.is_empty() {
+        return Err(refused(format!(
+            "kanban_complete refused: task {} waits for unfinished parent(s) {}.",
+            board.tasks[idx].id,
+            unsatisfied_parents_text(&open)
+        )));
+    }
+    let mut created_ids = Vec::new();
+    for id in &created {
+        let found = board
+            .tasks
+            .iter()
+            .chain(board.archived.iter())
+            .find(|task| task.id.eq_ignore_ascii_case(id));
+        match found {
+            Some(task) => created_ids.push(task.id.clone()),
+            None => return Err(refused(format!(
+                "kanban_complete refused: created_cards names {id}, which is not on board `{}`.",
+                board.id
+            ))),
+        }
+    }
+    let mut record = summary;
+    if !artifacts.is_empty() {
+        record.push_str(&format!("\nArtifacts: {}", artifacts.join(", ")));
+    }
+    if !created_ids.is_empty() {
+        record.push_str(&format!("\nCreated cards: {}", created_ids.join(", ")));
+    }
+    if let Some(metadata) = metadata {
+        record.push_str(&format!("\nMetadata: {metadata}"));
+    }
+    let record = redact_sensitive_text(record);
+    let task = &mut board.tasks[idx];
+    move_task(task, KanbanLane::Done, Some(record.clone()));
     let reply = json!({"ok": true, "task_id": task.id, "lane": task.lane.as_str()});
-    Ok(Outcome::changed(reply, task, summary))
+    Ok(Outcome::changed(reply, task, record))
 }
 
 fn block(
@@ -708,15 +917,26 @@ fn block(
     ctx: &KanbanToolContext,
     args: &Map<String, Value>,
 ) -> Result<Outcome, ToolError> {
-    let reason = required_str(args, "reason")?;
-    let task = lifecycle_target(board, ctx, args, Tool::Block)?;
+    let reason = text_arg(args, "reason")?.ok_or_else(|| refused("reason is required."))?;
+    let idx = lifecycle_target(board, ctx, args, Tool::Block)?;
+    let task = &mut board.tasks[idx];
+    if !matches!(task.lane, KanbanLane::Todo | KanbanLane::Doing) {
+        return Err(refused(format!(
+            "kanban_block: task {} is in {}; only a todo or doing task can be blocked.",
+            task.id,
+            task.lane.as_str()
+        )));
+    }
+    let reason = redact_sensitive_text(reason);
     set_blocked(task, Some(reason.clone()));
     let reply = json!({"ok": true, "task_id": task.id, "lane": task.lane.as_str()});
     Ok(Outcome::changed(reply, task, reason))
 }
 
 fn create(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome, ToolError> {
-    let title = required_str(args, "title")?;
+    let title =
+        capped_str(args, "title", MAX_TITLE_CHARS)?.ok_or_else(|| refused("title is required."))?;
+    let description = text_arg(args, aliased(args, "description", "body")?)?;
     let lane = match opt_str(args, "lane")? {
         None => KanbanLane::Todo,
         Some(raw) => match KanbanLane::parse(&raw) {
@@ -733,22 +953,8 @@ fn create(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome,
         Some(p @ 1..=5) => p as u8,
         Some(p) => return Err(refused(format!("priority must be 1 to 5, not {p}."))),
     };
-    let depends_on = match args.get("depends_on") {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::String(one)) => vec![one.trim().to_string()],
-        Some(Value::Array(items)) => items
-            .iter()
-            .map(|item| {
-                item.as_str()
-                    .map(|s| s.trim().to_string())
-                    .ok_or_else(|| refused("depends_on must be a list of task ids."))
-            })
-            .collect::<Result<_, _>>()?,
-        Some(_) => return Err(refused("depends_on must be a list of task ids.")),
-    };
-    let depends_on = depends_on
+    let depends_on = str_list(args, aliased(args, "depends_on", "parents")?)?
         .into_iter()
-        .filter(|id| !id.is_empty())
         .map(|id| task_index(board, &id).map(|idx| board.tasks[idx].id.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     let goal_max_turns = match opt_u64(args, "goal_max_turns")? {
@@ -763,12 +969,12 @@ fn create(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome,
     let task = add_task(
         board,
         NewKanbanTaskInput {
-            title,
+            title: redact_sensitive_text(title),
             lane,
             priority,
-            assignee: opt_str(args, "assignee")?,
-            tenant: opt_str(args, "tenant")?,
-            description: opt_str(args, "description")?,
+            assignee: capped_str(args, "assignee", MAX_NAME_CHARS)?,
+            tenant: capped_str(args, "tenant", MAX_NAME_CHARS)?,
+            description: description.map(redact_sensitive_text),
             depends_on,
             goal_mode: opt_bool(args, "goal_mode")?.unwrap_or(false),
             goal_max_turns,
@@ -811,15 +1017,14 @@ fn link(
     if parent == child {
         return Err(refused("a task cannot depend on itself."));
     }
-    if let Some(binding) = &ctx.binding {
-        let task = &board.tasks[child_idx];
-        let own_run = !binding.run.is_empty()
-            && task.background_job_id.as_deref() == Some(binding.run.as_str());
-        if task.lane == KanbanLane::Doing && !own_run {
-            return Err(refused(format!(
-                "kanban_link refused: task {child} is running under another run."
-            )));
-        }
+    let task = &board.tasks[child_idx];
+    let own_run = ctx.binding.as_ref().is_some_and(|binding| {
+        !binding.run.is_empty() && task.background_job_id.as_deref() == Some(binding.run.as_str())
+    });
+    if task.lane == KanbanLane::Doing && !own_run {
+        return Err(refused(format!(
+            "kanban_link refused: task {child} is running; only its own run may add a dependency to it."
+        )));
     }
     if depends_transitively(board, &parent, &child) {
         return Err(refused(format!(

@@ -339,9 +339,37 @@ pub fn claim_task(task: &mut KanbanTask, assignee: Option<String>) {
     task.assignee = normalize_optional(assignee);
     if task.lane == KanbanLane::Todo {
         task.lane = KanbanLane::Doing;
+        // A claim is not a dispatch: no run owns the claimed task.
+        task.background_job_id = None;
         task.started_at = Some(now_rfc3339());
     }
     task.updated_at = now_rfc3339();
+}
+
+/// Dependencies of `task` still open on `board`, with their lanes. Archived
+/// tasks were done; an id the board does not hold has nothing to wait for.
+pub fn unsatisfied_parents(board: &KanbanBoard, task: &KanbanTask) -> Vec<(String, KanbanLane)> {
+    task.depends_on
+        .iter()
+        .filter_map(|id| {
+            board
+                .tasks
+                .iter()
+                .find(|parent| parent.id.eq_ignore_ascii_case(id))
+                .filter(|parent| parent.lane != KanbanLane::Done)
+                .map(|parent| (parent.id.clone(), parent.lane))
+        })
+        .collect()
+}
+
+/// `Refusing ... unfinished parent(s) K-0001 (todo)` text for a task whose
+/// dependencies are still open.
+pub fn unsatisfied_parents_text(parents: &[(String, KanbanLane)]) -> String {
+    parents
+        .iter()
+        .map(|(id, lane)| format!("{id} ({})", lane.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn archive_done(board: &mut KanbanBoard) -> usize {

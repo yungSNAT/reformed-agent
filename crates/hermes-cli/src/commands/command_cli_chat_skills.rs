@@ -128,7 +128,7 @@ pub async fn handle_cli_chat(
             Arc::new(SkillManager::new(skill_store));
         hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
         let kanban_binding = crate::kanban::KanbanWorkerBinding::from_env();
-        crate::kanban::register_kanban_tools(&tool_registry, kanban_binding.clone());
+        crate::kanban::register_kanban_tools(&tool_registry, &config, kanban_binding.clone());
         wire_stdio_clarify_backend(&tool_registry);
         connect_configured_mcp_servers(&config, &hermes_config::hermes_home(), &tool_registry)
             .await;

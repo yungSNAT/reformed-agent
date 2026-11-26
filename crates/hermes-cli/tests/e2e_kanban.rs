@@ -183,3 +183,36 @@ async fn invalid_kanban_updates_leave_the_saved_board_unchanged() {
     assert_kanban(home, &["block", "K-0001"], "Usage: kanban block").await;
     assert_eq!(std::fs::read(store).unwrap(), before);
 }
+
+// Port of upstream test_kanban_complete_parents_tool.py::test_cli_complete_names_unsatisfied_parent.
+#[tokio::test]
+async fn kanban_done_names_an_unfinished_parent_and_changes_nothing() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path();
+    assert_kanban(home, &["init", "Gates"], "Board selected").await;
+    assert_kanban(home, &["add", "parent gate"], "Added task K-0001").await;
+    assert_kanban(
+        home,
+        &["add", "child work", "--depends", "K-0001", "--lane", "doing"],
+        "Added task K-0002",
+    )
+    .await;
+    let store = home.join("hermes/alpha/kanban/boards.json");
+    let before = std::fs::read(&store).unwrap();
+    let output = kanban(home, &["done", "K-0002", "finished"]).await;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "done succeeded: {stderr}");
+    assert!(
+        stderr.contains("unfinished parent(s) K-0001 (todo)"),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read(&store).unwrap(), before);
+    assert_kanban(home, &["done", "K-0001"], "K-0001").await;
+    assert_kanban(home, &["done", "K-0002"], "K-0002").await;
+    let lanes: Vec<KanbanLane> = board_store(home).boards[0]
+        .tasks
+        .iter()
+        .map(|task| task.lane)
+        .collect();
+    assert_eq!(lanes, [KanbanLane::Done, KanbanLane::Done]);
+}

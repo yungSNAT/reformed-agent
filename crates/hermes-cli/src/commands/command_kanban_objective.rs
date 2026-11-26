@@ -522,6 +522,17 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
             let summary = args.get(2..).unwrap_or_default().join(" ");
             let maybe_update = {
                 let board = ensure_board(&mut store, None);
+                let target = find_task_mut(board, task_ref).map(|task| task.clone());
+                if let Some(task) = target {
+                    let parents = crate::kanban::unsatisfied_parents(board, &task);
+                    if !parents.is_empty() {
+                        return Err(AgentError::Config(format!(
+                            "Refusing to mark {} done: unfinished parent(s) {}.",
+                            task.id,
+                            crate::kanban::unsatisfied_parents_text(&parents)
+                        )));
+                    }
+                }
                 let task_id = if let Some(task) = find_task_mut(board, task_ref) {
                     move_task(
                         task,

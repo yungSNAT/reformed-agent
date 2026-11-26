@@ -894,26 +894,31 @@ fn background_jobs_dir() -> Result<PathBuf, AgentError> {
     Ok(jobs_dir)
 }
 
-/// Starts `exe chat --query -` for a background task and writes the task to
-/// its standard input: on the command line, other local users could read it
-/// while the child runs.
 /// The kanban worker binding a job's status file records, if any.
+/// The run is the job's own id; a `kanban` record without a board or task
+/// cannot start a worker.
 fn kanban_binding_from_status(
     status: &serde_json::Map<String, serde_json::Value>,
-) -> Option<crate::kanban::KanbanWorkerBinding> {
-    let kanban = status.get("kanban")?.as_object()?;
-    let field = |key: &str| {
-        kanban
-            .get(key)
+) -> Result<Option<crate::kanban::KanbanWorkerBinding>, String> {
+    let Some(kanban) = status.get("kanban") else {
+        return Ok(None);
+    };
+    let text = |value: Option<&serde_json::Value>| {
+        value
             .and_then(|value| value.as_str())
+            .map(str::trim)
             .unwrap_or("")
             .to_string()
     };
-    Some(crate::kanban::KanbanWorkerBinding {
-        board: field("board"),
-        task: field("task"),
-        run: field("run"),
-    })
+    let binding = crate::kanban::KanbanWorkerBinding {
+        board: text(kanban.get("board")),
+        task: text(kanban.get("task")),
+        run: text(status.get("id")),
+    };
+    if binding.board.is_empty() || binding.task.is_empty() || binding.run.is_empty() {
+        return Err("kanban job record lacks its board, task or id".to_string());
+    }
+    Ok(Some(binding))
 }
 
 /// A kanban worker's child gets its binding; any other child gets none, even
@@ -932,11 +937,31 @@ fn apply_kanban_binding_env(
     }
 }
 
+/// Starts `exe chat --query -` for a background task and writes the task to
+/// its standard input: on the command line, other local users could read it
+/// while the child runs.
 fn spawn_background_child(
     exe: &std::path::Path,
     task: &str,
     kanban: Option<&crate::kanban::KanbanWorkerBinding>,
 ) -> std::io::Result<tokio::process::Child> {
+    let mut child = background_child_command(exe, kanban).spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let task = task.to_string();
+        // Written alongside the wait, so a child that stops reading cannot
+        // stall it; dropping the pipe afterwards ends the child's input.
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(task.as_bytes()).await;
+        });
+    }
+    Ok(child)
+}
+
+fn background_child_command(
+    exe: &std::path::Path,
+    kanban: Option<&crate::kanban::KanbanWorkerBinding>,
+) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(exe);
     cmd.arg("chat")
         .arg("--query")
@@ -952,17 +977,7 @@ fn spawn_background_child(
         cmd.env("HERMES_HOME", home);
     }
     apply_kanban_binding_env(&mut cmd, kanban);
-    let mut child = cmd.spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let task = task.to_string();
-        // Written alongside the wait, so a child that stops reading cannot
-        // stall it; dropping the pipe afterwards ends the child's input.
-        tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(task.as_bytes()).await;
-        });
-    }
-    Ok(child)
+    cmd
 }
 
 fn handle_background_command(app: &mut App, args: &[&str]) -> Result<CommandResult, AgentError> {
@@ -1268,8 +1283,10 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
             }
         };
 
-        let kanban = kanban_binding_from_status(&queued);
-        let child = match spawn_background_child(&exe, &task, kanban.as_ref()) {
+        let child = match kanban_binding_from_status(&queued)
+            .map_err(std::io::Error::other)
+            .and_then(|kanban| spawn_background_child(&exe, &task, kanban.as_ref()))
+        {
             Ok(child) => child,
             Err(e) => {
                 let mut failed = queued.clone();
