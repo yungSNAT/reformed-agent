@@ -1251,24 +1251,24 @@ fn gateway_requirement_issues(config: &hermes_config::GatewayConfig) -> Vec<Stri
 
     if let Some(p) = config.platforms.get("telegram") {
         if check(p.enabled, platform_token_or_extra(p).is_some()) {
-            issues.push("telegram.enabled=true 但缺少 token".to_string());
+            issues.push("telegram.enabled=true but token is missing".to_string());
         }
     }
     if let Some(p) = config.platforms.get("weixin") {
         let account_id = extra_string(p, "account_id").is_some();
         let token = platform_token_or_extra(p).is_some();
         if check(p.enabled, account_id && token) {
-            issues.push("weixin.enabled=true 但缺少 account_id 或 token".to_string());
+            issues.push("weixin.enabled=true but account_id or token is missing".to_string());
         }
     }
     if let Some(p) = config.platforms.get("discord") {
         if check(p.enabled, platform_token_or_extra(p).is_some()) {
-            issues.push("discord.enabled=true 但缺少 token".to_string());
+            issues.push("discord.enabled=true but token is missing".to_string());
         }
     }
     if let Some(p) = config.platforms.get("slack") {
         if check(p.enabled, platform_token_or_extra(p).is_some()) {
-            issues.push("slack.enabled=true 但缺少 token".to_string());
+            issues.push("slack.enabled=true but token is missing".to_string());
         }
     }
     if let Some(p) = config.platforms.get("ntfy") {
@@ -1285,7 +1285,7 @@ fn gateway_requirement_issues(config: &hermes_config::GatewayConfig) -> Vec<Stri
         let app_id = extra_string(p, "app_id").is_some();
         let secret = extra_string(p, "client_secret").is_some();
         if check(p.enabled, app_id && secret) {
-            issues.push("qqbot.enabled=true 但缺少 app_id 或 client_secret".to_string());
+            issues.push("qqbot.enabled=true but app_id or client_secret is missing".to_string());
         }
     }
     if let Some(p) = config.platforms.get("wecom_callback") {
@@ -1298,7 +1298,7 @@ fn gateway_requirement_issues(config: &hermes_config::GatewayConfig) -> Vec<Stri
             && extra_string(p, "encoding_aes_key").is_some();
         if check(p.enabled, ready) {
             issues.push(
-                "wecom_callback.enabled=true 但缺少 corp_id/corp_secret/agent_id/token/encoding_aes_key"
+                "wecom_callback.enabled=true but corp_id/corp_secret/agent_id/token/encoding_aes_key is missing"
                     .to_string(),
             );
         }

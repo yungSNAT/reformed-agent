@@ -401,17 +401,11 @@ impl ToolHandler for PatchHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // The backend is handed the absolute path the rule judged, resolved
-        // as `write_file` resolves it. Name and content rules stay with
-        // `write_file`.
+        // Enforce the same path and content rules as `write_file` before any
+        // backend runs; `LocalPatchBackend` re-checks inside its edit lock.
         let absolute = crate::credential_guard::local_write_path(Path::new(path))
             .unwrap_or_else(|| PathBuf::from(path));
-        if crate::credential_guard::is_write_denied(&absolute) {
-            return Err(ToolError::ExecutionFailed(format!(
-                "Write denied: '{}' is a protected system or credential path",
-                absolute.display()
-            )));
-        }
+        CredentialGuard::new().check_write_access(&absolute, new_string)?;
         let Some(absolute) = absolute.to_str() else {
             return Err(ToolError::InvalidParams(format!(
                 "Invalid path '{}': it is not valid UTF-8",
@@ -1068,19 +1062,45 @@ mod tests {
     }
 
     #[test]
-    fn patch_allows_a_file_named_like_a_credential() {
+    fn patch_enforces_credential_guard_on_paths_and_secrets() {
         let tmp = tempfile::tempdir().unwrap();
         let backend = Arc::new(CountingPatch::default());
         let handler = PatchHandler::new(backend.clone());
 
         crate::test_env::with_env(&[("HERMES_WRITE_SAFE_ROOT", None)], || {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
-                for name in ["credential_guard.rs", "fixture.pem"] {
+                for name in [
+                    ".env",
+                    "credentials.json",
+                    "fixture.pem",
+                    "server.key",
+                    "credential_guard.rs",
+                ] {
                     let path = tmp.path().join(name);
+                    let err = handler
+                        .execute(json!({"path": path, "old_string": "a", "new_string": "b"}))
+                        .await
+                        .expect_err("protected or credential path must be refused");
+                    assert!(err.to_string().contains("Write denied"), "{name}: {err}");
+                }
+
+                let regular = tmp.path().join("notes.md");
+                let err = handler
+                    .execute(json!({
+                        "path": regular,
+                        "old_string": "a",
+                        "new_string": "OPENAI_API_KEY=sk-1234567890abcdefghij"
+                    }))
+                    .await
+                    .expect_err("secret replacement must be refused");
+                assert!(err.to_string().contains("detected secret"), "{err}");
+
+                for allowed in ["notes.md", "main.rs"] {
+                    let path = tmp.path().join(allowed);
                     handler
                         .execute(json!({"path": path, "old_string": "a", "new_string": "b"}))
                         .await
-                        .unwrap_or_else(|e| panic!("{name} was refused: {e}"));
+                        .unwrap_or_else(|e| panic!("{allowed} was refused: {e}"));
                 }
             });
         });

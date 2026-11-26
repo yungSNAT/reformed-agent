@@ -1012,10 +1012,10 @@ def print_credential_summary(emit: Any = print) -> None:
     labels["project_key"] = "✓ stored" if sec else "✗ missing"
     phone, assigned = load_user_numbers()
     labels["phone_number"] = (
-        phone if phone else "✗ missing (run `hermes photon setup --phone ...`)"
+        "✓ stored" if phone else "✗ missing (run `hermes photon setup --phone ...`)"
     )
     labels["assigned_phone_number"] = (
-        assigned if assigned else "✗ missing (run `hermes photon setup`)"
+        "✓ stored" if assigned else "✗ missing (run `hermes photon setup`)"
     )
 
     rows = [
@@ -1049,11 +1049,11 @@ def credential_summary() -> Dict[str, str]:
 
     def _present_phone() -> str:
         phone, _assigned = load_user_numbers()
-        return phone or "✗ missing (run `hermes photon setup --phone ...`)"
+        return "✓ stored" if phone else "✗ missing (run `hermes photon setup --phone ...`)"
 
     def _present_assigned_phone() -> str:
         _phone, assigned = load_user_numbers()
-        return assigned or "✗ missing (run `hermes photon setup`)"
+        return "✓ stored" if assigned else "✗ missing (run `hermes photon setup`)"
 
     return {
         "device_token": _present_token(),
