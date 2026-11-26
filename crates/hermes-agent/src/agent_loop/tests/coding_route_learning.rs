@@ -1,6 +1,5 @@
 #[test]
 fn coding_context_prunes_non_coding_skill_categories_in_prompt_only() {
-    use futures::stream::BoxStream;
     use hermes_core::JsonSchema;
 
     let _lock = env_test_lock();
@@ -26,39 +25,6 @@ fn coding_context_prunes_non_coding_skill_categories_in_prompt_only() {
     )
     .expect("write github skill");
     let _cwd = EnvVarGuard::set("TERMINAL_CWD", tmp.path().to_str().unwrap());
-
-    struct DummyProvider;
-    #[async_trait::async_trait]
-    impl LlmProvider for DummyProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant("dummy"),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            futures::stream::empty().boxed()
-        }
-    }
 
     let config = AgentConfig {
         platform: Some("cli".to_string()),
@@ -907,41 +873,6 @@ async fn a_streamed_steer_delivered_before_a_rollback_is_not_lost() {
 
 #[test]
 fn test_smart_model_routing_cheap_route_for_simple_turn() {
-    use futures::stream::BoxStream;
-
-    struct DummyProvider;
-    #[async_trait::async_trait]
-    impl LlmProvider for DummyProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant("dummy"),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            futures::stream::empty().boxed()
-        }
-    }
-
     let mut runtime_providers = HashMap::new();
     runtime_providers.insert(
         "openai".to_string(),
@@ -990,41 +921,6 @@ fn test_smart_model_routing_cheap_route_for_simple_turn() {
 
 #[test]
 fn test_smart_model_routing_online_learning_prefers_primary_when_cheap_unstable() {
-    use futures::stream::BoxStream;
-
-    struct DummyProvider;
-    #[async_trait::async_trait]
-    impl LlmProvider for DummyProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant("dummy"),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            futures::stream::empty().boxed()
-        }
-    }
-
     let mut runtime_providers = HashMap::new();
     runtime_providers.insert(
         "openai".to_string(),
@@ -1094,41 +990,6 @@ fn test_smart_model_routing_online_learning_prefers_primary_when_cheap_unstable(
 
 #[test]
 fn test_route_learning_updates_after_outcomes() {
-    use futures::stream::BoxStream;
-
-    struct DummyProvider;
-    #[async_trait::async_trait]
-    impl LlmProvider for DummyProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant("dummy"),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            futures::stream::empty().boxed()
-        }
-    }
-
     let tmp = tempfile::tempdir().expect("tempdir");
     let cfg = AgentConfig {
         hermes_home: Some(tmp.path().to_string_lossy().to_string()),
@@ -1147,41 +1008,6 @@ fn test_route_learning_updates_after_outcomes() {
 
 #[test]
 fn test_route_learning_persists_across_agent_restarts() {
-    use futures::stream::BoxStream;
-
-    struct DummyProvider;
-    #[async_trait::async_trait]
-    impl LlmProvider for DummyProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant("dummy"),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            futures::stream::empty().boxed()
-        }
-    }
-
     let tmp = tempfile::tempdir().expect("tempdir");
     let cfg = AgentConfig {
         hermes_home: Some(tmp.path().to_string_lossy().to_string()),
@@ -1212,41 +1038,6 @@ fn test_route_learning_persists_across_agent_restarts() {
 
 #[test]
 fn test_route_learning_malformed_file_is_safe_fallback() {
-    use futures::stream::BoxStream;
-
-    struct DummyProvider;
-    #[async_trait::async_trait]
-    impl LlmProvider for DummyProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant("dummy"),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            futures::stream::empty().boxed()
-        }
-    }
-
     let tmp = tempfile::tempdir().expect("tempdir");
     let cfg = AgentConfig {
         hermes_home: Some(tmp.path().to_string_lossy().to_string()),
@@ -1273,41 +1064,6 @@ fn test_route_learning_malformed_file_is_safe_fallback() {
 #[cfg(unix)]
 #[test]
 fn test_route_learning_writes_through_a_symlinked_state_file() {
-    use futures::stream::BoxStream;
-
-    struct DummyProvider;
-    #[async_trait::async_trait]
-    impl LlmProvider for DummyProvider {
-        async fn chat_completion(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Ok(hermes_core::LlmResponse {
-                message: Message::assistant("dummy"),
-                usage: None,
-                model: "dummy".into(),
-                finish_reason: Some("stop".into()),
-            })
-        }
-
-        fn chat_completion_stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
-        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-            futures::stream::empty().boxed()
-        }
-    }
-
     let tmp = tempfile::tempdir().expect("tempdir");
     let cfg = AgentConfig {
         hermes_home: Some(tmp.path().join("home").to_string_lossy().to_string()),

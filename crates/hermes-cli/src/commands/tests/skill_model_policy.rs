@@ -1,6 +1,59 @@
 use super::*;
 use hermes_config::LlmProviderConfig;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn skills_slash_lists_local_catalogue_and_explains_empty_states() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::skill_model_policy::skills_slash_lists_local_catalogue_and_explains_empty_states",
+    ) {
+        return;
+    }
+
+    let home = hermes_config::hermes_home();
+    assert_eq!(dirs::home_dir().as_deref(), Some(home.as_path()));
+    std::env::set_var("AWS_SHARED_CREDENTIALS_FILE", home.join("unused-credentials"));
+    std::env::set_var("AWS_CONFIG_FILE", home.join("unused-aws-config"));
+    hermes_intelligence::models_dev::default_client().seed_cache(serde_json::json!({
+        "fixture": {"models": {}}
+    }));
+    std::env::set_var("HERMES_HF_CATALOG_DISABLE_LIVE", "1");
+    let mut app = build_test_app_with_stream(&home).await;
+    let skills = home.join("skills");
+    assert!(!skills.exists());
+    let output = command_output(&mut app, "/skills", &[]).await;
+    assert!(output.contains("No skills directory found") && output.contains("hermes setup"));
+
+    std::fs::create_dir(&skills).unwrap();
+    let output = command_output(&mut app, "/skills", &[]).await;
+    assert!(output.contains("No installed skills found"));
+
+    let nested = skills.join("writing/review");
+    let standalone = skills.join("outline");
+    let hidden = skills.join(".archive/old");
+    for dir in [&nested, &standalone, &hidden] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(
+        nested.join("SKILL.md"),
+        "---\nname: review\ndescription: Review a draft\n---\n",
+    )
+    .unwrap();
+    std::fs::write(standalone.join("SKILL.md"), "# Prepare an outline\n").unwrap();
+    std::fs::write(hidden.join("SKILL.md"), "# Hidden draft\n").unwrap();
+    let output = command_output(&mut app, "/skills", &[]).await;
+    let lines: Vec<_> = output.lines().take(3).collect();
+    assert_eq!(
+        lines,
+        [
+            "Installed skills (2):",
+            "- `outline` — Prepare an outline",
+            "- `review (writing/review)` — Review a draft",
+        ]
+    );
+    assert!(!output.contains("Hidden draft"));
+}
+
     #[test]
     fn read_skill_taps_accepts_upstream_object_shape() {
         let tmp = tempdir().expect("tempdir");
@@ -986,9 +1039,14 @@ llm_providers:
 
     #[test]
     fn mask_secret_value_hides_payload() {
-        let raw = "very-secret-value";
-        let masked = mask_secret_value(raw);
-        assert!(!masked.contains(raw));
+        let short = "very-secret-value";
+        assert_eq!(mask_secret_value(short), "********");
+
+        let long = "very-secret-value-012345";
+        let masked = mask_secret_value(long);
+        assert!(!masked.contains(long));
+        assert!(masked.starts_with("very"));
+        assert!(masked.ends_with("2345"));
         assert!(masked.contains("***"));
     }
 

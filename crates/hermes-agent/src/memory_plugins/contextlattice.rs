@@ -900,3 +900,7 @@ mod tests {
         assert_eq!(payload["sources"], json!(["topic_rollups", "qdrant"]));
     }
 }
+
+#[cfg(test)]
+#[path = "contextlattice_coverage_gen.rs"]
+mod coverage_gen;

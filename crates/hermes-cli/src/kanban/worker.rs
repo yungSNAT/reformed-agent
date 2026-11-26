@@ -191,3 +191,7 @@ fn truncate_for_prompt(raw: &str, max_chars: usize) -> String {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "worker_coverage_gen.rs"]
+mod coverage_gen_kanban_worker;

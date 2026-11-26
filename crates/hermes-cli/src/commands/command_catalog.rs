@@ -25,17 +25,7 @@ fn secret_stdout_allowed() -> bool {
 }
 
 fn mask_secret_value(secret: &str) -> String {
-    if secret.is_empty() {
-        return "(empty)".to_string();
-    }
-    if secret.len() <= 8 {
-        return "*".repeat(secret.len());
-    }
-    format!(
-        "{}***{}",
-        &secret[..secret.floor_char_boundary(4)],
-        &secret[secret.ceil_char_boundary(secret.len().saturating_sub(4))..]
-    )
+    hermes_core::secret_values::mask_secret(secret)
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +425,7 @@ const HERMES_SKILLS_INDEX_URL: &str =
     "https://hermes-agent.nousresearch.com/docs/api/skills-index.json";
 const SKILLS_SH_SEARCH_URL: &str = "https://skills.sh/api/search";
 const CLAWHUB_API_BASE: &str = "https://clawhub.ai/api/v1";
+const LOBEHUB_AGENTS_BASE: &str = "https://chat-agents.lobehub.com";
 const SKILLS_HUB_STATE_DIR: &str = ".hub";
 const SKILLS_HUB_LOCK_FILE: &str = "lock.json";
 const SKILLS_HUB_AUDIT_FILE: &str = "audit.log";
@@ -1432,3 +1423,7 @@ async fn github_repo_tree(
 }
 
 include!("command_catalog/skill_resolution.rs");
+
+#[cfg(test)]
+#[path = "command_catalog_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog;

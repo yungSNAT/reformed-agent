@@ -608,20 +608,7 @@ async fn hydrate_provider_env_from_vault_for_cli_with_options(
 }
 
 fn mask_secret(secret: &str) -> String {
-    if secret.is_empty() {
-        return "(empty)".to_string();
-    }
-    // Showing the first and last 4 characters of a short secret reveals most
-    // of it, and a star per character reveals its length; mask short secrets
-    // with a fixed string instead.
-    if secret.chars().count() < 20 {
-        return "********".to_string();
-    }
-    format!(
-        "{}***{}",
-        &secret[..secret.floor_char_boundary(4)],
-        &secret[secret.ceil_char_boundary(secret.len().saturating_sub(4))..]
-    )
+    hermes_core::secret_values::mask_secret(secret)
 }
 
 fn is_weixin_provider(provider: &str) -> bool {
@@ -984,11 +971,9 @@ fn qqbot_join_https_url(host: &str, path: &str) -> String {
 
 async fn qqbot_create_bind_task(
     client: &reqwest::Client,
-    portal_host: &str,
-    create_path: &str,
+    url: &str,
     key_base64: &str,
 ) -> Result<String, AgentError> {
-    let url = qqbot_join_https_url(portal_host, create_path);
     let resp = client
         .post(url)
         .headers(qqbot_api_headers())
@@ -1026,11 +1011,9 @@ async fn qqbot_create_bind_task(
 
 async fn qqbot_poll_bind_result(
     client: &reqwest::Client,
-    portal_host: &str,
-    poll_path: &str,
+    url: &str,
     task_id: &str,
 ) -> Result<(i64, String, String, String), AgentError> {
-    let url = qqbot_join_https_url(portal_host, poll_path);
     let resp = client
         .post(url)
         .headers(qqbot_api_headers())
@@ -1078,12 +1061,14 @@ async fn qqbot_qr_login_flow(
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AgentError::Io(format!("qqbot onboard client init failed: {e}")))?;
+    let create_url = qqbot_join_https_url(portal_host, create_path);
+    let poll_url = qqbot_join_https_url(portal_host, poll_path);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_seconds);
 
     for refresh_idx in 0..=MAX_REFRESHES {
         let bind_key = qqbot_generate_bind_key_base64();
-        let task_id = qqbot_create_bind_task(&client, portal_host, create_path, &bind_key).await?;
+        let task_id = qqbot_create_bind_task(&client, &create_url, &bind_key).await?;
         let connect_url = qqbot_connect_url(&task_id);
 
         println!();
@@ -1100,7 +1085,7 @@ async fn qqbot_qr_login_flow(
                 )));
             }
             if let Ok((status, app_id, encrypted_secret, user_openid)) =
-                qqbot_poll_bind_result(&client, portal_host, poll_path, &task_id).await
+                qqbot_poll_bind_result(&client, &poll_url, &task_id).await
             {
                 match status {
                     2 => {
@@ -1387,3 +1372,6 @@ async fn weixin_qr_login_flow(
     }
 }
 
+#[cfg(test)]
+#[path = "auth_providers_coverage_gen.rs"]
+mod coverage_gen_main_auth_providers;

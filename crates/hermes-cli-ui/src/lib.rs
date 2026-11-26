@@ -364,4 +364,38 @@ mod tests {
         assert!(rendered.contains("/memory"));
         assert!(!rendered.contains("/model"));
     }
+
+    #[test]
+    fn autocomplete_prefers_command_substrings_and_deduplicates_results() {
+        const COMMANDS: &[(&str, &str)] = &[
+            ("/tasks", "Describe a model"),
+            ("/model", "Select a model"),
+            ("/model-status", "Show status"),
+            ("/reload-model", "Refresh model metadata"),
+            ("/model", "Duplicate alias registration"),
+        ];
+        assert_eq!(
+            autocomplete("/model", COMMANDS),
+            ["/model", "/model-status", "/reload-model", "/tasks"]
+        );
+        assert_eq!(
+            autocomplete("model", COMMANDS),
+            ["/model", "/model-status", "/reload-model", "/tasks"]
+        );
+        assert_eq!(
+            autocomplete("/", COMMANDS),
+            ["/model", "/model-status", "/reload-model", "/tasks"]
+        );
+        assert_eq!(subsequence_score("", "model"), 0);
+        assert!(subsequence_score("ms", "model-status") > subsequence_score("ms", "modelstatus"));
+    }
+
+    #[test]
+    fn unfiltered_command_catalog_shows_search_help_and_all_commands() {
+        let rendered = render_command_catalog(None, COMMANDS);
+        assert!(rendered.contains("Scoped search:"));
+        for (command, description) in COMMANDS {
+            assert_eq!(rendered.matches(description).count(), 1, "{command}");
+        }
+    }
 }

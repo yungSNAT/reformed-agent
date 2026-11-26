@@ -987,3 +987,7 @@ mod mem0_setup_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "memory_setup_coverage_gen.rs"]
+mod coverage_gen_commands_command_cli_plugins_memory_mcp_memory_setup;

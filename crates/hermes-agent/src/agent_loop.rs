@@ -88,7 +88,12 @@ include!("agent_loop/finalizer_helpers.rs");
 
 #[cfg(test)]
 pub(crate) mod tests {
+    include!("agent_loop/tests/isolated_config.rs");
     include!("agent_loop/tests_core.rs");
     include!("agent_loop/tests_runtime.rs");
     include!("agent_loop/tests/tool_result_prune.rs");
 }
+
+#[cfg(test)]
+#[path = "agent_loop/tests/governor_loop_contract.rs"]
+mod guard_contract_tests;

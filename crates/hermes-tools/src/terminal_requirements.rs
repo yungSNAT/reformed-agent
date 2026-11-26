@@ -328,6 +328,85 @@ mod tests {
     use super::*;
     use crate::approval::TEST_ENV_LOCK;
 
+    #[cfg(unix)]
+    #[test]
+    fn command_probe_distinguishes_success_failure_missing_and_timeout() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let runner = root.path().join("fixture-probe");
+        std::fs::write(
+            &runner,
+            r#"#!/bin/sh
+case "$1" in
+  pass) exit 0 ;;
+  fail) exit 4 ;;
+  slow)
+    test -x /bin/sleep || exit 5
+    printf '%s\n' "$$" > "$2" || exit 6
+    exec /bin/sleep 2
+    ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let runner_name = runner.to_str().unwrap();
+        let available = check_command_backend("fixture", &[runner_name], &["pass"], "missing");
+        assert_eq!(available.backend, "fixture");
+        assert!(available.available);
+        assert!(available.reason.is_none());
+
+        let failed = check_command_backend("fixture", &[runner_name], &["fail"], "missing");
+        assert!(!failed.available);
+        let reason = failed.reason.as_deref().unwrap();
+        assert!(reason.contains("requirement probe failed or timed out"));
+        assert!(reason.ends_with("fixture-probe fail"));
+
+        let missing = root.path().join("missing-probe");
+        let unavailable = check_command_backend(
+            "fixture",
+            &[missing.to_str().unwrap()],
+            &["pass"],
+            "fixture probe unavailable",
+        );
+        assert_eq!(
+            unavailable.reason.as_deref(),
+            Some("fixture probe unavailable")
+        );
+        assert!(!command_success_with_timeout(
+            &missing,
+            &["pass"],
+            Duration::from_millis(50),
+        ));
+        let pid_file = root.path().join("slow-probe.pid");
+        assert!(!command_success_with_timeout(
+            &runner,
+            &["slow", pid_file.to_str().unwrap()],
+            Duration::from_millis(250),
+        ));
+        let pid = std::fs::read_to_string(pid_file)
+            .expect("slow probe started")
+            .trim()
+            .parse::<u32>()
+            .expect("slow probe wrote its process ID");
+        assert!(pid > 0);
+        assert_eq!(
+            std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "kill -0 \"$1\" 2>/dev/null",
+                    "probe",
+                    &pid.to_string()
+                ])
+                .status()
+                .unwrap()
+                .code(),
+            Some(1),
+            "timed-out probe should be reaped"
+        );
+    }
+
     struct EnvGuard {
         key: &'static str,
         original: Option<String>,

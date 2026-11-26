@@ -415,7 +415,43 @@ fn writer_started(record: &PendingReply) -> Option<std::time::SystemTime> {
     Some(std::time::UNIX_EPOCH + std::time::Duration::from_nanos(nanos))
 }
 
-/// When this host booted (Linux: `btime` in `/proc/stat`); `None` elsewhere.
+/// When this host booted (Linux: `btime` in `/proc/stat`; macOS:
+/// `kern.boottime`); `None` elsewhere.
+#[cfg(target_os = "macos")]
+pub fn boot_time() -> Option<std::time::SystemTime> {
+    let mut booted = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    let mut len = std::mem::size_of::<libc::timeval>();
+    let mut name = [libc::CTL_KERN, libc::KERN_BOOTTIME];
+    // SAFETY: `name` is a 2-level sysctl name, and `booted` with `len` is a
+    // writable buffer of the size the kernel is told; no new value is set.
+    let rc = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            2,
+            std::ptr::addr_of_mut!(booted).cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || len != std::mem::size_of::<libc::timeval>() {
+        return None;
+    }
+    let secs = u64::try_from(booted.tv_sec).ok().filter(|s| *s > 0)?;
+    let micros = u64::try_from(booted.tv_usec).ok()?;
+    Some(
+        std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs(secs)
+            + std::time::Duration::from_micros(micros),
+    )
+}
+
+/// When this host booted (Linux: `btime` in `/proc/stat`; macOS:
+/// `kern.boottime`); `None` elsewhere.
+#[cfg(not(target_os = "macos"))]
 pub fn boot_time() -> Option<std::time::SystemTime> {
     let stat = std::fs::read_to_string("/proc/stat").ok()?;
     let secs: u64 = stat

@@ -546,6 +546,36 @@ mod tests {
     }
 
     #[test]
+    fn migration_reports_write_failure_and_leaves_the_existing_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        let home = tmp.path().join("home");
+        let destination = home.join("USER.md");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(source.join("USER.md"), "Fixture profile").unwrap();
+        let marker = destination.join("existing.txt");
+        std::fs::write(&marker, "Existing destination").unwrap();
+
+        let source = SourceDir::open(&source).unwrap();
+        let entry = source.entry("USER.md").unwrap().unwrap();
+        let options = MigrateOptions {
+            overwrite: true,
+            ..Default::default()
+        };
+        let (status, reason) = migrate_file(entry, &home, &destination, &options).unwrap_err();
+        assert_eq!(status, MigrationStatus::Error);
+        assert!(
+            reason.starts_with("failed to persist temporary file:"),
+            "{reason}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap(),
+            "Existing destination"
+        );
+    }
+
+    #[test]
     fn test_migration_no_source() {
         let options = MigrateOptions {
             source: Some(PathBuf::from("/nonexistent/openclaw")),
@@ -1058,3 +1088,7 @@ mod tests {
         assert_ne!(MigrationStatus::Migrated, MigrationStatus::Skipped);
     }
 }
+
+#[cfg(test)]
+#[path = "claw_migrate_coverage_gen.rs"]
+mod coverage_gen_claw_migrate;

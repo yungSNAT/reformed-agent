@@ -770,3 +770,7 @@ impl App {
     }
 
 }
+
+#[cfg(test)]
+#[path = "inference_quorum_coverage_gen.rs"]
+mod coverage_gen_app_app_impl_inference_quorum;

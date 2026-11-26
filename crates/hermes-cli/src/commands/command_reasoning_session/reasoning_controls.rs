@@ -330,4 +330,3 @@ fn handle_reasoning_command(app: &mut App, args: &[&str]) -> Result<CommandResul
     }
     Ok(CommandResult::Handled)
 }
-

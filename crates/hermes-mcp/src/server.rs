@@ -491,6 +491,115 @@ mod tests {
     use serde_json::{json, Value};
     use std::sync::Arc;
 
+    #[tokio::test]
+    async fn stdio_server_routes_requests_and_recovers_after_a_malformed_record() {
+        use crate::transport::ServerStdioTransport;
+        use tokio::io::AsyncReadExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("fixture.txt");
+        std::fs::write(&file, "fixture resource contents").unwrap();
+        let local_uri = format!("file://{}", file.display());
+        let mut server = McpServer::new(Arc::new(ToolRegistry::new())).with_capability_policy(
+            McpCapabilityPolicy {
+                allow_prompt_read: false,
+                ..Default::default()
+            },
+        );
+        for uri in [local_uri.as_str(), "fixture://unconfigured"] {
+            server.add_resource(ResourceInfo {
+                uri: uri.to_string(),
+                name: "fixture resource".into(),
+                description: None,
+                mime_type: None,
+            });
+        }
+
+        let mut input = br#"{"jsonrpc":"2.0","method":"ping","id":"first"}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{invalid json}
+"#
+        .to_vec();
+        for request in [
+            json!({"jsonrpc": "2.0", "method": "fixture/unknown", "id": 2}),
+            json!({"jsonrpc": "2.0", "method": "tools/call", "id": 3}),
+            json!({"jsonrpc": "2.0", "method": "prompts/get", "id": 4}),
+            json!({"jsonrpc": "2.0", "method": "resources/read", "id": 5, "params": {"uri": "fixture://unconfigured"}}),
+            json!({"jsonrpc": "2.0", "method": "resources/read", "id": 6, "params": {"uri": local_uri}}),
+        ] {
+            serde_json::to_writer(&mut input, &request).unwrap();
+            input.push(b'\n');
+        }
+        let (mut reader, sender) = tokio::io::duplex(8_192);
+        let transport = ServerStdioTransport::with_io(std::io::Cursor::new(input), sender);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server.start(Box::new(transport)),
+        )
+        .await
+        .expect("server stops at EOF")
+        .expect("server ran");
+
+        let mut raw = String::new();
+        reader.read_to_string(&mut raw).await.unwrap();
+        let replies: Vec<Value> = raw
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("valid response"))
+            .collect();
+        assert_eq!(replies.len(), 7, "{replies:?}");
+        assert_eq!(
+            replies[0],
+            json!({"jsonrpc": "2.0", "id": "first", "result": {}})
+        );
+        assert_eq!(replies[1].get("id"), Some(&Value::Null));
+        assert_eq!(replies[1]["error"]["code"], -32603);
+        for (reply, (id, code)) in
+            replies[2..6]
+                .iter()
+                .zip([(2, -32601), (3, -32602), (4, -32600), (5, -32001)])
+        {
+            assert_eq!(reply["id"], id, "{reply}");
+            assert_eq!(reply["error"]["code"], code, "{reply}");
+        }
+        assert_eq!(replies[6]["id"], 6);
+        assert_eq!(
+            replies[6]["result"]["contents"],
+            json!([{
+                "uri": local_uri, "mimeType": "text/plain", "text": "fixture resource contents"
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn stdio_server_stops_when_the_peer_cannot_receive_a_reply() {
+        use crate::transport::ServerStdioTransport;
+        use tokio::io::AsyncWriteExt;
+
+        let server = McpServer::new(Arc::new(ToolRegistry::new()));
+        for input in [
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":1}\n".as_slice(),
+            b"{invalid json}\n".as_slice(),
+        ] {
+            let (mut input_writer, input_reader) = tokio::io::duplex(64);
+            input_writer
+                .write_all(input)
+                .await
+                .expect("write fixture frame");
+            let (output_reader, output_sender) = tokio::io::duplex(64);
+            drop(output_reader);
+            let transport = ServerStdioTransport::with_io(input_reader, output_sender);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                server.start(Box::new(transport)),
+            )
+            .await
+            .expect("server stops after a failed reply")
+            .expect("closed peer is handled");
+            // Keep input open until the failed reply stops the server.
+            drop(input_writer);
+        }
+    }
+
     struct EchoArgsHandler;
 
     #[async_trait]
@@ -757,5 +866,83 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert_eq!(text, "file content");
+    }
+
+    #[tokio::test]
+    async fn resources_read_uses_the_http_type_and_reports_service_errors() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let mut server = McpServer::new(Arc::new(ToolRegistry::new()));
+        for name in ["notes", "untagged", "unavailable"] {
+            server.add_resource(ResourceInfo {
+                uri: format!("{origin}/{name}"),
+                name: name.into(),
+                description: None,
+                mime_type: Some("text/plain".into()),
+            });
+        }
+
+        let replies = async {
+            for (name, status, content_type, text) in [
+                (
+                    "notes",
+                    "200 OK",
+                    "Content-Type: text/markdown\r\n",
+                    "# Survey",
+                ),
+                ("untagged", "200 OK", "", "Survey notes"),
+                ("unavailable", "503 Service Unavailable", "", ""),
+            ] {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut socket = BufReader::new(socket);
+                let mut line = String::new();
+                socket.read_line(&mut line).await.unwrap();
+                assert_eq!(line.trim_end(), format!("GET /{name} HTTP/1.1"));
+                while line != "\r\n" {
+                    line.clear();
+                    assert_ne!(socket.read_line(&mut line).await.unwrap(), 0);
+                }
+                let response = format!(
+                    "HTTP/1.1 {status}\r\n{content_type}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                    text.len()
+                );
+                socket
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+            }
+        };
+        let reads = async {
+            for (name, mime_type, text) in [
+                ("notes", "text/markdown", "# Survey"),
+                ("untagged", "text/plain", "Survey notes"),
+            ] {
+                let uri = format!("{origin}/{name}");
+                let result = server
+                    .handle_request("resources/read", json!({"uri": uri}))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    result["contents"],
+                    json!([{"uri": uri, "mimeType": mime_type, "text": text}])
+                );
+            }
+            let error = server
+                .handle_request(
+                    "resources/read",
+                    json!({"uri": format!("{origin}/unavailable")}),
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(error, crate::McpError::Protocol { code: 503, .. }));
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(replies, reads);
+        })
+        .await
+        .expect("registered loopback resource requests complete");
     }
 }

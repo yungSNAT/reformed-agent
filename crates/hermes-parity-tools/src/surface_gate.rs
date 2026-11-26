@@ -503,3 +503,7 @@ pub fn run(args: SurfaceGateArgs) -> Result<i32, String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "surface_gate_coverage_gen.rs"]
+mod coverage_gen;

@@ -624,3 +624,7 @@ fn import_sessions(
     }
     Ok(read)
 }
+
+#[cfg(test)]
+#[path = "hermes_migrate_coverage_gen.rs"]
+mod coverage_gen_commands_hermes_migrate;

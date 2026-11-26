@@ -491,6 +491,41 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_details_without_text_are_ignored() {
+        let details = serde_json::json!([{"type": "summary"}, {"text": 3}, {"text": ""}]);
+        assert!(ReasoningContent::from_value(&details).is_none());
+    }
+
+    #[test]
+    fn agent_result_serialises_run_flags_without_replaced_transcripts() {
+        let tool_error = ToolErrorRecord {
+            tool_name: "read".into(),
+            error: "Fixture note unavailable".into(),
+            turn: 1,
+        };
+        let result = AgentResult {
+            interrupted: true,
+            session_started_hooks_fired: true,
+            compressed_transcripts: vec![vec![Message::user("Earlier draft")]],
+            tool_errors: vec![tool_error.clone()],
+            ..Default::default()
+        };
+        let persisted = serde_json::to_value(result).unwrap();
+        assert_eq!(persisted["interrupted"], true);
+        assert_eq!(persisted["session_started_hooks_fired"], true);
+        assert!(persisted.get("compressed_transcripts").is_none());
+        let restored: AgentResult = serde_json::from_value(persisted).unwrap();
+        assert_eq!(restored.tool_errors, [tool_error]);
+
+        let legacy = serde_json::to_value(AgentResult::default()).unwrap();
+        assert!(legacy.get("interrupted").is_none());
+        assert!(legacy.get("session_started_hooks_fired").is_none());
+        let loaded: AgentResult = serde_json::from_value(legacy).unwrap();
+        assert!(!loaded.interrupted);
+        assert!(!loaded.session_started_hooks_fired);
+    }
+
+    #[test]
     fn test_serde_message_role() {
         let json = serde_json::to_string(&MessageRole::Assistant).unwrap();
         assert_eq!(json, "\"assistant\"");

@@ -1013,3 +1013,7 @@ mod tests {
         assert_eq!(clone.effective_api_key(), "new-token");
     }
 }
+
+#[cfg(test)]
+#[path = "api_bridge_coverage_gen.rs"]
+mod coverage_gen;

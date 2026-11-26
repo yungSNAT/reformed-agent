@@ -574,6 +574,10 @@ impl PlatformAdapter for DingTalkAdapter {
 mod dingtalk_ack_tests {
     use super::*;
 
+    mod stream_contract {
+        include!("dingtalk_stream_contract.rs");
+    }
+
     fn sample_cfg() -> DingTalkConfig {
         DingTalkConfig {
             client_id: "test_client".into(),

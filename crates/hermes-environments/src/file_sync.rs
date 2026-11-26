@@ -249,6 +249,7 @@ mod tests {
 
     struct MockBackend {
         files: HashMap<String, String>,
+        writes: Option<tokio::sync::mpsc::UnboundedSender<(String, String)>>,
     }
 
     #[async_trait]
@@ -280,7 +281,12 @@ mod tests {
                 .ok_or_else(|| AgentError::Io(format!("missing mock file: {path}")))
         }
 
-        async fn write_file(&self, _path: &str, _content: &str) -> Result<(), AgentError> {
+        async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError> {
+            if let Some(writes) = self.writes.as_ref() {
+                writes
+                    .send((path.to_string(), content.to_string()))
+                    .expect("test receives remote writes");
+            }
             Ok(())
         }
 
@@ -322,7 +328,13 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut files = HashMap::new();
         files.insert("subdir/file.txt".to_string(), "remote contents".to_string());
-        let sync = FileSync::new(dir.path().to_path_buf(), Arc::new(MockBackend { files }));
+        let sync = FileSync::new(
+            dir.path().to_path_buf(),
+            Arc::new(MockBackend {
+                files,
+                writes: None,
+            }),
+        );
 
         sync.sync_from_remote(&[PathBuf::from("subdir/file.txt")])
             .await
@@ -332,5 +344,146 @@ mod tests {
             .await
             .expect("read synced file");
         assert_eq!(actual, "remote contents");
+    }
+
+    #[tokio::test]
+    async fn file_watcher_transfers_new_and_changed_files_and_skips_build_directories() {
+        use std::time::Duration;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("watched");
+        let replacement = temp.path().join("replacement");
+        tokio::fs::create_dir(&root).await.unwrap();
+        for name in ["nested", ".cache", "target", "node_modules"] {
+            tokio::fs::create_dir(root.join(name)).await.unwrap();
+        }
+        for name in [".cache", "target", "node_modules"] {
+            tokio::fs::write(root.join(name).join("ignored.txt"), "ignored")
+                .await
+                .unwrap();
+        }
+        let relative = PathBuf::from("nested").join("file.txt");
+        let original = root.join(&relative);
+        tokio::fs::write(&original, "first café").await.unwrap();
+
+        let (sender, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let sync = FileSync::new(
+            root.clone(),
+            Arc::new(MockBackend {
+                files: HashMap::new(),
+                writes: Some(sender),
+            }),
+        );
+        assert_eq!(sync.local_root(), root);
+        let watcher = tokio::spawn(async move { sync.watch_and_sync().await });
+        let (path, text) = tokio::time::timeout(Duration::from_secs(5), received.recv())
+            .await
+            .expect("initial upload")
+            .unwrap();
+        assert_eq!(Path::new(&path), relative);
+        assert_eq!(text, "first café");
+
+        tokio::fs::write(&replacement, "new file").await.unwrap();
+        tokio::fs::rename(&replacement, root.join("new.txt"))
+            .await
+            .unwrap();
+        let (path, text) = tokio::time::timeout(Duration::from_secs(5), received.recv())
+            .await
+            .expect("upload of new file")
+            .unwrap();
+        assert_eq!(Path::new(&path), Path::new("new.txt"));
+        assert_eq!(text, "new file");
+
+        let before = tokio::fs::metadata(&original)
+            .await
+            .unwrap()
+            .modified()
+            .unwrap();
+        tokio::fs::write(&replacement, "updated café")
+            .await
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_modified(before + Duration::from_secs(30))
+            .unwrap();
+        tokio::fs::rename(&replacement, &original).await.unwrap();
+        let (path, text) = tokio::time::timeout(Duration::from_secs(5), received.recv())
+            .await
+            .expect("upload of edited file")
+            .unwrap();
+        assert_eq!(Path::new(&path), relative);
+        assert_eq!(text, "updated café");
+
+        watcher.abort();
+        assert!(watcher.await.unwrap_err().is_cancelled());
+        assert!(received.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn failed_download_preserves_destination_and_removes_temporary_file() {
+        let root = tempfile::tempdir().unwrap();
+        let occupied = root.path().join("occupied");
+        tokio::fs::create_dir(&occupied).await.unwrap();
+        tokio::fs::write(occupied.join("keep.txt"), "keep")
+            .await
+            .unwrap();
+        let sync = FileSync::new(
+            root.path().to_path_buf(),
+            Arc::new(MockBackend {
+                files: HashMap::from([("occupied".to_string(), "synthetic download".to_string())]),
+                writes: None,
+            }),
+        );
+        let error = sync
+            .sync_from_remote(&[PathBuf::from("occupied")])
+            .await
+            .expect_err("replace occupied directory fails");
+        assert!(error.to_string().contains("Failed to replace local file"));
+        assert_eq!(
+            tokio::fs::read_to_string(occupied.join("keep.txt"))
+                .await
+                .unwrap(),
+            "keep"
+        );
+        let remaining: Vec<_> = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(remaining, [occupied]);
+        let error = sync
+            .sync_to_remote(&[PathBuf::from("missing.txt")])
+            .await
+            .expect_err("a missing source cannot upload");
+        assert!(error.to_string().contains("Failed to read local file"));
+    }
+
+    #[tokio::test]
+    async fn download_fails_cleanly_when_a_local_parent_is_a_file() {
+        let root = tempfile::tempdir().unwrap();
+        let blocked = root.path().join("notes");
+        tokio::fs::write(&blocked, "existing notes").await.unwrap();
+        let relative = PathBuf::from("notes").join("summary.txt");
+        let remote_name = relative.to_string_lossy().into_owned();
+        let sync = FileSync::new(
+            root.path().to_path_buf(),
+            Arc::new(MockBackend {
+                files: HashMap::from([(remote_name, "synthetic summary".to_string())]),
+                writes: None,
+            }),
+        );
+
+        let error = sync.sync_from_remote(&[relative]).await.unwrap_err();
+        assert!(matches!(
+            error,
+            AgentError::Io(message)
+                if message.starts_with("Failed to create directory") && message.contains("notes")
+        ));
+        assert_eq!(
+            tokio::fs::read_to_string(&blocked).await.unwrap(),
+            "existing notes"
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 }

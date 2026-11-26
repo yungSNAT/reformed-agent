@@ -180,7 +180,7 @@ async fn run_gateway(
                     msg.push_str(&issue);
                     msg.push('\n');
                 }
-                msg.push_str("请先执行 `hermes gateway setup` 或 `hermes auth login <provider>` 修复后再启动。");
+                msg.push_str("Run `hermes gateway setup` or `hermes auth login <provider>` to fix these issues before starting.");
                 return Err(AgentError::Config(msg));
             }
 
@@ -1366,7 +1366,9 @@ async fn configure_platform_basic_prompts(
             let agent_id = prompt_line("WeCom callback agent_id: ").await?;
             set_extra_string_if_nonempty(p, "agent_id", &agent_id);
             let token = prompt_line("WeCom callback token: ").await?;
-            set_extra_string_if_nonempty(p, "token", &token);
+            if !token.trim().is_empty() {
+                p.token = Some(token.trim().to_string());
+            }
             let aes = prompt_line("WeCom callback encoding_aes_key: ").await?;
             set_extra_string_if_nonempty(p, "encoding_aes_key", &aes);
             let host = prompt_line("WeCom callback host (default 0.0.0.0): ").await?;
@@ -1692,3 +1694,7 @@ async fn run_gateway_setup(cli: &Cli) -> Result<(), AgentError> {
     println!("Next step: `hermes gateway start`");
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "gateway_command_coverage_gen.rs"]
+mod coverage_gen_main_gateway_command;

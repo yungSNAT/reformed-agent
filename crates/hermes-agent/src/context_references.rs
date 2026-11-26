@@ -983,3 +983,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "context_references_coverage_gen.rs"]
+mod coverage_gen;

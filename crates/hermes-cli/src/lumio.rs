@@ -706,3 +706,7 @@ mod tests {
         assert_ne!(a, b);
     }
 }
+
+#[cfg(test)]
+#[path = "lumio_coverage_gen.rs"]
+mod coverage_gen_lumio;

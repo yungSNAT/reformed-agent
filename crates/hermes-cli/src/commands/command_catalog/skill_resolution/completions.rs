@@ -415,3 +415,7 @@ pub fn help_for(cmd: &str) -> Option<&'static str> {
 fn canonical_command(cmd: &str) -> &str {
     hermes_cli_ui::canonical_command(cmd)
 }
+
+#[cfg(test)]
+#[path = "completions_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog_skill_resolution_completions;

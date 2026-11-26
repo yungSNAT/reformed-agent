@@ -90,6 +90,8 @@ async fn anthropic_tool_loop_requests_with(
         api_mode: ApiMode::AnthropicMessages,
         skip_memory: true,
         skip_context_files: true,
+        // The independent runs can start in different wall-clock minutes.
+        stored_system_prompt: Some("Fixture conversation instructions.".to_owned()),
         ephemeral_system_prompt: Some("later ephemeral instruction".to_string()),
         prompt_caching: hermes_config::PromptCachingConfig {
             cache_ttl,

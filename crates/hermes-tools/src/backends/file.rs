@@ -14,16 +14,16 @@ use hermes_core::ToolError;
 
 /// Real file patch backend using fuzzy string matching.
 ///
-/// Implements a 9-strategy matching chain (ported from Python `fuzzy_match.py`):
+/// Implements the effective matching order from Python `fuzzy_match.py`.
+/// Line trimming already handles indentation-only and boundary-only differences.
+///
 /// 1. Exact match
 /// 2. Line-trimmed (strip leading/trailing whitespace per line)
 /// 3. Whitespace normalized (collapse multiple spaces/tabs)
-/// 4. Indentation flexible (ignore indentation differences)
-/// 5. Escape normalized (convert \\n literals to newlines)
-/// 6. Unicode normalized (smart punctuation aliases)
-/// 7. Trimmed boundary (trim first/last line only)
-/// 8. Block anchor (match first+last lines, similarity for middle)
-/// 9. Context-aware (every non-blank line at least 0.80 similar)
+/// 4. Escape normalized (convert \\n literals to newlines)
+/// 5. Unicode normalized (smart punctuation aliases)
+/// 6. Block anchor (match first+last lines, similarity for middle)
+/// 7. Context-aware (every non-blank line at least 0.80 similar)
 pub struct LocalPatchBackend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,16 +68,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 4: Indentation flexible
-        if let Some((start, end)) = Self::strategy_indentation_flexible(haystack, needle) {
-            return Some(FuzzyMatch {
-                start,
-                end,
-                strategy: "indentation_flexible",
-            });
-        }
-
-        // Strategy 5: Escape normalized
+        // Strategy 4: Escape normalized
         if let Some((start, end)) = Self::strategy_escape_normalized(haystack, needle) {
             return Some(FuzzyMatch {
                 start,
@@ -86,7 +77,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 6: Unicode normalized
+        // Strategy 5: Unicode normalized
         if let Some((start, end)) = Self::strategy_unicode_normalized(haystack, needle) {
             return Some(FuzzyMatch {
                 start,
@@ -95,16 +86,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 7: Trimmed boundary
-        if let Some((start, end)) = Self::strategy_trimmed_boundary(haystack, needle) {
-            return Some(FuzzyMatch {
-                start,
-                end,
-                strategy: "trimmed_boundary",
-            });
-        }
-
-        // Strategy 8: Block anchor
+        // Strategy 6: Block anchor
         if let Some((start, end)) = Self::strategy_block_anchor(haystack, needle) {
             return Some(FuzzyMatch {
                 start,
@@ -113,7 +95,7 @@ impl LocalPatchBackend {
             });
         }
 
-        // Strategy 9: Context-aware
+        // Strategy 7: Context-aware
         Self::strategy_context_aware(haystack, needle).map(|(start, end)| FuzzyMatch {
             start,
             end,
@@ -163,36 +145,7 @@ impl LocalPatchBackend {
         None
     }
 
-    /// Strategy 4: Ignore indentation differences entirely.
-    fn strategy_indentation_flexible(haystack: &str, needle: &str) -> Option<(usize, usize)> {
-        let needle_lines: Vec<&str> = needle.lines().map(|l| l.trim_start()).collect();
-        let haystack_lines: Vec<&str> = haystack.lines().collect();
-
-        if needle_lines.is_empty() {
-            return None;
-        }
-
-        for i in 0..haystack_lines.len().saturating_sub(needle_lines.len() - 1) {
-            let mut matches = true;
-            for (j, nl) in needle_lines.iter().enumerate() {
-                if i + j >= haystack_lines.len() || haystack_lines[i + j].trim_start() != *nl {
-                    matches = false;
-                    break;
-                }
-            }
-            if matches {
-                return Some(Self::line_positions(
-                    haystack,
-                    &haystack_lines,
-                    i,
-                    i + needle_lines.len(),
-                ));
-            }
-        }
-        None
-    }
-
-    /// Strategy 5: Convert escape sequences to actual characters.
+    /// Strategy 4: Convert escape sequences to actual characters.
     fn strategy_escape_normalized(haystack: &str, needle: &str) -> Option<(usize, usize)> {
         let unescaped = needle
             .replace("\\n", "\n")
@@ -256,41 +209,7 @@ impl LocalPatchBackend {
         Some((spans[start_char].0, spans[end_char - 1].1))
     }
 
-    /// Strategy 6: Trim whitespace from first and last lines only.
-    fn strategy_trimmed_boundary(haystack: &str, needle: &str) -> Option<(usize, usize)> {
-        let mut needle_lines: Vec<String> = needle.lines().map(|l| l.to_string()).collect();
-        if needle_lines.is_empty() {
-            return None;
-        }
-
-        needle_lines[0] = needle_lines[0].trim().to_string();
-        if needle_lines.len() > 1 {
-            let last = needle_lines.len() - 1;
-            needle_lines[last] = needle_lines[last].trim().to_string();
-        }
-
-        let haystack_lines: Vec<&str> = haystack.lines().collect();
-        let n = needle_lines.len();
-
-        for i in 0..haystack_lines.len().saturating_sub(n - 1) {
-            let mut check_lines: Vec<String> = haystack_lines[i..i + n]
-                .iter()
-                .map(|l| l.to_string())
-                .collect();
-            check_lines[0] = check_lines[0].trim().to_string();
-            if check_lines.len() > 1 {
-                let last = check_lines.len() - 1;
-                check_lines[last] = check_lines[last].trim().to_string();
-            }
-
-            if check_lines == needle_lines {
-                return Some(Self::line_positions(haystack, &haystack_lines, i, i + n));
-            }
-        }
-        None
-    }
-
-    /// Strategy 7: Match by anchoring on first and last lines.
+    /// Strategy 6: Match by anchoring on first and last lines.
     fn strategy_block_anchor(haystack: &str, needle: &str) -> Option<(usize, usize)> {
         let needle_lines: Vec<&str> = needle.lines().collect();
         if needle_lines.len() < 2 {
@@ -330,7 +249,7 @@ impl LocalPatchBackend {
         None
     }
 
-    /// Strategy 9 (last resort): the first and last lines, and every other
+    /// Strategy 7 (last resort): the first and last lines, and every other
     /// non-blank line, must each be at least 0.80 similar, as upstream requires.
     fn strategy_context_aware(haystack: &str, needle: &str) -> Option<(usize, usize)> {
         let needle_lines: Vec<&str> = needle.lines().collect();
@@ -453,14 +372,24 @@ impl PatchBackend for LocalPatchBackend {
         new_string: &str,
         replace_all: bool,
     ) -> Result<String, ToolError> {
-        hermes_config::tool_guard::check_write(std::path::Path::new(path))
+        let target_path = crate::credential_guard::local_write_path(std::path::Path::new(path))
+            .unwrap_or_else(|| std::path::PathBuf::from(path));
+        let edit_lock = file_edit_lock(&target_path).await;
+        let _turn = edit_lock.lock().await;
+        hermes_config::tool_guard::check_write(&target_path)
             .await
             .map_err(ToolError::ExecutionFailed)?;
-        let edit_lock = file_edit_lock(std::path::Path::new(path)).await;
-        let _turn = edit_lock.lock().await;
-        let content = tokio::fs::read_to_string(path)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
+        crate::credential_guard::CredentialGuard::new()
+            .check_write_access(&target_path, new_string)?;
+
+        let target_read = target_path.clone();
+        let read = tokio::task::spawn_blocking(move || {
+            hermes_config::read_regular_file_no_follow(&target_read)
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
+        let content = read.content.as_str();
 
         if old_string == new_string {
             return Err(ToolError::InvalidParams(
@@ -468,20 +397,18 @@ impl PatchBackend for LocalPatchBackend {
             ));
         }
 
-        if old_string.is_empty() {
+        let (new_content, reply) = if old_string.is_empty() {
             // Empty old_string means create new file or append
             let new_content = if content.is_empty() {
                 new_string.to_string()
             } else {
                 format!("{}\n{}", content, new_string)
             };
-            tokio::fs::write(path, &new_content).await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e))
-            })?;
-            return Ok(json!({"status": "ok", "message": "Content appended"}).to_string());
-        }
-
-        if replace_all {
+            (
+                new_content,
+                json!({"status": "ok", "message": "Content appended"}).to_string(),
+            )
+        } else if replace_all {
             // Simple replace all occurrences
             if !content.contains(old_string) {
                 return Err(ToolError::ExecutionFailed(format!(
@@ -492,40 +419,54 @@ impl PatchBackend for LocalPatchBackend {
             }
             let new_content = content.replace(old_string, new_string);
             let count = content.matches(old_string).count();
-            tokio::fs::write(path, &new_content).await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e))
-            })?;
-            return Ok(json!({"status": "ok", "replacements": count}).to_string());
-        }
+            (
+                new_content,
+                json!({"status": "ok", "replacements": count}).to_string(),
+            )
+        } else {
+            // Single replacement with fuzzy matching
+            let exact_count = content.matches(old_string).count();
+            if exact_count > 1 {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Found {exact_count} matches for the specified text in '{path}'. Use replace_all=true to replace all occurrences."
+                )));
+            }
+            let Some(found) = Self::fuzzy_find(content, old_string) else {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Could not find a match for the specified text in '{}'",
+                    path
+                )));
+            };
+            let mut new_content = String::with_capacity(content.len());
+            new_content.push_str(&content[..found.start]);
+            new_content.push_str(new_string);
+            new_content.push_str(&content[found.end..]);
+            (
+                new_content,
+                json!({"status": "ok", "replacements": 1, "strategy": found.strategy}).to_string(),
+            )
+        };
 
-        // Single replacement with fuzzy matching
-        let exact_count = content.matches(old_string).count();
-        if exact_count > 1 {
+        if let Some(detection) = crate::credential_guard::detect_added_secret(content, &new_content)
+        {
             return Err(ToolError::ExecutionFailed(format!(
-                "Found {exact_count} matches for the specified text in '{path}'. Use replace_all=true to replace all occurrences."
+                "Write denied: content contains detected secret ({detection})"
             )));
         }
-        match Self::fuzzy_find(&content, old_string) {
-            Some(found) => {
-                let mut new_content = String::with_capacity(content.len());
-                new_content.push_str(&content[..found.start]);
-                new_content.push_str(new_string);
-                new_content.push_str(&content[found.end..]);
 
-                tokio::fs::write(path, &new_content).await.map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e))
-                })?;
+        let target_write = target_path;
+        tokio::task::spawn_blocking(move || {
+            hermes_config::atomic_write_bytes_no_follow(
+                &target_write,
+                new_content.as_bytes(),
+                Some(read),
+            )
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e)))?
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e)))?;
 
-                Ok(
-                    json!({"status": "ok", "replacements": 1, "strategy": found.strategy})
-                        .to_string(),
-                )
-            }
-            None => Err(ToolError::ExecutionFailed(format!(
-                "Could not find a match for the specified text in '{}'",
-                path
-            ))),
-        }
+        Ok(reply)
     }
 }
 
@@ -896,6 +837,43 @@ mod tests {
         let found = LocalPatchBackend::fuzzy_find(haystack, "b c").expect("match");
         assert_eq!(found.strategy, "whitespace_normalized");
         assert_eq!(&haystack[found.start..found.end], "b  c");
+    }
+
+    #[tokio::test]
+    async fn patch_replaces_only_the_selected_fuzzy_span() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.txt");
+        let backend = LocalPatchBackend::new();
+        for (original, needle, strategy, expected) in [
+            (
+                "before\nquoted\tfield\nfinal\nafter\n",
+                r"quoted\tfield\nfinal",
+                "escape_normalized",
+                "before\nreplacement\nafter\n",
+            ),
+            (
+                "☕ Before\r\n“Ready” — l’été…\r\nAfter\r\n",
+                "\"Ready\" -- l'été...",
+                "unicode_normalized",
+                "☕ Before\r\nreplacement\r\nAfter\r\n",
+            ),
+            (
+                "before\nbegin\nThe counter was 7.\nend\nafter\n",
+                "begin\nThe counter was 8.\nend",
+                "block_anchor",
+                "before\nreplacement\nafter\n",
+            ),
+        ] {
+            std::fs::write(&path, original).unwrap();
+            let result = backend
+                .patch_file(path.to_str().unwrap(), needle, "replacement", false)
+                .await
+                .unwrap();
+            let result: Value = serde_json::from_str(&result).unwrap();
+            assert_eq!(result["strategy"], strategy);
+            assert_eq!(result["replacements"], 1);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        }
     }
 
     #[tokio::test]
@@ -1277,5 +1255,66 @@ mod tests {
             .filter(|i| !content.contains(&format!("edited {i};")))
             .collect();
         assert!(lost.is_empty(), "patches lost: {lost:?}\n{content}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn patch_file_refuses_leaf_symlink() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = tmp.path().join("real.txt");
+        let link = tmp.path().join("alias.txt");
+        std::fs::write(&target, "original content").expect("write target");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        let err = LocalPatchBackend::new()
+            .patch_file(link.to_str().unwrap(), "original", "tampered", false)
+            .await
+            .expect_err("leaf symlink must be refused");
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "original content"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_file_refuses_protected_file_and_split_secret() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "FOO=bar\n").expect("write .env");
+        let err = LocalPatchBackend::new()
+            .patch_file(env_file.to_str().unwrap(), "bar", "baz", false)
+            .await
+            .expect_err(".env must be refused by backend");
+        assert!(err.to_string().contains("Write denied"), "{err}");
+        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), "FOO=bar\n");
+
+        let code = tmp.path().join("notes.txt");
+        std::fs::write(&code, "key = sk-1234567890__SPLIT__").expect("write code");
+        let err = LocalPatchBackend::new()
+            .patch_file(code.to_str().unwrap(), "__SPLIT__", "abcdefghij", false)
+            .await
+            .expect_err("split secret must be refused");
+        assert!(err.to_string().contains("detected secret"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&code).unwrap(),
+            "key = sk-1234567890__SPLIT__"
+        );
+
+        let mixed = tmp.path().join("mixed.py");
+        let original = "def login(password = \"placeholder\"):\n    return \"hello\"\nkey = sk-1234567890__SPLIT__\n";
+        std::fs::write(&mixed, original).expect("write mixed");
+        LocalPatchBackend::new()
+            .patch_file(mixed.to_str().unwrap(), "\"hello\"", "\"world\"", false)
+            .await
+            .expect("unrelated edit alongside routine password field should succeed");
+        let err = LocalPatchBackend::new()
+            .patch_file(mixed.to_str().unwrap(), "__SPLIT__", "abcdefghij", false)
+            .await
+            .expect_err("pre-existing password line must not mask split secret");
+        assert!(err.to_string().contains("detected secret"), "{err}");
+        assert!(std::fs::read_to_string(&mixed)
+            .unwrap()
+            .contains("key = sk-1234567890__SPLIT__"));
     }
 }

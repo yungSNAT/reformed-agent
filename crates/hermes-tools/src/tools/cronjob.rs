@@ -303,15 +303,25 @@ mod tests {
         async fn update(
             &self,
             id: &str,
-            _schedule: Option<&str>,
-            _task: Option<&str>,
-            _enabled: Option<bool>,
-            _context_from: Option<&Value>,
-            _script: Option<&str>,
-            _no_agent: Option<bool>,
-            _workdir: Option<&Value>,
+            schedule: Option<&str>,
+            task: Option<&str>,
+            enabled: Option<bool>,
+            context_from: Option<&Value>,
+            script: Option<&str>,
+            no_agent: Option<bool>,
+            workdir: Option<&Value>,
         ) -> Result<String, ToolError> {
-            Ok(format!("Updated cronjob: {}", id))
+            Ok(json!({
+                "id": id,
+                "schedule": schedule,
+                "task": task,
+                "enabled": enabled,
+                "context_from": context_from,
+                "script": script,
+                "no_agent": no_agent,
+                "workdir": workdir,
+            })
+            .to_string())
         }
         async fn pause(&self, id: &str) -> Result<String, ToolError> {
             Ok(format!("Paused: {}", id))
@@ -339,6 +349,54 @@ mod tests {
         let handler = CronjobHandler::new(Arc::new(MockCronBackend));
         let result = handler.execute(json!({"action": "list"})).await.unwrap();
         assert_eq!(result, "[]");
+    }
+
+    #[tokio::test]
+    async fn test_cronjob_update_forwards_optional_fields() {
+        let handler = CronjobHandler::new(Arc::new(MockCronBackend));
+        let update = json!({
+            "id": "job-7",
+            "schedule": "0 9 * * *",
+            "task": "Summarise a local note",
+            "enabled": false,
+            "context_from": ["job-6"],
+            "script": "local-summary",
+            "no_agent": true,
+            "workdir": "notes",
+        });
+        let mut params = update.clone();
+        params["action"] = json!("update");
+
+        let result = handler.execute(params).await.unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&result).unwrap(), update);
+    }
+
+    #[tokio::test]
+    async fn test_cronjob_lifecycle_routes_each_action_and_requires_an_id() {
+        let handler = CronjobHandler::new(Arc::new(MockCronBackend));
+        for (action, expected) in [
+            ("pause", "Paused: job-7"),
+            ("resume", "Resumed: job-7"),
+            ("remove", "Removed: job-7"),
+            ("run", "Ran: job-7"),
+        ] {
+            let result = handler
+                .execute(json!({"action": action, "id": "job-7"}))
+                .await
+                .unwrap();
+            assert_eq!(result, expected);
+        }
+
+        for action in ["update", "pause", "resume", "remove", "run"] {
+            let error = handler
+                .execute(json!({"action": action}))
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                ToolError::InvalidParams(message) if message == "Missing 'id' parameter"
+            ));
+        }
     }
 
     #[tokio::test]
