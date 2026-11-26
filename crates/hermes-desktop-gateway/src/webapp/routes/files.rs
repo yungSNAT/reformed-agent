@@ -7,7 +7,8 @@
 //! - a path must resolve inside the user's home folder or the served profile's working folder
 //!   (upstream: the whole host on a loopback Webapp), and the Hermes home is refused wherever it
 //!   is (it holds the browser credential and saved gateway tokens, which upstream's list lacks);
-//!   a working folder that is `/` or holds a system folder is not a root;
+//!   a working folder that is `/`, holds a system folder or sits in `/proc`, `/sys` or `/dev` is
+//!   not a root;
 //! - credential files and folders are refused anywhere, browser profiles, cookie and password
 //!   stores and keyrings included;
 //! - paths are absolute or `~`; the resolved path is opened by walking it from the root's
@@ -816,10 +817,14 @@ const SYSTEM_DIRS: [&str; 24] = [
     "/private",
 ];
 
-/// Whether the canonical working folder `dir` may be a root beside the home folder: never `/`,
-/// and outside `home` never a folder that is or holds a system folder.
+/// Kernel file systems: a root in one would expose `/proc/<pid>/environ` and the like.
+const KERNEL_DIRS: [&str; 3] = ["/proc", "/sys", "/dev"];
+
+/// Whether the canonical working folder `dir` may be a root beside the home folder: never `/` or
+/// a folder in a kernel file system, and outside `home` never a folder that is or holds a system
+/// folder.
 pub(crate) fn extra_root_allowed(dir: &Path, home: Option<&Path>) -> bool {
-    if dir.parent().is_none() {
+    if dir.parent().is_none() || KERNEL_DIRS.iter().any(|k| dir.starts_with(k)) {
         return false;
     }
     if home.is_some_and(|h| dir.starts_with(h)) {
