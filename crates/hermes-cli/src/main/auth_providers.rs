@@ -608,20 +608,7 @@ async fn hydrate_provider_env_from_vault_for_cli_with_options(
 }
 
 fn mask_secret(secret: &str) -> String {
-    if secret.is_empty() {
-        return "(empty)".to_string();
-    }
-    // Showing the first and last 4 characters of a short secret reveals most
-    // of it, and a star per character reveals its length; mask short secrets
-    // with a fixed string instead.
-    if secret.chars().count() < 20 {
-        return "********".to_string();
-    }
-    format!(
-        "{}***{}",
-        &secret[..secret.floor_char_boundary(4)],
-        &secret[secret.ceil_char_boundary(secret.len().saturating_sub(4))..]
-    )
+    hermes_core::secret_values::mask_secret(secret)
 }
 
 fn is_weixin_provider(provider: &str) -> bool {
