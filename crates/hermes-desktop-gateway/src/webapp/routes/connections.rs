@@ -38,7 +38,7 @@ use axum::{Json, Router};
 use futures::StreamExt;
 use serde_json::{json, Map, Value};
 
-use super::startup::{blocking, machine_root, webapp_only, StoreLock};
+use super::store::{blocking, install_root, webapp_only, StoreLock};
 use crate::webapp::api::{ApiError, ApiResult, Ctx};
 
 pub fn router() -> Router {
@@ -338,8 +338,7 @@ pub(crate) fn mutate<T>(
         std::fs::create_dir_all(parent)
             .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
     }
-    let lock = StoreLock::take(path)
-        .map_err(|_| StoreError::Busy("gateway connections store is busy".into()))?;
+    let lock = StoreLock::take(path, "gateway connections store").map_err(StoreError::Busy)?;
     let (doc, corrupt) = read_doc(path)?;
     let mut list = connections(doc.as_ref());
     let mut next = doc.clone().unwrap_or_default();
@@ -758,7 +757,7 @@ pub(crate) fn last_used(path: &Path, id: &str) -> Result<Map<String, Value>, Sto
 // ---- Registry routes ------------------------------------------------------------------------
 
 fn store_path(ctx: &Ctx) -> PathBuf {
-    machine_root(ctx).join(STORE_NAME)
+    install_root(ctx).join(STORE_NAME)
 }
 
 fn answer(doc: &Map<String, Value>, extra: Option<(&str, Value)>) -> Value {
