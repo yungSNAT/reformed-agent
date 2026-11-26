@@ -91,4 +91,5 @@ pub(crate) mod tests {
     include!("agent_loop/tests_core.rs");
     include!("agent_loop/tests_runtime.rs");
     include!("agent_loop/tests/tool_result_prune.rs");
+    include!("agent_loop/tests/route_fallback_errors.rs");
 }
