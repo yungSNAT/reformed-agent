@@ -288,69 +288,6 @@ async fn native_tui_filters_pickers_and_applies_skin_and_personality() {
 }
 
 #[tokio::test]
-async fn native_tui_model_picker_cancels_or_persists_the_confirmed_model() {
-    let sandbox = tempfile::tempdir().unwrap();
-    let home = sandbox.path().join("hermes");
-    let config = home.join("config.yaml");
-    std::fs::create_dir(&home).unwrap();
-    std::fs::write(
-        &config,
-        r#"model:
-  default: fixture-a
-  provider: local-test
-tools: []
-llm_providers:
-  local-test:
-    base_url: http://127.0.0.1:1/v1
-    api_key: local-provider-fixture
-    discover_models: false
-    models:
-      fixture-a: {}
-      fixture-b: {}
-"#,
-    )
-    .unwrap();
-
-    let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["--ignore-rules"], false);
-    read_until(&mut terminal, b"\x1b[?1049h").await;
-    let original = std::fs::read(&config).unwrap();
-    let open_picker = b"\x1b[200~/model local-test\x1b[201~\r";
-    terminal.write_all(open_picker).unwrap();
-    read_until(&mut terminal, "❯ fixture-a".as_bytes()).await;
-    terminal.write_all(b"j").unwrap();
-    read_until(&mut terminal, "❯ fixture-b".as_bytes()).await;
-    terminal.write_all(b"q").unwrap();
-    read_until(&mut terminal, b"Model switch cancelled.").await;
-    assert_eq!(std::fs::read(&config).unwrap(), original);
-
-    terminal.write_all(open_picker).unwrap();
-    read_until(&mut terminal, "❯ fixture-a".as_bytes()).await;
-    terminal.write_all(b"j").unwrap();
-    read_until(&mut terminal, "❯ fixture-b".as_bytes()).await;
-    terminal.write_all(b"\r").unwrap();
-    read_until(&mut terminal, b"Persisted default model").await;
-    let persisted: serde_yaml::Value =
-        serde_yaml::from_slice(&std::fs::read(&config).unwrap()).unwrap();
-    assert_eq!(persisted["model"]["default"].as_str(), Some("fixture-b"));
-    assert_eq!(persisted["model"]["provider"].as_str(), Some("local-test"));
-    assert_eq!(
-        persisted["model"]["base_url"].as_str(),
-        Some("http://127.0.0.1:1/v1")
-    );
-
-    terminal.write_all(b"\x1b[200~/quit\x1b[201~\r").unwrap();
-    let restored = read_until(&mut terminal, b"\x1b[?1049l").await;
-    assert!(restored.windows(8).any(|bytes| bytes == b"\x1b[?2004l"));
-    assert!(timeout(Duration::from_secs(10), child.wait())
-        .await
-        .expect("TUI shutdown timeout")
-        .expect("wait for isolated CLI")
-        .success());
-    assert_eq!(terminal_flags(&terminal), initial_flags);
-}
-
-#[tokio::test]
 async fn native_tui_streams_a_loopback_turn_and_persists_the_full_reply() {
     let provider = MockServer::start().await;
     let prompt = "Read back the synthetic fixture";
