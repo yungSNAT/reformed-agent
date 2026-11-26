@@ -117,7 +117,51 @@ const METHODS: &[(&str, Handler)] = &[
     ("prompt.submit", |r| {
         ready(r.chat.submit(&r.params, &r.conn))
     }),
+    ("session.events.since", |r| ready(events_since(&r))),
 ];
+
+/// `session.events.since`: a session's events after `last_seen`, from its log of recent events
+/// (upstream tui_gateway/methods_session.py); `truncated` when some were dropped, so the client
+/// refetches the transcript. An unknown session has none.
+fn events_since(req: &Request) -> Result<Value, RpcError> {
+    let id = match req.params.get("session_id") {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(id)) => id.clone(),
+        Some(_) => return Err((INVALID_PARAMS, "session_id must be a string".into())),
+    };
+    let last_seen = match req.params.get("last_seen") {
+        None | Some(Value::Null) => 0,
+        // A negative watermark asks for every event, as upstream's `seq > last_seen` does.
+        Some(Value::Number(n)) if n.is_u64() || n.is_i64() => n.as_u64().unwrap_or(0),
+        Some(_) => {
+            return Err((
+                BAD_LAST_SEEN,
+                "invalid params: last_seen must be an integer".into(),
+            ))
+        }
+    };
+    let session = req.chat.lock_sessions().get(&id).cloned();
+    let session::Replay {
+        events,
+        latest_seq,
+        truncated,
+    } = match session {
+        Some(session) => session.events_since(last_seen),
+        None => session::Replay {
+            events: Vec::new(),
+            latest_seq: 0,
+            truncated: false,
+        },
+    };
+    Ok(json!({
+        "count": events.len(),
+        "events": events,
+        "latest_seq": latest_seq,
+        "truncated": truncated,
+        "epoch": req.chat.replay_epoch(),
+        "open_requests": [],
+    }))
+}
 
 /// A JSON-RPC error: code and message.
 pub(crate) type RpcError = (i64, String);
@@ -130,6 +174,8 @@ const SESSION_NOT_FOUND: i64 = 4001;
 const SESSION_BUSY: i64 = 4009;
 const TEXT_REQUIRED: i64 = 4012;
 const NO_TURN_SLOT: i64 = 4090;
+/// JSON-RPC's invalid params, which upstream gives a `last_seen` that is not an integer.
+const BAD_LAST_SEEN: i64 = -32602;
 // 4015 no attachment given, 5028 the attachment could not be staged.
 const ATTACHMENT_REQUIRED: i64 = 4015;
 const ATTACH_FAILED: i64 = 5028;
@@ -482,7 +528,7 @@ impl Chat {
         let prompt = Queued {
             text,
             images,
-            admission,
+            admission: admission.map(Box::new),
         };
         let slot = || Arc::clone(&self.turns).try_acquire_owned().ok();
         let (refused, prompt) = match session.admit(slot, prompt) {
@@ -536,7 +582,7 @@ impl Chat {
                     id: id.clone(),
                     turn_id: uuid::Uuid::new_v4().simple().to_string(),
                     slot: Some(Arc::new(slot)),
-                    admission: prompt.admission,
+                    admission: prompt.admission.map(|admission| *admission),
                 };
                 turn.run(prompt.text, prompt.images, &session).await;
                 next = match session.next() {

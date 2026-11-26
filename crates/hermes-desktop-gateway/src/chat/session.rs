@@ -56,7 +56,7 @@ fn release(counter: &AtomicUsize, bytes: usize) {
 pub(super) struct Queued {
     pub(super) text: String,
     pub(super) images: Vec<StagedImage>,
-    pub(super) admission: Option<Admission>,
+    pub(super) admission: Option<Box<Admission>>,
 }
 
 /// How a prompt was taken.
