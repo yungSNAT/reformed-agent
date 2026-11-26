@@ -364,6 +364,28 @@ impl SessionManager {
     /// called directly) is numbered now. A prompt that a later cancel covers
     /// does not start or queue, whether or not another turn runs.
     pub fn begin_turn(&self, session_id: &str, seq: Option<u64>) -> TurnStart {
+        self.begin_turn_inner(session_id, seq, None)
+    }
+
+    /// [`Self::begin_turn`], queueing `prompt` for the running turn when the
+    /// session is busy, under the same lock: queued separately, it could land
+    /// after the running turn's last [`Self::next_queued_or_finish`] and wait
+    /// behind a later prompt.
+    pub fn begin_turn_or_queue(
+        &self,
+        session_id: &str,
+        seq: Option<u64>,
+        prompt: &str,
+    ) -> TurnStart {
+        self.begin_turn_inner(session_id, seq, Some(prompt))
+    }
+
+    fn begin_turn_inner(
+        &self,
+        session_id: &str,
+        seq: Option<u64>,
+        queue: Option<&str>,
+    ) -> TurnStart {
         let mut sessions = self.sessions.lock().unwrap();
         let Some(state) = sessions.get_mut(session_id) else {
             return TurnStart::Missing;
@@ -382,19 +404,14 @@ impl SessionManager {
             return TurnStart::Cancelled;
         }
         if state.turn_seq.is_some() {
+            if let Some(prompt) = queue.map(str::trim).filter(|p| !p.is_empty()) {
+                state.queued_prompts.push(prompt.to_string());
+            }
             return TurnStart::Busy;
         }
         state.turn_seq = Some(seq);
         state.phase = SessionPhase::Active;
         TurnStart::Started(seq)
-    }
-
-    /// Whether a cancel covers the turn numbered `seq`.
-    pub fn turn_cancelled(&self, session_id: &str, seq: u64) -> bool {
-        let sessions = self.sessions.lock().unwrap();
-        sessions
-            .get(session_id)
-            .is_some_and(|state| seq <= state.cancel_through)
     }
 
     /// Finish the turn numbered `seq`, if it is the running one, leaving the
@@ -499,18 +516,6 @@ impl SessionManager {
             return std::mem::take(&mut state.queued_prompts);
         }
         Vec::new()
-    }
-
-    /// Pop one queued prompt in FIFO order.
-    pub fn pop_queued_prompt(&self, session_id: &str) -> Option<String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(state) = sessions.get_mut(session_id) {
-            if !state.queued_prompts.is_empty() {
-                state.touch();
-                return Some(state.queued_prompts.remove(0));
-            }
-        }
-        None
     }
 
     /// Store an interrupted prompt for subsequent `/steer` replay.
@@ -715,7 +720,6 @@ mod tests {
         let c = sessions.prompt_received(&id).unwrap();
         assert_eq!(sessions.begin_turn(&id, Some(c)), TurnStart::Started(c));
         sessions.request_cancel(&id);
-        assert!(sessions.turn_cancelled(&id, c));
         assert!(sessions.finish_turn(&id, c, SessionPhase::Idle));
         // A cancel with nothing received covers nothing later.
         sessions.request_cancel(&id);
@@ -729,16 +733,21 @@ mod tests {
         let id = sessions.create_session(".").session_id;
         let a = sessions.prompt_received(&id).unwrap();
         assert_eq!(sessions.begin_turn(&id, Some(a)), TurnStart::Started(a));
-        assert_eq!(sessions.begin_turn(&id, None), TurnStart::Busy);
-        sessions.push_queued_prompt(&id, "b");
+        // Queued under the lock that saw the turn busy.
+        assert_eq!(
+            sessions.begin_turn_or_queue(&id, None, " b "),
+            TurnStart::Busy
+        );
         assert_eq!(
             sessions.next_queued_or_finish(&id, a, SessionPhase::Idle),
             QueuedOrFinished::Queued("b".into())
         );
         // The turn stays A's until its queue is empty, so C still queues
         // into it rather than starting a turn of its own.
-        assert_eq!(sessions.begin_turn(&id, None), TurnStart::Busy);
-        sessions.push_queued_prompt(&id, "c");
+        assert_eq!(
+            sessions.begin_turn_or_queue(&id, None, "c"),
+            TurnStart::Busy
+        );
         assert_eq!(
             sessions.next_queued_or_finish(&id, a, SessionPhase::Idle),
             QueuedOrFinished::Queued("c".into())
@@ -748,8 +757,14 @@ mod tests {
             QueuedOrFinished::Finished { cancelled: false }
         );
         assert_eq!(sessions.get_session(&id).unwrap().phase, SessionPhase::Idle);
+        // Once the turn has finished, a prompt starts its own turn and is
+        // not queued.
         let d = sessions.prompt_received(&id).unwrap();
-        assert_eq!(sessions.begin_turn(&id, Some(d)), TurnStart::Started(d));
+        assert_eq!(
+            sessions.begin_turn_or_queue(&id, Some(d), "d"),
+            TurnStart::Started(d)
+        );
+        assert!(sessions.take_queued_prompts(&id).is_empty());
     }
 
     #[test]
