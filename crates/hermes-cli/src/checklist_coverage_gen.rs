@@ -1,7 +1,11 @@
 use super::*;
 
+// The embedded picker flag is shared by all tests in this process.
+static PICKER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn embedded_picker_guard_toggles_active_flag() {
+    let _lock = PICKER_TEST_LOCK.lock().expect("picker test lock");
     assert!(!embedded_picker_active());
     {
         let _guard = EmbeddedPickerGuard::enter();
@@ -11,15 +15,17 @@ fn embedded_picker_guard_toggles_active_flag() {
 }
 
 #[test]
-fn embedded_picker_guard_nested_drop_resets_flag() {
-    let outer = EmbeddedPickerGuard::enter();
+fn embedded_picker_guard_drop_resets_flag() {
+    let _lock = PICKER_TEST_LOCK.lock().expect("picker test lock");
+    let guard = EmbeddedPickerGuard::enter();
     assert!(embedded_picker_active());
-    drop(outer);
+    drop(guard);
     assert!(!embedded_picker_active());
 }
 
 #[test]
 fn curses_select_embedded_empty_items_returns_unconfirmed() {
+    let _lock = PICKER_TEST_LOCK.lock().expect("picker test lock");
     let result = curses_select_embedded("Pick", &[], 5);
     assert_eq!(result.index, 0);
     assert!(!result.confirmed);

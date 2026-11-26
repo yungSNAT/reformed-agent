@@ -227,6 +227,72 @@ fn skills_cli_snapshot_round_trip_restores_uninstalled_content() {
 }
 
 #[test]
+fn skills_cli_uninstall_updates_only_the_matching_lock_and_audit_records() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let installed = root.join("skills");
+    let state = installed.join(".hub");
+    let lock = state.join("lock.json");
+    fs::create_dir_all(&state).unwrap();
+    write_skill(&installed.join("heron-notes"), "# Heron notes");
+    write_skill(&installed.join("wren-notes"), "# Wren notes");
+
+    let records = ["heron-notes", "stale-robin", "wren-notes"].map(|name| {
+        serde_json::json!({
+            "name": name,
+            "source": "tap",
+            "identifier": format!("field/notes/{name}"),
+            "trust_level": "trusted",
+            "scan_verdict": "clean",
+            "content_hash": format!("fixture-{name}"),
+            "install_path": installed.join(name),
+            "installed_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        })
+    });
+    fs::write(
+        &lock,
+        serde_json::json!({"version": 1, "installed": records}).to_string(),
+    )
+    .unwrap();
+    let read_lock = || serde_json::from_str::<Value>(&fs::read_to_string(&lock).unwrap()).unwrap();
+
+    let removed = success_text(skills(root, &["uninstall", "heron-notes"]).assert());
+    assert!(removed
+        .contains("Skill 'heron-notes' uninstalled (source=tap, id=field/notes/heron-notes)"));
+    assert!(!installed.join("heron-notes").exists());
+    assert_eq!(read_lock()["installed"][0]["name"], "stale-robin");
+
+    let stale = success_text(skills(root, &["uninstall", "stale-robin"]).assert());
+    assert!(stale.contains("Skill 'stale-robin' not found locally, but removed stale lock entry"));
+    let absent = success_text(skills(root, &["uninstall", "absent"]).assert());
+    assert!(absent.contains("Skill 'absent' not found."));
+    let check = success_text(skills(root, &["check", "heron-notes"]).assert());
+    assert!(check.contains("Skill 'heron-notes' not found."));
+
+    let kept = read_lock();
+    assert_eq!(kept["installed"].as_array().unwrap().len(), 1);
+    assert_eq!(kept["installed"][0]["name"], "wren-notes");
+    assert_eq!(kept["installed"][0]["content_hash"], "fixture-wren-notes");
+    assert_eq!(
+        fs::read_to_string(installed.join("wren-notes/SKILL.md")).unwrap(),
+        "# Wren notes"
+    );
+
+    let log = fs::read_to_string(state.join("audit.log")).unwrap();
+    let entries: Vec<Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(entries.len(), 2);
+    for (entry, name) in entries.iter().zip(["heron-notes", "stale-robin"]) {
+        assert_eq!(entry["action"], "UNINSTALL");
+        assert_eq!(entry["name"], name);
+        assert_eq!(entry["identifier"], format!("field/notes/{name}"));
+    }
+}
+
+#[test]
 fn skills_cli_reports_local_configuration_quality_and_audit_findings() {
     let home = tempfile::tempdir().unwrap();
     let root = home.path();
