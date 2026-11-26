@@ -1395,3 +1395,7 @@ impl AgentLoop {
     }
 
 }
+
+#[cfg(test)]
+#[path = "methods_run_coverage_gen.rs"]
+mod coverage_gen_agent_loop_methods_run;

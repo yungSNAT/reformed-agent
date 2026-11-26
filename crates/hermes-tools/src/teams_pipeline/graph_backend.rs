@@ -640,3 +640,7 @@ fn fetch_call_record_artifact_from_payload(payload: &Value) -> Option<MeetingArt
         metadata,
     })
 }
+
+#[cfg(test)]
+#[path = "graph_backend_coverage_gen.rs"]
+mod coverage_gen;

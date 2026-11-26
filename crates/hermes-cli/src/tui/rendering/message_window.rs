@@ -258,3 +258,7 @@ fn project_transcript_window(
 
     (window, intra_line_offset)
 }
+
+#[cfg(test)]
+#[path = "message_window_coverage_gen.rs"]
+mod coverage_gen_tui_rendering_message_window;

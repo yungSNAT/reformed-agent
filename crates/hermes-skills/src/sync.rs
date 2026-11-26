@@ -1065,6 +1065,47 @@ mod tests {
     }
 
     #[test]
+    fn remove_pristine_bundled_skills_keeps_entries_without_a_verifiable_origin() {
+        let dir = tempdir().unwrap();
+        let bundled = setup_bundled(dir.path());
+        let cfg = config(dir.path(), bundled);
+        sync_skills(&cfg, true).unwrap();
+        let mut manifest = read_manifest(&cfg.manifest_file);
+        manifest.get_mut("new-skill").unwrap().clear();
+        write_manifest(&cfg.manifest_file, &manifest).unwrap();
+        fs::rename(
+            cfg.bundled_dir.join("old-skill"),
+            dir.path().join("retired-bundle"),
+        )
+        .unwrap();
+
+        for dry_run in [true, false] {
+            let report = remove_pristine_bundled_skills(&cfg, dry_run).unwrap();
+            assert!(report.removed.is_empty());
+            assert_eq!(
+                report
+                    .skipped
+                    .iter()
+                    .map(|skip| (skip.name.as_str(), skip.reason.as_str()))
+                    .collect::<Vec<_>>(),
+                [
+                    ("new-skill", "legacy manifest without origin hash (kept)"),
+                    ("old-skill", "no bundled source (removed upstream)")
+                ]
+            );
+            assert_eq!(read_manifest(&cfg.manifest_file), manifest);
+            assert_eq!(
+                fs::read_to_string(cfg.skills_dir.join("category/new-skill/SKILL.md")).unwrap(),
+                "# New"
+            );
+            assert_eq!(
+                fs::read_to_string(cfg.skills_dir.join("old-skill/SKILL.md")).unwrap(),
+                "# Old"
+            );
+        }
+    }
+
+    #[test]
     fn remove_pristine_bundled_skills_cleans_missing_manifest_entries() {
         let dir = tempdir().unwrap();
         let bundled = setup_bundled(dir.path());
@@ -1130,6 +1171,73 @@ mod tests {
             .unwrap()
             .copied
             .contains(&"google-workspace".to_string()));
+    }
+
+    #[test]
+    fn bundled_skill_reset_preserves_the_manifest_if_a_file_blocks_restore() {
+        let root = tempdir().unwrap();
+        let cfg = config(root.path(), setup_bundled(root.path()));
+        let unknown = reset_bundled_skill(&cfg, "missing-fixture", true).unwrap();
+        assert!(!unknown.ok);
+        assert_eq!(unknown.action, "not_in_manifest");
+        let untracked = reset_bundled_skill(&cfg, "new-skill", false).unwrap();
+        assert!(!untracked.ok);
+        assert_eq!(untracked.action, "not_in_manifest");
+        assert!(!cfg.manifest_file.exists());
+
+        let occupied = cfg.skills_dir.join("category/new-skill");
+        fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+        fs::write(&occupied, b"local fixture file").unwrap();
+        let manifest = BTreeMap::from([("new-skill".into(), "existing-baseline".into())]);
+        write_manifest(&cfg.manifest_file, &manifest).unwrap();
+
+        let reset = reset_bundled_skill(&cfg, "new-skill", true).unwrap();
+        assert!(!reset.ok);
+        assert_eq!(reset.action, "not_reset");
+        assert!(reset.synced.is_none());
+        assert_eq!(read_manifest(&cfg.manifest_file), manifest);
+        assert_eq!(fs::read(occupied).unwrap(), b"local fixture file");
+    }
+
+    #[test]
+    fn optional_skill_preview_preserves_changes_and_backfills_matching_provenance() {
+        let root = tempdir().unwrap();
+        let cfg = config(root.path(), setup_bundled(root.path()));
+        let relative = Path::new("category/optional-folder");
+        let official = cfg.optional_dir.join(relative);
+        let local = cfg.skills_dir.join(relative);
+        for location in [&official, &local] {
+            fs::create_dir_all(location).unwrap();
+        }
+        let content = "---\nname: optional-fixture\n---\n# Official\n";
+        let edited = "---\nname: optional-fixture\n---\n# Local edit\n";
+        fs::write(official.join("SKILL.md"), content).unwrap();
+        fs::write(local.join("SKILL.md"), edited).unwrap();
+
+        let unknown = restore_official_optional_skill(&cfg, "missing-fixture", false).unwrap();
+        assert!(!unknown.ok);
+        let preview = restore_official_optional_skill(&cfg, "optional-folder", false).unwrap();
+        assert!(preview.ok);
+        assert!(preview.restored.is_empty() && preview.backed_up.is_empty());
+        assert!(!Path::new(&preview.backup_dir).exists());
+        assert!(!skills_hub_lock_path(&cfg.skills_dir).exists());
+        assert_eq!(fs::read_to_string(local.join("SKILL.md")).unwrap(), edited);
+
+        fs::write(local.join("SKILL.md"), content).unwrap();
+        let backfill = restore_official_optional_skill(&cfg, "optional-folder", false).unwrap();
+        assert_eq!(backfill.backfilled, ["optional-folder"]);
+        assert!(backfill.restored.is_empty() && backfill.backed_up.is_empty());
+        let lock = read_hub_lock(&cfg.skills_dir);
+        assert_eq!(lock.installed.len(), 1);
+        assert_eq!(lock.installed[0].name, "optional-fixture");
+        assert_eq!(
+            lock.installed[0].identifier,
+            "official/category/optional-folder"
+        );
+        assert_eq!(
+            lock.installed[0].content_hash,
+            format!("md5:{}", dir_hash(&local))
+        );
     }
 
     #[test]

@@ -125,6 +125,109 @@ fn build_converse_body_passes_top_p_guardrails_and_strips_unsupported_tools() {
 }
 
 #[test]
+fn converse_preserves_anthropic_fields_and_builds_inference_from_top_p() {
+    let extra = json!({
+        "additionalModelRequestFields": {"top_k": 17},
+        "guardrailConfig": null,
+        "topP": 0.85,
+    });
+    let messages = [Message::user("Review the outline.")];
+    let body = build_converse_body(
+        "global.anthropic.claude-opus-4-7",
+        &messages,
+        &[],
+        None,
+        None,
+        Some(&extra),
+    );
+    let fields = &body["additionalModelRequestFields"];
+    assert_eq!(fields["top_k"], 17);
+    assert!(fields["anthropic_beta"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(CONTEXT_1M_BETA)));
+    assert_eq!(body["inferenceConfig"], json!({"topP": 0.85}));
+    assert!(body.get("guardrailConfig").is_none());
+
+    let body = build_converse_body(
+        "amazon.nova-lite-v1:0",
+        &messages,
+        &[],
+        None,
+        None,
+        Some(&json!({
+            "additionalModelRequestFields": {"top_k": 12},
+            "guardrail_config": {},
+            "top_p": null
+        })),
+    );
+    assert_eq!(body["additionalModelRequestFields"], json!({"top_k": 12}));
+    assert!(body.get("guardrailConfig").is_none());
+    assert!(body.get("inferenceConfig").is_none());
+}
+
+#[test]
+fn converse_keeps_reasoning_and_legacy_tool_arguments_in_order() {
+    let mut tool_call = Message::assistant_with_tool_calls(
+        None,
+        vec![hermes_core::ToolCall {
+            id: "draft-1".into(),
+            function: hermes_core::FunctionCall {
+                name: "inspect_outline".into(),
+                arguments: "rough draft context".into(),
+            },
+            extra_content: None,
+        }],
+    );
+    tool_call.reasoning_content = Some("  Check the draft outline.  ".into());
+    let (_, messages) = convert_messages_to_bedrock(&[
+        tool_call,
+        Message::tool_result("draft-1", ""),
+        Message::assistant("   "),
+    ]);
+    assert_eq!(
+        json!(messages),
+        json!([
+            {"role": "user", "content": [{"text": " "}]},
+            {"role": "assistant", "content": [
+                {"reasoningContent": {"text": "Check the draft outline."}},
+                {"toolUse": {"toolUseId": "draft-1", "name": "inspect_outline",
+                    "input": {"arguments": "rough draft context"}}}
+            ]},
+            {"role": "user", "content": [
+                {"toolResult": {"toolUseId": "draft-1", "content": [{"text": " "}]}}
+            ]},
+            {"role": "assistant", "content": [{"text": " "}]},
+            {"role": "user", "content": [{"text": " "}]}
+        ])
+    );
+}
+
+#[test]
+fn converse_preserves_inline_images_and_remote_attachment_references() {
+    let parts = json!([
+        {"type": "image_url", "image_url": "https://example.invalid/draft-cover.jpg"},
+        {"type": "input_image", "url": "data:image/gif;BASE64,R0lGODlh"},
+        {"type": "input_image", "url": "data:image/webp;base64,UklGRg=="},
+        {"type": "input_image", "url": "data:image/jpg;base64,/9j/"},
+        {"type": "input_image", "url": ""},
+        {"type": "document", "text": "  Draft excerpt  "}
+    ]);
+    let (_, messages) =
+        convert_messages_to_bedrock(&[Message::user(format!("{ACP_MULTIMODAL_PREFIX}{parts}"))]);
+    assert_eq!(
+        messages[0]["content"],
+        json!([
+            {"text": "[Attached image]\nURL: https://example.invalid/draft-cover.jpg"},
+            {"image": {"format": "gif", "source": {"bytes": "R0lGODlh"}}},
+            {"image": {"format": "webp", "source": {"bytes": "UklGRg=="}}},
+            {"image": {"format": "jpeg", "source": {"bytes": "/9j/"}}},
+            {"text": "Draft excerpt"}
+        ])
+    );
+}
+
+#[test]
 fn convert_messages_merges_roles_and_enforces_user_boundaries() {
     let messages = vec![
         Message::user("first"),

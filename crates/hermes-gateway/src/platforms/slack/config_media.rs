@@ -58,6 +58,14 @@ pub struct SlackResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct SlackExternalUploadResponse {
+    ok: bool,
+    error: Option<String>,
+    file_id: Option<String>,
+    upload_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SlackAuthTestResponse {
     pub ok: bool,
     #[serde(default)]

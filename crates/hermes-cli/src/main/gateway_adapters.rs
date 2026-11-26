@@ -939,3 +939,7 @@ async fn run_telegram_poll_loop(gateway: Arc<Gateway>, adapter: Arc<TelegramAdap
         }
     }
 }
+
+#[cfg(test)]
+#[path = "gateway_adapters_coverage_gen.rs"]
+mod coverage_gen_main_gateway_adapters;

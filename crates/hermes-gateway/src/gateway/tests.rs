@@ -241,6 +241,38 @@ impl PlatformAdapter for TestAdapter {
     }
 }
 
+#[tokio::test]
+async fn core_trait_contract_basic_adapter_appends_status_and_skips_unsupported_actions() {
+    let adapter = TestAdapter {
+        messages: Arc::new(Mutex::new(Vec::new())),
+    };
+    adapter
+        .send_or_update_status("chat", "progress", "starting", Some(ParseMode::Plain))
+        .await
+        .unwrap();
+    adapter
+        .send_or_update_status("chat", "progress", "finished", Some(ParseMode::Plain))
+        .await
+        .unwrap();
+    assert!(!adapter.delete_message("chat", "message").await.unwrap());
+    assert!(!adapter.rename_thread("thread", "new title").await.unwrap());
+    adapter
+        .add_reaction("chat", "message", "check")
+        .await
+        .unwrap();
+    adapter
+        .remove_reaction("chat", "message", "check")
+        .await
+        .unwrap();
+    assert_eq!(
+        *adapter.messages.lock().unwrap(),
+        [
+            ("chat".to_owned(), "starting".to_owned()),
+            ("chat".to_owned(), "finished".to_owned()),
+        ]
+    );
+}
+
 #[async_trait]
 impl PlatformAdapter for FailingSendAdapter {
     async fn start(&self) -> Result<(), GatewayError> {
@@ -816,10 +848,15 @@ impl PlatformAdapter for StatusUpdateAdapter {
 
     async fn edit_message(
         &self,
-        _chat_id: &str,
-        _message_id: &str,
-        _text: &str,
+        chat_id: &str,
+        message_id: &str,
+        text: &str,
     ) -> Result<(), GatewayError> {
+        self.updates.lock().unwrap().push((
+            chat_id.to_string(),
+            message_id.to_string(),
+            text.to_string(),
+        ));
         Ok(())
     }
 
@@ -1184,4 +1221,5 @@ include!("tests/status_profiles.rs");
 include!("tests/reply_recovery.rs");
 
 mod hook_lifecycle;
+mod routing_contract;
 mod runtime_controls;

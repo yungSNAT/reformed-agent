@@ -849,9 +849,6 @@ fn process_stream_lane_event(app: &mut App, state: &mut TuiState, event: Event) 
                             state.stream_needs_break = false;
                         }
                         state.stream_buffer.push_str(&content);
-                        state.stream_char_count = state
-                            .stream_char_count
-                            .saturating_add(content.chars().count());
                         if !state.saw_first_token {
                             state.saw_first_token = true;
                             let first_token_ms = state
@@ -920,3 +917,7 @@ fn process_stream_lane_event(app: &mut App, state: &mut TuiState, event: Event) 
         _ => false,
     }
 }
+
+#[cfg(test)]
+#[path = "modal_runtime_coverage_gen.rs"]
+mod coverage_gen_tui_rendering_modals_events_modal_runtime;

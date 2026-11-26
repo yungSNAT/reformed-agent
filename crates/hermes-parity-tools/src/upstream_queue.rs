@@ -420,3 +420,7 @@ pub fn run(args: UpstreamQueueArgs) -> Result<i32, String> {
     )?;
     Ok(0)
 }
+
+#[cfg(test)]
+#[path = "upstream_queue_coverage_gen.rs"]
+mod coverage_gen;

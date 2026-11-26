@@ -1341,3 +1341,7 @@ fn missing_gateway_adapter_feature(platform: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "gateway_access_coverage_gen.rs"]
+mod coverage_gen_main_gateway_access;

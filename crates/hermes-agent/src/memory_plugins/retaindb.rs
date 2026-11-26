@@ -1352,3 +1352,7 @@ mod tests {
         assert!(rendered.contains("- verify evidence"));
     }
 }
+
+#[cfg(test)]
+#[path = "retaindb_coverage_gen.rs"]
+mod coverage_gen;

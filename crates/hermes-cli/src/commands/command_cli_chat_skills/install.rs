@@ -65,7 +65,7 @@
                     "lobehub" => {
                         println!("Resolved lobehub source: {}", key);
                         (
-                            fetch_lobehub_skill_files(&client, &key).await?,
+                            fetch_lobehub_skill_files(&client, LOBEHUB_AGENTS_BASE, &key).await?,
                             key.clone(),
                             SkillInstallProvenance {
                                 source: "lobehub".to_string(),
@@ -78,8 +78,13 @@
                     "clawhub" => {
                         println!("Resolved clawhub source: {}", key);
                         (
-                            fetch_clawhub_skill_files(&client, &key, _requested_version.as_deref())
-                                .await?,
+                            fetch_clawhub_skill_files(
+                                &client,
+                                CLAWHUB_API_BASE,
+                                &key,
+                                _requested_version.as_deref(),
+                            )
+                            .await?,
                             key.clone(),
                             SkillInstallProvenance {
                                 source: "clawhub".to_string(),
@@ -266,7 +271,8 @@
                             RegistryInstallSource::LobeRegistry { slug } => {
                                 println!("Resolved source [lobehub]: {}", slug);
                                 (
-                                    fetch_lobehub_skill_files(&client, &slug).await?,
+                                    fetch_lobehub_skill_files(&client, LOBEHUB_AGENTS_BASE, &slug)
+                                        .await?,
                                     slug.clone(),
                                     SkillInstallProvenance {
                                         source: "lobehub".to_string(),
@@ -280,8 +286,13 @@
                             RegistryInstallSource::ClawRegistry { slug, version } => {
                                 println!("Resolved source [clawhub]: {}", slug);
                                 (
-                                    fetch_clawhub_skill_files(&client, &slug, version.as_deref())
-                                        .await?,
+                                    fetch_clawhub_skill_files(
+                                        &client,
+                                        CLAWHUB_API_BASE,
+                                        &slug,
+                                        version.as_deref(),
+                                    )
+                                    .await?,
                                     slug.clone(),
                                     SkillInstallProvenance {
                                         source: "clawhub".to_string(),

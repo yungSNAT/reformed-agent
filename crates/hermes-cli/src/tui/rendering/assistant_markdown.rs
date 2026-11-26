@@ -268,4 +268,3 @@ fn tail_render_lines_with_notice(
     out.extend(lines.into_iter().skip(total.saturating_sub(keep)));
     out
 }
-

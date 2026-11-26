@@ -248,3 +248,7 @@ mod tests {
         assert_eq!(config_dir.as_deref(), Some(dir.path()));
     }
 }
+
+#[cfg(test)]
+#[path = "hermes-bench_coverage_gen.rs"]
+mod coverage_gen;

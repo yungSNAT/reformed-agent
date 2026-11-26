@@ -313,3 +313,7 @@ fn promote(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "specify_coverage_gen.rs"]
+mod coverage_gen_kanban_specify;

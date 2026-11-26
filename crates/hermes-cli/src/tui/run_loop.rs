@@ -646,3 +646,7 @@ fn spawn_tui_direct_agent_turn(
         });
     }))
 }
+
+#[cfg(test)]
+#[path = "run_loop_coverage_gen.rs"]
+mod coverage_gen_tui_run_loop;

@@ -1,0 +1,470 @@
+use super::*;
+
+use std::mem::{size_of, size_of_val};
+
+fn config_with_key(provider: &str, base_url: Option<&str>) -> GatewayConfig {
+    let mut config = GatewayConfig::default();
+    config.llm_providers.insert(
+        provider.to_string(),
+        LlmProviderConfig {
+            api_key: Some("cov-test-key".to_string()),
+            base_url: base_url.map(str::to_string),
+            ..LlmProviderConfig::default()
+        },
+    );
+    config
+}
+
+fn assert_real_backend(p: &Arc<dyn LlmProvider>) {
+    assert_ne!(size_of_val(&**p), size_of::<NoBackendProvider>());
+}
+
+#[test]
+fn local_backend_resolved_base_url_prefers_trimmed_config_value() {
+    let spec = &local_backend_specs()[0];
+    let mut config = GatewayConfig::default();
+    config.llm_providers.insert(
+        spec.provider.to_string(),
+        LlmProviderConfig {
+            base_url: Some("  http://127.0.0.1:9/cov/v1  ".to_string()),
+            ..LlmProviderConfig::default()
+        },
+    );
+    assert_eq!(
+        local_backend_resolved_base_url(spec.provider, Some(&config)),
+        Some("http://127.0.0.1:9/cov/v1".to_string())
+    );
+}
+
+#[test]
+fn local_backend_resolved_base_url_blank_config_falls_back() {
+    let spec = &local_backend_specs()[0];
+    let mut config = GatewayConfig::default();
+    config.llm_providers.insert(
+        spec.provider.to_string(),
+        LlmProviderConfig {
+            base_url: Some("   ".to_string()),
+            ..LlmProviderConfig::default()
+        },
+    );
+    let resolved = local_backend_resolved_base_url(spec.provider, Some(&config))
+        .expect("local backend always resolves a base url");
+    assert!(!resolved.trim().is_empty());
+    let without_config = local_backend_resolved_base_url(spec.provider, None)
+        .expect("local backend always resolves a base url");
+    assert!(!without_config.trim().is_empty());
+}
+
+#[test]
+fn local_backend_resolved_base_url_unknown_provider_is_none() {
+    assert_eq!(
+        local_backend_resolved_base_url("zz-cov-not-a-local-backend", None),
+        None
+    );
+}
+
+#[test]
+fn smoke_matrix_reports_all_mismatch_kinds() {
+    let config = GatewayConfig::default();
+    let cases = vec![provider_auth_smoke_case(
+        "cov_mismatch",
+        "moa:default",
+        "zz-wrong-provider",
+        false,
+        None,
+        false,
+        true,
+    )];
+    let matrix = provider_auth_smoke_matrix_with_auth_resolver(&config, &cases, None);
+    assert!(!matrix.pass);
+    assert_eq!(matrix.summary.total, 1);
+    assert_eq!(matrix.summary.passed, 0);
+    assert_eq!(matrix.summary.failed, 1);
+    let result = &matrix.results[0];
+    assert!(!result.pass);
+    assert!(result
+        .failures
+        .iter()
+        .any(|f| f == "runtime_provider expected=zz-wrong-provider actual=moa"));
+    assert!(result
+        .failures
+        .iter()
+        .any(|f| f == "local_no_key_allowed expected=false actual=true"));
+    assert!(result
+        .failures
+        .iter()
+        .any(|f| f == "uses_openai_pro_backend expected=true actual=false"));
+}
+
+#[test]
+fn api_key_source_reports_configured_env_var() {
+    let cfg = LlmProviderConfig {
+        api_key_env: Some(" PATH ".to_string()),
+        ..LlmProviderConfig::default()
+    };
+    let (present, source) =
+        provider_runtime_api_key_source(Some(&cfg), "zz-cov-alias-a", "zz-cov-runtime-a", None);
+    assert!(present);
+    assert_eq!(source, Some("env:PATH".to_string()));
+}
+
+#[test]
+fn api_key_source_uses_resolver_for_runtime_provider() {
+    let resolver = |name: &str| {
+        if name == "zz-cov-runtime-b" {
+            Some("tok".to_string())
+        } else {
+            None
+        }
+    };
+    let (present, source) = provider_runtime_api_key_source(
+        None,
+        "zz-cov-alias-b",
+        "zz-cov-runtime-b",
+        Some(&resolver),
+    );
+    assert!(present);
+    assert_eq!(source, Some("oauth_resolver:zz-cov-runtime-b".to_string()));
+}
+
+#[tokio::test]
+async fn isolated_fallback_and_provider_env_cases() {
+    const CASE: &str = "HERMES_TEST_PROVIDER_RUNTIME_CASE";
+    if let Ok(case) = std::env::var(CASE) {
+        match case.as_str() {
+            "list" => {
+                let chain = configured_model_fallback_chain(&GatewayConfig::default());
+                assert_eq!(chain, ["openai:a", "anthropic:b"]);
+            }
+            "single" => {
+                let chain = configured_model_fallback_chain(&GatewayConfig::default());
+                assert_eq!(chain, ["custom:fallback"]);
+            }
+            "startup" => {
+                let provider = LlmProviderConfig {
+                    api_key_env: Some("HERMES_TEST_ABSENT_PROVIDER_KEY".into()),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    provider_runtime_api_key_source(Some(&provider), "fixture", "fixture", None),
+                    (false, None)
+                );
+                assert_backend_without_configured_key().await;
+                assert_default_startup_selection();
+                assert_configured_fallback_chain();
+                assert_skip_duplicate_startup_fallback();
+            }
+            _ => {
+                assert_eq!(
+                    provider_runtime_api_key_source(None, "openai", "custom", None),
+                    (true, Some("provider_env:openai".into()))
+                );
+                assert_eq!(
+                    provider_runtime_api_key_source(None, "custom", "openai", None),
+                    (true, Some("provider_env:openai".into()))
+                );
+            }
+        }
+        return;
+    }
+
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let test_name = format!("{module}::isolated_fallback_and_provider_env_cases");
+    let list = [
+        (
+            "HERMES_FALLBACK_MODELS",
+            " openai:a, OPENAI:A, ,anthropic:b ",
+        ),
+        ("HERMES_FALLBACK_MODEL", "ignored:fallback"),
+    ];
+    let single = [
+        ("HERMES_FALLBACK_MODELS", ", "),
+        ("HERMES_FALLBACK_MODEL", " custom:fallback "),
+    ];
+    let blank_fallback = [("HERMES_FALLBACK_MODEL", " ")];
+    let provider = [("OPENAI_API_KEY", "runtime-test-fixture")];
+    let cases = [
+        ("list", &list[..]),
+        ("single", &single[..]),
+        ("startup", &blank_fallback[..]),
+        ("provider", &provider[..]),
+    ];
+    for (case, environment) in cases {
+        // Execute only this test binary in a controlled child environment.
+        let executable = std::env::current_exe().unwrap(); // nosemgrep: rust.lang.security.current-exe.current-exe
+        let mut command = std::process::Command::new(executable);
+        command
+            .env_clear()
+            .env(CASE, case)
+            .envs(environment.iter().copied())
+            .args(["--exact", &test_name]);
+        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let output = command.output().expect("run isolated provider test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "{case}:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+async fn assert_backend_without_configured_key() {
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mut config = GatewayConfig::default();
+    config.llm_providers.insert(
+        "openai".to_string(),
+        LlmProviderConfig {
+            base_url: Some("https://provider.test/v1".into()),
+            ..Default::default()
+        },
+    );
+    let provider = build_provider(&config, "openai:fixture-model");
+    let result = provider
+        .chat_completion(&[], &[], None, None, None, None)
+        .await;
+    assert!(matches!(
+        result,
+        Err(AgentError::LlmApi(message)) if message.contains("no LLM backend configured")
+            && message.contains("openai:fixture-model")
+    ));
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_partial_json(serde_json::json!({"model": "fixture-model"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "model": "fixture-model",
+            "choices": [{"message": {"role": "assistant", "content": "local response"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2}
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    for provider_name in ["ollama-local", "openai"] {
+        config.llm_providers.insert(
+            provider_name.to_string(),
+            LlmProviderConfig {
+                base_url: Some(server.uri()),
+                ..Default::default()
+            },
+        );
+        let provider = build_provider(&config, &format!("{provider_name}:fixture-model"));
+        let response = provider
+            .chat_completion(
+                &[hermes_core::Message::user("hello")],
+                &[],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("loopback provider works without a configured key");
+        assert_eq!(response.message.content.as_deref(), Some("local response"));
+    }
+    server.verify().await;
+}
+
+#[test]
+fn unqualified_model_uses_the_sole_configured_provider() {
+    let config = config_with_key("fixture-provider", None);
+    assert_eq!(
+        resolve_provider_and_model(&config, "  catalogue-model  "),
+        ("fixture-provider".into(), "catalogue-model".into())
+    );
+}
+
+fn assert_configured_fallback_chain() {
+    let config = GatewayConfig {
+        fallback_models: vec![
+            "alpha".to_string(),
+            "   ".to_string(),
+            "ALPHA".to_string(),
+            " beta ".to_string(),
+        ],
+        fallback_model: Some("gamma".to_string()),
+        ..GatewayConfig::default()
+    };
+    assert_eq!(
+        configured_model_fallback_chain(&config),
+        vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()]
+    );
+}
+
+fn assert_default_startup_selection() {
+    let selection = select_startup_model_with_fallback(&GatewayConfig::default(), "   ");
+    assert_eq!(selection.requested_model, "gpt-5.5");
+    assert_eq!(selection.selected_model, "gpt-5.5");
+    assert!(!selection.fallback_used);
+    assert_eq!(selection.skipped_unavailable_models, ["gpt-5.5"]);
+}
+
+fn assert_skip_duplicate_startup_fallback() {
+    let config = GatewayConfig {
+        fallback_models: vec!["ZZ-COV-NONE:MODEL".to_string(), "moa:default".to_string()],
+        ..GatewayConfig::default()
+    };
+    let selection = select_startup_model_with_fallback(&config, "zz-cov-none:model");
+    assert_eq!(selection.requested_model, "zz-cov-none:model");
+    assert_eq!(selection.selected_model, "moa:default");
+    assert!(selection.fallback_used);
+    assert_eq!(
+        selection.skipped_unavailable_models,
+        vec!["zz-cov-none:model".to_string()]
+    );
+}
+
+#[test]
+fn active_config_matches_case_insensitively() {
+    let mut config = GatewayConfig::default();
+    config.llm_providers.insert(
+        "MyCovProv".to_string(),
+        LlmProviderConfig {
+            base_url: Some("http://127.0.0.1:9/case".to_string()),
+            ..LlmProviderConfig::default()
+        },
+    );
+    let found = active_llm_provider_config(&config, "mycovprov", "mycovprov-runtime")
+        .expect("case-insensitive match");
+    assert_eq!(found.base_url.as_deref(), Some("http://127.0.0.1:9/case"));
+    assert!(active_llm_provider_config(&config, "other", "other-runtime").is_none());
+}
+
+#[test]
+fn resolve_provider_uses_single_configured_provider() {
+    let mut config = GatewayConfig::default();
+    config
+        .llm_providers
+        .insert("zz-solo".to_string(), LlmProviderConfig::default());
+    assert_eq!(
+        resolve_provider_and_model(&config, "  some-model  "),
+        ("zz-solo".to_string(), "some-model".to_string())
+    );
+}
+
+#[tokio::test]
+async fn build_provider_moa_returns_no_backend() {
+    let p = build_provider(&GatewayConfig::default(), "moa:default");
+    assert_eq!(size_of_val(&*p), size_of::<NoBackendProvider>());
+    let result = p.chat_completion(&[], &[], None, None, None, None).await;
+    match result {
+        Err(AgentError::LlmApi(msg)) => {
+            assert!(msg.contains("NoBackendProvider"));
+            assert!(msg.contains("moa:default"));
+        }
+        _ => panic!("expected LlmApi error from NoBackendProvider"),
+    }
+}
+
+#[tokio::test]
+async fn no_backend_stream_yields_single_error() {
+    let p = NoBackendProvider {
+        model: "cov-model".to_string(),
+    };
+    let mut stream = p.chat_completion_stream(&[], &[], None, None, None, None);
+    match futures::StreamExt::next(&mut stream).await {
+        Some(Err(AgentError::LlmApi(msg))) => {
+            assert!(msg.contains("no LLM backend configured for streaming"));
+        }
+        _ => panic!("expected streaming LlmApi error"),
+    }
+    assert!(futures::StreamExt::next(&mut stream).await.is_none());
+}
+
+#[test]
+fn build_provider_vertex_constructs_vertex_backend() {
+    let model = format!("{VERTEX_PROVIDER_ID}:gemini-2.5-pro");
+    let p = build_provider(&GatewayConfig::default(), &model);
+    assert_real_backend(&p);
+    assert_eq!(size_of_val(&*p), size_of::<VertexProvider>());
+}
+
+#[test]
+fn build_provider_codex_with_base_url() {
+    let config = config_with_key("codex", Some("http://127.0.0.1:9/codex"));
+    let p = build_provider(&config, "codex:gpt-5.5");
+    assert_real_backend(&p);
+    assert_eq!(size_of_val(&*p), size_of::<CodexProvider>());
+}
+
+#[test]
+fn build_provider_anthropic_with_base_url() {
+    let config = config_with_key("anthropic", Some("http://127.0.0.1:9/anthropic"));
+    let p = build_provider(&config, "anthropic:claude-sonnet-4-6");
+    assert_real_backend(&p);
+    assert_eq!(size_of_val(&*p), size_of::<AnthropicProvider>());
+}
+
+#[test]
+fn build_provider_bedrock_without_key() {
+    let p = build_provider(&GatewayConfig::default(), "bedrock:anthropic.claude-v2");
+    assert_real_backend(&p);
+}
+
+#[test]
+fn build_provider_openrouter() {
+    let config = config_with_key("openrouter", None);
+    let p = build_provider(&config, "openrouter:anthropic/claude-sonnet-4.6");
+    assert_real_backend(&p);
+    assert_eq!(size_of_val(&*p), size_of::<OpenRouterProvider>());
+}
+
+#[test]
+fn build_provider_qwen_oauth_with_base_url() {
+    let config = config_with_key("qwen-cli", Some("http://127.0.0.1:9/qwen"));
+    let p = build_provider(&config, "qwen-cli:qwen3-coder");
+    assert_real_backend(&p);
+    assert_eq!(size_of_val(&*p), size_of::<QwenProvider>());
+}
+
+#[test]
+fn build_provider_kimi_and_moonshot() {
+    for provider in ["kimi", "moonshot"] {
+        let config = config_with_key(provider, Some("http://127.0.0.1:9/kimi"));
+        let p = build_provider(&config, &format!("{provider}:kimi-k2"));
+        assert_real_backend(&p);
+    }
+}
+
+#[test]
+fn build_provider_minimax_with_base_url() {
+    let config = config_with_key("minimax", Some("http://127.0.0.1:9/minimax"));
+    let p = build_provider(&config, "minimax:MiniMax-M2");
+    assert_real_backend(&p);
+}
+
+#[test]
+fn build_provider_gemini_with_base_url() {
+    let config = config_with_key("gemini", Some("http://127.0.0.1:9/gemini"));
+    let p = build_provider(&config, "gemini:gemini-2.5-pro");
+    assert_real_backend(&p);
+}
+
+#[test]
+fn build_provider_stepfun() {
+    let config = config_with_key("stepfun", None);
+    let p = build_provider(&config, "stepfun:step-2");
+    assert_real_backend(&p);
+}
+
+#[test]
+fn build_provider_nous_with_base_url() {
+    let config = config_with_key("nous", Some("http://127.0.0.1:9/nous"));
+    let p = build_provider(&config, "nous:Hermes-4");
+    assert_real_backend(&p);
+    assert_eq!(size_of_val(&*p), size_of::<NousProvider>());
+}
+
+#[test]
+fn build_provider_copilot() {
+    let config = config_with_key("copilot", None);
+    let p = build_provider(&config, "copilot:gpt-4o");
+    assert_real_backend(&p);
+}
