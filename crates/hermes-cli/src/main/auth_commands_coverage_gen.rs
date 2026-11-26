@@ -229,3 +229,5 @@ async fn auth_verify_refreshes_a_fixture_credential_and_keeps_it_on_rejection() 
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
     server.verify().await;
 }
+
+include!("auth_commands_part2_coverage_gen.rs");

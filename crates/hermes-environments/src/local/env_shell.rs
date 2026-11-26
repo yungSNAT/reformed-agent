@@ -607,8 +607,15 @@ fn with_login_profile_sources(
             auto_source_bashrc,
             subprocess_home,
         ));
-        let bash_command = shell_single_quote(&format!("{bash_prelude}{cleanup}{command}"));
-        let zsh_command = shell_single_quote(&format!("{zsh_prelude}{cleanup}{command}"));
+        // The command goes into the script once, as a variable each branch
+        // appends. With a copy per shell branch, the one `sh -c` argument
+        // held the command 2 or 3 times and passed Linux's 128 KiB cap on a
+        // single argument for commands of about 40,000 characters.
+        let command_var = shell_single_quote(command);
+        let bash_setup = shell_single_quote(&format!("{bash_prelude}{cleanup}"));
+        let zsh_setup = shell_single_quote(&format!("{zsh_prelude}{cleanup}"));
+        let bash_command = format!("{bash_setup}\"$__hermes_command\"");
+        let zsh_command = format!("{zsh_setup}\"$__hermes_command\"");
         let preferred_shell = std::env::var("SHELL")
             .ok()
             .and_then(|raw| {
@@ -628,7 +635,7 @@ fn with_login_profile_sources(
             _ => String::new(),
         };
         format!(
-            "{preferred_branch}if command -v bash >/dev/null 2>&1; then exec bash -lc {bash_command}; \
+            "__hermes_command={command_var}; {preferred_branch}if command -v bash >/dev/null 2>&1; then exec bash -lc {bash_command}; \
 elif command -v zsh >/dev/null 2>&1; then exec zsh -lc {zsh_command}; \
 else printf '%s\n' \"Hermes could not find bash or zsh in PATH. Run 'exec zsh -l' or set your default shell where env vars are available.\" >&2; exit 127; fi"
         )
@@ -823,4 +830,31 @@ fn last_top_level_chain_operator(line: &str, stop: usize) -> Option<ChainOperato
         }
     }
     last
+}
+
+#[cfg(all(test, unix))]
+mod login_wrapper_size_tests {
+    use super::*;
+
+    #[test]
+    fn login_wrapper_holds_the_command_once() {
+        let wrapped = with_login_profile_sources("echo marker-7f3a", &[], true, &[], None);
+        assert_eq!(wrapped.matches("marker-7f3a").count(), 1, "{wrapped}");
+    }
+
+    /// Linux caps one argument at 128 KiB (MAX_ARG_STRLEN). With a copy of
+    /// the command for each login shell branch (2 or 3), a 70,000-character
+    /// command passed it. macOS has no per-argument cap, so it runs on Linux.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_70000_character_command_runs_through_the_login_wrapper() {
+        let command = format!("x={}; echo ${{#x}}", "a".repeat(70_000));
+        let backend = LocalBackend::new(30, 1_048_576);
+        let output = backend
+            .execute_command(&command, None, None, false, false)
+            .await
+            .unwrap();
+        assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+        assert_eq!(output.stdout.trim(), "70000");
+    }
 }

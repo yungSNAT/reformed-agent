@@ -12,14 +12,23 @@ struct ClaudeMarketplacePlugin {
     skills: Vec<String>,
 }
 
-async fn fetch_claude_marketplace_manifest(
+async fn resolve_claude_marketplace_skill(
     client: &reqwest::Client,
-) -> Result<ClaudeMarketplaceManifest, AgentError> {
+    requested: &str,
+) -> Result<ResolvedSkillSource, AgentError> {
     let url = format!(
         "{}/repos/anthropics/skills/contents/.claude-plugin/marketplace.json",
         GITHUB_API_BASE
     );
-    let resp = github_request(client, &url, "application/vnd.github.v3.raw")
+    let request = github_request(client, &url, "application/vnd.github.v3.raw");
+    resolve_claude_marketplace_skill_from_request(request, requested).await
+}
+
+async fn resolve_claude_marketplace_skill_from_request(
+    request: reqwest::RequestBuilder,
+    requested: &str,
+) -> Result<ResolvedSkillSource, AgentError> {
+    let resp = request
         .timeout(std::time::Duration::from_secs(20))
         .send()
         .await
@@ -32,16 +41,10 @@ async fn fetch_claude_marketplace_manifest(
             status, body
         )));
     }
-    resp.json::<ClaudeMarketplaceManifest>()
+    let manifest = resp
+        .json::<ClaudeMarketplaceManifest>()
         .await
-        .map_err(|e| AgentError::Config(format!("Invalid Claude marketplace payload: {}", e)))
-}
-
-async fn resolve_claude_marketplace_skill(
-    client: &reqwest::Client,
-    requested: &str,
-) -> Result<ResolvedSkillSource, AgentError> {
-    let manifest = fetch_claude_marketplace_manifest(client).await?;
+        .map_err(|e| AgentError::Config(format!("Invalid Claude marketplace payload: {}", e)))?;
     let req = requested.trim().trim_matches('/').to_ascii_lowercase();
     let mut candidate_paths: Vec<String> = Vec::new();
     for plugin in manifest.plugins {

@@ -97,6 +97,10 @@ mod tests {
     }
 
     fn build_minimal_test_app_with_state_root(state_root: PathBuf) -> App {
+        build_minimal_test_app_with_memory(state_root, true)
+    }
+
+    fn build_minimal_test_app_with_memory(state_root: PathBuf, memory_enabled: bool) -> App {
         let config = Arc::new(GatewayConfig::default());
         let tool_registry = Arc::new(ToolRegistry::new());
         let cron_dir = state_root.join("cron");
@@ -111,6 +115,7 @@ mod tests {
         let session_id = "test-session".to_string();
         let mut agent_config = build_agent_config(config.as_ref(), "dynamic");
         agent_config.session_id = Some(session_id.clone());
+        agent_config.skip_memory |= !memory_enabled;
         let provider: Arc<dyn LlmProvider> = Arc::new(hermes_provider_runtime::NoBackendProvider {
             model: "dynamic".to_string(),
         });
@@ -159,6 +164,32 @@ mod tests {
             tool_snapshot_sync_error: None,
             fail_model_rebuild_for: None,
         }
+    }
+
+    #[test]
+    fn app_debug_keeps_conversation_content_out_of_diagnostics() {
+        if !crate::isolated_test_profile::enter(
+            "app::tests::app_debug_keeps_conversation_content_out_of_diagnostics",
+        ) {
+            return;
+        }
+        let mut app = build_minimal_test_app_with_state_root(hermes_home_dir());
+        app.messages
+            .push(hermes_core::Message::user("raw conversation fixture"));
+        app.input_history.push("raw editable input fixture".into());
+        app.current_model = "debug-fixture-model".into();
+        app.running = false;
+
+        let report = format!("{app:?}");
+        assert!(report.starts_with("App {"), "{report}");
+        assert!(report.contains(r#"session_id: "test-session""#), "{report}");
+        assert!(
+            report.contains(r#"current_model: "debug-fixture-model""#),
+            "{report}"
+        );
+        assert!(report.contains("running: false"), "{report}");
+        assert!(!report.contains("raw conversation fixture"), "{report}");
+        assert!(!report.contains("raw editable input fixture"), "{report}");
     }
 
     #[test]
@@ -464,6 +495,175 @@ mod tests {
             app.current_model = current.to_string();
             assert!(app.model_auto_remediation_target(&unavailable).await.is_none());
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn auth_refresh_reports_missing_state_for_the_active_provider() {
+        if !crate::isolated_test_profile::enter(
+            "app::tests::auth_refresh_reports_missing_state_for_the_active_provider",
+        ) {
+            return;
+        }
+
+        let profile = tempfile::tempdir().unwrap();
+        let home = profile.path();
+        std::env::set_var("HOME", home);
+        std::env::set_var("HERMES_HOME", home);
+        std::env::set_var("HERMES_AUTH_FILE", home.join("missing-auth-store.json"));
+        for (key, filename) in [
+            ("HERMES_NOUS_OAUTH_FILE", "missing-nous.json"),
+            ("HERMES_QWEN_CLI_AUTH_FILE", "missing-qwen.json"),
+            ("HERMES_GEMINI_OAUTH_FILE", "missing-gemini.json"),
+        ] {
+            let path = home.join(filename);
+            assert!(!path.exists());
+            std::env::set_var(key, path);
+        }
+        std::env::set_var("HERMES_AUTO_NOUS_REAUTH", "off");
+
+        let mut app = build_minimal_test_app_with_memory(home.to_path_buf(), false);
+        let model_messages = app.messages.len();
+        let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        app.set_stream_handle(Some(StreamHandle::from(tx)));
+        for (model, notice_prefix, missing_state) in [
+            (
+                "nous:fixture",
+                "Nous auth auto-refresh failed:",
+                "not logged into Nous Portal",
+            ),
+            (
+                "qwen-cli:fixture",
+                "Qwen OAuth auto-refresh failed:",
+                "Qwen CLI credentials not found",
+            ),
+            (
+                "gemini-oauth:fixture",
+                "Gemini OAuth auto-refresh failed:",
+                "Google OAuth credentials not found",
+            ),
+        ] {
+            app.current_model = model.to_string();
+            assert!(!app.force_auth_refresh_after_error().await);
+            let notice = app
+                .ui_messages
+                .last()
+                .unwrap()
+                .message
+                .content
+                .as_deref()
+                .unwrap();
+            assert!(
+                notice.starts_with(notice_prefix) && notice.contains(missing_state),
+                "{notice}"
+            );
+            let crate::tui::Event::StreamChunk(chunk) = events.try_recv().unwrap() else {
+                panic!("expected a lifecycle stream chunk for {model}");
+            };
+            let event = chunk.delta.unwrap().extra.unwrap();
+            assert_eq!(event["ui_event"], "lifecycle");
+            assert_eq!(event["message"], notice);
+            assert!(events.try_recv().is_err());
+            assert_eq!(app.current_model, model);
+        }
+
+        app.current_model = "openai:fixture".into();
+        assert!(!app.force_auth_refresh_after_error().await);
+        assert!(events.try_recv().is_err());
+        assert_eq!(app.ui_messages.len(), 3);
+        assert_eq!(app.messages.len(), model_messages);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn contextlattice_preflight_reports_the_loopback_service_state() {
+        const TEST: &str =
+            "app::tests::contextlattice_preflight_reports_the_loopback_service_state";
+        if !crate::isolated_test_profile::enter(TEST) {
+            return;
+        }
+        let server = MockServer::start().await;
+        let mut app = build_minimal_test_app_with_state_root(hermes_home_dir());
+        let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        app.set_stream_handle(Some(StreamHandle::from(tx)));
+        let mut next_event = || {
+            let crate::tui::Event::StreamChunk(chunk) = events.try_recv().expect("preflight event")
+            else {
+                panic!("expected a preflight stream chunk");
+            };
+            chunk.delta.unwrap().extra.unwrap()
+        };
+
+        std::env::set_var("CONTEXTLATTICE_TOPIC_PATH", "  tests/red-queen  ");
+        std::env::set_var("HERMES_CONTEXTLATTICE_PING_TIMEOUT_SECONDS", "5");
+        for (prefix, response, result, phase) in [
+            (
+                "healthy",
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "service": "fixture", "ok": true
+                })),
+                "contextlattice connected (service=fixture status=200 OK",
+                Some("contextlattice connected"),
+            ),
+            (
+                "degraded",
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "service": "fixture", "ok": false
+                })),
+                "contextlattice degraded (service=fixture status=200 OK",
+                Some("contextlattice degraded"),
+            ),
+            (
+                "invalid",
+                ResponseTemplate::new(200).set_body_string("status unavailable"),
+                "contextlattice connected (service=unknown status=200 OK",
+                Some("contextlattice connected"),
+            ),
+            (
+                "unavailable",
+                ResponseTemplate::new(503),
+                "contextlattice status endpoint returned 503 Service Unavailable",
+                None,
+            ),
+        ] {
+            let base = format!("{}/{prefix}", server.uri());
+            let resource = format!("/{prefix}/status");
+            Mock::given(method("GET"))
+                .and(path(resource.as_str()))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            std::env::set_var("CONTEXTLATTICE_ORCHESTRATOR_URL", format!(" {base}/ "));
+            app.emit_contextlattice_connectivity_status().await;
+
+            assert_eq!(
+                next_event(),
+                serde_json::json!({
+                    "ui_event": "lifecycle",
+                    "message": format!("contextlattice preflight ping {base} (topic=tests/red-queen)"),
+                })
+            );
+            let outcome = next_event();
+            assert_eq!(outcome["ui_event"], "lifecycle");
+            let message = outcome["message"].as_str().unwrap();
+            assert!(message.starts_with(result), "{message}");
+            assert!(message.contains(&base), "{message}");
+            if let Some(label) = phase {
+                assert_eq!(
+                    next_event(),
+                    serde_json::json!({
+                        "ui_event": "phase", "phase": "context", "label": label, "progress_pct": 12,
+                    })
+                );
+            }
+        }
+        assert!(events.try_recv().is_err());
+
+        std::env::set_var("HERMES_CONTEXTLATTICE_UI_STATUS", "off");
+        app.emit_contextlattice_connectivity_status().await;
+        assert!(events.try_recv().is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 4);
     }
 
     #[test]

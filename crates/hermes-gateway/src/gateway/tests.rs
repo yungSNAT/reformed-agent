@@ -27,9 +27,15 @@ struct FileTestAdapter {
     files: Arc<Mutex<Vec<String>>>,
 }
 
+type MediaTextCall = (String, String, Option<ParseMode>);
+type MediaImageCall = (String, String, Option<String>);
+
+#[derive(Default)]
 struct MediaMarkerTestAdapter {
-    messages: Arc<Mutex<Vec<(String, String)>>>,
-    files: Arc<Mutex<Vec<String>>>,
+    messages: Mutex<Vec<MediaTextCall>>,
+    files: Mutex<Vec<String>>,
+    images: Mutex<Vec<MediaImageCall>>,
+    reject_files: bool,
 }
 
 type ThreadSendRecord = (String, String, Option<String>, bool);
@@ -384,12 +390,12 @@ impl PlatformAdapter for MediaMarkerTestAdapter {
         &self,
         chat_id: &str,
         text: &str,
-        _parse_mode: Option<ParseMode>,
+        parse_mode: Option<ParseMode>,
     ) -> Result<(), GatewayError> {
         self.messages
             .lock()
             .unwrap()
-            .push((chat_id.to_string(), text.to_string()));
+            .push((chat_id.to_string(), text.to_string(), parse_mode));
         Ok(())
     }
 
@@ -412,7 +418,28 @@ impl PlatformAdapter for MediaMarkerTestAdapter {
             .lock()
             .unwrap()
             .push(format!("{chat_id}:{file_path}"));
+        if self.reject_files {
+            return Err(GatewayError::SendFailed(
+                "fixture file delivery failed".into(),
+            ));
+        }
         Ok(())
+    }
+
+    async fn send_image_url(
+        &self,
+        chat_id: &str,
+        image_url: &str,
+        caption: Option<&str>,
+    ) -> Result<(), GatewayError> {
+        self.images.lock().unwrap().push((
+            chat_id.into(),
+            image_url.into(),
+            caption.map(str::to_owned),
+        ));
+        Err(GatewayError::SendFailed(
+            "fixture image delivery failed".into(),
+        ))
     }
 
     fn is_running(&self) -> bool {
@@ -1110,15 +1137,11 @@ async fn gateway_explicit_send_truncates_long_non_chunking_output_with_audit_lab
 
 #[tokio::test]
 async fn gateway_send_message_extracts_media_markers_and_delivers_files() {
-    let messages = Arc::new(Mutex::new(Vec::new()));
-    let files = Arc::new(Mutex::new(Vec::new()));
-    let adapter = Arc::new(MediaMarkerTestAdapter {
-        messages: messages.clone(),
-        files: files.clone(),
-    });
+    let adapter = Arc::new(MediaMarkerTestAdapter::default());
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let gw = Gateway::with_defaults(session_mgr, GatewayConfig::default());
-    gw.register_adapter("media-marker-test", adapter).await;
+    gw.register_adapter("media-marker-test", adapter.clone())
+        .await;
 
     let tmp = tempfile::tempdir().unwrap();
     let audio = tmp.path().join("reply.ogg");
@@ -1140,12 +1163,16 @@ async fn gateway_send_message_extracts_media_markers_and_delivers_files() {
     .expect("send should succeed");
 
     assert_eq!(
-        messages.lock().unwrap().as_slice(),
-        &[("chat1".to_string(), "Here is the result. Done".to_string())]
+        *adapter.messages.lock().unwrap(),
+        [(
+            "chat1".to_owned(),
+            "Here is the result. Done".to_owned(),
+            Some(ParseMode::Markdown)
+        )]
     );
     assert_eq!(
-        files.lock().unwrap().as_slice(),
-        &[
+        *adapter.files.lock().unwrap(),
+        [
             format!("chat1:{}", std::fs::canonicalize(&audio).unwrap().display()),
             format!("chat1:{}", std::fs::canonicalize(&image).unwrap().display()),
         ]
@@ -1153,16 +1180,79 @@ async fn gateway_send_message_extracts_media_markers_and_delivers_files() {
 }
 
 #[tokio::test]
-async fn gateway_send_message_blocks_unsafe_media_marker_paths() {
-    let messages = Arc::new(Mutex::new(Vec::new()));
-    let files = Arc::new(Mutex::new(Vec::new()));
+async fn gateway_falls_back_to_readable_text_when_native_media_fails() {
     let adapter = Arc::new(MediaMarkerTestAdapter {
-        messages: messages.clone(),
-        files: files.clone(),
+        reject_files: true,
+        ..MediaMarkerTestAdapter::default()
     });
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let gw = Gateway::with_defaults(session_mgr, GatewayConfig::default());
-    gw.register_adapter("media-marker-test", adapter).await;
+    gw.register_adapter("media-marker-test", adapter.clone())
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let attachment = tmp.path().join("timetable.txt");
+    std::fs::write(&attachment, "Northbound departure at 9:15").unwrap();
+    let canonical = std::fs::canonicalize(&attachment).unwrap();
+    gw.send_message(
+        "media-marker-test",
+        "chat1",
+        &format!(
+            "Here is the timetable.\n![ Timetable ](https://example.invalid/timetable.png)\n![](https://example.invalid/map.png)\nMEDIA:\"{}\"",
+            attachment.display()
+        ),
+        Some(ParseMode::Markdown),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        *adapter.files.lock().unwrap(),
+        [format!("chat1:{}", canonical.display())]
+    );
+    assert_eq!(
+        *adapter.images.lock().unwrap(),
+        [
+            (
+                "chat1".to_owned(),
+                "https://example.invalid/timetable.png".to_owned(),
+                Some("Timetable".to_owned())
+            ),
+            (
+                "chat1".to_owned(),
+                "https://example.invalid/map.png".to_owned(),
+                None
+            ),
+        ]
+    );
+    let expected = [
+        ("Here is the timetable.".to_string(), ParseMode::Markdown),
+        (
+            "Timetable\nhttps://example.invalid/timetable.png".to_string(),
+            ParseMode::Plain,
+        ),
+        (
+            "https://example.invalid/map.png".to_string(),
+            ParseMode::Plain,
+        ),
+        (
+            format!("[media attachment] {}", canonical.display()),
+            ParseMode::Plain,
+        ),
+    ];
+    assert_eq!(
+        *adapter.messages.lock().unwrap(),
+        expected.map(|(text, mode)| ("chat1".to_string(), text, Some(mode)))
+    );
+}
+
+#[tokio::test]
+async fn gateway_send_message_blocks_unsafe_media_marker_paths() {
+    let adapter = Arc::new(MediaMarkerTestAdapter::default());
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let gw = Gateway::with_defaults(session_mgr, GatewayConfig::default());
+    gw.register_adapter("media-marker-test", adapter.clone())
+        .await;
 
     gw.send_message(
         "media-marker-test",
@@ -1173,12 +1263,13 @@ async fn gateway_send_message_blocks_unsafe_media_marker_paths() {
     .await
     .expect("blocked media marker should not fail entire message send");
 
-    assert!(files.lock().unwrap().is_empty());
+    assert!(adapter.files.lock().unwrap().is_empty());
     assert_eq!(
-        messages.lock().unwrap().as_slice(),
-        &[(
+        *adapter.messages.lock().unwrap(),
+        [(
             "chat1".to_string(),
-            "[media attachment blocked: unsafe local file path]".to_string()
+            "[media attachment blocked: unsafe local file path]".to_string(),
+            Some(ParseMode::Plain),
         )]
     );
 }
