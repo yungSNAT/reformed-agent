@@ -18,25 +18,6 @@ tool_output:
   max_lines: 2000
   max_line_length: 2000
 platforms: {}
-platform_toolsets:
-  desktop:
-    - hermes-cli
-  cron:
-    - hermes-cron
-  cli:
-    - hermes-cli
-  whatsapp:
-    - hermes-whatsapp
-  telegram:
-    - hermes-telegram
-  acp:
-    - hermes-acp
-  discord:
-    - hermes-discord
-  slack:
-    - hermes-slack
-  tui:
-    - hermes-cli
 delegation: {}
 session:
   reset_policy:
