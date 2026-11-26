@@ -73,6 +73,108 @@ fn config_file_activates_provider_and_loads_values() {
 }
 
 #[test]
+fn recall_config_overrides_environment_and_bounds_policy_values() {
+    const CHILD: &str = "REFORMED_OPENVIKING_RECALL_CONFIG_TEST";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let home = tempfile::tempdir().unwrap();
+        let executable = std::env::current_exe().expect("test executable");
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let test =
+            format!("{module}::recall_config_overrides_environment_and_bounds_policy_values");
+        let mut command = std::process::Command::new(executable);
+        command
+            .env_clear()
+            .envs([
+                (CHILD, "1"),
+                ("OPENVIKING_RECALL_LIMIT", " 9 "),
+                ("OPENVIKING_RECALL_SCORE_THRESHOLD", " .375 "),
+                ("OPENVIKING_RECALL_MAX_INJECTED_CHARS", "1200"),
+                ("OPENVIKING_RECALL_TIMEOUT_SECONDS", ".875"),
+                ("OPENVIKING_RECALL_REQUEST_TIMEOUT_SECONDS", "1.75"),
+                ("OPENVIKING_RECALL_FULL_READ_LIMIT", "5"),
+                ("OPENVIKING_RECALL_PREFER_ABSTRACT", " nO "),
+                ("OPENVIKING_RECALL_RESOURCES", " yes "),
+            ])
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env("HERMES_HOME", home.path())
+            .current_dir(home.path())
+            .args(["--exact", &test, "--color", "never"]);
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env(
+                "LLVM_PROFILE_FILE",
+                std::path::absolute(profile).expect("resolve coverage output path"),
+            );
+        }
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system_root);
+        }
+        let output = command.output().expect("run isolated OpenViking fixture");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains(&format!("test {test} ... ok")),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    let profile = tempfile::tempdir().unwrap();
+    let home = profile.path().to_str().expect("UTF-8 fixture path");
+    let inherited = OpenVikingConfig::load(home).recall;
+    assert_eq!(inherited.limit, 9);
+    assert_eq!(inherited.score_threshold, 0.375);
+    assert_eq!(inherited.max_injected_chars, 1200);
+    assert_eq!(inherited.timeout, Duration::from_millis(875));
+    assert_eq!(inherited.request_timeout, Duration::from_millis(1750));
+    assert_eq!(inherited.full_read_limit, 5);
+    assert!(!inherited.prefer_abstract);
+    assert!(inherited.include_resources);
+
+    let path = OpenVikingConfig::config_path(home);
+    std::fs::write(
+        &path,
+        r#"{
+        "recall_limit": " 99 ",
+        "recall_score_threshold": -0.25,
+        "recall_max_injected_chars": "invalid",
+        "recall_timeout_seconds": 0,
+        "recall_request_timeout_seconds": "0.25",
+        "recall_full_read_limit": 17,
+        "recall_prefer_abstract": " YeS ",
+        "recall_resources": false
+    }"#,
+    )
+    .unwrap();
+    let overrides = OpenVikingConfig::load(home).recall;
+    assert_eq!(overrides.limit, 50);
+    assert_eq!(overrides.score_threshold, 0.0);
+    assert_eq!(overrides.max_injected_chars, inherited.max_injected_chars);
+    assert_eq!(overrides.timeout, Duration::from_millis(50));
+    assert_eq!(overrides.request_timeout, Duration::from_millis(250));
+    assert_eq!(overrides.full_read_limit, 10);
+    assert!(overrides.prefer_abstract);
+    assert!(!overrides.include_resources);
+
+    std::fs::write(
+        path,
+        r#"{
+        "recall_limit": "-1",
+        "recall_max_injected_chars": 1,
+        "recall_prefer_abstract": 7,
+        "recall_resources": " oFf "
+    }"#,
+    )
+    .unwrap();
+    let replaced = OpenVikingConfig::load(home).recall;
+    assert_eq!(replaced.limit, inherited.limit);
+    assert_eq!(replaced.max_injected_chars, 256);
+    assert!(!replaced.prefer_abstract);
+    assert!(!replaced.include_resources);
+}
+
+#[test]
 fn save_config_merges_and_writes_owner_only() {
     let _guard = config_io::TEST_ENV_LOCK.lock().expect("env lock");
     let tmp = tempfile::tempdir().expect("tempdir");
