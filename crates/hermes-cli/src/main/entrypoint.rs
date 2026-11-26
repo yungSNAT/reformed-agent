@@ -41,7 +41,7 @@ async fn run_main() {
         // already exists, so --profile or --config-dir would be silently ignored here.
         if cli.profile.is_some() || cli.config_dir.is_some() {
             eprintln!(
-                "Error: import-hermes-sessions writes to --profile-dir; drop --profile and --config-dir."
+                "Error: --profile and --config-dir do not apply to import-hermes-sessions, which writes to --profile-dir."
             );
             std::process::exit(1);
         }

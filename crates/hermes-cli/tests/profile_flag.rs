@@ -1,6 +1,6 @@
 //! The global `--profile` flag: it and `--config-dir` each choose the home, so giving both is
-//! an error, and a command that takes its folder from its own flag refuses it rather than
-//! ignoring it.
+//! an error, and import-hermes-sessions, which writes to the folder --profile-dir names, refuses
+//! them rather than ignoring them.
 
 use assert_cmd::Command;
 
