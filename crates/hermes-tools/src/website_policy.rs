@@ -96,7 +96,7 @@ pub fn load_website_blocklist(
                 }
             }
             // No fallback to the profile alone: the overlay was required.
-            with_managed_config(&dir, || {
+            hermes_config::managed_config::with_managed_config(&dir, || {
                 hermes_config::load_effective_config_yaml_value(&path)
             })
             .map_err(WebsitePolicyError::new)?
@@ -217,45 +217,6 @@ pub fn check_website_access_with_policy(
         }
     }
     None
-}
-
-/// Runs `read`, which lays the managed scope's `config.yaml` in `dir` over a profile's through
-/// the shared loader. The loader skips a managed file it cannot use, with a warning; security
-/// readers refuse instead, as it may pin a restriction, and refuse too when the file changed
-/// during `read`, as the loader may then have skipped it.
-pub(crate) fn with_managed_config<T>(dir: &Path, read: impl FnOnce() -> T) -> Result<T, String> {
-    let before = usable_managed_config(dir)?;
-    let value = read();
-    if usable_managed_config(dir)? != before {
-        return Err(format!(
-            "{} changed while it was read",
-            dir.join("config.yaml").display()
-        ));
-    }
-    Ok(value)
-}
-
-/// The managed `config.yaml` in `dir` when the shared loader can lay it over a profile's, or
-/// `None` when it names nothing (missing, empty or only comments).
-fn usable_managed_config(dir: &Path) -> Result<Option<String>, String> {
-    let path = dir.join("config.yaml");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("Failed to read {}: {e}", path.display())),
-    };
-    if text.trim().is_empty() {
-        return Ok(None);
-    }
-    match serde_yaml::from_str::<serde_yaml::Value>(&text) {
-        Err(e) => Err(format!("Invalid YAML in {}: {e}", path.display())),
-        Ok(serde_yaml::Value::Null) => Ok(None),
-        Ok(root) if !root.is_mapping() => Err(format!("{} must be a mapping", path.display())),
-        Ok(root) => match serde_json::to_value(root) {
-            Ok(_) => Ok(Some(text)),
-            Err(e) => Err(format!("{} cannot be read as JSON: {e}", path.display())),
-        },
-    }
 }
 
 fn mapping_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
@@ -517,22 +478,6 @@ security:
         std::fs::write(managed.path().join("config.yaml"), "# none yet\n").unwrap();
         let _managed = ManagedDir::set(managed.path());
         assert!(!load_website_blocklist(Some(&config)).unwrap().enabled);
-    }
-
-    #[test]
-    fn a_managed_config_that_changes_while_it_is_read_refuses() {
-        let managed = tempfile::tempdir().unwrap();
-        let file = managed.path().join("config.yaml");
-        std::fs::write(&file, "security: {}\n").unwrap();
-        assert_eq!(with_managed_config(managed.path(), || 1), Ok(1));
-        for changed in [
-            "security: [unclosed\n",
-            "security:\n  website_blocklist:\n    enabled: true\n",
-        ] {
-            std::fs::write(&file, "security: {}\n").unwrap();
-            let read = with_managed_config(managed.path(), || std::fs::write(&file, changed));
-            assert!(read.is_err(), "{changed:?} went unnoticed");
-        }
     }
 
     #[test]

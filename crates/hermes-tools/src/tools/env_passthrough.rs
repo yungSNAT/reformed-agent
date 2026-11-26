@@ -22,7 +22,7 @@ fn load_config_passthrough_uncached() -> BTreeSet<String> {
     // passes nothing through, rather than the profile's list.
     let read = || hermes_config::load_effective_config_yaml_value(&home.join("config.yaml"));
     let config = match hermes_config::managed_scope_dir() {
-        Some(dir) => match crate::website_policy::with_managed_config(&dir, read) {
+        Some(dir) => match hermes_config::managed_config::with_managed_config(&dir, read) {
             Ok(config) => config,
             Err(problem) => {
                 tracing::warn!("terminal.env_passthrough ignored: {problem}");

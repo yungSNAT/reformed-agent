@@ -76,14 +76,16 @@ impl Pins {
             return Ok(Some(guard));
         }
         if let Some(dir) = managed {
-            if let Some(read) = guard_in(&dir.join("config.yaml"), "the managed config").await? {
+            let config = crate::managed_config::managed_config_yaml(dir)
+                .map_err(|e| undecided(format!("the managed config could not be used ({e})")))?;
+            if let Some(read) = config.as_ref().map(guard_named_in).transpose()?.flatten() {
                 return Ok(Some(self.managed.get_or_init(|| read)));
             }
         }
         if let Some(guard) = self.pinned() {
             return Ok(Some(guard));
         }
-        if let Some(read) = guard_in(&home.join("config.yaml"), "the profile config").await? {
+        if let Some(read) = guard_in(&home.join("config.yaml")).await? {
             self.profile.get_or_init(|| read);
         }
         // A managed guard another call pinned during this read governs.
@@ -136,18 +138,26 @@ fn undecided(why: impl std::fmt::Display) -> String {
     format!("The tool guard refused the call: {why}.")
 }
 
-/// The guard a `config.yaml` names, read without the rest of the config so an
-/// unrelated setting cannot switch it off. A config that exists but cannot be
-/// read refuses, as it may name a guard. The administrator's guard (the
-/// managed scope's) is used whole; the profile's applies only when it names none.
-async fn guard_in(path: &Path, name: &str) -> Result<Option<ToolGuardConfig>, String> {
+/// The guard the profile's `config.yaml` names. A config that exists but cannot
+/// be read refuses, as it may name a guard.
+async fn guard_in(path: &Path) -> Result<Option<ToolGuardConfig>, String> {
+    let name = "the profile config";
     let text = match tokio::fs::read_to_string(path).await {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(undecided(format!("{name} could not be read ({e})"))),
     };
-    let config: serde_yaml::Value = serde_yaml::from_str(&text)
+    let mut config: serde_yaml::Value = serde_yaml::from_str(&text)
         .map_err(|e| undecided(format!("{name} could not be parsed ({e})")))?;
+    crate::loader::expand_env_vars_in_yaml(&mut config);
+    guard_named_in(&config)
+}
+
+/// The guard a config names, read without the rest of the config so an
+/// unrelated setting cannot switch it off. `${VAR}` references are expanded
+/// first, as `load_config` does. The administrator's guard (the managed
+/// scope's) is used whole; the profile's applies only when it names none.
+fn guard_named_in(config: &serde_yaml::Value) -> Result<Option<ToolGuardConfig>, String> {
     match config
         .get("security")
         .and_then(|security| security.get("tool_guard"))
