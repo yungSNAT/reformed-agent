@@ -3,15 +3,16 @@
 //! `session.resume` answer with a session snapshot, `prompt.submit` with an admission receipt, and
 //! a turn's events carry its admission, execution generation and the replay epoch, with a
 //! `session.info` as the turn starts and ends. Every other method is answered as on the legacy
-//! wire, so one this backend does not serve gets JSON-RPC 'method not found'.
+//! wire, so one this backend does not serve gets JSON-RPC 'method not found' (-32601).
 //!
 //! One profile is served, `default`, so a request naming any other is refused. A session's
 //! metadata cannot be changed here, so its revision stays 0.
 //!
-//! A prompt sent whilst a turn runs is queued (its receipt says `queued`), a session resumed on
-//! another connection streams there too, and a retried `session.create` with the same
-//! `request_id` gets the same session while the gateway remembers it (its last
-//! [`super::CREATE_RECORDS`] creates).
+//! A prompt sent whilst a turn runs is queued (its receipt says `queued`, and snapshots and
+//! `session.info` list it in `pending` until it starts), a session resumed on another
+//! connection streams there too, and a retried `session.create` with the same `request_id`
+//! gets the same session while the gateway remembers it (its last [`super::CREATE_RECORDS`]
+//! creates, of ids at least [`MIN_REMEMBERED_REQUEST_ID`] long).
 
 use std::sync::Arc;
 
@@ -32,6 +33,10 @@ const PROFILE: &str = "default";
 /// `prepareCreate`) that change nothing this backend does. Any other launch option (a model, a
 /// working folder, toolsets) is refused rather than dropped.
 const CREATE_KEYS: [&str; 4] = ["request_id", "source", "profile", "service_tier"];
+/// Shortest `request_id` remembered. Any connection with the gateway's credential can create,
+/// so a remembered id opens its session to whoever sends it again: a short one could be
+/// guessed, where the desktop sends a UUID (36 characters).
+const MIN_REMEMBERED_REQUEST_ID: usize = 16;
 
 /// The methods a canonical connection answers its own way; the rest are the legacy wire's.
 pub(super) const METHODS: &[(&str, Handler)] = &[
@@ -86,25 +91,32 @@ impl Admission {
         json!({"profile_id": self.profile_id, "session_id": session_id})
     }
 
-    /// The `session.info` payload as the turn starts (`running`) and once it has ended.
-    pub(super) fn info(&self, session_id: &str, running: bool) -> Value {
-        let pending = if running {
-            json!([{
-                "admission_id": self.id,
-                "ref": self.reference(session_id),
-                "sequence": self.sequence,
-                "status": "started",
-                "outcome": null,
-                "authority_epoch": AUTHORITY_EPOCH,
-                "execution_generation": self.generation,
-                "input_id": self.input_id,
-                "text": self.text,
-                "controls": [],
-                "steering": false,
-            }])
-        } else {
-            json!([])
-        };
+    /// Its row in a snapshot's or `session.info`'s `pending`: `started` with its generation,
+    /// or `queued` with none, as upstream's `CanonicalPendingAdmission`.
+    pub(super) fn row(&self, session_id: &str, started: bool) -> Value {
+        json!({
+            "admission_id": self.id,
+            "ref": self.reference(session_id),
+            "sequence": self.sequence,
+            "status": if started { "started" } else { "queued" },
+            "outcome": null,
+            "authority_epoch": AUTHORITY_EPOCH,
+            "execution_generation": if started { json!(self.generation) } else { Value::Null },
+            "input_id": self.input_id,
+            "text": self.text,
+            "controls": [],
+            "steering": false,
+        })
+    }
+
+    /// Bytes it holds besides its prompt's text, which a queue counts against its limits.
+    pub(super) fn held_bytes(&self) -> usize {
+        self.text.len()
+    }
+
+    /// The `session.info` payload as the turn starts (`running`) and once it has ended, with
+    /// the session's `pending` admissions.
+    pub(super) fn info(&self, session_id: &str, running: bool, pending: Vec<Value>) -> Value {
         json!({
             "stored_session_id": session_id,
             "pending": pending,
@@ -140,7 +152,7 @@ impl Chat {
                 format!("invalid_params: {key} is not a session option this gateway serves"),
             ));
         }
-        let request_id = match params.get("request_id") {
+        let request_id: &String = match params.get("request_id") {
             Some(Value::String(r)) if !r.is_empty() => r,
             _ => {
                 return Err((
@@ -161,9 +173,11 @@ impl Chat {
         }
         // One lock over the lookup, the creation and the record, so 2 requests with one id
         // make one session.
+        let remembered = request_id.len() >= MIN_REMEMBERED_REQUEST_ID;
         let mut created = self.created.lock().unwrap_or_else(|e| e.into_inner());
         let earlier = created
             .iter()
+            .filter(|_| remembered)
             .find(|(request, _)| request == request_id)
             .and_then(|(_, id)| Some((id.clone(), self.lock_sessions().get(id).cloned()?)));
         let repeat = earlier.is_some();
@@ -174,10 +188,12 @@ impl Chat {
                 let session = self.new_session();
                 self.lock_sessions()
                     .insert(id.clone(), Arc::clone(&session));
-                created.retain(|(request, _)| request != request_id);
-                created.push_back((request_id.clone(), id.clone()));
-                if created.len() > CREATE_RECORDS {
-                    created.pop_front();
+                if remembered {
+                    created.retain(|(request, _)| request != request_id);
+                    created.push_back((request_id.clone(), id.clone()));
+                    if created.len() > CREATE_RECORDS {
+                        created.pop_front();
+                    }
                 }
                 (id, session)
             }
@@ -293,7 +309,7 @@ impl Chat {
             "last_sequence": last_sequence,
             "revision": 0,
             "execution_generation": generation,
-            "pending": [],
+            "pending": session.pending(id, true),
             "prompts": [],
             "info": info,
         });

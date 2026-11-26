@@ -5,10 +5,14 @@
 //! connection are decided together. Sends are to unbounded channels and never wait; a
 //! connection that stops reading is closed by its write deadline (`lib.rs`), which bounds what
 //! waits for it.
+//!
+//! The gateway's log budget is shared: a session short of it clears the logs of idle sessions,
+//! the least recently written first. It only tries their locks, never waits for them, as it
+//! holds its own.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use serde_json::Value;
 use tokio::sync::OwnedSemaphorePermit;
@@ -22,8 +26,9 @@ use crate::attach::StagedImage;
 /// and 4 MiB per session in tui_gateway/event_replay.py).
 const LOG_EVENTS: usize = 512;
 const LOG_BYTES: usize = 1 << 20;
-/// Most bytes of event logs kept across the gateway (upstream: 64 MiB). Past it an event is
-/// sent but not kept, and a replay from before it reports `truncated`.
+/// Most bytes of event logs kept across the gateway (upstream: 64 MiB). Past it, idle
+/// sessions' logs are cleared to make room; with none to clear, an event is sent but not kept,
+/// and a replay from before it reports `truncated`.
 const PROCESS_LOG_BYTES: usize = 64 << 20;
 
 /// Most prompts, and most bytes of their text, one session holds for its running turn.
@@ -37,6 +42,46 @@ const PROCESS_QUEUE_BYTES: usize = 16 << 20;
 pub(crate) struct Budget {
     log: AtomicUsize,
     queue: AtomicUsize,
+    /// Every session made with this budget, to take log bytes from.
+    sessions: Mutex<Vec<Weak<LiveSession>>>,
+    /// Orders sessions by when their logs were last written.
+    clock: AtomicU64,
+}
+
+impl Budget {
+    /// Clears idle sessions' logs, the least recently written first, until `size` bytes are
+    /// reserved; false when no idle session other than `me` has a log to clear.
+    fn reclaim(&self, me: &LiveSession, size: usize) -> bool {
+        let mut idle: Vec<(u64, Arc<LiveSession>)> = {
+            let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            sessions.retain(|session| session.strong_count() > 0);
+            sessions
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter(|session| !std::ptr::eq(Arc::as_ptr(session), me))
+                .filter_map(|session| {
+                    // Only tried: another session's publisher may be waiting for `me`'s lock.
+                    let touched = {
+                        let hub = session.hub.try_lock().ok()?;
+                        (!hub.busy && hub.log_bytes > 0).then_some(hub.touched)?
+                    };
+                    Some((touched, session))
+                })
+                .collect()
+        };
+        idle.sort_by_key(|(touched, _)| *touched);
+        for (_, session) in idle {
+            if let Ok(mut hub) = session.hub.try_lock() {
+                if !hub.busy {
+                    hub.clear_log(self);
+                }
+            }
+            if reserve(&self.log, size, PROCESS_LOG_BYTES) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Takes `bytes` from `counter` if the total stays within `cap`.
@@ -59,6 +104,23 @@ pub(super) struct Queued {
     pub(super) text: String,
     pub(super) images: Vec<StagedImage>,
     pub(super) admission: Option<Box<Admission>>,
+}
+
+impl Queued {
+    /// Bytes it holds that the queue limits count: its text, and its admission's copy.
+    fn size(&self) -> usize {
+        self.text.len() + self.admission.as_ref().map_or(0, |a| a.held_bytes())
+    }
+}
+
+/// What a session's runner does when a turn ends.
+pub(super) enum Next {
+    /// Run this prompt with this slot.
+    Run(Queued, OwnedSemaphorePermit),
+    /// A prompt waits: get a turn slot and ask again.
+    Wait,
+    /// Nothing waits; the session is idle.
+    Idle,
 }
 
 /// How a prompt was taken.
@@ -101,6 +163,8 @@ struct Hub {
     log_bytes: usize,
     /// Highest seq dropped from the log or never kept in it.
     evicted_through: u64,
+    /// The budget's clock when the log was last written.
+    touched: u64,
     busy: bool,
     queue: VecDeque<Queued>,
     queue_bytes: usize,
@@ -108,6 +172,8 @@ struct Hub {
     admitted: u64,
     /// Turns started (the canonical wire's execution generation).
     generation: u64,
+    /// The running turn's admission, on the canonical wire.
+    current: Option<Box<Admission>>,
 }
 
 pub(crate) struct LiveSession {
@@ -119,11 +185,17 @@ pub(crate) struct LiveSession {
 
 impl LiveSession {
     pub(super) fn new(budget: Arc<Budget>) -> Arc<Self> {
-        Arc::new(Self {
+        let session = Arc::new(Self {
             hub: Mutex::default(),
-            budget,
+            budget: Arc::clone(&budget),
             images: Mutex::default(),
-        })
+        });
+        budget
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(Arc::downgrade(&session));
+        session
     }
 
     fn hub(&self) -> MutexGuard<'_, Hub> {
@@ -150,29 +222,75 @@ impl LiveSession {
     }
 
     /// Sends one event, its `params` stamped with the next seq, to every connection and keeps
-    /// it in the log. `slot` is a turn's slot and the connection that prompted the turn, freed
-    /// once every connection's copy is written or dropped.
+    /// it in the log. `slot` is a turn's slot and the connection that prompted the turn: it
+    /// rides on that connection's copy only, and frees once that copy is written or dropped,
+    /// or at once when that connection no longer streams the session.
     pub(crate) fn publish(
         &self,
         mut params: Value,
         slot: Option<(u64, Arc<OwnedSemaphorePermit>)>,
     ) {
-        let slot = slot.map(|(_, permit)| permit);
+        let (owner, mut slot) = match slot {
+            Some((owner, slot)) => (Some(owner), Some(slot)),
+            None => (None, None),
+        };
         let mut hub = self.hub();
         hub.seq += 1;
         let seq = hub.seq;
         params["seq"] = seq.into();
         let text: Arc<str> = params.to_string().into();
-        hub.keep(seq, &text, &self.budget);
+        self.keep(&mut hub, seq, &text);
         let frame: Arc<str> =
             format!(r#"{{"jsonrpc":"2.0","method":"event","params":{text}}}"#).into();
         let queued = Instant::now();
         // A connection that has closed drops out here.
-        hub.subscribers.retain(|(_, outbox)| {
+        hub.subscribers.retain(|(conn, outbox)| {
+            let carried = if owner == Some(*conn) {
+                slot.take()
+            } else {
+                None
+            };
             outbox
-                .send(Outgoing::shared(Arc::clone(&frame), queued, slot.clone()))
+                .send(Outgoing::shared(Arc::clone(&frame), queued, carried))
                 .is_ok()
         });
+    }
+
+    /// Logs event `seq`, then drops the oldest events past the session's limits.
+    fn keep(&self, hub: &mut Hub, seq: u64, text: &Arc<str>) {
+        let size = text.len();
+        let budget = &self.budget;
+        if size > LOG_BYTES
+            || !(reserve(&budget.log, size, PROCESS_LOG_BYTES) || budget.reclaim(self, size))
+        {
+            hub.evicted_through = seq;
+            return;
+        }
+        hub.touched = budget.clock.fetch_add(1, Ordering::Relaxed);
+        hub.log.push_back((seq, Arc::clone(text)));
+        hub.log_bytes += size;
+        while hub.log.len() > LOG_EVENTS || hub.log_bytes > LOG_BYTES {
+            let Some((old, text)) = hub.log.pop_front() else {
+                break;
+            };
+            hub.log_bytes -= text.len();
+            release(&budget.log, text.len());
+            hub.evicted_through = hub.evicted_through.max(old);
+        }
+    }
+
+    /// The admissions waiting in `pending` (upstream's snapshot and `session.info` field): the
+    /// running turn's when `running` is asked for, then each queued one in order.
+    pub(super) fn pending(&self, session_id: &str, running: bool) -> Vec<Value> {
+        let hub = self.hub();
+        let current = hub.current.iter().filter(|_| running && hub.busy);
+        let started = current.map(|admission| admission.row(session_id, true));
+        let queued = hub
+            .queue
+            .iter()
+            .filter_map(|prompt| prompt.admission.as_ref())
+            .map(|admission| admission.row(session_id, false));
+        started.chain(queued).collect()
     }
 
     /// The logged events after `last_seen`.
@@ -228,6 +346,7 @@ impl LiveSession {
             if let Some(admission) = prompt.admission.as_mut() {
                 admission.generation = hub.generation;
             }
+            hub.current = prompt.admission.clone();
             return Ok(Admitted::Start {
                 generation: hub.generation,
                 sequence,
@@ -235,7 +354,7 @@ impl LiveSession {
                 prompt,
             });
         }
-        let bytes = prompt.text.len();
+        let bytes = prompt.size();
         if hub.queue.len() >= QUEUE_PROMPTS
             || hub.queue_bytes + bytes > QUEUE_BYTES
             || !reserve(&self.budget.queue, bytes, PROCESS_QUEUE_BYTES)
@@ -248,22 +367,30 @@ impl LiveSession {
         Ok(Admitted::Queued { sequence })
     }
 
-    /// Called when a turn ends: the next waiting prompt and its turn's generation, or `None`
-    /// once the queue is empty, which leaves the session idle.
-    pub(super) fn next(&self) -> Option<(Queued, u64)> {
+    /// Called when a turn ends, and again with a turn slot in `slot` after [`Next::Wait`]:
+    /// the next waiting prompt runs as the next generation only once it has a slot, and an
+    /// empty queue leaves the session idle.
+    pub(super) fn next(&self, slot: &mut Option<OwnedSemaphorePermit>) -> Next {
         let mut hub = self.hub();
-        let Some(prompt) = hub.queue.pop_front() else {
+        hub.current = None;
+        if hub.queue.is_empty() {
             hub.busy = false;
-            return None;
+            return Next::Idle;
+        }
+        let Some(permit) = slot.take() else {
+            return Next::Wait;
         };
-        hub.queue_bytes -= prompt.text.len();
-        release(&self.budget.queue, prompt.text.len());
+        let Some(mut prompt) = hub.queue.pop_front() else {
+            unreachable!("the queue was not empty");
+        };
+        hub.queue_bytes -= prompt.size();
+        release(&self.budget.queue, prompt.size());
         hub.generation += 1;
-        let mut prompt = prompt;
         if let Some(admission) = prompt.admission.as_mut() {
             admission.generation = hub.generation;
         }
-        Some((prompt, hub.generation))
+        hub.current = prompt.admission.clone();
+        Next::Run(prompt, permit)
     }
 
     /// Leaves the session idle and drops its waiting prompts, for a turn task that ends
@@ -271,6 +398,7 @@ impl LiveSession {
     pub(super) fn abandon(&self) {
         let mut hub = self.hub();
         hub.busy = false;
+        hub.current = None;
         hub.queue.clear();
         release(&self.budget.queue, hub.queue_bytes);
         hub.queue_bytes = 0;
@@ -278,23 +406,12 @@ impl LiveSession {
 }
 
 impl Hub {
-    /// Logs event `seq`, then drops the oldest events past the session's limits.
-    fn keep(&mut self, seq: u64, text: &Arc<str>, budget: &Budget) {
-        let size = text.len();
-        if size > LOG_BYTES || !reserve(&budget.log, size, PROCESS_LOG_BYTES) {
-            self.evicted_through = seq;
-            return;
-        }
-        self.log.push_back((seq, Arc::clone(text)));
-        self.log_bytes += size;
-        while self.log.len() > LOG_EVENTS || self.log_bytes > LOG_BYTES {
-            let Some((old, text)) = self.log.pop_front() else {
-                break;
-            };
-            self.log_bytes -= text.len();
-            release(&budget.log, text.len());
-            self.evicted_through = self.evicted_through.max(old);
-        }
+    /// Drops the whole log, so a replay from before now reports `truncated`.
+    fn clear_log(&mut self, budget: &Budget) {
+        release(&budget.log, self.log_bytes);
+        self.log.clear();
+        self.log_bytes = 0;
+        self.evicted_through = self.seq;
     }
 }
 
@@ -468,9 +585,22 @@ mod tests {
             live.admit(|| None, prompt("over")),
             Err((Refused::QueueFull, _))
         ));
-        let (first, generation) = live.next().unwrap();
-        assert_eq!((first.text.as_str(), generation), ("q0", 2));
-        while live.next().is_some() {}
+        assert!(matches!(live.next(&mut None), Next::Wait));
+        assert_eq!(live.state().2, 1, "no generation before a slot");
+        let mut slot = Arc::clone(&slots).try_acquire_owned().ok();
+        assert!(slot.is_none(), "the first turn holds the only slot");
+        let freed = Arc::new(tokio::sync::Semaphore::new(1));
+        slot = Arc::clone(&freed).try_acquire_owned().ok();
+        let Next::Run(first, _) = live.next(&mut slot) else {
+            panic!("a slot was given");
+        };
+        assert_eq!((first.text.as_str(), live.state().2), ("q0", 2));
+        loop {
+            let mut slot = Arc::clone(&freed).try_acquire_owned().ok();
+            if matches!(live.next(&mut slot), Next::Idle) {
+                break;
+            }
+        }
         assert!(!live.state().0);
         assert_eq!(live.budget.queue.load(Ordering::Acquire), 0);
     }
@@ -493,7 +623,7 @@ mod tests {
         let _ = live.admit(|| None, prompt("waiting"));
         live.abandon();
         assert!(!live.state().0);
-        assert!(live.next().is_none());
+        assert!(matches!(live.next(&mut None), Next::Idle));
         assert_eq!(live.budget.queue.load(Ordering::Acquire), 0);
     }
 }

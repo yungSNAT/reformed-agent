@@ -36,7 +36,7 @@ mod canonical;
 mod session;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
-use session::{Admitted, Budget, Queued, Refused};
+use session::{Admitted, Budget, Next, Queued, Refused};
 
 /// Marks a message whose content is a JSON array of text and image parts, which the agent's
 /// providers send as such (`ACP_MULTIMODAL_PREFIX` in hermes-agent).
@@ -46,8 +46,9 @@ const PARTS_PREFIX: &str = "__hermes_acp_parts_json__:";
 pub(crate) type Outbox = UnboundedSender<Outgoing>;
 
 /// A frame for the connection to write and when it was queued. A turn's last event carries
-/// the turn's slot, shared by every connection's copy, so the slot frees once each copy is
-/// written or dropped with a closed connection.
+/// the turn's slot on the copy for the connection that prompted the turn, so the slot frees
+/// once that copy is written, or dropped with a closed connection. Other connections' copies
+/// carry none: a viewer that stops reading holds no slot, and its write deadline closes it.
 pub(crate) struct Outgoing {
     pub(crate) text: Arc<str>,
     pub(crate) queued: Instant,
@@ -74,6 +75,21 @@ impl From<Value> for Outgoing {
     }
 }
 
+/// Where a connection's client is, for the methods that serve only clients on this machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Origin {
+    /// Not known to be on this machine. A connection has it until its listener says otherwise,
+    /// so a listener that does not say gets the most restricted.
+    #[default]
+    Remote,
+    /// A browser session of the Webapp.
+    #[allow(dead_code, reason = "set by the Webapp's listener")]
+    Webapp,
+    /// This machine's desktop or terminal UI: the loopback token socket or local mode's ticket
+    /// socket (`upgrade` in lib.rs).
+    Local,
+}
+
 /// One WebSocket connection.
 #[derive(Clone)]
 pub(crate) struct Conn {
@@ -82,6 +98,24 @@ pub(crate) struct Conn {
     pub(crate) outbox: Outbox,
     /// Speaks the canonical wire ([`crate::CANONICAL_PROTOCOL`]).
     pub(crate) canonical: bool,
+    /// Where its client is; check it before serving a client that must be on this machine.
+    #[allow(
+        dead_code,
+        reason = "read by the methods that serve only local clients"
+    )]
+    pub(crate) origin: Origin,
+}
+
+impl Conn {
+    /// A connection with [`Origin::Remote`] until its listener sets `origin`.
+    pub(crate) fn new(id: u64, outbox: Outbox, canonical: bool) -> Self {
+        Self {
+            id,
+            outbox,
+            canonical,
+            origin: Origin::default(),
+        }
+    }
 }
 
 /// One request as a handler gets it. Absent params arrive as an empty map.
@@ -94,7 +128,15 @@ pub(crate) struct Request {
 /// A method's result, ready now or later.
 pub(crate) type Reply = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + Send>>;
 
-/// Runs one method.
+/// Runs one method. A handler may wait (for a turn, a slot or an answer from the client):
+/// meanwhile its connection goes on writing events and answering other requests, and up to 16
+/// of a connection's requests wait at once (`serve_socket` in lib.rs). A waiting handler is
+/// dropped at its await if the connection closes, so it must leave shared state whole at each
+/// await: change state under a lock rather than across an await, or hold a guard that undoes
+/// the change when dropped.
+///
+/// Each method name is registered once across [`AREAS`]; `canonical::METHODS` overrides an
+/// area's name only where its test lists it (`each_method_is_registered_once`).
 pub(crate) type Handler = fn(Request) -> Reply;
 
 /// A reply that is ready now.
@@ -185,8 +227,8 @@ const IMAGE_INVALID: i64 = 4017;
 const IMAGE_TOO_LARGE: i64 = 4018;
 const IMAGE_WRITE_FAILED: i64 = 5027;
 
-/// Most turns running or with events not yet written, across the gateway; it bounds the
-/// replies held in memory, as a turn keeps its slot until its last event is written.
+/// Most turns running or with their last event not yet written to the connection that
+/// prompted them, across the gateway; it bounds the replies held for those connections.
 const MAX_TURNS: usize = 8;
 
 /// How long a frame may wait, from being queued until it is written, before the connection
@@ -327,7 +369,9 @@ impl Chat {
         let Some((_, handler)) = handler else {
             return ready(Err((
                 METHOD_NOT_FOUND,
-                format!("method not found: {method}"),
+                // Upstream's text (tui_gateway/contracts/registry.py), which the desktop
+                // matches to tell a method this backend lacks from one that failed.
+                format!("unknown method: {method} \u{2014} not available on this Hermes backend"),
             )));
         };
         match params {
@@ -574,8 +618,9 @@ impl Chat {
     ) {
         let chat = Arc::clone(self);
         let id = id.to_string();
+        // Made before the task, so a task dropped before it first runs leaves the session idle.
+        let mut guard = DrainGuard(Some(Arc::clone(&session)));
         tokio::spawn(async move {
-            let mut guard = DrainGuard(Some(Arc::clone(&session)));
             let mut next = Some((prompt, slot));
             while let Some((prompt, slot)) = next {
                 let turn = Turn {
@@ -587,15 +632,19 @@ impl Chat {
                     admission: prompt.admission.map(|admission| *admission),
                 };
                 turn.run(prompt.text, prompt.images, &session).await;
-                next = match session.next() {
-                    // The prompt was accepted, so it waits for a slot rather than failing.
-                    Some((prompt, _)) => match Arc::clone(&chat.turns).acquire_owned().await {
-                        Ok(slot) => Some((prompt, slot)),
-                        Err(_) => None,
-                    },
-                    None => {
-                        guard.0 = None;
-                        None
+                let mut slot = None;
+                next = loop {
+                    match session.next(&mut slot) {
+                        Next::Run(prompt, slot) => break Some((prompt, slot)),
+                        Next::Idle => {
+                            guard.0 = None;
+                            break None;
+                        }
+                        // The prompt was accepted, so it waits for a slot rather than failing.
+                        Next::Wait => match Arc::clone(&chat.turns).acquire_owned().await {
+                            Ok(permit) => slot = Some(permit),
+                            Err(_) => break None,
+                        },
                     }
                 };
             }
@@ -805,7 +854,7 @@ impl Turn {
             self.emit(
                 session,
                 "session.info",
-                admission.info(&self.id, true),
+                admission.info(&self.id, true, session.pending(&self.id, true)),
                 None,
             );
         }
@@ -834,7 +883,7 @@ impl Turn {
                 self.emit(
                     session,
                     "session.info",
-                    admission.info(&self.id, false),
+                    admission.info(&self.id, false, session.pending(&self.id, false)),
                     slot,
                 );
             }
@@ -1053,6 +1102,12 @@ mod tests {
                 "{name}: served by an area but not a listed canonical override, or the reverse"
             );
         }
+    }
+
+    #[test]
+    fn a_connection_whose_listener_sets_no_origin_is_remote() {
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        assert_eq!(Conn::new(1, outbox, false).origin, Origin::Remote);
     }
 
     #[test]

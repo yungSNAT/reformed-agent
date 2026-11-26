@@ -4,7 +4,7 @@
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
 //! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
-//! self-update as off. Other methods get JSON-RPC 'method not found'.
+//! self-update as off. Other methods get JSON-RPC 'method not found' (-32601).
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
 //! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token in its
@@ -23,6 +23,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
@@ -34,6 +35,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
@@ -45,7 +47,7 @@ pub mod local;
 mod tickets;
 
 pub use chat::Chat;
-use chat::{Conn, Outgoing, Reply};
+use chat::{Conn, Origin, Outgoing, Reply};
 use tickets::{Purpose, Tickets};
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
@@ -347,6 +349,11 @@ async fn upgrade(
     }
     let chat = Arc::clone(&gw.chat);
     let canonical = offered.is_some();
+    // Both listeners take loopback connections only: the token one checks `Host` and `Origin`,
+    // and the ticket one is local mode's. A new kind of listener must choose here.
+    let origin = match gw.auth {
+        Auth::Token(_) | Auth::Native(_) => Origin::Local,
+    };
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
     let ws = if canonical {
         ws.protocols([CANONICAL_PROTOCOL])
@@ -355,7 +362,7 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, chat, canonical))
+        .on_upgrade(move |socket| session(socket, chat, canonical, origin))
 }
 
 /// The ticket a native dial offers as its `hermes-gateway-ticket.` subprotocol: `None` when it
@@ -381,7 +388,7 @@ fn protocol_ticket(headers: &HeaderMap) -> Result<Option<&str>, ()> {
 
 /// One connection. A `canonical` one ([`CANONICAL_PROTOCOL`]) announces the session authority in
 /// its `gateway.ready` and answers the session verbs as [`chat`]'s `canonical` module does.
-async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool) {
+async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool, origin: Origin) {
     let mut ready = json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -397,54 +404,67 @@ async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool) {
         ready["params"]["payload"]["session_authority"] = true.into();
     }
     // Turns stream their events through the outbox of each connection on their session,
-    // after `gateway.ready`; replies go out first, as each is written before the next outbox
-    // frame is read. A request is answered before the next frame is read. Queued
-    // events are written before the next request is read, so a client that reads slowly cannot
-    // start more turns while finished ones wait. A turn keeps its slot until its last event is
-    // written, so the turn cap bounds the replies waiting across all connections. A frame not
-    // written within the write timeout of being queued closes the connection, which drops its
-    // queued events and frees their slots.
+    // after `gateway.ready` (see `serve_socket` for the order).
     let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
     // Cannot fail: `events` lives until the session ends.
     let _ = outbox.send(Outgoing::from(ready));
-    let conn = Conn {
-        id: CONNECTIONS.fetch_add(1, Ordering::Relaxed),
+    let mut conn = Conn::new(
+        CONNECTIONS.fetch_add(1, Ordering::Relaxed),
         outbox,
         canonical,
-    };
+    );
+    conn.origin = origin;
     let call = |method: &str, params: Value| chat.call(&conn, method, params);
     serve_socket(&mut socket, &mut events, &call, chat.write_timeout()).await;
     chat.disconnect(conn.id);
 }
 
+/// Most requests one connection has waiting on their handlers; past it, the connection's
+/// next frame is read once one is answered.
+const MAX_IN_FLIGHT: usize = 16;
+
+/// A frame's reply, once its handlers are done.
+type InFlight<'a> = Pin<Box<dyn Future<Output = Option<Value>> + Send + 'a>>;
+
 /// Answers `socket`'s requests with `call` and writes `events`, each frame within
 /// `write_timeout` of being queued, until either side closes.
+///
+/// A frame's handlers run whilst the connection goes on: a handler that waits holds up
+/// neither the connection's events nor its other requests, and its reply goes out when it is
+/// done. Each pass writes a finished reply first, then a queued event, and only then reads
+/// another frame, so a handler that answers at once is answered before the next frame is read,
+/// and a client that reads slowly cannot start more turns whilst finished ones wait. A turn
+/// keeps its slot until its last event is written to the connection that prompted it, so the
+/// turn cap bounds the replies waiting on those connections. A frame not written within the
+/// write timeout of being queued closes the connection, which drops its queued events, frees
+/// their slots and drops the handlers still waiting.
 async fn serve_socket(
     socket: &mut WebSocket,
     events: &mut mpsc::UnboundedReceiver<Outgoing>,
     call: &Call<'_>,
     write_timeout: std::time::Duration,
 ) {
+    let mut in_flight: FuturesUnordered<InFlight<'_>> = FuturesUnordered::new();
     loop {
-        let inbound = tokio::select! {
+        let frame = tokio::select! {
             biased;
-            Some(event) = events.recv() => Ok(event),
-            inbound = socket.recv() => Err(inbound),
-        };
-        let frame = match inbound {
-            Ok(event) => Some(event),
-            Err(inbound) => match inbound {
-                Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
-                    reply_to(&text, call).await.map(Outgoing::from)
+            Some(reply) = in_flight.next(), if !in_flight.is_empty() => reply.map(Outgoing::from),
+            Some(event) = events.recv() => Some(event),
+            inbound = socket.recv(), if in_flight.len() < MAX_IN_FLIGHT => {
+                match inbound {
+                    Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
+                        in_flight.push(Box::pin(async move { reply_to(&text, call).await }));
+                    }
+                    Some(Ok(Message::Text(text))) => match attach_request(&text) {
+                        Some(request) => in_flight.push(Box::pin(reply_to_one(request, call))),
+                        None => break,
+                    },
+                    Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                    Some(Ok(_)) => {}
                 }
-                Some(Ok(Message::Text(text))) => match attach_request(&text) {
-                    Some(request) => reply_to_one(request, call).await.map(Outgoing::from),
-                    None => break,
-                },
-                Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,
-                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
-                Some(Ok(_)) => None,
-            },
+                None
+            }
         };
         if let Some(outgoing) = frame {
             let deadline = outgoing.queued + write_timeout;
@@ -485,7 +505,31 @@ fn rpc_error(id: Value, code: i64, message: String) -> Value {
 /// Runs one request's method; the error is a JSON-RPC code and message.
 type Call<'a> = dyn Fn(&str, Value) -> Reply + Sync + 'a;
 
-/// The reply to one inbound frame: one request or a JSON-RPC batch of them, run in order.
+/// The code for a batch member that was not run because the batch's reply had passed
+/// [`MAX_MESSAGE_BYTES`] (JSON-RPC's range for server errors).
+const BATCH_FULL: i64 = -32000;
+
+/// The length of `value` as JSON text, without building the text.
+fn json_len(value: &Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    // Writing to a counter cannot fail.
+    let _ = serde_json::to_writer(&mut count, value);
+    count.0
+}
+
+/// The reply to one inbound frame: one request or a JSON-RPC batch of them, run in order. Once
+/// a batch's replies pass [`MAX_MESSAGE_BYTES`], its later requests are not run and get
+/// [`BATCH_FULL`], so one small frame cannot build an unbounded reply.
 async fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return Some(rpc_error(Value::Null, -32700, "parse error".into()));
@@ -502,9 +546,27 @@ async fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
             format!("invalid request: a batch holds at most {MAX_BATCH} requests"),
         )),
         Value::Array(items) => {
+            let full: &Call<'_> = &|_, _| {
+                chat::ready(Err((
+                    BATCH_FULL,
+                    format!(
+                        "not run: this batch's reply passed {} MiB; send the request again on its own",
+                        MAX_MESSAGE_BYTES >> 20
+                    ),
+                )))
+            };
             let mut replies = Vec::new();
+            let mut bytes = 0;
             for item in items {
-                replies.extend(reply_to_one(item, call).await);
+                let run = if bytes > MAX_MESSAGE_BYTES {
+                    full
+                } else {
+                    call
+                };
+                if let Some(reply) = reply_to_one(item, run).await {
+                    bytes += json_len(&reply);
+                    replies.push(reply);
+                }
             }
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
@@ -831,7 +893,8 @@ mod tests {
                                 chat::ready(Ok(json!("pong")))
                             }
                         };
-                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30)).await;
+                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30))
+                            .await;
                     })
                 }
             }),
