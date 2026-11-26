@@ -345,4 +345,37 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn reports_stay_byte_identical_when_an_evidence_file_is_added() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let platforms = root.join("crates/hermes-gateway/src/platforms");
+        fs::create_dir_all(&platforms).unwrap();
+        let reports = || {
+            let args = TestIntentMappingArgs {
+                repo_root: root.to_str().unwrap().into(),
+                out_json: "mapping.json".into(),
+                out_md: "mapping.md".into(),
+            };
+            assert_eq!(run(args).unwrap(), 0);
+            (
+                fs::read_to_string(root.join("mapping.json")).unwrap(),
+                fs::read_to_string(root.join("mapping.md")).unwrap(),
+            )
+        };
+        fs::write(platforms.join("first.rs"), "// first adapter\n").unwrap();
+        let (json, markdown) = reports();
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(platforms.join("second.rs"), "// second adapter\n").unwrap();
+        let (json_after, markdown_after) = reports();
+
+        assert_eq!(json_after, json);
+        assert_eq!(markdown_after, markdown);
+        for volatile in ["generated_at_utc", "evidence_count", "evidence_sample"] {
+            assert!(!json.contains(volatile), "{volatile} in {json}");
+        }
+        assert!(json.contains("\"mapped\": true"), "{json}");
+    }
 }
