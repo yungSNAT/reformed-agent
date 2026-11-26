@@ -479,6 +479,113 @@ streaming:
 }
 
 #[tokio::test]
+async fn native_tui_resume_uses_the_saved_model_and_conversation() {
+    let provider = MockServer::start().await;
+    let first_prompt = "Where is the fixture train going?";
+    let first_reply = "It is heading north.";
+    let followup = "What direction did you say?";
+    let reply = "ResumeFixtureAnswer";
+    let stream = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        json!({
+            "id": "fixture-resume",
+            "object": "chat.completion.chunk",
+            "model": "restored",
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": reply},
+                "finish_reason": "stop",
+            }],
+        })
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_partial_json(
+            json!({"model": "restored", "stream": true}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream"))
+        .expect(1)
+        .mount(&provider)
+        .await;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        home.join("config.yaml"),
+        format!(
+            r#"model: local-test:initial
+tools: []
+llm_providers:
+  local-test:
+    base_url: {}
+    api_key: local-provider-fixture
+    discover_models: false
+    models: [initial, restored]
+streaming:
+  enabled: true
+"#,
+            provider.uri()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        sessions.join("session_fixture-resume.json"),
+        json!({
+            "session_info": {
+                "session_id": "fixture-resume",
+                "model": "local-test:restored",
+            },
+            "messages": [
+                {"role": "User", "content": first_prompt},
+                {"role": "Assistant", "content": first_reply},
+            ],
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut child, mut terminal, initial_flags) = start_in_pty(
+        sandbox.path(),
+        &["--ignore-rules", "resume", "fixture-resume"],
+        true,
+    );
+    read_until(&mut terminal, b"Resumed session").await;
+    write!(terminal, "\x1b[200~{followup}\x1b[201~\r").unwrap();
+    read_until(&mut terminal, reply.as_bytes()).await;
+    terminal.write_all(b"\x03").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("resumed TUI shutdown timeout")
+        .unwrap()
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+
+    let requests = provider.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let request: Value = requests[0].body_json().unwrap();
+    let history = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|message| {
+            let role = message["role"].as_str()?;
+            matches!(role, "user" | "assistant").then(|| (role, message["content"].as_str()))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        history,
+        [
+            ("user", Some(first_prompt)),
+            ("assistant", Some(first_reply)),
+            ("user", Some(followup)),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn native_tui_interrupt_retains_the_inflight_prompt_and_the_next_draft() {
     assert_native_tui_shutdown_keeps_prompt_and_draft(|_, terminal| {
         terminal.write_all(b"\x03").unwrap();
