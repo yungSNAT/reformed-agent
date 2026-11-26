@@ -634,17 +634,14 @@ impl AgentLoop {
             let sent_at = tokio::time::Instant::now();
             let result = loop {
                 let sent = target.provider.active_credential();
-                let result = target
-                    .provider
-                    .chat_completion(
+                let result = self.metered_completion(target.provider.chat_completion(
                         &api_messages,
                         tool_schemas,
                         effective_max_tokens,
                         self.config.temperature,
                         Some(&target.wire_model),
                         target.extra_body.as_ref(),
-                    )
-                    .await;
+                    )).await;
                 if let Err(ref e) = result {
                     if !unauthorized_refresh_tried && is_unauthorized_error(&e.to_string()) {
                         unauthorized_refresh_tried = true;
@@ -735,16 +732,14 @@ impl AgentLoop {
                                                 pool,
                                             ) {
                                                 Ok(provider) => {
-                                                    provider
-                                                        .chat_completion(
+                                                    self.metered_completion(provider.chat_completion(
                                                             &api_messages,
                                                             tool_schemas,
                                                             effective_max_tokens,
                                                             self.config.temperature,
                                                             Some(&fallback_model_name),
                                                             extra_body_for_call.as_ref(),
-                                                        )
-                                                        .await
+                                                        )).await
                                                 }
                                                 Err(build_err) => Err(build_err),
                                             }
@@ -759,16 +754,14 @@ impl AgentLoop {
                                                 self.primary_credential_pool.as_ref(),
                                             ) {
                                                 Ok(provider) => {
-                                                    provider
-                                                        .chat_completion(
+                                                    self.metered_completion(provider.chat_completion(
                                                             &api_messages,
                                                             tool_schemas,
                                                             effective_max_tokens,
                                                             self.config.temperature,
                                                             Some(&fallback_model_name),
                                                             default_extra_body.as_ref(),
-                                                        )
-                                                        .await
+                                                        )).await
                                                 }
                                                 Err(build_err) => Err(build_err),
                                             }
@@ -818,16 +811,14 @@ impl AgentLoop {
                                         pool,
                                     ) {
                                         Ok(provider) => {
-                                            provider
-                                                .chat_completion(
+                                            self.metered_completion(provider.chat_completion(
                                                     &api_messages,
                                                     &[],
                                                     effective_max_tokens,
                                                     self.config.temperature,
                                                     Some(&wire_model_name),
                                                     extra_body_for_call.as_ref(),
-                                                )
-                                                .await
+                                                )).await
                                         }
                                         Err(_) => {
                                             let (fallback_provider_name, fallback_model_name) = self
@@ -839,16 +830,14 @@ impl AgentLoop {
                                                     fallback_provider_name.as_str(),
                                                     fallback_model_name,
                                                 );
-                                            self.llm_provider
-                                                .chat_completion(
+                                            self.metered_completion(self.llm_provider.chat_completion(
                                                     &api_messages,
                                                     &[],
                                                     effective_max_tokens,
                                                     self.config.temperature,
                                                     Some(&fallback_wire_model_name),
                                                     default_extra_body.as_ref(),
-                                                )
-                                                .await
+                                                )).await
                                         }
                                     }
                                 } else {
@@ -856,16 +845,14 @@ impl AgentLoop {
                                         provider_name.as_str(),
                                         model_name,
                                     );
-                                    self.llm_provider
-                                        .chat_completion(
+                                    self.metered_completion(self.llm_provider.chat_completion(
                                             &api_messages,
                                             &[],
                                             effective_max_tokens,
                                             self.config.temperature,
                                             Some(&wire_model_name),
                                             default_extra_body.as_ref(),
-                                        )
-                                        .await
+                                        )).await
                                 };
                                 match no_tools_result {
                                     Ok(resp) => {
@@ -939,17 +926,14 @@ impl AgentLoop {
                                                 fallback_provider_name.as_str(),
                                                 fallback_model_name,
                                             );
-                                        let fallback_result = self
-                                            .llm_provider
-                                            .chat_completion(
+                                        let fallback_result = self.metered_completion(self.llm_provider.chat_completion(
                                                 &api_messages,
                                                 tool_schemas,
                                                 effective_max_tokens,
                                                 self.config.temperature,
                                                 Some(&fallback_wire_model_name),
                                                 default_extra_body.as_ref(),
-                                            )
-                                            .await;
+                                            )).await;
                                         match fallback_result {
                                             Ok(resp) => {
                                                 self.emit_status(
@@ -1081,6 +1065,7 @@ impl AgentLoop {
             };
             let sent_at = tokio::time::Instant::now();
             let sent = target.provider.active_credential();
+            self.begin_budget_request()?;
             let mut stream = target.provider.chat_completion_stream(
                 &api_messages,
                 tool_schemas,
@@ -1147,6 +1132,7 @@ impl AgentLoop {
                         chunk
                     }
                     Err(err) => {
+                        if !chunk_received { self.settle_rejected_budget(&err)?; }
                         if !chunk_received
                             && !unauthorized_refresh_tried
                             && is_unauthorized_error(&err.to_string())
@@ -1351,6 +1337,10 @@ impl AgentLoop {
                 last_usage.as_ref(),
                 sent_at,
             );
+            let cost = last_usage.as_ref()
+                .and_then(|usage| estimate_usage_cost_usd(usage, streamed_model, &self.config))
+                .unwrap_or(0.0);
+            self.charge_session_budget(cost)?;
             return Ok(StreamCollectOutcome::Complete(LlmResponse {
                 message,
                 usage: last_usage,

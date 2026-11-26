@@ -486,6 +486,140 @@ fn self_evolution_recommendations_extracts_lines() {
     assert!(lines[0].contains("/ops eval run"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn self_evolution_reports_a_failed_probe_and_recommends_holding_release() {
+    use std::os::unix::fs::PermissionsExt;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::runtime_parity_ops::self_evolution_reports_a_failed_probe_and_recommends_holding_release",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let repo = home.join("fixture-repo");
+    let parity = repo.join("docs/parity");
+    std::fs::create_dir_all(&parity).unwrap();
+    std::fs::write(
+        parity.join("global-parity-proof.json"),
+        r#"{"release_gate":{"pass":true}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        parity.join("shared-diff-backlog.json"),
+        r#"{"summary":{"pending_classification":0,"pending_review":0}}"#,
+    )
+    .unwrap();
+
+    // Exercise report assembly without shell profiles or nested cargo runs.
+    let bin = home.join("fixture-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let shell = bin.join("bash");
+    std::fs::write(
+        &shell,
+        r#"#!/bin/sh
+[ "$#" -eq 2 ] && [ "$1" = '-lc' ] || exit 64
+case "$2" in
+  'scripts/check-rust-runtime-no-python.sh'|'scripts/check-runtime-placeholders.sh') exit 0 ;;
+  'cargo test -p hermes-tools tool_policy_hot_path_benchmark_report -- --nocapture')
+    printf 'tool_policy_hot_path_ns_per_eval=100\n' ;;
+  'cargo test -p hermes-mcp stale_transport_marker_detection_matches_known_variants -- --nocapture')
+    printf 'fixture stale transport probe failed\n' >&2; exit 7 ;;
+  *) exit 64 ;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::env::set_var("PATH", bin);
+    std::env::set_var("HERMES_REPO_ROOT", &repo);
+    std::env::set_var("HERMES_AUTOPILOT_PROBE_TIMEOUT_SECS", "5");
+    std::env::set_var(
+        "AWS_SHARED_CREDENTIALS_FILE",
+        home.join("unused-credentials"),
+    );
+    std::env::set_var("AWS_CONFIG_FILE", home.join("unused-aws-config"));
+    std::env::set_var("HERMES_HF_CATALOG_DISABLE_LIVE", "1");
+    std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:9");
+    std::env::set_var("HTTP_PROXY", "http://127.0.0.1:9");
+    std::env::set_var("NO_PROXY", "127.0.0.1");
+    hermes_intelligence::models_dev::default_client().seed_cache(serde_json::json!({
+        "fixture": {"models": {}}
+    }));
+
+    let memory = MockServer::start().await;
+    std::env::set_var("CONTEXTLATTICE_ORCHESTRATOR_URL", memory.uri());
+    std::env::set_var("CONTEXTLATTICE_AGENT_ID", "evolution-fixture");
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+        .expect(1)
+        .mount(&memory)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/memory/search"))
+        .and(body_json(serde_json::json!({
+            "agent_id": "evolution-fixture",
+            "query": "hermes-ultra contextlattice intelligence preflight",
+            "limit": 2,
+            "retrieval_mode": "fast",
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"degraded": false})),
+        )
+        .expect(1)
+        .mount(&memory)
+        .await;
+
+    let mut app = build_test_app_with_stream(&home).await;
+    app.set_session_objective(Some("Keep observatory reports current".into()));
+    let before = command_output(&mut app, "/ops", &["evolve", "status"]).await;
+    assert!(before.contains("self_evolution=unknown (no reports yet)"));
+    let output = tokio::time::timeout(
+        Duration::from_secs(20),
+        command_output(&mut app, "/ops", &["evolve", "run"]),
+    )
+    .await
+    .expect("self-evolution probe deadline");
+    let (json, emitted_path) = output.rsplit_once("\nreport_path=").expect("report path");
+    let report: serde_json::Value = serde_json::from_str(json).expect("report JSON");
+    assert_eq!(report["objective"], "Keep observatory reports current");
+    assert_eq!(report["ok"], false);
+    assert_eq!(
+        report["summary"],
+        serde_json::json!({
+            "total_sections": 3, "passed_sections": 2, "failed_sections": 1, "intelligence_index": 66.67,
+        })
+    );
+    let report_dir = repo.join(".sync-reports");
+    let report_path = latest_json_report(&report_dir, "self-evolution-loop-").unwrap();
+    assert_eq!(Path::new(emitted_path), report_path);
+    assert_eq!(read_json_file(&report_path), Some(report));
+    let elite_path = latest_json_report(&report_dir, "elite-sync-gate-").unwrap();
+    let elite = read_json_file(&elite_path).expect("elite report");
+    assert_eq!(elite["sections"]["hotpath"]["ok"], true);
+    assert_eq!(elite["sections"]["mcp_stale_recovery"]["exit_code"], 7);
+    assert_eq!(
+        elite["sections"]["mcp_stale_recovery"]["stderr_tail"],
+        "fixture stale transport probe failed\n"
+    );
+    let autopilot_path = latest_json_report(&report_dir, "performance-autopilot-").unwrap();
+    let autopilot = read_json_file(&autopilot_path).expect("autopilot report");
+    assert_eq!(
+        autopilot["sections"]["contextlattice_preflight"]["ok"],
+        true
+    );
+    memory.verify().await;
+
+    let status = command_output(&mut app, "/ops", &["evolve", "status"]).await;
+    assert!(status.contains("self_evolution=fail idx=66.67 recs=1"));
+    let recs = command_output(&mut app, "/ops", &["evolve", "recommend"]).await;
+    assert!(recs.contains("[P0] ELITE_GATE_FAIL: Hold release and remediate elite gate failures"));
+    assert!(recs.contains("cmd: /ops gate elite"));
+}
+
 #[test]
 fn native_session_eval_harness_writes_compatible_report() {
     let reports = tempdir().expect("reports");
