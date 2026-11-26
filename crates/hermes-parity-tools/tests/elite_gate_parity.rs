@@ -146,9 +146,11 @@ impl Sandbox {
         let text = text.replace(&format!("gui/{}", uid.trim()), "gui/<UID>");
         let program = Regex::new(r"(?s)<key>ProgramArguments</key>.*?</array>").expect("regex");
         let text = program.replace_all(&text, "<PROGRAM>");
-        // Commit ids depend on the sandbox repository's files, not on the command.
-        let sha = Regex::new(r"\b[0-9a-f]{40}\b").expect("regex");
-        let text = sha.replace_all(&text, "<SHA>");
+        // The sandbox head's id depends on the sandbox's files, not on the
+        // command; any other commit id stays and fails the case.
+        let head = self.command("git").args(["rev-parse", "HEAD"]).output().expect("git");
+        let head = String::from_utf8(head.stdout).expect("head");
+        let text = text.replace(head.trim(), "<SHA>");
         let stamp = Regex::new(r"\d{8}T\d{6}Z").expect("regex");
         let text = stamp.replace_all(&text, "<STAMP>");
         let time =
