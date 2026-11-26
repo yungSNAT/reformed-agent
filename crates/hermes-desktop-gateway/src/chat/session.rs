@@ -370,6 +370,61 @@ mod tests {
         assert_eq!(budget.log.load(Ordering::Acquire), PROCESS_LOG_BYTES);
     }
 
+    /// A session short of the gateway's log budget takes it from the idle session whose log
+    /// was written longest ago, which then reports its replay as truncated; a session with a
+    /// running turn keeps its log.
+    #[test]
+    fn a_session_short_of_the_log_budget_takes_it_from_the_least_recent_idle_session() {
+        let budget = Arc::new(Budget::default());
+        let old = LiveSession::new(Arc::clone(&budget));
+        let running = LiveSession::new(Arc::clone(&budget));
+        let new = LiveSession::new(Arc::clone(&budget));
+        running.publish(json!({"n": 1}), None);
+        old.publish(json!({"n": 2}), None);
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        assert!(matches!(
+            running.admit(|| Arc::clone(&slots).try_acquire_owned().ok(), prompt("a")),
+            Ok(Admitted::Start { .. })
+        ));
+        let held = budget.log.load(Ordering::Acquire);
+        budget
+            .log
+            .fetch_add(PROCESS_LOG_BYTES - held, Ordering::AcqRel);
+
+        new.publish(json!({"n": 3}), None);
+        let kept = new.events_since(0);
+        assert_eq!((kept.events.len(), kept.truncated), (1, false));
+        let taken = old.events_since(0);
+        assert!(taken.events.is_empty() && taken.truncated);
+        assert_eq!(running.events_since(0).events.len(), 1);
+        assert_eq!(budget.log.load(Ordering::Acquire), PROCESS_LOG_BYTES);
+    }
+
+    /// A turn's slot rides only on the copy of its last event for the connection that
+    /// prompted it, so a viewer that stops reading holds no slot.
+    #[test]
+    fn a_turns_slot_rides_only_on_the_prompting_connections_copy() {
+        let live = session();
+        let (owner, mut owner_rx) = mpsc::unbounded_channel();
+        let (viewer, mut viewer_rx) = mpsc::unbounded_channel();
+        live.subscribe(1, &owner);
+        live.subscribe(2, &viewer);
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slot = Arc::new(Arc::clone(&slots).try_acquire_owned().unwrap());
+        live.publish(json!({"type": "message.complete"}), Some((1, slot)));
+        assert_eq!(slots.available_permits(), 0);
+        drop(owner_rx.try_recv().unwrap());
+        assert_eq!(slots.available_permits(), 1, "the viewer's copy holds it");
+        assert!(viewer_rx.try_recv().is_ok());
+
+        // With the prompting connection gone, no copy holds it.
+        live.unsubscribe(1);
+        let slot = Arc::new(Arc::clone(&slots).try_acquire_owned().unwrap());
+        live.publish(json!({"type": "message.complete"}), Some((1, slot)));
+        assert_eq!(slots.available_permits(), 1);
+        assert!(viewer_rx.try_recv().is_ok());
+    }
+
     #[test]
     fn dropping_a_session_returns_its_bytes() {
         let budget = Arc::new(Budget::default());

@@ -750,9 +750,11 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     // of 1 MiB because Windows takes a whole send while less than its send buffer (64 KiB) is
     // queued, so 2 large frames would both be taken and the slot freed.
     let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
-    // The timeout runs from when each frame is queued, so all 8 stalled turns and the check
-    // below must fit inside it: 10 seconds was too short on a loaded runner.
-    let timeout = Duration::from_secs(30);
+    // The timeout runs from when each frame is queued. A turn's last event is queued after its
+    // reply is saved, and the gateway saves one turn at a time, so the first turn's deadline
+    // runs whilst the other 7 are saved: those saves and the check below must fit inside it.
+    // 30 seconds allowed only about 4 seconds a save of 8 MiB on a slow runner; 90 allows 12.
+    let timeout = Duration::from_secs(90);
     let started = start_with(vec![piece; 4], Duration::ZERO, Some(timeout), "").await;
     let mut stalled = Vec::new();
     for _ in 0..8 {

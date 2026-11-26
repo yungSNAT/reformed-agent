@@ -774,4 +774,109 @@ mod tests {
             None
         );
     }
+
+    /// A batch whose replies pass [`MAX_MESSAGE_BYTES`] runs no more of its requests; each
+    /// is still answered, with an error that says to send it again on its own.
+    #[tokio::test]
+    async fn a_batch_stops_running_requests_once_its_reply_is_large() {
+        let runs = std::sync::atomic::AtomicUsize::new(0);
+        let big = "x".repeat(1 << 20);
+        let call: &Call<'_> = &|_, _| {
+            runs.fetch_add(1, Ordering::Relaxed);
+            chat::ready(Ok(Value::String(big.clone())))
+        };
+        let batch: Vec<Value> = (0..MAX_BATCH)
+            .map(|id| json!({"jsonrpc": "2.0", "id": id, "method": "m"}))
+            .collect();
+        let reply = reply_to(&Value::Array(batch).to_string(), call)
+            .await
+            .unwrap();
+        let replies = reply.as_array().unwrap();
+        assert_eq!(replies.len(), MAX_BATCH);
+        let ran = runs.load(Ordering::Relaxed);
+        assert!((1..MAX_BATCH).contains(&ran), "{ran} ran");
+        assert!(reply.to_string().len() <= MAX_MESSAGE_BYTES + (2 << 20));
+        let last = &replies[MAX_BATCH - 1];
+        assert_eq!(last["id"], MAX_BATCH - 1);
+        assert_eq!(last["error"]["code"], -32000, "{last}");
+    }
+
+    /// A request whose handler waits holds up neither the connection's events nor its
+    /// other requests, and is answered once it is done.
+    #[tokio::test]
+    async fn a_waiting_request_holds_up_neither_events_nor_other_requests() {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message as Frame;
+
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (outbox, events) = mpsc::unbounded_channel::<Outgoing>();
+        let events = Arc::new(std::sync::Mutex::new(Some(events)));
+        let parked = Arc::clone(&release);
+        let app = Router::new().route(
+            "/",
+            get(move |ws: WebSocketUpgrade| {
+                let events = events.lock().unwrap().take();
+                let release = Arc::clone(&parked);
+                async move {
+                    ws.on_upgrade(move |mut socket| async move {
+                        let mut events = events.expect("one connection");
+                        let call = move |method: &str, _: Value| -> Reply {
+                            if method == "wait" {
+                                let release = Arc::clone(&release);
+                                Box::pin(async move {
+                                    release.notified().await;
+                                    Ok(json!("released"))
+                                })
+                            } else {
+                                chat::ready(Ok(json!("pong")))
+                            }
+                        };
+                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30)).await;
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        let request = |id: u64, method: &str| {
+            Frame::text(json!({"jsonrpc": "2.0", "id": id, "method": method}).to_string())
+        };
+        ws.send(request(1, "wait")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        outbox
+            .send(Outgoing::from(json!({"method": "event"})))
+            .unwrap();
+        assert_eq!(read(&mut ws).await["method"], "event");
+        ws.send(request(2, "ping")).await.unwrap();
+        let pong = read(&mut ws).await;
+        assert_eq!((&pong["id"], &pong["result"]), (&json!(2), &json!("pong")));
+        release.notify_one();
+        let released = read(&mut ws).await;
+        assert_eq!(
+            (&released["id"], &released["result"]),
+            (&json!(1), &json!("released"))
+        );
+    }
+
+    async fn read(
+        ws: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    ) -> Value {
+        use futures::StreamExt;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .expect("a frame within 5 s")
+                .unwrap()
+                .unwrap();
+            if let tokio_tungstenite::tungstenite::Message::Text(text) = frame {
+                return serde_json::from_str(&text).unwrap();
+            }
+        }
+    }
 }

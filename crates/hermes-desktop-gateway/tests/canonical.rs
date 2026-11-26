@@ -435,11 +435,49 @@ async fn a_refused_request_leaves_the_connection_and_session_usable() {
     assert_eq!(receipt["status"], "queued", "{queued}");
     assert_eq!(receipt["sequence"], 2, "{queued}");
     assert_eq!(receipt["execution_generation"], Value::Null, "{queued}");
+    // Whilst the first runs, a snapshot lists it as started and the second as queued.
+    let snapshot = client
+        .request(
+            "session.resume",
+            json!({"session_id": session, "omit_messages": true}),
+        )
+        .await;
+    let rows: Vec<(Value, Value, Value)> = snapshot["result"]["pending"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{snapshot}"))
+        .iter()
+        .map(|row| {
+            (
+                row["sequence"].clone(),
+                row["status"].clone(),
+                row["execution_generation"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (json!(1), json!("started"), json!(1)),
+            (json!(2), json!("queued"), Value::Null)
+        ],
+        "{snapshot}"
+    );
     let events = client.events_until("message.complete").await;
     assert!(events
         .iter()
         .all(|e| e["params"]["execution_generation"] == 1));
-    client.events_until("session.info").await;
+    // The first turn's end reports the session idle with the second still queued.
+    let ended = client.events_until("session.info").await;
+    let info = &ended.last().unwrap()["params"]["payload"];
+    assert_eq!(info["running"], false, "{info}");
+    let waiting = &info["pending"];
+    assert_eq!(waiting.as_array().map(Vec::len), Some(1), "{info}");
+    assert_eq!(
+        waiting[0]["admission_id"], receipt["admission_id"],
+        "{info}"
+    );
+    assert_eq!(waiting[0]["status"], "queued", "{info}");
+    assert_eq!(waiting[0]["execution_generation"], Value::Null, "{info}");
 
     // The queued prompt then runs as generation 2 and streams in full.
     let events = client.events_until("message.complete").await;
@@ -465,7 +503,7 @@ async fn a_refused_request_leaves_the_connection_and_session_usable() {
 async fn a_retried_create_gets_the_same_session_and_both_connections_stream_it() {
     let (_dir, home, runtime) = start().await;
     let (mut first, _) = connect(&home, &runtime).await;
-    let create = json!({"request_id": "r-lost", "source": "gui"});
+    let create = json!({"request_id": "5b0e7a52-0f7c-4d1b-9c3e-2a6f4d8e1b90", "source": "gui"});
     let made = first.request("session.create", create.clone()).await;
     let session = made["result"]["session_id"].as_str().unwrap().to_string();
     let (mut second, _) = connect(&home, &runtime).await;
@@ -475,6 +513,13 @@ async fn a_retried_create_gets_the_same_session_and_both_connections_stream_it()
         .request("session.create", json!({"request_id": "r-other"}))
         .await;
     assert_ne!(other["result"]["session_id"], session.as_str(), "{other}");
+    // A request id shorter than 16 characters is not remembered, so it cannot be guessed.
+    let short = json!({"request_id": "r-other"});
+    let repeated = second.request("session.create", short).await;
+    assert_ne!(
+        repeated["result"]["session_id"], other["result"]["session_id"],
+        "{repeated}"
+    );
 
     first
         .request(
