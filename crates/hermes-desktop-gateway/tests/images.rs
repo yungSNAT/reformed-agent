@@ -68,7 +68,11 @@ async fn start() -> Started {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let chat = hermes_desktop_gateway::Chat::new(config);
-    tokio::spawn(hermes_desktop_gateway::serve(listener, TOKEN.to_string(), chat));
+    tokio::spawn(hermes_desktop_gateway::serve(
+        listener,
+        TOKEN.to_string(),
+        chat,
+    ));
     Started {
         addr,
         requests,
@@ -173,7 +177,12 @@ fn staged_images(home: &Path) -> Vec<PathBuf> {
 /// The image data URLs the model was sent with request `n`'s last message.
 fn sent_images(requests: &Requests, n: usize) -> Vec<String> {
     let requests = requests.lock().unwrap();
-    let last = requests[n]["messages"].as_array().unwrap().last().unwrap().clone();
+    let last = requests[n]["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
     match last["content"].as_array() {
         Some(parts) => parts
             .iter()
@@ -208,17 +217,26 @@ async fn image_attach_refuses_bad_requests() {
         (json!({"session_id": session, "path": "   "}), 4015),
         (json!({"session_id": session, "path": 3}), 4000),
         (json!({"session_id": session, "path": text(&missing)}), 4016),
-        (json!({"session_id": session, "path": text(folder.path())}), 4016),
+        (
+            json!({"session_id": session, "path": text(folder.path())}),
+            4016,
+        ),
         (json!({"session_id": session, "path": text(&notes)}), 4016),
         (json!({"session_id": session, "path": text(&fake)}), 4016),
         (json!({"session_id": session, "path": text(&big)}), 4018),
     ];
     for (n, (params, code)) in cases.iter().enumerate() {
-        let reply = client.call(10 + n as u64, "image.attach", params.clone()).await;
+        let reply = client
+            .call(10 + n as u64, "image.attach", params.clone())
+            .await;
         assert_eq!(reply["error"]["code"], *code, "{params}: {reply}");
     }
     let reply = client
-        .call(30, "image.attach", json!({"session_id": session, "path": text(&missing)}))
+        .call(
+            30,
+            "image.attach",
+            json!({"session_id": session, "path": text(&missing)}),
+        )
         .await;
     assert_eq!(
         reply["error"]["message"],
@@ -226,11 +244,14 @@ async fn image_attach_refuses_bad_requests() {
         "{reply}"
     );
     let reply = client
-        .call(31, "image.attach", json!({"session_id": session, "path": text(&notes)}))
+        .call(
+            31,
+            "image.attach",
+            json!({"session_id": session, "path": text(&notes)}),
+        )
         .await;
     assert_eq!(
-        reply["error"]["message"],
-        "unsupported image: notes.txt",
+        reply["error"]["message"], "unsupported image: notes.txt",
         "{reply}"
     );
     assert!(staged_images(started.home.path()).is_empty());
@@ -251,7 +272,11 @@ async fn an_image_named_by_path_goes_with_the_next_prompt() {
     // Quoted, as a terminal drop of a path with a space gives it, with words after it.
     let raw = format!("\"{}\" what is this", source.display());
     let reply = client
-        .call(2, "image.attach", json!({"session_id": session, "path": raw}))
+        .call(
+            2,
+            "image.attach",
+            json!({"session_id": session, "path": raw}),
+        )
         .await;
     let result = &reply["result"];
     assert_eq!(result["attached"], true, "{reply}");
@@ -289,20 +314,38 @@ async fn dropped_path_spellings_resolve() {
     ];
     for (n, (raw, remainder)) in spellings.iter().enumerate() {
         let reply = client
-            .call(10 + n as u64, "image.attach", json!({"session_id": session, "path": raw}))
+            .call(
+                10 + n as u64,
+                "image.attach",
+                json!({"session_id": session, "path": raw}),
+            )
             .await;
         assert_eq!(reply["result"]["name"], "my shot.png", "{raw}: {reply}");
         assert_eq!(reply["result"]["remainder"], *remainder, "{raw}");
     }
     let reply = client
-        .call(20, "image.attach", json!({"session_id": session, "path": "my shot.png"}))
+        .call(
+            20,
+            "image.attach",
+            json!({"session_id": session, "path": "my shot.png"}),
+        )
         .await;
-    assert_eq!(reply["error"]["code"], 4016, "relative to the gateway's folder: {reply}");
+    assert_eq!(
+        reply["error"]["code"], 4016,
+        "relative to the gateway's folder: {reply}"
+    );
     // With no words after the path, the text is upstream's attachment line.
     let reply = client
-        .call(21, "image.attach", json!({"session_id": session, "path": source.display().to_string()}))
+        .call(
+            21,
+            "image.attach",
+            json!({"session_id": session, "path": source.display().to_string()}),
+        )
         .await;
-    assert_eq!(reply["result"]["text"], "[User attached image: my shot.png]");
+    assert_eq!(
+        reply["result"]["text"],
+        "[User attached image: my shot.png]"
+    );
     assert_eq!(reply["result"]["count"], 4);
 }
 
@@ -321,10 +364,18 @@ async fn a_detached_image_is_not_sent() {
 
     let detach = json!({"session_id": session, "path": dropped_path});
     let reply = client.call(4, "image.detach", detach.clone()).await;
-    assert_eq!(reply["result"], json!({"detached": true, "count": 1}), "{reply}");
+    assert_eq!(
+        reply["result"],
+        json!({"detached": true, "count": 1}),
+        "{reply}"
+    );
     assert!(!Path::new(&dropped_path).exists());
     let reply = client.call(5, "image.detach", detach).await;
-    assert_eq!(reply["result"], json!({"detached": false, "count": 1}), "{reply}");
+    assert_eq!(
+        reply["result"],
+        json!({"detached": false, "count": 1}),
+        "{reply}"
+    );
 
     client.turn(6, &session, "describe").await;
     assert_eq!(sent_images(&started.requests, 0), vec![data_url(&kept)]);
@@ -343,7 +394,9 @@ async fn image_detach_refuses_bad_requests() {
         (json!({"session_id": session, "path": false}), 4000),
     ];
     for (n, (params, code)) in cases.iter().enumerate() {
-        let reply = client.call(10 + n as u64, "image.detach", params.clone()).await;
+        let reply = client
+            .call(10 + n as u64, "image.detach", params.clone())
+            .await;
         assert_eq!(reply["error"]["code"], *code, "{params}: {reply}");
     }
 }

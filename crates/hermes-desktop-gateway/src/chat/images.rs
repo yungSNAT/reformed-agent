@@ -17,7 +17,8 @@ use super::{
 };
 use crate::attach::{stage_image_bytes, ImageError, MAX_IMAGE_BYTES};
 
-pub(super) const METHODS: &[(&str, Handler)] = &[("image.attach", attach), ("image.detach", detach)];
+pub(super) const METHODS: &[(&str, Handler)] =
+    &[("image.attach", attach), ("image.detach", detach)];
 
 /// Upstream's image extensions (`_IMAGE_EXTENSIONS`, hermes_cli/cli_terminal_input.py); the
 /// bytes then decide whether the image is one the model is sent.
@@ -142,7 +143,9 @@ fn image_path(raw: &str, cwd: &Path) -> Result<(PathBuf, String), String> {
         return Ok(found);
     }
     let (token, remainder) = split_path_input(raw);
-    resolve(&token, cwd).map(|path| (path, remainder)).ok_or(token)
+    resolve(&token, cwd)
+        .map(|path| (path, remainder))
+        .ok_or(token)
 }
 
 /// Upstream's `_detect_file_drop`: a path at the start of `raw` (optionally quoted; `/`, `~`,
@@ -207,7 +210,10 @@ fn split_path_input(raw: &str) -> (String, String) {
             _ => pos += 1,
         }
     }
-    (raw[..pos].replace("\\ ", " "), raw[pos..].trim().to_string())
+    (
+        raw[..pos].replace("\\ ", " "),
+        raw[pos..].trim().to_string(),
+    )
 }
 
 /// Upstream's `_resolve_attachment_path`: quotes, `\ ` escapes, `file://` and a leading `~`
