@@ -228,13 +228,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Download release build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
       - name: Download security artifacts (SBOM)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sbom-and-secret-scan
           path: security
@@ -273,7 +273,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download staged assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: staged-release
           path: staged
@@ -316,7 +316,7 @@ jobs:
         shell: bash
     steps:
       - name: Download staged assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: staged-release
           path: staged
@@ -360,7 +360,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download staged assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: staged-release
           path: dist
@@ -426,7 +426,7 @@ jobs:
             exit 1
           fi
       - name: Download signed assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signed-release
           path: dist
