@@ -211,6 +211,81 @@ async fn matrix_typing_reports_a_transport_failure() {
 }
 
 #[tokio::test]
+async fn native_http_distinguishes_request_errors_from_truncated_responses() {
+    use ruma::api::client::account::whoami::v3::Request;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let server = MockServer::start().await;
+    let mut adapter = adapter_for_matrix_fixture(&server);
+    adapter.config.homeserver_url = "http://[".into();
+    assert!(matches!(
+        adapter.build_ruma_request(Request::new(), "whoami"),
+        Err(GatewayError::ConnectionFailed(detail)) if detail.contains("whoami build request failed")
+    ));
+    let relative = http::Request::get("/fixture").body(Vec::new()).unwrap();
+    assert!(matches!(
+        adapter.execute_ruma_request(relative, "whoami").await,
+        Err(GatewayError::ConnectionFailed(detail)) if detail.contains("whoami invalid request URI")
+    ));
+
+    for (truncated, expected) in [
+        (false, "whoami request failed"),
+        (true, "whoami read response failed"),
+    ] {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        adapter.config.homeserver_url = format!("http://{}", listener.local_addr().unwrap());
+        let request = adapter
+            .build_ruma_request(Request::new(), "whoami")
+            .unwrap();
+        let serve = async {
+            let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+            let mut request_line = String::new();
+            socket.read_line(&mut request_line).await.unwrap();
+            assert_eq!(
+                request_line,
+                "GET /_matrix/client/v3/account/whoami HTTP/1.1\r\n"
+            );
+            let mut authorization_seen = false;
+            loop {
+                let mut header = String::new();
+                assert_ne!(socket.read_line(&mut header).await.unwrap(), 0);
+                if header == "\r\n" {
+                    break;
+                }
+                let (name, value) = header.split_once(':').unwrap();
+                if name.eq_ignore_ascii_case("authorization") {
+                    assert!(!authorization_seen);
+                    assert_eq!(value.trim(), "Bearer matrix-fixture");
+                    authorization_seen = true;
+                }
+            }
+            assert!(authorization_seen);
+            if truncated {
+                socket
+                    .get_mut()
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\nshort",
+                    )
+                    .await
+                    .unwrap();
+            }
+            socket.get_mut().shutdown().await.unwrap();
+        };
+        let ((), result) = tokio::time::timeout(Duration::from_secs(7), async {
+            tokio::join!(serve, adapter.execute_ruma_request(request, "whoami"))
+        })
+        .await
+        .expect("native Matrix request and fixture response timed out");
+        assert!(matches!(
+            result,
+            Err(GatewayError::ConnectionFailed(detail)) if detail.contains(expected)
+        ));
+    }
+}
+
+#[tokio::test]
 async fn native_runtime_reuses_whoami_device_and_reconciles_generated_keys() {
     let server = MockServer::start().await;
     let adapter = adapter_for_matrix_fixture(&server);
