@@ -98,3 +98,69 @@ pub(crate) fn groups<S: Clone + Send + Sync + 'static>() -> Router<S> {
         .fold(Router::new(), |router, group| router.merge(group()))
         .with_state(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::Request;
+    use axum::middleware::{self, Next};
+    use axum::routing::get;
+
+    fn native_routes() -> Router {
+        Router::new().route("/native", get(|| async { "native" }))
+    }
+
+    fn shared_routes() -> Router {
+        Router::new().route("/shared", get(|| async { "shared" }))
+    }
+
+    /// Stands in for the credential guard: admits the caller the request names.
+    async fn admit_as(mut request: Request, next: Next) -> Response {
+        let caller = match request.headers().get("x-caller").and_then(|v| v.to_str().ok()) {
+            Some("browser") => Some(Caller::Browser { generation: 1 }),
+            Some("native") => Some(Caller::Native),
+            Some("token") => Some(Caller::Token),
+            _ => None,
+        };
+        if let Some(caller) = caller {
+            request.extensions_mut().insert(caller);
+        }
+        next.run(request).await
+    }
+
+    #[tokio::test]
+    async fn a_native_only_group_refuses_the_browser_credential() {
+        let groups = [
+            Group {
+                audience: Audience::NativeOnly,
+                routes: native_routes,
+            },
+            Group {
+                audience: Audience::Browser,
+                routes: shared_routes,
+            },
+        ];
+        let app: Router = merge::<()>(&groups).layer(middleware::from_fn(admit_as));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        for (path, caller, want) in [
+            ("/native", "browser", 403),
+            ("/native", "none", 403),
+            ("/native", "native", 200),
+            ("/native", "token", 200),
+            ("/shared", "browser", 200),
+            ("/shared", "native", 200),
+        ] {
+            let status = client
+                .get(format!("http://{addr}{path}"))
+                .header("x-caller", caller)
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status.as_u16(), want, "{path} as {caller}");
+        }
+    }
+}

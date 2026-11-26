@@ -328,6 +328,14 @@ async fn rest_routes_admit_the_browser_credential_on_its_own_branch() {
         403
     );
     assert_eq!(get("wrong", None).await.unwrap().status(), 401);
+    // The Origin is judged before the credential: a foreign page learns nothing about a guess.
+    assert_eq!(
+        get("wrong", Some("http://evil.example"))
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
     // Both credentials at once are refused, and the native ticket is left unspent.
     let instance = control(&home, "identify", json!({}))["result"]["instance_id"].clone();
     let native = control(
@@ -354,6 +362,81 @@ async fn rest_routes_admit_the_browser_credential_on_its_own_branch() {
         .await
         .unwrap();
     assert_eq!(native_only.status(), 200);
+}
+
+/// A page at `evil.example` that rebinds its name to 127.0.0.1 sends its own name as both `Host`
+/// and `Origin`. Every Webapp route refuses it (403) and spends nothing: the handoff and socket
+/// checks themselves refuse a `Host` that is not a loopback name on this port, and the routes that
+/// carry no `Origin` (the bundle, a REST call with the credential) rely on the Host guard, so this
+/// fails if that guard stops covering any of them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rebinding_host_is_refused_on_every_webapp_route() {
+    let (_dir, home) = private_home();
+    let (_runtime, origin) = serving(&home);
+    let port = origin.rsplit(':').next().unwrap();
+    let evil_host = format!("evil.example:{port}");
+    let evil_origin = format!("http://{evil_host}");
+    let client = reqwest::Client::new();
+
+    let ticket = launch_ticket(&home);
+    let handoff = client
+        .post(format!("{origin}/webapp/window-session"))
+        .header("Host", &evil_host)
+        .header("Origin", &evil_origin)
+        .header("X-Hermes-Window-Ticket", &ticket)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(handoff.status(), 403);
+    // Unspent: the launch page on the real origin still redeems it.
+    let redeemed = window_session(&origin, Some(&origin), &ticket).await;
+    assert_eq!(redeemed.status(), 200);
+    let token = redeemed.json::<Value>().await.unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    for (path, sends_origin) in [
+        ("/api/hermes/update/check", false),
+        ("/api/hermes/update/check", true),
+        ("/api/status", false),
+    ] {
+        let mut request = client
+            .get(format!("{origin}{path}"))
+            .header("Host", &evil_host)
+            .header("X-Hermes-Session-Token", &token);
+        if sends_origin {
+            request = request.header("Origin", &evil_origin);
+        }
+        assert_eq!(request.send().await.unwrap().status(), 403, "{path}");
+    }
+    let minted = client
+        .post(format!("{origin}/api/webapp/socket-ticket?socket=gateway"))
+        .header("Host", &evil_host)
+        .header("Origin", &evil_origin)
+        .header("X-Hermes-Session-Token", &token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(minted.status(), 403);
+    for path in ["/", "/index.html", "/assets/app.js", "/webapp/launch"] {
+        let page = client
+            .get(format!("{origin}{path}"))
+            .header("Host", &evil_host)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(page.status(), 403, "{path}");
+    }
+
+    let socket = minted_socket_ticket(&origin, &token).await;
+    let mut dial = browser_dial(&origin, Some(&evil_origin), &protocols(&socket));
+    dial.headers_mut()
+        .insert("Host", evil_host.parse().unwrap());
+    assert_eq!(refused_status(dial).await, 403);
+    // Unspent: the tab on the real origin opens its socket with it.
+    let real = browser_dial(&origin, Some(&origin), &protocols(&socket));
+    assert!(tokio_tungstenite::connect_async(real).await.is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread")]

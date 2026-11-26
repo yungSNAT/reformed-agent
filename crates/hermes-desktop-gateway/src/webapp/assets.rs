@@ -468,7 +468,14 @@ mod tests {
         let boot = Bootstrap { profile: "default" };
         let missing = resolve(Some(dir.path()), "/", &boot).err().unwrap();
         assert_eq!(missing.0, StatusCode::NOT_FOUND);
-        assert!(missing.1.contains("index.html is missing"), "{}", missing.1);
+        // An HTTP client learns that the bundle is missing, never where it was looked for.
+        let folder = dir.path().to_string_lossy().into_owned();
+        assert!(missing.1.starts_with(NOT_BUILT), "{}", missing.1);
+        assert!(!missing.1.contains(&folder), "{}", missing.1);
+        let unreadable = resolve(Some(&dir.path().join("absent")), "/", &boot)
+            .err()
+            .unwrap();
+        assert!(!unreadable.1.contains(&folder), "{}", unreadable.1);
         assert!(missing_reason(Some(dir.path()))
             .unwrap()
             .contains("index.html is missing"));
@@ -478,5 +485,6 @@ mod tests {
         std::fs::write(dir.path().join(STALE_MARKER), "x").unwrap();
         let stale = resolve(Some(dir.path()), "/", &boot).err().unwrap();
         assert_eq!(stale.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!stale.1.contains(&folder), "{}", stale.1);
     }
 }

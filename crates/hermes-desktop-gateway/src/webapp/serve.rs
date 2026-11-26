@@ -517,6 +517,42 @@ mod tests {
             .port()
     }
 
+    fn with(pairs: &[(header::HeaderName, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.append(name, value.parse().unwrap());
+        }
+        headers
+    }
+
+    #[test]
+    fn an_own_origin_is_a_loopback_host_on_this_port_not_whatever_host_is_sent() {
+        let (host, origin) = (header::HOST, header::ORIGIN);
+        for name in ["127.0.0.1:9120", "localhost:9120", "[::1]:9120"] {
+            let pair = with(&[(host.clone(), name), (origin.clone(), &format!("http://{name}"))]);
+            assert!(own_origin(&pair, 9120), "{name}");
+            assert!(origin_absent_or_own(&pair, 9120), "{name}");
+        }
+        // A rebinding page sends its own name as both Host and Origin: refused without relying on
+        // the Host guard in front.
+        for name in ["evil.example:9120", "127.0.0.1:9121", "127.0.0.2:9120", "localhost"] {
+            let pair = with(&[(host.clone(), name), (origin.clone(), &format!("http://{name}"))]);
+            assert!(!own_origin(&pair, 9120), "{name}");
+            assert!(!origin_absent_or_own(&pair, 9120), "{name}");
+        }
+        let foreign = with(&[(host.clone(), "127.0.0.1:9120"), (origin.clone(), "http://evil.example")]);
+        assert!(!own_origin(&foreign, 9120));
+        let absent = with(&[(host.clone(), "127.0.0.1:9120")]);
+        assert!(!own_origin(&absent, 9120));
+        assert!(origin_absent_or_own(&absent, 9120));
+        let twice = with(&[
+            (host, "127.0.0.1:9120"),
+            (origin.clone(), "http://127.0.0.1:9120"),
+            (origin, "http://127.0.0.1:9120"),
+        ]);
+        assert!(!own_origin(&twice, 9120));
+    }
+
     #[test]
     fn without_a_bundle_the_webapp_says_how_to_get_one_and_mints_nothing() {
         let home = tempfile::tempdir().unwrap();
