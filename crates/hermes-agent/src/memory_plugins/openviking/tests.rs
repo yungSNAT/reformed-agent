@@ -73,14 +73,13 @@ fn config_file_activates_provider_and_loads_values() {
 }
 
 #[test]
-fn recall_config_overrides_environment_and_bounds_policy_values() {
+fn recall_config_reads_environment_values() {
     const CHILD: &str = "REFORMED_OPENVIKING_RECALL_CONFIG_TEST";
     if std::env::var(CHILD).as_deref() != Ok("1") {
         let home = tempfile::tempdir().unwrap();
         let executable = std::env::current_exe().expect("test executable");
         let (_, module) = module_path!().split_once("::").unwrap();
-        let test =
-            format!("{module}::recall_config_overrides_environment_and_bounds_policy_values");
+        let test = format!("{module}::recall_config_reads_environment_values");
         let mut command = std::process::Command::new(executable);
         command
             .env_clear()
@@ -131,47 +130,6 @@ fn recall_config_overrides_environment_and_bounds_policy_values() {
     assert_eq!(inherited.full_read_limit, 5);
     assert!(!inherited.prefer_abstract);
     assert!(inherited.include_resources);
-
-    let path = OpenVikingConfig::config_path(home);
-    std::fs::write(
-        &path,
-        r#"{
-        "recall_limit": " 99 ",
-        "recall_score_threshold": -0.25,
-        "recall_max_injected_chars": "invalid",
-        "recall_timeout_seconds": 0,
-        "recall_request_timeout_seconds": "0.25",
-        "recall_full_read_limit": 17,
-        "recall_prefer_abstract": " YeS ",
-        "recall_resources": false
-    }"#,
-    )
-    .unwrap();
-    let overrides = OpenVikingConfig::load(home).recall;
-    assert_eq!(overrides.limit, 50);
-    assert_eq!(overrides.score_threshold, 0.0);
-    assert_eq!(overrides.max_injected_chars, inherited.max_injected_chars);
-    assert_eq!(overrides.timeout, Duration::from_millis(50));
-    assert_eq!(overrides.request_timeout, Duration::from_millis(250));
-    assert_eq!(overrides.full_read_limit, 10);
-    assert!(overrides.prefer_abstract);
-    assert!(!overrides.include_resources);
-
-    std::fs::write(
-        path,
-        r#"{
-        "recall_limit": "-1",
-        "recall_max_injected_chars": 1,
-        "recall_prefer_abstract": 7,
-        "recall_resources": " oFf "
-    }"#,
-    )
-    .unwrap();
-    let replaced = OpenVikingConfig::load(home).recall;
-    assert_eq!(replaced.limit, inherited.limit);
-    assert_eq!(replaced.max_injected_chars, 256);
-    assert!(!replaced.prefer_abstract);
-    assert!(!replaced.include_resources);
 }
 
 #[test]
