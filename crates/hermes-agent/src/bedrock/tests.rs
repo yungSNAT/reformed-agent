@@ -1,9 +1,12 @@
 use super::*;
 use hermes_core::JsonSchema;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex as AsyncMutex;
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn encode_event_stream_message(event_type: &str, payload: Value) -> Vec<u8> {
     let payload = serde_json::to_vec(&payload).expect("payload JSON");
@@ -695,6 +698,127 @@ fn finish_reason_mapping_matches_bedrock_transport_contract() {
         map_bedrock_finish_reason(Some("unknown")).as_deref(),
         Some("stop")
     );
+}
+
+#[tokio::test]
+async fn catalog_fetch_loopback_responses() {
+    const CHILD: &str = "HERMES_BEDROCK_CATALOG_TEST_CHILD";
+    const COMPLETED: &str = "Bedrock catalog checks completed";
+    if std::env::var_os(CHILD).is_some() {
+        catalog_fetch_requires_a_successful_json_response().await;
+        catalog_fetch_handles_an_unsignable_url_and_a_closed_connection().await;
+        println!("{COMPLETED}");
+        return;
+    }
+
+    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .env_clear()
+        .args([
+            "--exact",
+            "bedrock::tests::catalog_fetch_loopback_responses",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("NO_PROXY", "127.0.0.1")
+        .env("no_proxy", "127.0.0.1")
+        .kill_on_drop(true);
+    for name in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let output = tokio::time::timeout(Duration::from_secs(30), command.output())
+        .await
+        .expect("catalog child must finish")
+        .expect("launch catalog child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains(COMPLETED),
+        "catalog child status: {}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+async fn catalog_fetch_requires_a_successful_json_response() {
+    let server = MockServer::start().await;
+    let catalog = json!({"modelSummaries": [{"modelId": "fixture-model"}]});
+    for (route, response) in [
+        (
+            "/foundation-models",
+            ResponseTemplate::new(200).set_body_json(&catalog),
+        ),
+        (
+            "/rejected",
+            ResponseTemplate::new(503).set_body_json(&catalog),
+        ),
+        (
+            "/malformed",
+            ResponseTemplate::new(200).set_body_raw("{", "application/json"),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .and(header("authorization", "Bearer catalog-fixture"))
+            .and(header("accept", "application/json"))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+
+    let auth = BedrockAuth::Bearer("catalog-fixture".to_string());
+    for (route, expected) in [
+        ("/foundation-models", vec!["fixture-model"]),
+        ("/rejected", vec![]),
+        ("/malformed", vec![]),
+    ] {
+        let url = format!("{}{route}", server.uri());
+        let models = tokio::time::timeout(
+            Duration::from_secs(5),
+            fetch_bedrock_catalog_endpoint(&url, "us-east-1", &auth),
+        )
+        .await
+        .expect("local catalog request must finish");
+        assert_eq!(models, expected, "{route}");
+    }
+    server.verify().await;
+}
+
+async fn catalog_fetch_handles_an_unsignable_url_and_a_closed_connection() {
+    let signing = BedrockAuth::SigV4(AwsCredentials {
+        access_key_id: "fixture-id".to_string(),
+        secret_access_key: "fixture-secret".to_string(),
+        session_token: None,
+    });
+    assert!(
+        fetch_bedrock_catalog_endpoint("file:///foundation-models", "us-east-1", &signing)
+            .await
+            .is_empty()
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/foundation-models",
+        listener.local_addr().unwrap()
+    );
+    let bearer = BedrockAuth::Bearer("catalog-fixture".to_string());
+    let (models, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            fetch_bedrock_catalog_endpoint(&url, "us-east-1", &bearer),
+            async {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request_start = [0; 4];
+                socket.read_exact(&mut request_start).await.unwrap();
+                assert_eq!(&request_start, b"GET ");
+                socket.shutdown().await.unwrap();
+            }
+        )
+    })
+    .await
+    .expect("local disconnect must finish");
+    assert!(models.is_empty());
 }
 
 #[test]

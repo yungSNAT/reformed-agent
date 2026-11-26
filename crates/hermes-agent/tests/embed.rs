@@ -390,6 +390,29 @@ fn a_home_set_through_configure_is_kept_and_two_homes_are_refused() {
 }
 
 #[test]
+fn named_homes_are_created_and_must_be_directories() {
+    let root = tempfile::tempdir().unwrap();
+    let builder = || Agent::builder(Arc::new(Scripted::default())).model("scripted");
+    let home = root.path().join("nested/home");
+    assert!(matches!(
+        builder().home("").build(),
+        Err(AgentError::Config(_))
+    ));
+    let agent = builder().home(&home).build().unwrap();
+    assert!(agent.home().is_dir());
+    drop(agent);
+    assert!(home.is_dir());
+
+    let file = root.path().join("file");
+    std::fs::write(&file, "existing contents").unwrap();
+    let result = builder()
+        .configure(|c| c.hermes_home = Some(file.display().to_string()))
+        .build();
+    assert!(matches!(result, Err(AgentError::Config(_))));
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "existing contents");
+}
+
+#[test]
 fn building_needs_a_model_and_at_least_one_turn() {
     let provider = || Arc::new(Scripted::default());
 

@@ -887,4 +887,83 @@ mod tests {
         let metas = store.list().await.unwrap();
         assert!(!metas.iter().any(|m| m.name == "sneaky"));
     }
+
+    #[tokio::test]
+    async fn list_skips_invalid_frontmatter_and_keeps_readable_skills() {
+        let root = tempdir().unwrap();
+        let store = FileSkillStore::new(root.path().to_path_buf());
+        write_skill(
+            &root.path().join("archives").join("croft-notes"),
+            "croft-notes",
+        )
+        .await;
+
+        for (name, content) in [
+            ("no-frontmatter", "Draft body"),
+            ("unfinished", "---\nname: unfinished\nDraft body"),
+            ("bad-yaml", "---\nname: [unfinished\n---\nDraft body"),
+        ] {
+            let dir = root.path().join(name);
+            fs::create_dir(&dir).await.unwrap();
+            fs::write(dir.join("SKILL.md"), content).await.unwrap();
+            let result = store.load(name).await;
+            assert!(
+                matches!(result, Err(SkillError::Parse(_))),
+                "{name}: {result:?}"
+            );
+        }
+
+        let listed = store.list().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "croft-notes");
+        assert_eq!(listed[0].category.as_deref(), Some("archives"));
+        assert_eq!(
+            store.load("croft-notes").await.unwrap().unwrap().content,
+            "# Linked\nBody"
+        );
+    }
+
+    #[tokio::test]
+    async fn unreadable_skill_reports_io_error_and_preserves_the_file() {
+        let root = tempdir().unwrap();
+        let dir = root.path().join("bad-encoding");
+        fs::create_dir(&dir).await.unwrap();
+        let path = dir.join("SKILL.md");
+        let bytes = b"---\nname: bad-encoding\n---\n\xff";
+        fs::write(&path, bytes).await.unwrap();
+        let store = FileSkillStore::new(root.path().to_path_buf());
+
+        assert!(matches!(
+            store.load("bad-encoding").await,
+            Err(SkillError::Io(_))
+        ));
+        assert!(matches!(store.list().await, Err(SkillError::Io(_))));
+        assert_eq!(fs::read(&path).await.unwrap(), bytes);
+    }
+
+    #[tokio::test]
+    async fn a_file_in_place_of_the_store_is_preserved_on_io_error() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("skills");
+        fs::write(&path, "Local notes").await.unwrap();
+        let store = FileSkillStore::new(path.clone());
+        let skill = Skill {
+            name: "daily-notes".to_string(),
+            content: "Summarise today's notes".to_string(),
+            description: None,
+            category: None,
+        };
+
+        assert!(matches!(store.save(&skill).await, Err(SkillError::Io(_))));
+        assert!(matches!(
+            store.load("daily-notes").await,
+            Err(SkillError::Io(_))
+        ));
+        assert!(matches!(store.list().await, Err(SkillError::Io(_))));
+        assert!(matches!(
+            store.delete("daily-notes").await,
+            Err(SkillError::Io(_))
+        ));
+        assert_eq!(fs::read_to_string(&path).await.unwrap(), "Local notes");
+    }
 }

@@ -1,19 +1,29 @@
 use super::*;
 
 const CHILD_HOME: &str = "HERMES_IMAGE_CONFIG_FIXTURE_HOME";
+const AUTH_FILE: &str = "fixture-image-auth.json";
 
 #[tokio::test]
 async fn image_provider_selection_preserves_scoped_settings() {
     if let Some(home) = std::env::var_os(CHILD_HOME) {
         let home = PathBuf::from(home);
+        assert_eq!(
+            ImageGenRuntimeBackend::from_env_or_managed().provider_label(),
+            "fal"
+        );
         assert_openai_image_config(&home);
         assert_xai_image_config(&home);
         assert_nous_image_config(&home);
+        assert_krea_image_config(&home);
+        assert_openai_codex_image_config(&home);
+        assert_unconfigured_image_providers(&home);
         return;
     }
 
     let fixture = tempfile::tempdir().unwrap();
     let home = fixture.path().canonicalize().unwrap();
+    let managed = home.join("managed");
+    std::fs::create_dir(&managed).unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
     let mut child = tokio::process::Command::new(std::env::current_exe().unwrap());
     child
@@ -28,7 +38,9 @@ async fn image_provider_selection_preserves_scoped_settings() {
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env("HERMES_HOME", &home)
-        .env("HERMES_AUTH_FILE", home.join("empty-fixture-auth.json"))
+        .env("HERMES_AUTH_FILE", home.join(AUTH_FILE))
+        .env("HERMES_MANAGED_DIR", managed)
+        .env("HERMES_ENABLE_NOUS_MANAGED_TOOLS", "0")
         .env("HERMES_IMAGE_GEN_PROVIDER", "unsupported-provider")
         .env("IMAGE_FIXTURE_VALUE", "fixture-image-value")
         .env("OPENAI_API_KEY", "fixture-openai-fallback")
@@ -148,4 +160,91 @@ llm_providers:
         backend.config.api_key.as_deref(),
         Some("fixture-image-value")
     );
+}
+
+fn assert_krea_image_config(home: &Path) {
+    std::fs::write(
+        home.join("config.yaml"),
+        r#"image_gen:
+  provider: krea-ai
+  krea:
+    api_key_env: IMAGE_FIXTURE_VALUE
+    base_url: https://images.fixture.invalid/
+"#,
+    )
+    .unwrap();
+    let runtime = ImageGenRuntimeBackend::from_env_or_managed();
+    assert_eq!(runtime.provider_label(), "krea");
+    assert_eq!(runtime.required_env_vars(), ["KREA_API_KEY"]);
+    let ImageGenRuntimeBackend::Krea(backend) = runtime else {
+        panic!("expected the configured Krea image provider");
+    };
+    let KreaTransport::Direct { api_key, base_url } = &backend.config().transport else {
+        panic!("expected the direct image transport");
+    };
+    assert_eq!(api_key, "fixture-image-value");
+    assert_eq!(base_url, "https://images.fixture.invalid");
+    assert_eq!(backend.config().output_dir, home.join("cache/images"));
+}
+
+fn assert_openai_codex_image_config(home: &Path) {
+    std::fs::write(home.join("config.yaml"), "image_gen:\n  provider: codex\n").unwrap();
+    let runtime = ImageGenRuntimeBackend::from_env_or_managed();
+    assert_eq!(runtime.provider_label(), "openai-codex");
+    assert_eq!(runtime.required_env_vars(), ["HERMES_OPENAI_CODEX_API_KEY"]);
+    let ImageGenRuntimeBackend::OpenAICodex(unconfigured) = runtime else {
+        panic!("the selected image provider must survive missing credentials");
+    };
+    assert!(unconfigured.config().access_token.is_none());
+
+    std::fs::write(
+        home.join(AUTH_FILE),
+        r#"{"providers":{"openai-codex":{"tokens":{"access_token":"fixture-image-session"},
+                                      "base_url":"https://responses.fixture.invalid/"}}}"#,
+    )
+    .unwrap();
+    let ImageGenRuntimeBackend::OpenAICodex(configured) =
+        ImageGenRuntimeBackend::from_env_or_managed()
+    else {
+        panic!("expected the configured Codex image provider");
+    };
+    assert_eq!(
+        configured.config().access_token.as_deref(),
+        Some("fixture-image-session")
+    );
+    assert_eq!(
+        configured.config().base_url,
+        "https://responses.fixture.invalid"
+    );
+}
+
+fn assert_unconfigured_image_providers(home: &Path) {
+    let path = home.join("config.yaml");
+    std::fs::write(&path, "image_gen:\n  provider: open-router\n").unwrap();
+    let runtime = ImageGenRuntimeBackend::from_env_or_managed();
+    assert_eq!(runtime.provider_label(), "openrouter");
+    assert_eq!(runtime.required_env_vars(), ["OPENROUTER_API_KEY"]);
+    let ImageGenRuntimeBackend::OpenRouterCompat(backend) = runtime else {
+        panic!("expected the selected compatible image provider");
+    };
+    assert_eq!(
+        backend.config().provider(),
+        OpenRouterCompatImageProviderKind::OpenRouter
+    );
+    assert!(backend.config().api_key.is_none());
+
+    std::fs::write(&path, "image_gen:\n  provider: krea\n").unwrap();
+    let ImageGenRuntimeBackend::Krea(backend) = ImageGenRuntimeBackend::from_env_or_managed()
+    else {
+        panic!("expected the selected Krea image provider");
+    };
+    assert!(matches!(
+        &backend.config().transport,
+        KreaTransport::Direct { api_key, .. } if api_key.is_empty()
+    ));
+
+    std::fs::write(&path, "image_gen:\n  provider: unknown-fixture\n").unwrap();
+    let runtime = ImageGenRuntimeBackend::from_env_or_managed();
+    assert_eq!(runtime.provider_label(), "fal");
+    assert_eq!(runtime.required_env_vars(), ["FAL_KEY"]);
 }

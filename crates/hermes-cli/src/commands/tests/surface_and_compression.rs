@@ -763,6 +763,136 @@
     }
 
     #[tokio::test]
+    async fn compression_recommends_limits_for_compact_verbose_and_long_transcripts() {
+        use hermes_core::Message;
+
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let base = CompressionRenderPolicy::builtin_defaults();
+        let limits = |policy: CompressionRenderPolicy| {
+            [
+                policy.max_assistant_render_lines,
+                policy.max_tool_output_lines,
+                policy.max_tool_output_line_chars,
+                policy.max_tool_output_total_chars,
+            ]
+        };
+
+        app.messages = vec![Message::assistant("Short response"); 6];
+        app.messages.extend([
+            Message::tool_result("fixture-1", "First result"),
+            Message::tool_result("fixture-2", "Second result"),
+            Message::assistant_with_tool_calls(None, Vec::new()),
+        ]);
+        assert_eq!(
+            limits(recommend_compression_policy_for_app(&app, &base)),
+            [220, 160, 600, 40_000]
+        );
+
+        let assistant = format!("{}\n", "é".repeat(161)).repeat(61);
+        app.messages = vec![Message::assistant(assistant); 6];
+        assert_eq!(
+            limits(recommend_compression_policy_for_app(&app, &base)),
+            [320, 180, 720, 48_000]
+        );
+
+        let tool = format!("{}\n", "x".repeat(721)).repeat(121);
+        app.messages.extend([
+            Message::tool_result("fixture-1", &tool),
+            Message::tool_result("fixture-2", &tool),
+        ]);
+        assert_eq!(
+            limits(recommend_compression_policy_for_app(&app, &base)),
+            [320, 260, 920, 96_000]
+        );
+
+        app.messages.extend(vec![Message::user("Earlier user turn"); 131]);
+        assert_eq!(
+            limits(recommend_compression_policy_for_app(&app, &base)),
+            [320, 260, 920, 96_000]
+        );
+        app.messages.push(Message::user("One more user turn"));
+        assert_eq!(
+            limits(recommend_compression_policy_for_app(&app, &base)),
+            [240, 260, 920, 64_000]
+        );
+    }
+
+    #[tokio::test]
+    async fn compression_autotune_dry_run_apply_and_clear_manage_the_user_plane() {
+        let _guard = test_env_lock::lock_async().await;
+        let keys = [
+            "HERMES_TUI_MAX_ASSISTANT_RENDER_LINES",
+            "HERMES_TUI_MAX_TOOL_OUTPUT_LINES",
+            "HERMES_TUI_MAX_TOOL_OUTPUT_LINE_CHARS",
+            "HERMES_TUI_MAX_TOOL_OUTPUT_TOTAL_CHARS",
+        ];
+        let inherited = keys.map(std::env::var_os);
+        let tmp = tempdir().expect("tempdir");
+        let home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        app.messages.clear();
+        let path = tmp.path().join("compression/user-rules.json");
+        let before = keys.map(std::env::var_os);
+        let (current, _, _) = merged_compression_policy();
+        let limits = [
+            current.max_assistant_render_lines,
+            current.max_tool_output_lines,
+            current.max_tool_output_line_chars,
+            current.max_tool_output_total_chars,
+        ];
+
+        handle_slash_command(&mut app, "/compress", &["rules", "autotune"])
+            .await
+            .expect("dry-run autotune");
+        assert!(latest_ui_assistant_text(&app).contains("Dry-run only"));
+        assert!(!path.exists());
+        assert_eq!(keys.map(std::env::var_os), before);
+
+        handle_slash_command(
+            &mut app,
+            "/compress",
+            &["rules", "autotune", "apply", "global"],
+        )
+        .await
+        .expect("reject unknown rule plane");
+        assert!(latest_ui_assistant_text(&app).contains("Plane must be `user` or `project`"));
+        assert!(!path.exists());
+        assert_eq!(keys.map(std::env::var_os), before);
+
+        handle_slash_command(&mut app, "/compress", &["rules", "autotune", "apply"])
+            .await
+            .expect("apply autotune to default user plane");
+        assert!(latest_ui_assistant_text(&app).contains("Autotune applied to user plane"));
+        let saved = load_compression_plane(&path).expect("persist the user plane");
+        assert_eq!(
+            [
+                saved.max_assistant_render_lines,
+                saved.max_tool_output_lines,
+                saved.max_tool_output_line_chars,
+                saved.max_tool_output_total_chars,
+            ],
+            limits.map(Some)
+        );
+        for (key, value) in keys.into_iter().zip(limits) {
+            assert_eq!(std::env::var(key).unwrap(), value.to_string());
+        }
+
+        for expected in ["Cleared user plane rules", "user plane rules already clear"] {
+            handle_slash_command(&mut app, "/compress", &["rules", "clear", "user"])
+                .await
+                .expect("clear user plane");
+            assert!(latest_ui_assistant_text(&app).contains(expected));
+            assert!(!path.exists());
+        }
+        drop(app);
+        drop(home_guard);
+        assert_eq!(keys.map(std::env::var_os), inherited);
+    }
+
+    #[tokio::test]
     async fn compress_command_reports_before_after_message_and_token_summary() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");

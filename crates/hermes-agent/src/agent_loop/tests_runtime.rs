@@ -29,6 +29,7 @@
     }
 
     include!("tests/runtime_smart_routing.rs");
+    include!("tests/tool_execution_contract.rs");
 
     use std::sync::atomic::AtomicU64;
 
@@ -1018,8 +1019,10 @@
             }
         }
 
+        let home = tempfile::tempdir().unwrap();
         let config = AgentConfig {
-            session_id: Some("sess-auto-1".into()),
+            session_id: Some(" sess-auto-1 ".into()),
+            hermes_home: Some(home.path().to_string_lossy().into_owned()),
             ..AgentConfig::default()
         };
         let agent = AgentLoop::new(
@@ -1041,6 +1044,27 @@
             args.get("current_session_id").and_then(|v| v.as_str()),
             Some("sess-auto-1")
         );
+        assert_eq!(args["query"], "previous issue");
+        assert_eq!(args["limit"], 3);
+
+        tc.function.arguments = r#"["previous issue"]"#.into();
+        let original = tc.clone();
+        agent.hydrate_session_search_args(&mut tc);
+        assert_eq!(tc, original);
+
+        tc.function.arguments = r#"{"query":"previous issue"}"#.into();
+        let original = tc.clone();
+        let no_session = AgentLoop::new(
+            AgentConfig {
+                session_id: Some("   ".into()),
+                hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DummyProvider),
+        );
+        no_session.hydrate_session_search_args(&mut tc);
+        assert_eq!(tc, original);
     }
 
     #[test]
@@ -1284,6 +1308,7 @@
     }
 
     include!("tests/anthropic_per_request_pricing.rs");
+    include!("tests/session_spend_cap.rs");
     include!("tests/runtime_provider_resolution.rs");
 
     include!("tests/governor_finalizer.rs");
