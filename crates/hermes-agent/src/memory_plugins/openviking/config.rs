@@ -72,12 +72,15 @@ impl OpenVikingConfig {
             account: std::env::var("OPENVIKING_ACCOUNT").unwrap_or_else(|_| "default".into()),
             user: std::env::var("OPENVIKING_USER").unwrap_or_else(|_| "default".into()),
             agent: std::env::var("OPENVIKING_AGENT").unwrap_or_else(|_| DEFAULT_AGENT.into()),
-            recall: OpenVikingRecallConfig::from_env(),
+            recall: OpenVikingRecallConfig::default(),
         };
 
         let path = Self::config_path(hermes_home);
         let raw = config_io::read_json_object(&path);
         apply_openviking_config_map(&mut config, &raw);
+        // As the Python plugin's `_recall_config`: a set environment variable beats config.
+        config.recall.apply_env();
+        config.recall.normalize();
 
         config.endpoint = normalize_openviking_endpoint(&config.endpoint);
         config.api_key_type = normalize_openviking_key_type(&config.api_key_type);
@@ -89,8 +92,8 @@ impl OpenVikingConfig {
 }
 
 impl OpenVikingRecallConfig {
-    fn from_env() -> Self {
-        let mut cfg = Self::default();
+    fn apply_env(&mut self) {
+        let cfg = self;
         apply_recall_usize_env(&mut cfg.limit, "OPENVIKING_RECALL_LIMIT");
         apply_recall_f64_env(
             &mut cfg.score_threshold,
@@ -114,17 +117,18 @@ impl OpenVikingRecallConfig {
             "OPENVIKING_RECALL_PREFER_ABSTRACT",
         );
         apply_recall_bool_env(&mut cfg.include_resources, "OPENVIKING_RECALL_RESOURCES");
-        cfg.normalize();
-        cfg
     }
 
     fn normalize(&mut self) {
-        self.limit = self.limit.clamp(1, 50);
+        // The Python plugin's bounds.
+        self.limit = self.limit.clamp(1, 100);
         self.score_threshold = self.score_threshold.clamp(0.0, 1.0);
-        self.max_injected_chars = self.max_injected_chars.clamp(256, 50_000);
-        self.timeout = self.timeout.max(RECALL_MIN_TIMEOUT);
-        self.request_timeout = self.request_timeout.max(RECALL_MIN_TIMEOUT);
-        self.full_read_limit = self.full_read_limit.min(10);
+        self.max_injected_chars = self.max_injected_chars.clamp(100, 50_000);
+        self.timeout = self.timeout.clamp(RECALL_TIMEOUT_FLOOR, RECALL_TIMEOUT_CAP);
+        self.request_timeout = self
+            .request_timeout
+            .clamp(RECALL_TIMEOUT_FLOOR, RECALL_TIMEOUT_CAP);
+        self.full_read_limit = self.full_read_limit.min(100);
     }
 }
 
@@ -198,18 +202,24 @@ fn apply_openviking_config_map(
         raw,
         "recall_resources",
     );
-    config.recall.normalize();
 }
 
 fn json_number_or_string_usize(value: &Value) -> Option<usize> {
+    json_number_or_string_f64(value).and_then(count_from_f64)
+}
+
+/// Python's `int(float(raw))`: truncates toward zero; a negative count becomes 0 before clamping.
+fn count_from_f64(value: f64) -> Option<usize> {
     value
-        .as_u64()
-        .and_then(|value| usize::try_from(value).ok())
-        .or_else(|| {
-            value
-                .as_str()
-                .and_then(|value| value.trim().parse::<usize>().ok())
-        })
+        .is_finite()
+        .then(|| value.trunc().max(0.0) as usize)
+}
+
+fn env_f64(key: &str) -> Option<f64> {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| !value.is_nan())
 }
 
 fn json_number_or_string_f64(value: &Value) -> Option<f64> {
@@ -233,35 +243,32 @@ fn json_boolish(value: &Value) -> Option<bool> {
 }
 
 fn apply_recall_usize_env(target: &mut usize, key: &str) {
-    if let Ok(value) = std::env::var(key) {
-        if let Ok(parsed) = value.trim().parse::<usize>() {
-            *target = parsed;
-        }
+    if let Some(parsed) = env_f64(key).and_then(count_from_f64) {
+        *target = parsed;
     }
 }
 
 fn apply_recall_f64_env(target: &mut f64, key: &str) {
-    if let Ok(value) = std::env::var(key) {
-        if let Ok(parsed) = value.trim().parse::<f64>() {
-            *target = parsed;
-        }
+    if let Some(parsed) = env_f64(key) {
+        *target = parsed;
     }
 }
 
 fn apply_recall_duration_env(target: &mut Duration, key: &str) {
-    if let Ok(value) = std::env::var(key) {
-        if let Ok(parsed) = value.trim().parse::<f64>() {
-            *target = duration_from_secs_f64(parsed);
-        }
+    if let Some(parsed) = env_f64(key) {
+        *target = duration_from_secs_f64(parsed);
     }
 }
 
+/// As Python's `_env_bool`: unset or empty keeps the current value; any other word but
+/// 1, true, yes or on is false.
 fn apply_recall_bool_env(target: &mut bool, key: &str) {
     if let Ok(value) = std::env::var(key) {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "yes" | "on" => *target = true,
-            "0" | "false" | "no" | "off" => *target = false,
-            _ => {}
+        if !value.is_empty() {
+            *target = matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            );
         }
     }
 }
@@ -295,11 +302,13 @@ fn apply_recall_bool_map(target: &mut bool, raw: &serde_json::Map<String, Value>
 }
 
 fn duration_from_secs_f64(seconds: f64) -> Duration {
-    if !seconds.is_finite() || seconds <= 0.0 {
-        RECALL_MIN_TIMEOUT
-    } else {
-        Duration::from_secs_f64(seconds)
+    if seconds.is_nan() {
+        return RECALL_TIMEOUT_FLOOR;
     }
+    Duration::from_secs_f64(seconds.clamp(
+        RECALL_TIMEOUT_FLOOR.as_secs_f64(),
+        RECALL_TIMEOUT_CAP.as_secs_f64(),
+    ))
 }
 
 fn normalize_openviking_endpoint(raw: &str) -> String {
