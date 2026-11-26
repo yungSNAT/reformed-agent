@@ -29,6 +29,7 @@
     }
 
     include!("tests/runtime_smart_routing.rs");
+    include!("tests/tool_execution_contract.rs");
 
     use std::sync::atomic::AtomicU64;
 
