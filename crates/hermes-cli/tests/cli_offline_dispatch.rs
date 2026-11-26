@@ -6,6 +6,81 @@ use std::time::Duration;
 use support::isolated_hermes;
 
 #[tokio::test]
+async fn offline_pairing_approves_masks_and_revokes_a_disposable_device() {
+    use hermes_cli::pairing_store::{PairedDevice, PairingStatus, PairingStore};
+
+    let root = tempfile::tempdir().unwrap();
+    let store = PairingStore::new(root.path().join("hermes/pairing.json"));
+    let run_pairing = |args: &[&str]| {
+        let mut command = isolated_hermes(root.path());
+        command.arg("pairing").args(args);
+        async move {
+            tokio::time::timeout(Duration::from_secs(15), command.output())
+                .await
+                .expect("pairing command timed out")
+                .expect("pairing command should run")
+        }
+    };
+
+    let empty = run_pairing(&[]).await;
+    assert!(empty.status.success());
+    assert!(String::from_utf8_lossy(&empty.stdout).contains("No paired devices."));
+
+    let devices = ["fixture-device", "fixture-expired"].map(|id| PairedDevice {
+        device_id: id.to_string(),
+        name: None,
+        status: PairingStatus::Pending,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        last_seen: None,
+        shared_secret: None,
+    });
+    store.save(&devices).unwrap();
+
+    let missing = run_pairing(&["approve"]).await;
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("Missing --device-id"));
+    assert_eq!(store.list().unwrap()[0].status, PairingStatus::Pending);
+
+    let approved = run_pairing(&["approve", "--device-id", "fixture-device"]).await;
+    assert!(approved.status.success());
+    let saved = store.list().unwrap();
+    assert_eq!(saved[0].device_id, "fixture-device");
+    assert_eq!(saved[0].status, PairingStatus::Approved);
+    let secret = saved[0].shared_secret.as_deref().unwrap();
+    let stdout = String::from_utf8_lossy(&approved.stdout);
+    let masked = hermes_core::secret_values::mask_secret(secret);
+    assert!(stdout.contains("Device 'fixture-device' approved."));
+    assert!(stdout
+        .lines()
+        .any(|line| line.trim() == format!("Shared secret: {masked}")));
+    assert!(!stdout.contains(secret));
+    assert!(!String::from_utf8_lossy(&approved.stderr).contains(secret));
+
+    let cleared = run_pairing(&["clear-pending"]).await;
+    assert!(cleared.status.success());
+    assert!(String::from_utf8_lossy(&cleared.stdout).contains("Cleared 1 pending pairing request"));
+    let saved = store.list().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].device_id, "fixture-device");
+    assert_eq!(saved[0].status, PairingStatus::Approved);
+
+    let revoked = run_pairing(&["revoke", "--device-id", "fixture-device"]).await;
+    assert!(revoked.status.success());
+    assert!(String::from_utf8_lossy(&revoked.stdout).contains("Device 'fixture-device' revoked."));
+    let saved = store.list().unwrap();
+    assert_eq!(saved[0].status, PairingStatus::Revoked);
+    assert!(saved[0].shared_secret.is_none());
+
+    let list = run_pairing(&["list"]).await;
+    assert!(list.status.success());
+    let stdout = String::from_utf8_lossy(&list.stdout);
+    assert!(stdout
+        .lines()
+        .any(|line| line.contains("fixture-device") && line.contains("revoked")));
+    assert!(!stdout.contains("fixture-expired"));
+}
+
+#[tokio::test]
 async fn offline_hermes_export_import_publishes_only_valid_history() {
     const EXPORT: &str =
         include_str!("../../hermes-parity-tests/fixtures/session_import/hermes_export.jsonl");
