@@ -374,6 +374,35 @@ streaming:
     .await
     .expect("completed provider turn is saved in the isolated session");
 
+    terminal.write_all(b"\x1b[200~/undo\x1b[201~\r!").unwrap();
+    let edited = format!("{prompt}!");
+    let draft_path = home.join("composer-drafts.json");
+    timeout(Duration::from_secs(12), async {
+        loop {
+            if let Ok(bytes) = std::fs::read(&draft_path) {
+                if let Ok(drafts) = serde_json::from_slice::<Value>(&bytes) {
+                    if drafts["drafts"][0]["text"] == edited {
+                        break;
+                    }
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("undo restores the prompt at the cursor and stores the edit as a draft");
+
+    terminal.write_all(b"\x03").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("TUI shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+
+    let saved_draft: Value = serde_json::from_slice(&std::fs::read(&draft_path).unwrap()).unwrap();
+    assert_eq!(saved_draft["drafts"][0]["text"], edited);
     let requests = provider.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
     let request: Value = requests[0].body_json().unwrap();
@@ -384,15 +413,6 @@ streaming:
         .rfind(|message| message["role"] == "user")
         .expect("request has a user message");
     assert_eq!(message["content"], prompt);
-
-    terminal.write_all(b"\x1b[200~/quit\x1b[201~\r").unwrap();
-    read_until(&mut terminal, b"\x1b[?1049l").await;
-    assert!(timeout(Duration::from_secs(10), child.wait())
-        .await
-        .expect("TUI shutdown timeout")
-        .expect("wait for isolated CLI")
-        .success());
-    assert_eq!(terminal_flags(&terminal), initial_flags);
 }
 
 #[tokio::test]
