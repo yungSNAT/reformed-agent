@@ -1229,6 +1229,61 @@ async fn api_jobs_endpoint_validates_input_ids_and_auth() {
     assert!(authed_response.starts_with("HTTP/1.1 200 OK"));
 }
 
+#[test]
+fn invalid_job_ids_return_a_consistent_error_with_or_without_context() {
+    let context = ApiJobRequestContext {
+        method: "GET",
+        raw_path: "/api/jobs/missing",
+        headers: "User-Agent: fixture client\r\n",
+    };
+    assert!(invalid_api_job_id_response("A0-e7", Some(context)).is_none());
+    let overlong = "a".repeat(65);
+    for id in ["", "missing", overlong.as_str()] {
+        let (status, body) = invalid_api_job_id_response(id, Some(context)).unwrap();
+        assert_eq!((status.code, status.reason), (400, "Bad Request"));
+        assert_eq!(body["error"]["message"], "Invalid job id");
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+        assert_eq!(body["error"]["code"], "400");
+        let (status_without_context, body_without_context) =
+            invalid_api_job_id_response(id, None).unwrap();
+        assert_eq!(status_without_context.code, status.code);
+        assert_eq!(status_without_context.reason, status.reason);
+        assert_eq!(body_without_context, body);
+    }
+}
+
+#[test]
+fn job_audit_context_omits_missing_fields_and_bounds_unicode_metadata() {
+    let context = ApiJobRequestContext {
+        method: " ",
+        raw_path: "",
+        headers: "User-Agent:  \r\n",
+    };
+    assert_eq!(audit_log_suffix(context), "source='unknown'");
+
+    let prefix = "/api/jobs/";
+    let path = format!("  {prefix}{}  ", "é".repeat(510));
+    let expected_path = format!("{prefix}{}", "é".repeat(500 - prefix.len()));
+    let context = ApiJobRequestContext {
+        method: "  GET ",
+        raw_path: &path,
+        headers: concat!(
+            "GET /api/jobs/missing HTTP/1.1\r\n",
+            "Host: localhost\r\n",
+            "x-forwarded-for: 192.0.2.15, 198.51.100.2 \r\n",
+            "X-Real-IP: 203.0.113.7\r\n",
+            "USER-AGENT:\tfixture: client\r\n",
+        ),
+    };
+    assert_eq!(
+        audit_log_suffix(context),
+        format!(
+            r#"forwarded_for="192.0.2.15, 198.51.100.2" real_ip="203.0.113.7" method="GET" path="{expected_path}" user_agent="fixture: client""#
+        )
+    );
+    assert_eq!(clean_audit_log_value(Some("one\r\ntwo"), 20), "one  two");
+}
+
 #[tokio::test]
 async fn cron_fire_endpoint_uses_nas_auth_not_generic_api_token() {
     let (tx, _rx) = mpsc::channel(1);
