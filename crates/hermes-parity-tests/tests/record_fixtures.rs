@@ -185,6 +185,20 @@ fn what_the_adapter_prints_at_exit_follows_the_json_with_its_exit_code() {
 }
 
 #[test]
+fn bytes_the_adapter_writes_after_the_json_pass_through_unchanged() {
+    let adapter = format!(
+        "import atexit, sys\n\ndef _tail():\n    sys.stdout.flush()\n    sys.stdout.buffer.write(b'\\xff\\n')\n\natexit.register(_tail)\n{FAKE_ADAPTER}"
+    );
+    let dir = checkout("raw-bytes", &adapter);
+    let py_root = dir.path().join("hermes-agent");
+    let recorded = record(&py_root, &python());
+    assert_eq!(recorded.code, 0);
+    let stdout: &[u8] = recorded.stdout.as_ref();
+    let expected = [golden("fake_checkout.json", &py_root).as_bytes(), b"\xff\n"].concat();
+    assert_eq!(stdout, expected.as_slice());
+}
+
+#[test]
 fn the_checkout_beside_is_found_from_the_resolved_repository_root() {
     let dir = Scratch::new("resolve");
     let repo = dir.path().join("reformed-agent");
