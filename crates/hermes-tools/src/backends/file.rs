@@ -372,14 +372,24 @@ impl PatchBackend for LocalPatchBackend {
         new_string: &str,
         replace_all: bool,
     ) -> Result<String, ToolError> {
-        hermes_config::tool_guard::check_write(std::path::Path::new(path))
+        let target_path = crate::credential_guard::local_write_path(std::path::Path::new(path))
+            .unwrap_or_else(|| std::path::PathBuf::from(path));
+        let edit_lock = file_edit_lock(&target_path).await;
+        let _turn = edit_lock.lock().await;
+        hermes_config::tool_guard::check_write(&target_path)
             .await
             .map_err(ToolError::ExecutionFailed)?;
-        let edit_lock = file_edit_lock(std::path::Path::new(path)).await;
-        let _turn = edit_lock.lock().await;
-        let content = tokio::fs::read_to_string(path)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
+        crate::credential_guard::CredentialGuard::new()
+            .check_write_access(&target_path, new_string)?;
+
+        let target_read = target_path.clone();
+        let read = tokio::task::spawn_blocking(move || {
+            hermes_config::read_regular_file_no_follow(&target_read)
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
+        let content = read.content.as_str();
 
         if old_string == new_string {
             return Err(ToolError::InvalidParams(
@@ -387,20 +397,18 @@ impl PatchBackend for LocalPatchBackend {
             ));
         }
 
-        if old_string.is_empty() {
+        let (new_content, reply) = if old_string.is_empty() {
             // Empty old_string means create new file or append
             let new_content = if content.is_empty() {
                 new_string.to_string()
             } else {
                 format!("{}\n{}", content, new_string)
             };
-            tokio::fs::write(path, &new_content).await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e))
-            })?;
-            return Ok(json!({"status": "ok", "message": "Content appended"}).to_string());
-        }
-
-        if replace_all {
+            (
+                new_content,
+                json!({"status": "ok", "message": "Content appended"}).to_string(),
+            )
+        } else if replace_all {
             // Simple replace all occurrences
             if !content.contains(old_string) {
                 return Err(ToolError::ExecutionFailed(format!(
@@ -411,40 +419,54 @@ impl PatchBackend for LocalPatchBackend {
             }
             let new_content = content.replace(old_string, new_string);
             let count = content.matches(old_string).count();
-            tokio::fs::write(path, &new_content).await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e))
-            })?;
-            return Ok(json!({"status": "ok", "replacements": count}).to_string());
-        }
+            (
+                new_content,
+                json!({"status": "ok", "replacements": count}).to_string(),
+            )
+        } else {
+            // Single replacement with fuzzy matching
+            let exact_count = content.matches(old_string).count();
+            if exact_count > 1 {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Found {exact_count} matches for the specified text in '{path}'. Use replace_all=true to replace all occurrences."
+                )));
+            }
+            let Some(found) = Self::fuzzy_find(content, old_string) else {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Could not find a match for the specified text in '{}'",
+                    path
+                )));
+            };
+            let mut new_content = String::with_capacity(content.len());
+            new_content.push_str(&content[..found.start]);
+            new_content.push_str(new_string);
+            new_content.push_str(&content[found.end..]);
+            (
+                new_content,
+                json!({"status": "ok", "replacements": 1, "strategy": found.strategy}).to_string(),
+            )
+        };
 
-        // Single replacement with fuzzy matching
-        let exact_count = content.matches(old_string).count();
-        if exact_count > 1 {
+        if let Some(detection) = crate::credential_guard::detect_added_secret(content, &new_content)
+        {
             return Err(ToolError::ExecutionFailed(format!(
-                "Found {exact_count} matches for the specified text in '{path}'. Use replace_all=true to replace all occurrences."
+                "Write denied: content contains detected secret ({detection})"
             )));
         }
-        match Self::fuzzy_find(&content, old_string) {
-            Some(found) => {
-                let mut new_content = String::with_capacity(content.len());
-                new_content.push_str(&content[..found.start]);
-                new_content.push_str(new_string);
-                new_content.push_str(&content[found.end..]);
 
-                tokio::fs::write(path, &new_content).await.map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e))
-                })?;
+        let target_write = target_path;
+        tokio::task::spawn_blocking(move || {
+            hermes_config::atomic_write_bytes_no_follow(
+                &target_write,
+                new_content.as_bytes(),
+                Some(read),
+            )
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e)))?
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to write '{}': {}", path, e)))?;
 
-                Ok(
-                    json!({"status": "ok", "replacements": 1, "strategy": found.strategy})
-                        .to_string(),
-                )
-            }
-            None => Err(ToolError::ExecutionFailed(format!(
-                "Could not find a match for the specified text in '{}'",
-                path
-            ))),
-        }
+        Ok(reply)
     }
 }
 
@@ -1233,5 +1255,66 @@ mod tests {
             .filter(|i| !content.contains(&format!("edited {i};")))
             .collect();
         assert!(lost.is_empty(), "patches lost: {lost:?}\n{content}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn patch_file_refuses_leaf_symlink() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = tmp.path().join("real.txt");
+        let link = tmp.path().join("alias.txt");
+        std::fs::write(&target, "original content").expect("write target");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        let err = LocalPatchBackend::new()
+            .patch_file(link.to_str().unwrap(), "original", "tampered", false)
+            .await
+            .expect_err("leaf symlink must be refused");
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "original content"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_file_refuses_protected_file_and_split_secret() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "FOO=bar\n").expect("write .env");
+        let err = LocalPatchBackend::new()
+            .patch_file(env_file.to_str().unwrap(), "bar", "baz", false)
+            .await
+            .expect_err(".env must be refused by backend");
+        assert!(err.to_string().contains("Write denied"), "{err}");
+        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), "FOO=bar\n");
+
+        let code = tmp.path().join("notes.txt");
+        std::fs::write(&code, "key = sk-1234567890__SPLIT__").expect("write code");
+        let err = LocalPatchBackend::new()
+            .patch_file(code.to_str().unwrap(), "__SPLIT__", "abcdefghij", false)
+            .await
+            .expect_err("split secret must be refused");
+        assert!(err.to_string().contains("detected secret"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&code).unwrap(),
+            "key = sk-1234567890__SPLIT__"
+        );
+
+        let mixed = tmp.path().join("mixed.py");
+        let original = "def login(password = \"placeholder\"):\n    return \"hello\"\nkey = sk-1234567890__SPLIT__\n";
+        std::fs::write(&mixed, original).expect("write mixed");
+        LocalPatchBackend::new()
+            .patch_file(mixed.to_str().unwrap(), "\"hello\"", "\"world\"", false)
+            .await
+            .expect("unrelated edit alongside routine password field should succeed");
+        let err = LocalPatchBackend::new()
+            .patch_file(mixed.to_str().unwrap(), "__SPLIT__", "abcdefghij", false)
+            .await
+            .expect_err("pre-existing password line must not mask split secret");
+        assert!(err.to_string().contains("detected secret"), "{err}");
+        assert!(std::fs::read_to_string(&mixed)
+            .unwrap()
+            .contains("key = sk-1234567890__SPLIT__"));
     }
 }

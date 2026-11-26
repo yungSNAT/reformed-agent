@@ -471,6 +471,23 @@ fn apply_patch_dotted_llm_proxy_budget() {
 }
 
 #[test]
+fn config_display_shows_at_most_a_quarter_of_an_api_key() {
+    let mut c = GatewayConfig::default();
+    for (key, shown) in [
+        ("abcde", "***"),
+        ("0123456789abcde", "***"),
+        ("0123456789abcdef", "***cdef"),
+    ] {
+        apply_user_config_patch(&mut c, "llm.openai.api_key", key).unwrap();
+        assert_eq!(
+            user_config_field_display(&c, "llm.openai.api_key").unwrap(),
+            shown,
+            "{key}"
+        );
+    }
+}
+
+#[test]
 fn apply_patch_dotted_kanban_dispatch_gate() {
     let mut c = GatewayConfig::default();
     assert!(c.kanban.dispatch_in_gateway);
@@ -592,7 +609,7 @@ fn apply_patch_dotted_auxiliary_values() {
     );
     assert_eq!(
         user_config_field_display(&c, "auxiliary.vision.api_key").unwrap(),
-        "***-key"
+        "***"
     );
     assert_eq!(
         user_config_field_display(&c, "auxiliary.vision.timeout").unwrap(),
