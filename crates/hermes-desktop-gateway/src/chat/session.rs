@@ -169,7 +169,9 @@ struct Hub {
     evicted_through: u64,
     /// The budget's clock when the log was last written.
     touched: u64,
+    /// A turn runs, or the next waiting prompt waits for a turn slot (`waits_for_slot`).
     busy: bool,
+    waits_for_slot: bool,
     queue: VecDeque<Queued>,
     queue_bytes: usize,
     /// Prompts admitted (the canonical receipt's `sequence`).
@@ -304,15 +306,7 @@ impl LiveSession {
     /// The admissions waiting in `pending` (upstream's snapshot and `session.info` field): the
     /// running turn's when `running` is asked for, then each queued one in order.
     pub(super) fn pending(&self, session_id: &str, running: bool) -> Vec<Value> {
-        let hub = self.hub();
-        let current = hub.current.iter().filter(|_| running && hub.busy);
-        let started = current.map(|admission| admission.row(session_id, true));
-        let queued = hub
-            .queue
-            .iter()
-            .filter_map(|prompt| prompt.admission.as_ref())
-            .map(|admission| admission.row(session_id, false));
-        started.chain(queued).collect()
+        self.hub().pending(session_id, running)
     }
 
     /// The logged events after `last_seen`.
@@ -339,10 +333,18 @@ impl LiveSession {
         }
     }
 
-    /// Whether a turn runs or waits to start, the last seq and the turns started.
-    pub(super) fn state(&self) -> (bool, u64, u64) {
+    /// Whether a turn runs (not one waiting for a slot), the last seq and the turns started.
+    #[cfg(test)]
+    fn state(&self) -> (bool, u64, u64) {
+        self.status("").0
+    }
+
+    /// [`Self::state`] and the running and queued admissions, taken together.
+    pub(super) fn status(&self, session_id: &str) -> ((bool, u64, u64), Vec<Value>) {
         let hub = self.hub();
-        (hub.busy, hub.seq, hub.generation)
+        let running = hub.busy && !hub.waits_for_slot;
+        let pending = hub.pending(session_id, running);
+        ((running, hub.seq, hub.generation), pending)
     }
 
     /// Takes `prompt`: it starts now when the session is idle and `slot` gives a turn slot,
@@ -395,11 +397,13 @@ impl LiveSession {
     pub(super) fn next(&self, slot: &mut Option<OwnedSemaphorePermit>) -> Next {
         let mut hub = self.hub();
         hub.current = None;
+        hub.waits_for_slot = false;
         if hub.queue.is_empty() {
             hub.busy = false;
             return Next::Idle;
         }
         let Some(permit) = slot.take() else {
+            hub.waits_for_slot = true;
             return Next::Wait;
         };
         let Some(mut prompt) = hub.queue.pop_front() else {
@@ -420,6 +424,7 @@ impl LiveSession {
     pub(super) fn abandon(&self) {
         let mut hub = self.hub();
         hub.busy = false;
+        hub.waits_for_slot = false;
         hub.current = None;
         hub.queue.clear();
         release(&self.budget.queue, hub.queue_bytes);
@@ -440,6 +445,18 @@ impl Hub {
         self.log.clear();
         self.log_bytes = 0;
         self.evicted_through = self.seq;
+    }
+
+    /// See [`LiveSession::pending`].
+    fn pending(&self, session_id: &str, running: bool) -> Vec<Value> {
+        let current = self.current.iter().filter(|_| running && self.busy);
+        let started = current.map(|admission| admission.row(session_id, true));
+        let queued = self
+            .queue
+            .iter()
+            .filter_map(|prompt| prompt.admission.as_ref())
+            .map(|admission| admission.row(session_id, false));
+        started.chain(queued).collect()
     }
 }
 
@@ -639,7 +656,10 @@ mod tests {
         ));
         assert!(matches!(live.next(&mut None), Next::Wait));
         assert_eq!(live.state().2, 1, "no generation before a slot");
-        assert!(!live.state().0, "no turn runs whilst the next waits for a slot");
+        assert!(
+            !live.state().0,
+            "no turn runs whilst the next waits for a slot"
+        );
         let freed = Arc::new(tokio::sync::Semaphore::new(1));
         let mut slot = Arc::clone(&freed).try_acquire_owned().ok();
         let Next::Run(first, _) = live.next(&mut slot) else {
