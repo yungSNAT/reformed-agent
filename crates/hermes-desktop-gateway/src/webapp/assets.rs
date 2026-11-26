@@ -467,7 +467,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let boot = Bootstrap { profile: "default" };
         let missing = resolve(Some(dir.path()), "/", &boot).err().unwrap();
-        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+        assert!(missing.1.contains("index.html is missing"), "{}", missing.1);
         assert!(missing_reason(Some(dir.path()))
             .unwrap()
             .contains("index.html is missing"));
@@ -476,6 +477,6 @@ mod tests {
         assert!(missing_reason(Some(dir.path())).is_none());
         std::fs::write(dir.path().join(STALE_MARKER), "x").unwrap();
         let stale = resolve(Some(dir.path()), "/", &boot).err().unwrap();
-        assert_eq!(stale.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(stale.0, StatusCode::SERVICE_UNAVAILABLE);
     }
 }
