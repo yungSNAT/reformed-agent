@@ -1205,3 +1205,7 @@ fn extract_video(value: &Value) -> Option<VideoArtifact> {
 }
 
 include!("video_gen/tests.rs");
+
+#[cfg(test)]
+#[path = "video_gen_coverage_gen.rs"]
+mod coverage_gen;

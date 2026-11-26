@@ -443,3 +443,7 @@ timeout_secs = 30
         assert!(!bad.passed);
     }
 }
+
+#[cfg(test)]
+#[path = "configured_coverage_gen.rs"]
+mod coverage_gen;

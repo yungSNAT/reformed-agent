@@ -42,3 +42,7 @@ async fn main() -> std::process::ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "hermes-bench-smoke_coverage_gen.rs"]
+mod coverage_gen;

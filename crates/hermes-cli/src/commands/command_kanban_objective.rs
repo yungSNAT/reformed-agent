@@ -1397,3 +1397,7 @@ async fn contextlattice_embedding_diagnostics_lines() -> Vec<String> {
 }
 
 include!("command_kanban_objective/graph_objective.rs");
+
+#[cfg(test)]
+#[path = "command_kanban_objective_coverage_gen.rs"]
+mod coverage_gen_commands_command_kanban_objective;

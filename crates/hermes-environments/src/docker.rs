@@ -1,9 +1,11 @@
 //! Docker terminal backend – executes commands inside Docker containers.
 
-use std::sync::Mutex;
+use std::process::Stdio;
 
 use async_trait::async_trait;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command as TokioCommand;
+use tokio::sync::Mutex;
 
 use hermes_core::{subprocess::CommandNoWindowExt, AgentError, CommandOutput, TerminalBackend};
 
@@ -146,13 +148,9 @@ impl DockerBackend {
     /// Ensure we have a running container. If `container_id` is None,
     /// create one from the configured image.
     async fn ensure_container(&self) -> Result<String, AgentError> {
-        if let Some(id) = self
-            .container_id
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
-            return Ok(id);
+        let mut cached_id = self.container_id.lock().await;
+        if let Some(id) = cached_id.as_ref() {
+            return Ok(id.clone());
         }
 
         let image = self
@@ -181,7 +179,7 @@ impl DockerBackend {
 
         let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
         tracing::info!("Created container: {}", id);
-        *self.container_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
+        *cached_id = Some(id.clone());
         Ok(id)
     }
 
@@ -193,16 +191,39 @@ impl DockerBackend {
         }
     }
 
-    fn clear_container_id(&self) {
-        *self.container_id.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
-
     fn should_recreate_after_exec_output(&self, output: &CommandOutput) -> bool {
         self.container_persistent && output_indicates_container_gone(output)
     }
 
+    async fn container_is_gone(container_id: &str, timeout_secs: u64) -> bool {
+        let mut inspect = TokioCommand::new("docker");
+        inspect
+            .args([
+                "container",
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                "--",
+                container_id,
+            ])
+            .kill_on_drop(true)
+            .suppress_windows_console();
+        let Ok(Ok(output)) = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            inspect.output(),
+        )
+        .await
+        else {
+            return false;
+        };
+        if output.status.success() {
+            String::from_utf8_lossy(&output.stdout).trim() == "false"
+        } else {
+            container_gone_message(&String::from_utf8_lossy(&output.stderr))
+        }
+    }
+
     async fn execute_in_container(
-        &self,
         container_id: &str,
         command: &str,
         timeout_secs: u64,
@@ -240,13 +261,10 @@ impl DockerBackend {
                 .await
                 .map_err(|e| AgentError::Io(format!("Failed to execute docker command: {}", e)))?;
 
-            let stdout = self.truncate_output(String::from_utf8_lossy(&output.stdout).to_string());
-            let stderr = self.truncate_output(String::from_utf8_lossy(&output.stderr).to_string());
-
             Ok(CommandOutput {
                 exit_code: output.status.code().unwrap_or(-1),
-                stdout,
-                stderr,
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
         })
         .await;
@@ -286,8 +304,31 @@ impl TerminalBackend for DockerBackend {
     ) -> Result<CommandOutput, AgentError> {
         let timeout_secs = timeout.unwrap_or(self.default_timeout);
         let mut container_id = self.ensure_container().await?;
-        let mut output = self
-            .execute_in_container(
+        let mut output = Self::execute_in_container(
+            &container_id,
+            command,
+            timeout_secs,
+            workdir,
+            background,
+            pty,
+        )
+        .await?;
+
+        if self.should_recreate_after_exec_output(&output)
+            && Self::container_is_gone(&container_id, timeout_secs).await
+        {
+            tracing::warn!(
+                container_id = container_id,
+                "Docker persistent container disappeared; recreating and retrying command once"
+            );
+            {
+                let mut cached_id = self.container_id.lock().await;
+                if cached_id.as_deref() == Some(container_id.as_str()) {
+                    *cached_id = None;
+                }
+            }
+            container_id = self.ensure_container().await?;
+            output = Self::execute_in_container(
                 &container_id,
                 command,
                 timeout_secs,
@@ -296,26 +337,10 @@ impl TerminalBackend for DockerBackend {
                 pty,
             )
             .await?;
-
-        if self.should_recreate_after_exec_output(&output) {
-            tracing::warn!(
-                container_id = container_id,
-                "Docker persistent container disappeared; recreating and retrying command once"
-            );
-            self.clear_container_id();
-            container_id = self.ensure_container().await?;
-            output = self
-                .execute_in_container(
-                    &container_id,
-                    command,
-                    timeout_secs,
-                    workdir,
-                    background,
-                    pty,
-                )
-                .await?;
         }
 
+        output.stdout = self.truncate_output(output.stdout);
+        output.stderr = self.truncate_output(output.stderr);
         Ok(output)
     }
 
@@ -340,7 +365,7 @@ impl TerminalBackend for DockerBackend {
                     shlex_quote(path)
                 );
             } else {
-                cat_cmd = format!("sed -n '{},\\$p' {}", start, shlex_quote(path));
+                cat_cmd = format!("sed -n '{},$p' {}", start, shlex_quote(path));
             }
         }
 
@@ -392,20 +417,25 @@ impl TerminalBackend for DockerBackend {
             }
         }
 
-        // Write content using docker exec with heredoc-style input
-        // Escape any single quotes in the content
-        let escaped_content = content.replace('\'', "'\\''");
-        let write_cmd = format!(
-            "cat > {} << 'HERMES_EOF'\n{}\nHERMES_EOF",
-            shlex_quote(path),
-            escaped_content
-        );
-
-        let output = TokioCommand::new("docker")
-            .args(["exec", container_id.as_str(), "sh", "-c", &write_cmd])
+        let write_cmd = format!("cat > {}", shlex_quote(path));
+        let mut child = TokioCommand::new("docker")
+            .args(["exec", "-i", container_id.as_str(), "sh", "-c", &write_cmd])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .suppress_windows_console()
-            .output()
-            .await
+            .spawn()
+            .map_err(|e| AgentError::Io(format!("Failed to write file via docker: {}", e)))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AgentError::Io("Docker file writer has no standard input".into()))?;
+        let (sent, output) = tokio::join!(
+            async move { stdin.write_all(content.as_bytes()).await },
+            child.wait_with_output()
+        );
+        let output = output
             .map_err(|e| AgentError::Io(format!("Failed to write file via docker: {}", e)))?;
 
         if !output.status.success() {
@@ -416,7 +446,7 @@ impl TerminalBackend for DockerBackend {
             )));
         }
 
-        Ok(())
+        sent.map_err(|e| AgentError::Io(format!("Failed to send file content via docker: {}", e)))
     }
 
     async fn file_exists(&self, path: &str) -> Result<bool, AgentError> {
@@ -433,6 +463,10 @@ impl TerminalBackend for DockerBackend {
         Ok(output.status.success())
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "docker/tests/backend_lifecycle.rs"]
+mod backend_lifecycle;
 
 #[cfg(test)]
 mod quote_tests {

@@ -1143,3 +1143,7 @@ mod tests {
         assert!(shown.contains("x-consumer-api-key"), "{shown}");
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_tool_wiring_coverage_gen.rs"]
+mod coverage_gen_runtime_tool_wiring;

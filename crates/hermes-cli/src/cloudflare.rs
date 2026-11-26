@@ -211,3 +211,7 @@ To continue without logging in, rerun this command with `--temporary`.
         );
     }
 }
+
+#[cfg(test)]
+#[path = "cloudflare_coverage_gen.rs"]
+mod coverage_gen_cloudflare;

@@ -425,3 +425,7 @@ pub fn run(args: DashboardArgs) -> Result<i32, String> {
     println!("Wrote parity dashboard: {}", py::path_str(&output));
     Ok(0)
 }
+
+#[cfg(test)]
+#[path = "dashboard_coverage_gen.rs"]
+mod coverage_gen;

@@ -58,7 +58,7 @@
         "status": "pass"
       },
       {
-        "actual": 24464.0,
+        "actual": 24472.0,
         "limit": 2600,
         "metric": "max_files_only_upstream",
         "status": "fail"
@@ -260,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-23T12:39:44.300499+00:00",
+  "generated_at_utc": "2026-11-24T19:40:10.370343+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -286,7 +286,7 @@
     "max_deep_problem_solving_unverified_cases": 0.0,
     "max_deferred_review_overdue": 0.0,
     "max_divergence_review_overdue": 0.0,
-    "max_files_only_upstream": 24464.0,
+    "max_files_only_upstream": 24472.0,
     "max_queue_pending_commits": 0.0,
     "max_shared_diff_deferred_rows": 22.0,
     "max_sota_harness_critical_gaps": 0.0,
@@ -559,8 +559,8 @@
       "missing_rust_test_refs": 0,
       "queue_pending": 0,
       "queue_total": 1,
-      "rust_test_files": 549,
-      "rust_test_functions": 16629,
+      "rust_test_files": 888,
+      "rust_test_functions": 26689,
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,

@@ -1931,3 +1931,7 @@ mod redirect_tests {
         assert!(matches!(err, ToolError::Timeout(_)), "{err}");
     }
 }
+
+#[cfg(test)]
+#[path = "web_coverage_gen.rs"]
+mod coverage_gen;

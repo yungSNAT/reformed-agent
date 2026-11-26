@@ -246,4 +246,3 @@ fn build_transcript_lines(
     }
     lines
 }
-

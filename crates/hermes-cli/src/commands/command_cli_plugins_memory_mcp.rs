@@ -748,3 +748,7 @@ pub async fn handle_cli_memory(
 }
 
 include!("command_cli_plugins_memory_mcp/mcp_commands.rs");
+
+#[cfg(test)]
+#[path = "command_cli_plugins_memory_mcp_coverage_gen.rs"]
+mod coverage_gen_commands_command_cli_plugins_memory_mcp;

@@ -293,3 +293,7 @@ pub(super) fn apply_ci_rules(
     ]));
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "gate_coverage_gen.rs"]
+mod coverage_gen;

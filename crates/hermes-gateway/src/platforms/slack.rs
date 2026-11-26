@@ -1,7 +1,7 @@
 //! Slack Bot API adapter.
 //!
 //! Implements the `PlatformAdapter` trait for Slack using the Web API
-//! for message operations (`chat.postMessage`, `chat.update`, `files.upload`)
+//! for messages and file uploads
 //! and Socket Mode via WebSocket for receiving events.
 //! Supports Block Kit formatting and thread replies via `thread_ts`.
 //!
@@ -28,6 +28,7 @@ use crate::channel_directory::{ChannelDirectoryProvider, ChannelEntry};
 
 /// Slack Web API base URL.
 const SLACK_API_BASE: &str = "https://slack.com/api";
+const SLACK_FILE_UPLOAD_ORIGIN: &str = "https://files.slack.com";
 
 /// Maximum message length for Slack (4000 characters for text blocks).
 const MAX_MESSAGE_LENGTH: usize = 4000;

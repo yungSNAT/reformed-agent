@@ -1218,3 +1218,7 @@ mod tests {
         assert_eq!(plugin.fact_count(), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "holographic_coverage_gen.rs"]
+mod coverage_gen;

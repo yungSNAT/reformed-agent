@@ -1220,3 +1220,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "lib_coverage_gen.rs"]
+mod coverage_gen;

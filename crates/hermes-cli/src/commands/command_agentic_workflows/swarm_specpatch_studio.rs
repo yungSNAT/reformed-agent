@@ -630,3 +630,7 @@ mod swarm_git_tests {
         assert_eq!(count.unwrap(), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "swarm_specpatch_studio_coverage_gen.rs"]
+mod coverage_gen_commands_command_agentic_workflows_swarm_specpatch_studio;

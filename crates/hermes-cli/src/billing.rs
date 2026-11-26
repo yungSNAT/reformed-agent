@@ -2127,3 +2127,7 @@ mod tests {
         assert!(out.contains("without `--confirm`"));
     }
 }
+
+#[cfg(test)]
+#[path = "billing_coverage_gen.rs"]
+mod coverage_gen_billing;

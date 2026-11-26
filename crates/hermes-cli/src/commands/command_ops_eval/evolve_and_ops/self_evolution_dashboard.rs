@@ -265,3 +265,7 @@ fn dashboard_status_line_from_payload(payload: &serde_json::Value) -> String {
         url
     )
 }
+
+#[cfg(test)]
+#[path = "self_evolution_dashboard_coverage_gen.rs"]
+mod coverage_gen_commands_command_ops_eval_evolve_and_ops_self_evolution_dashboard;

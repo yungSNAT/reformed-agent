@@ -531,4 +531,162 @@ mod tests {
         let key = manager.get_next_key("openai");
         assert_eq!(key, Some("key-a".to_string()));
     }
+
+    #[test]
+    fn selection_strategies_rotate_or_prefer_underused_credentials() {
+        let entries = vec![
+            make_cred("fixture", "first", "example-a"),
+            make_cred("fixture", "second", "example-b"),
+        ];
+        assert_eq!(
+            PoolStrategy::from_str_loose("unknown"),
+            PoolStrategy::FillFirst
+        );
+
+        let mut pool = CredentialPool::new(
+            "fixture",
+            entries.clone(),
+            PoolStrategy::from_str_loose(" ROUND_ROBIN "),
+        );
+        assert!(pool.current().is_none());
+        for expected in ["first", "second", "first"] {
+            assert_eq!(pool.select().unwrap().id, expected);
+            assert_eq!(pool.current().unwrap().id, expected);
+        }
+
+        let mut pool = CredentialPool::new(
+            "fixture",
+            entries.clone(),
+            PoolStrategy::from_str_loose("least_used"),
+        );
+        for expected in ["first", "second", "first"] {
+            assert_eq!(pool.select().unwrap().id, expected);
+            pool.increment_request_count();
+        }
+        assert_eq!(pool.current().unwrap().request_count, 2);
+        assert!(pool.remove_index(0).is_none());
+        assert_eq!(pool.remove_index(1).unwrap().id, "first");
+        assert!(pool.current().is_none());
+
+        let mut entries = entries;
+        entries[0].last_status = Some(STATUS_EXHAUSTED.into());
+        entries[0].last_error_reset_at = Some(f64::MAX);
+        let strategy = PoolStrategy::from_str_loose("random");
+        assert_eq!(strategy, PoolStrategy::Random);
+        let mut pool = CredentialPool::new("fixture", entries, strategy);
+        assert_eq!(pool.select().unwrap().id, "second");
+    }
+
+    #[test]
+    fn leases_balance_usage_and_allow_a_specific_credential() {
+        let entries = vec![
+            make_cred("fixture", "first", "example-a"),
+            make_cred("fixture", "second", "example-b"),
+        ];
+        let mut pool = CredentialPool::new("fixture", entries, PoolStrategy::FillFirst);
+        assert_eq!(pool.acquire_lease(Some("first")).as_deref(), Some("first"));
+        assert_eq!(pool.acquire_lease(Some("first")).as_deref(), Some("first"));
+        assert_eq!(pool.acquire_lease(None).as_deref(), Some("second"));
+        pool.release_lease("first");
+        pool.release_lease("unknown");
+        pool.release_lease("second");
+        assert_eq!(pool.acquire_lease(None).as_deref(), Some("second"));
+        assert_eq!(pool.current().unwrap().id, "second");
+        pool.release_lease("first");
+        assert_eq!(pool.acquire_lease(None).as_deref(), Some("first"));
+
+        let mut empty = CredentialPool::new("fixture", vec![], PoolStrategy::FillFirst);
+        assert!(!empty.has_available());
+        assert!(empty.acquire_lease(None).is_none());
+        empty.increment_request_count();
+    }
+
+    #[test]
+    fn cooldown_expiry_and_explicit_recovery_make_credentials_selectable() {
+        let mut entry = make_cred("fixture", "first", "example-a");
+        entry.base_url = Some("https://example.invalid/api".into());
+        assert_eq!(entry.runtime_api_key(), "example-a");
+        assert_eq!(
+            entry.runtime_base_url(),
+            Some("https://example.invalid/api")
+        );
+        assert!(entry.exhausted_until().is_none());
+
+        entry.last_status = Some(STATUS_EXHAUSTED.into());
+        let mut pool = CredentialPool::new("fixture", vec![entry], PoolStrategy::FillFirst);
+        assert!(pool.has_available());
+        assert_eq!(pool.select().unwrap().id, "first");
+        assert!(pool
+            .mark_exhausted_and_rotate(Some(503), Some("busy"), Some("try again"), None)
+            .is_none());
+        let entry = &pool.entries()[0];
+        assert_eq!(entry.last_error_reason.as_deref(), Some("busy"));
+        assert_eq!(entry.last_error_message.as_deref(), Some("try again"));
+        assert_eq!(
+            entry.exhausted_until(),
+            entry
+                .last_status_at
+                .map(|time| time + EXHAUSTED_TTL_DEFAULT_SECONDS as f64)
+        );
+        assert!(!pool.has_available());
+
+        pool.mark_key_recovered("missing");
+        assert!(!pool.has_available());
+        pool.mark_key_recovered("first");
+        let recovered = &pool.entries()[0];
+        assert_eq!(recovered.last_status.as_deref(), Some(STATUS_OK));
+        assert!(recovered.last_status_at.is_none());
+        assert!(recovered.last_error_code.is_none());
+        assert!(recovered.last_error_reason.is_none());
+        assert!(recovered.last_error_message.is_none());
+        assert!(recovered.last_error_reset_at.is_none());
+        assert_eq!(pool.select().unwrap().id, "first");
+        assert_eq!(
+            pool.mark_exhausted_and_rotate(Some(429), None, None, Some(0.0))
+                .unwrap()
+                .id,
+            "first"
+        );
+        assert_eq!(pool.current().unwrap().exhausted_until(), Some(0.0));
+    }
+
+    #[test]
+    fn manager_exhaustion_and_recovery_are_scoped_to_the_provider() {
+        let manager = PoolManager::default();
+        for provider in ["first-provider", "second-provider"] {
+            let entry = make_cred(provider, "same-id", provider);
+            manager.register(CredentialPool::new(
+                provider,
+                vec![entry],
+                PoolStrategy::FillFirst,
+            ));
+        }
+        let mut providers = manager.list_providers();
+        providers.sort();
+        assert_eq!(providers, ["first-provider", "second-provider"]);
+        assert!(manager.mark_key_exhausted("unknown", Some(429)).is_none());
+        assert!(manager.get_next_key("unknown").is_none());
+        assert_eq!(
+            manager.get_next_key("first-provider").as_deref(),
+            Some("first-provider")
+        );
+        assert!(manager
+            .mark_key_exhausted("first-provider", Some(429))
+            .is_none());
+        manager.mark_key_recovered("unknown", "same-id");
+        assert!(manager.get_next_key("first-provider").is_none());
+        assert_eq!(
+            manager.get_next_key("second-provider").as_deref(),
+            Some("second-provider")
+        );
+        assert!(manager
+            .mark_key_exhausted("second-provider", Some(429))
+            .is_none());
+        manager.mark_key_recovered("first-provider", "same-id");
+        assert_eq!(
+            manager.get_next_key("first-provider").as_deref(),
+            Some("first-provider")
+        );
+        assert!(manager.get_next_key("second-provider").is_none());
+    }
 }

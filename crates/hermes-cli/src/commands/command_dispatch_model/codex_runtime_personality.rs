@@ -256,3 +256,7 @@ fn handle_personality_command(app: &mut App, args: &[&str]) -> Result<CommandRes
     }
     Ok(CommandResult::Handled)
 }
+
+#[cfg(test)]
+#[path = "codex_runtime_personality_coverage_gen.rs"]
+mod coverage_gen_commands_command_dispatch_model_codex_runtime_personality;

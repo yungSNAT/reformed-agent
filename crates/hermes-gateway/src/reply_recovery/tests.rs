@@ -91,6 +91,23 @@ fn a_writer_from_before_the_boot_has_stopped_whatever_its_pid_names_now() {
     assert_eq!(recovering(&dir)[0].1.session_key, "rebooted");
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn the_host_boot_time_is_known_where_records_are_held_for_live_writers() {
+    let booted = boot_time().expect("boot time on Linux and macOS");
+    let up = std::time::SystemTime::now()
+        .duration_since(booted)
+        .expect("booted in the past");
+    assert!(
+        up < std::time::Duration::from_secs(10 * 365 * 24 * 3600),
+        "uptime {up:?} is not a boot time"
+    );
+    // A boot time after this process started would make every live writer's
+    // record look older than the boot, so it would be sent twice.
+    let started = writer_started(&record("me", &this_process())).expect("start stamp");
+    assert!(booted <= started, "booted {booted:?} after {started:?}");
+}
+
 #[test]
 fn each_send_is_counted_before_it_is_made_and_the_cap_drops_the_record() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -404,5 +421,69 @@ fn symlinks_for_lock_records_and_recovering_dir_are_refused() {
     assert!(
         write(&symlink_lock_dir, &record("blocked-by-symlink-lock", "1-1")).is_none(),
         "symlinked .lock must be refused"
+    );
+}
+
+#[test]
+fn recovery_keeps_stopped_records_when_the_destination_cannot_be_replaced() {
+    let tmp = tempfile::tempdir().expect("isolated recovery fixtures");
+    let dir = records_dir(tmp.path());
+    let destination = recovering_dir(&dir).join("turn-fixture-510.json");
+    std::fs::create_dir_all(&destination).expect("non-file recovery destination");
+    let marker = destination.join("keep.txt");
+    std::fs::write(&marker, "existing directory").unwrap();
+    let path = dir.join("turn-fixture.json");
+    let pending = record("fixture-session", "5-10");
+    assert!(write_at_with(&path, &pending, set_unix_mode));
+
+    let before = std::fs::read(&path).expect("pending fixture");
+    let report = take_over_report(&dir, never_alive);
+    assert_eq!(report.moved, 0);
+    assert!(report.unmovable_stopped);
+    assert_eq!(
+        std::fs::read(&path).expect("preserved pending reply"),
+        before
+    );
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap(),
+        "existing directory"
+    );
+    assert!(recovering(&dir).is_empty());
+    assert_eq!(pending_count(&dir), 1);
+}
+
+#[test]
+fn recovery_drops_unreadable_records_and_refuses_unavailable_storage() {
+    let tmp = tempfile::tempdir().expect("isolated recovery fixtures");
+    let dir = records_dir(tmp.path());
+    std::fs::create_dir_all(&dir).unwrap();
+    let broken = dir.join("broken.json");
+    std::fs::write(&broken, "{").unwrap();
+    let report = take_over_report(&dir, never_alive);
+    assert_eq!(report.moved, 0);
+    assert!(!report.unmovable_stopped);
+    assert!(!broken.exists());
+    assert!(!begin_send(&dir, &broken, "fixture reply"));
+
+    let blocked = tmp.path().join("blocked");
+    std::fs::write(&blocked, "file instead of directory").unwrap();
+    let unavailable = blocked.join("pending");
+    let path = unavailable.join("reply.json");
+    let mut pending = record("fixture-session", "5-10");
+    let report = take_over_report(&unavailable, never_alive);
+    assert_eq!(report.moved, 0);
+    assert!(report.unmovable_stopped);
+    assert!(recovering(&unavailable).is_empty());
+    assert_eq!(pending_count(&unavailable), 0);
+    assert!(!begin_send(&unavailable, &path, "fixture reply"));
+    assert!(matches!(
+        count_attempt(&unavailable, &path, &mut pending),
+        AttemptOutcome::WriteFailed
+    ));
+    finish(&unavailable, &path);
+    mark_delivered(&unavailable, &path);
+    assert_eq!(
+        std::fs::read_to_string(blocked).unwrap(),
+        "file instead of directory"
     );
 }
