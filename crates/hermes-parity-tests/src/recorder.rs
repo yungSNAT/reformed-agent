@@ -145,11 +145,24 @@ fn failure(stderr: String) -> Recorded {
     }
 }
 
+/// `PARITY_PYTHON`, or `python3` when it is unset.
+pub fn python_from_env() -> String {
+    std::env::var("PARITY_PYTHON").unwrap_or_else(|_| "python3".into())
+}
+
+/// The `hermes-agent` folder beside the repository at `repo_root`.
+pub fn python_checkout_beside(repo_root: &Path) -> std::path::PathBuf {
+    repo_root.parent().unwrap_or(repo_root).join("hermes-agent")
+}
+
+fn shim_command(python: &str, py_root: &Path) -> Command {
+    let mut command = Command::new(python);
+    command.arg("-c").arg(ANTHROPIC_SHIM).arg(py_root);
+    command
+}
+
 fn upstream_results(python: &str, py_root: &Path) -> Result<Vec<Value>, Recorded> {
-    let output = Command::new(python)
-        .arg("-c")
-        .arg(ANTHROPIC_SHIM)
-        .arg(py_root)
+    let output = shim_command(python, py_root)
         .output()
         .map_err(|error| failure(format!("cannot run {python}: {error}\n")))?;
     if !output.status.success() {
@@ -205,6 +218,35 @@ pub fn record(py_root: &Path, python: &str) -> Recorded {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `json.py` in the working folder must not shadow the standard library's: with `-c`,
+    /// Python puts the working folder first on `sys.path`, where the script had its own folder.
+    #[test]
+    fn the_shim_ignores_modules_in_the_working_folder() {
+        let scratch = std::env::temp_dir().join(format!("recorder-cwd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let (cwd, py_root) = (scratch.join("cwd"), scratch.join("hermes-agent"));
+        std::fs::create_dir_all(py_root.join("agent")).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(
+            cwd.join("json.py"),
+            "raise SystemExit('json.py from the working folder')\n",
+        )
+        .unwrap();
+        std::fs::write(py_root.join("agent").join("__init__.py"), "").unwrap();
+        std::fs::write(
+            py_root.join("agent").join("anthropic_adapter.py"),
+            "raise ImportError('reached the adapter')\n",
+        )
+        .unwrap();
+        let output = shim_command(&python_from_env(), &py_root)
+            .current_dir(&cwd)
+            .output()
+            .expect("run Python 3 (set PARITY_PYTHON if `python3` is not it)");
+        let _ = std::fs::remove_dir_all(&scratch);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("reached the adapter"), "{stderr}");
+    }
 
     #[test]
     fn python_json_escapes_non_ascii_like_json_dumps() {

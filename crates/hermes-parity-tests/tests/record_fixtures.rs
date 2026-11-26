@@ -4,8 +4,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use hermes_parity_tests::recorder::{record, Recorded};
+use hermes_parity_tests::recorder::{python_checkout_beside, python_from_env, record, Recorded};
 
 /// A stand-in for upstream's `agent/anthropic_adapter.py`; its non-ASCII beta checks that
 /// the output escapes like Python's `json.dumps`.
@@ -31,8 +32,19 @@ def _common_betas_for_base_url(base_url):
     return ["interleaved-thinking-2025-05-14", "café-beta"]
 "#;
 
+/// The interpreter the recorder would use; these tests need it to be a working Python 3.
 fn python() -> String {
-    std::env::var("PARITY_PYTHON").unwrap_or_else(|_| "python3".into())
+    let python = python_from_env();
+    let works = Command::new(&python)
+        .args(["-c", "import sys; sys.exit(sys.version_info[0] != 3)"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    assert!(
+        works,
+        "these tests run Python 3 as `{python}`: install it, or set PARITY_PYTHON to a \
+         Python 3 interpreter (on Windows often `python` or `py`)"
+    );
+    python
 }
 
 fn golden(name: &str, py_root: &Path) -> String {
@@ -102,6 +114,47 @@ fn with_a_checkout_records_the_adapter_cases_from_python() {
     assert_eq!(recorded.stderr, "");
     assert_eq!(recorded.code, 0);
     assert_eq!(recorded.stdout, golden("fake_checkout.json", &py_root));
+}
+
+#[test]
+fn what_the_adapter_writes_to_stderr_passes_through_on_success() {
+    let adapter = format!("import sys\nsys.stderr.write('adapter warning\\n')\n{FAKE_ADAPTER}");
+    let dir = checkout("warns", &adapter);
+    let py_root = dir.path().join("hermes-agent");
+    let recorded = record(&py_root, &python());
+    assert_eq!(recorded.stderr, "adapter warning\n");
+    assert_eq!(recorded.code, 0);
+    assert_eq!(recorded.stdout, golden("fake_checkout.json", &py_root));
+}
+
+#[test]
+fn what_the_adapter_prints_comes_before_the_json() {
+    let adapter = format!("print('loading adapter')\n{FAKE_ADAPTER}");
+    let dir = checkout("prints", &adapter);
+    let py_root = dir.path().join("hermes-agent");
+    let recorded = record(&py_root, &python());
+    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.code, 0);
+    assert_eq!(
+        recorded.stdout,
+        format!(
+            "loading adapter\n{}",
+            golden("fake_checkout.json", &py_root)
+        )
+    );
+}
+
+#[test]
+fn the_checkout_beside_is_found_from_the_resolved_repository_root() {
+    let dir = Scratch::new("resolve");
+    let repo = dir.path().join("reformed-agent");
+    fs::create_dir_all(&repo).unwrap();
+    let unresolved = repo.join("..").join("reformed-agent");
+    let found = python_checkout_beside(&unresolved);
+    let real = fs::canonicalize(dir.path()).unwrap();
+    let real = real.to_str().unwrap();
+    let real = real.strip_prefix(r"\\?\").unwrap_or(real);
+    assert_eq!(found, Path::new(real).join("hermes-agent"));
 }
 
 #[test]
