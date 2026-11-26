@@ -21,6 +21,7 @@ hermes-app-runtime = { workspace = true }
 hermes-config = { workspace = true }
 hermes-core = { workspace = true }
 hermes-provider-runtime = { workspace = true }
+hermes-tools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 subtle = "2.6"

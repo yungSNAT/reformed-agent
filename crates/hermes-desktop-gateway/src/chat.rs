@@ -34,6 +34,7 @@ use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
 mod session;
+mod slash;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
 use session::{Admitted, Budget, Next, Queued, Refused, MAX_STAGED_BYTES, MAX_STAGED_IMAGES};
@@ -145,7 +146,7 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 }
 
 /// Every area's methods; a new area adds its table here.
-const AREAS: &[&[(&str, Handler)]] = &[METHODS];
+const AREAS: &[&[(&str, Handler)]] = &[METHODS, slash::METHODS];
 
 /// The methods served on both wires.
 const METHODS: &[(&str, Handler)] = &[
