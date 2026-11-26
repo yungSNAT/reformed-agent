@@ -381,7 +381,7 @@ async fn canonical_requests_refuse_another_profile_unknown_sessions_and_launch_o
         .await;
     assert_eq!(refused["error"]["code"], 4001, "{refused}");
     // Methods the canonical wire does not serve get JSON-RPC 'method not found'.
-    let unknown = client.request("profiles.list", json!({})).await;
+    let unknown = client.request("no.such.method", json!({})).await;
     assert_eq!(unknown["error"]["code"], -32601, "{unknown}");
 }
 

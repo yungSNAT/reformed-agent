@@ -1172,3 +1172,63 @@ async fn staged_images_go_with_their_own_sessions_next_prompt_once() {
         [vec![url("a1")], vec![url("a2")], vec![], vec![url("b1")]]
     );
 }
+
+/// `session.events.since` replays the events after a watermark, from any connection.
+#[tokio::test]
+async fn events_since_replays_what_a_client_missed() {
+    let started = start(vec!["one ", "two"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    client.submit(2, &session, "hi").await;
+    let streamed = client.turn_events(&session).await;
+    let last = streamed.last().unwrap().2;
+
+    let mut late = connect(started.addr).await;
+    let replay = late
+        .call(
+            1,
+            "session.events.since",
+            json!({"session_id": session, "last_seen": 0}),
+        )
+        .await;
+    let result = &replay["result"];
+    let kinds: Vec<&str> = result["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["type"].as_str().unwrap())
+        .collect();
+    let expected: Vec<&str> = streamed.iter().map(|e| e.0.as_str()).collect();
+    assert_eq!(kinds, expected, "{replay}");
+    assert_eq!(result["count"], streamed.len(), "{replay}");
+    assert_eq!(result["latest_seq"], last, "{replay}");
+    assert_eq!(result["truncated"], false, "{replay}");
+    assert_eq!(result["open_requests"], json!([]), "{replay}");
+    let epoch = result["epoch"].as_str().unwrap().to_string();
+    assert!(!epoch.is_empty());
+
+    let caught_up = late
+        .call(
+            2,
+            "session.events.since",
+            json!({"session_id": session, "last_seen": last - 1}),
+        )
+        .await;
+    assert_eq!(caught_up["result"]["count"], 1, "{caught_up}");
+    assert_eq!(caught_up["result"]["events"][0]["type"], "message.complete");
+    assert_eq!(caught_up["result"]["epoch"], epoch.as_str());
+
+    let unknown = late
+        .call(3, "session.events.since", json!({"session_id": "nope"}))
+        .await;
+    assert_eq!(unknown["result"]["events"], json!([]), "{unknown}");
+    assert_eq!(unknown["result"]["latest_seq"], 0, "{unknown}");
+    let bad = late
+        .call(
+            4,
+            "session.events.since",
+            json!({"session_id": session, "last_seen": "x"}),
+        )
+        .await;
+    assert_eq!(bad["error"]["code"], -32602, "{bad}");
+}
