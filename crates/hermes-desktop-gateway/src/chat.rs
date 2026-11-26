@@ -135,8 +135,11 @@ pub(crate) struct Request {
 pub(crate) type Reply = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + Send>>;
 
 /// Runs one method. A handler may wait (for a turn, a slot or an answer from the client):
-/// meanwhile its connection goes on writing events and answering other requests, and up to 16
-/// of a connection's requests wait at once (`serve_socket` in lib.rs). A waiting handler is
+/// meanwhile its connection goes on writing events and answering other requests, so replies
+/// can come out of order, and up to 16 of a connection's frames wait at once (`serve_socket`
+/// in lib.rs). Past that, a handler that would wait is dropped before its first wait and its
+/// request answered busy, so a method that answers a waiting handler (an approval's answer)
+/// must answer at once. A waiting handler is
 /// dropped at its await if the connection closes, so it must leave shared state whole at each
 /// await: change state under a lock rather than across an await, or hold a guard that undoes
 /// the change when dropped.
