@@ -1012,7 +1012,7 @@ async fn gateway_usage_text_includes_last_nous_credits_state() {
 }
 
 #[tokio::test]
-async fn gateway_background_commands_report_lifecycle_and_delivery() {
+async fn gateway_background_task_lifecycle_commands_work() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(TestAdapter {
         messages: sent.clone(),
