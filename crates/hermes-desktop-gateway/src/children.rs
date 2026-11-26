@@ -710,4 +710,74 @@ mod tests {
         );
         assert_eq!(child_origin(&headers), Origin::Remote);
     }
+
+    /// A link to a scripted child that answers the first 2 requests in reverse order, then
+    /// echoes each method name at once.
+    async fn scripted_link() -> (Link, Arc<Mutex<Pending>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut held: Vec<Value> = Vec::new();
+            // After the first pair, each request is answered at once.
+            let mut paired = false;
+            while let Some(Ok(tungstenite::Message::Text(text))) = socket.next().await {
+                let request: Value = serde_json::from_str(&text).unwrap();
+                held.push(request);
+                if held.len() == 1 && !paired {
+                    continue;
+                }
+                paired = true;
+                for request in held.drain(..).rev() {
+                    let reply = json!({"jsonrpc": "2.0", "id": request["id"],
+                                       "result": {"method": request["method"]}});
+                    socket
+                        .send(tungstenite::Message::text(reply.to_string()))
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let config = ChildGateways::new(PathBuf::from("unused"));
+        let children = Arc::new(Children {
+            config,
+            root: PathBuf::from("unused"),
+            state: Mutex::default(),
+        });
+        let lease = Lease {
+            children,
+            name: "scripted".into(),
+            port,
+            token: "t".into(),
+        };
+        let (outbox, _events) = mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let link = Link::dial(lease, &conn).await.unwrap();
+        let pending = Arc::clone(&link.pending);
+        (link, pending)
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_on_one_link_each_get_their_own_reply() {
+        let (link, pending) = scripted_link().await;
+        let (first, second) = tokio::join!(
+            link.call("first.method", Map::new()),
+            link.call("second.method", Map::new()),
+        );
+        assert_eq!(first.unwrap(), json!({"method": "first.method"}));
+        assert_eq!(second.unwrap(), json!({"method": "second.method"}));
+        assert!(Pending::lock(&pending).waiting.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_request_whose_caller_leaves_is_forgotten() {
+        let (link, pending) = scripted_link().await;
+        // The child holds the first request until a second comes, so this one is still
+        // waiting when its caller gives up.
+        let gave_up =
+            tokio::time::timeout(Duration::from_millis(200), link.call("held", Map::new())).await;
+        assert!(gave_up.is_err());
+        assert!(Pending::lock(&pending).waiting.is_empty());
+    }
 }

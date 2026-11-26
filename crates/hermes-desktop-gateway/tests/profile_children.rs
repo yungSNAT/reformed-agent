@@ -534,3 +534,82 @@ async fn a_crashed_child_fails_the_next_request_at_once_and_the_one_after_restar
         ["Bearer inbox-key", "Bearer inbox-key"]
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scoped_socket_runs_only_in_its_profile_whatever_a_request_names() {
+    let started = start(4).await;
+    let addr = started.addr;
+    let mut client = connect(addr, Some("research")).await;
+    // Another profile, a number, a list: refused, never run here or elsewhere.
+    for profile in [
+        json!("inbox"),
+        json!("default"),
+        json!(7),
+        json!(["research"]),
+    ] {
+        let refused = client
+            .call(
+                1,
+                "session.create",
+                json!({"profile": profile, "source": "desktop"}),
+            )
+            .await;
+        assert_eq!(refused["error"]["code"], 4000, "{profile}: {refused}");
+    }
+    // A null profile is no profile: the socket's own.
+    let created = client
+        .call(
+            1,
+            "session.create",
+            json!({"profile": null, "source": "desktop"}),
+        )
+        .await;
+    let session = created["result"]["session_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{created}"))
+        .to_string();
+    let submitted = client
+        .call(
+            2,
+            "prompt.submit",
+            json!({"session_id": session, "text": "hello", "profile": null}),
+        )
+        .await;
+    assert!(submitted.get("error").is_none(), "{submitted}");
+    loop {
+        let frame = match client.events.pop_front() {
+            Some(frame) => frame,
+            None => client.next_json().await,
+        };
+        if frame["params"]["type"] == "message.complete" {
+            break;
+        }
+    }
+    assert_eq!(*started.keys.lock().unwrap(), ["Bearer research-key"]);
+    assert_eq!(history(addr, &session, Some("research")).await, (200, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn on_the_default_socket_a_profile_that_is_not_a_name_is_refused() {
+    let started = start(4).await;
+    let mut client = connect(started.addr, None).await;
+    for profile in [json!(7), json!({"name": "inbox"})] {
+        let refused = client
+            .call(
+                1,
+                "session.create",
+                json!({"profile": profile, "source": "desktop"}),
+            )
+            .await;
+        assert_eq!(refused["error"]["code"], 4000, "{profile}: {refused}");
+    }
+    // Null is no profile: the default socket's own.
+    let created = client
+        .call(
+            1,
+            "session.create",
+            json!({"profile": null, "source": "desktop"}),
+        )
+        .await;
+    assert!(created["result"]["session_id"].is_string(), "{created}");
+}
