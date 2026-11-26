@@ -145,6 +145,20 @@ fn what_the_adapter_prints_comes_before_the_json() {
 }
 
 #[test]
+fn what_the_adapter_prints_without_a_newline_comes_before_the_json() {
+    let adapter = format!("import sys\nsys.stdout.write('loading')\n{FAKE_ADAPTER}");
+    let dir = checkout("unterminated", &adapter);
+    let py_root = dir.path().join("hermes-agent");
+    let recorded = record(&py_root, &python());
+    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.code, 0);
+    assert_eq!(
+        recorded.stdout,
+        format!("loading{}", golden("fake_checkout.json", &py_root))
+    );
+}
+
+#[test]
 fn the_checkout_beside_is_found_from_the_resolved_repository_root() {
     let dir = Scratch::new("resolve");
     let repo = dir.path().join("reformed-agent");

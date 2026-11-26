@@ -20,14 +20,18 @@ use crate::harness::{
 };
 
 /// Calls upstream's adapter for each Anthropic case and prints the results as one JSON list
-/// on the last line. `-c` puts the working folder first on `sys.path`; the checkout replaces
-/// it before anything but the built-in `sys` is imported.
+/// after [`RESULTS_MARKER`], so whatever the adapter prints first, newline or not, stays apart.
+/// `-c` puts the working folder first on `sys.path` (unless `-P` or `PYTHONSAFEPATH` is in
+/// force); the checkout takes that place before anything but the built-in `sys` is imported.
 const ANTHROPIC_SHIM: &str = r#"
 import sys
-sys.path[0] = sys.argv[1]
+if getattr(sys.flags, "safe_path", False):
+    sys.path.insert(0, sys.argv[1])
+else:
+    sys.path[0] = sys.argv[1]
 import json
 from agent import anthropic_adapter as aa
-print(json.dumps([
+results = json.dumps([
     aa.normalize_model_name("anthropic/claude-opus-4.6", False),
     aa.normalize_model_name("anthropic/qwen3.5-plus", True),
     aa._sanitize_tool_id("abc.123"),
@@ -37,8 +41,12 @@ print(json.dumps([
     aa._common_betas_for_base_url(None),
     aa._common_betas_for_base_url("https://api.minimax.io/anthropic/v1"),
     list(aa._common_betas_for_base_url(None)) + list(aa._OAUTH_ONLY_BETAS),
-]))
+])
+sys.stdout.write("\x00hermes-record-results\x00" + results)
 "#;
+
+/// Separates the adapter's own stdout from the shim's results; see [`ANTHROPIC_SHIM`].
+const RESULTS_MARKER: &str = "\0hermes-record-results\0";
 
 /// Operation and input of each Anthropic case, in the order the shim prints its results.
 fn anthropic_inputs() -> [(&'static str, Value); 9] {
@@ -196,14 +204,14 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
     if !output.status.success() {
         return Err(failure(stderr));
     }
-    // The results are the last line; anything the adapter printed comes before it.
+    // The results follow the marker; anything the adapter printed comes before it.
     let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-    let body = stdout.trim_end_matches('\n');
-    let (printed, last) = body
-        .rfind('\n')
-        .map_or(("", body), |at| (&stdout[..=at], &body[at + 1..]));
-    let results: Vec<Value> = serde_json::from_str(last)
-        .map_err(|error| failure(format!("unreadable output from {python}: {error}\n")))?;
+    let unreadable = |error: String| failure(format!("unreadable output from {python}: {error}\n"));
+    let (printed, last) = stdout
+        .rsplit_once(RESULTS_MARKER)
+        .ok_or_else(|| unreadable("no results".into()))?;
+    let results: Vec<Value> =
+        serde_json::from_str(last).map_err(|error| unreadable(error.to_string()))?;
     let expected = anthropic_inputs().len();
     if results.len() != expected {
         return Err(failure(format!(
@@ -280,6 +288,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("reached the adapter"), "{stderr}");
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_stripped_as_python_resolve_does() {
+        let strip = |path: &str| without_verbatim_prefix(PathBuf::from(path));
+        assert_eq!(strip(r"\\?\D:\code\repo"), PathBuf::from(r"D:\code\repo"));
+        assert_eq!(
+            strip(r"\\?\UNC\host\share\repo"),
+            PathBuf::from(r"\\host\share\repo")
+        );
+        assert_eq!(strip("/home/l/repo"), PathBuf::from("/home/l/repo"));
     }
 
     #[test]
