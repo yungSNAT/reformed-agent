@@ -141,11 +141,26 @@ fn plist(label: &str, repo_root: &str, log_dir: &str, hour: &str, minute: &str) 
     .map(|arg| format!("    <string>{}</string>\n", xml(arg)))
     .collect();
     let env = [
-        ("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()),
-        ("AUTOMATION_SUMMARY_SINK_ORDER", "contextlattice,github,local".to_string()),
-        ("AUTOMATION_SUMMARY_CONTEXT_PROJECT", last_component(repo_root).to_string()),
-        ("AUTOMATION_SUMMARY_CONTEXT_TOPIC_PATH", "ops/nightly-elite-gate".to_string()),
-        ("AUTOMATION_SUMMARY_CONTEXT_FILE_NAME", "ops/nightly-elite-gate.md".to_string()),
+        (
+            "PATH",
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string(),
+        ),
+        (
+            "AUTOMATION_SUMMARY_SINK_ORDER",
+            "contextlattice,github,local".to_string(),
+        ),
+        (
+            "AUTOMATION_SUMMARY_CONTEXT_PROJECT",
+            last_component(repo_root).to_string(),
+        ),
+        (
+            "AUTOMATION_SUMMARY_CONTEXT_TOPIC_PATH",
+            "ops/nightly-elite-gate".to_string(),
+        ),
+        (
+            "AUTOMATION_SUMMARY_CONTEXT_FILE_NAME",
+            "ops/nightly-elite-gate.md".to_string(),
+        ),
         ("AUTOMATION_SUMMARY_GITHUB_ISSUE", "0".to_string()),
         (
             "AUTOMATION_SUMMARY_LOCAL_PATH",

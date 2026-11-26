@@ -61,7 +61,11 @@ pub(crate) fn home_dir() -> Result<String, String> {
 fn basename(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
-        return if path.is_empty() { String::new() } else { "/".to_string() };
+        return if path.is_empty() {
+            String::new()
+        } else {
+            "/".to_string()
+        };
     }
     trimmed.rsplit('/').next().unwrap_or(trimmed).to_string()
 }
@@ -312,7 +316,10 @@ pub fn run(args: NightlyEliteGateArgs) -> Result<i32, String> {
         Some(dir) => dir.clone(),
         None => format!("{}/.hermes-agent-ultra/logs/elite-gate", home_dir()?),
     };
-    let sink_order = env_or("AUTOMATION_SUMMARY_SINK_ORDER", "contextlattice,github,local");
+    let sink_order = env_or(
+        "AUTOMATION_SUMMARY_SINK_ORDER",
+        "contextlattice,github,local",
+    );
     let context_project = env_or("AUTOMATION_SUMMARY_CONTEXT_PROJECT", &basename(&repo_root));
     let topic_path = env_or(
         "AUTOMATION_SUMMARY_CONTEXT_TOPIC_PATH",
@@ -322,7 +329,10 @@ pub fn run(args: NightlyEliteGateArgs) -> Result<i32, String> {
         "AUTOMATION_SUMMARY_CONTEXT_FILE_NAME",
         "ops/nightly-elite-gate.md",
     );
-    let agent_id = env_or("AUTOMATION_SUMMARY_CONTEXT_AGENT_ID", "hermes_ultra_nightly");
+    let agent_id = env_or(
+        "AUTOMATION_SUMMARY_CONTEXT_AGENT_ID",
+        "hermes_ultra_nightly",
+    );
     let github_issue = env_or("AUTOMATION_SUMMARY_GITHUB_ISSUE", "0");
     let local_path = env_or(
         "AUTOMATION_SUMMARY_LOCAL_PATH",

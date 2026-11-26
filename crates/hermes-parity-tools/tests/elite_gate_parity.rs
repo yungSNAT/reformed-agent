@@ -147,7 +147,8 @@ impl Sandbox {
         let text = program.replace_all(&text, "<PROGRAM>");
         let stamp = Regex::new(r"\d{8}T\d{6}Z").expect("regex");
         let text = stamp.replace_all(&text, "<STAMP>");
-        let time = Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)?").expect("regex");
+        let time =
+            Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)?").expect("regex");
         time.replace_all(&text, "<TIME>").into_owned()
     }
 }
@@ -163,7 +164,10 @@ fn collect(dir: &Path, root: &Path, out: &mut BTreeMap<String, String>) {
         } else {
             let name = path.strip_prefix(root).expect("prefix").to_string_lossy();
             let body = fs::read(&path).expect("read");
-            out.insert(name.into_owned(), String::from_utf8_lossy(&body).into_owned());
+            out.insert(
+                name.into_owned(),
+                String::from_utf8_lossy(&body).into_owned(),
+            );
         }
     }
 }
@@ -217,8 +221,18 @@ fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
 
-fn nightly(name: &'static str, extra: &[&str], env: Vec<(&'static str, String)>, setup: fn(&Sandbox)) {
-    let mut args = strings(&["--repo-root", "<ROOT>/repo", "--log-dir", "<ROOT>/home/logs"]);
+fn nightly(
+    name: &'static str,
+    extra: &[&str],
+    env: Vec<(&'static str, String)>,
+    setup: fn(&Sandbox),
+) {
+    let mut args = strings(&[
+        "--repo-root",
+        "<ROOT>/repo",
+        "--log-dir",
+        "<ROOT>/home/logs",
+    ]);
     args.extend(strings(extra));
     check(Case {
         name,
@@ -307,8 +321,17 @@ fn install(name: &'static str, extra: &[&str], env: Vec<(&'static str, String)>)
         script: "install-elite-gate-launchd",
         args,
         env,
-        setup: nothing,
+        setup: install_runner,
     });
+}
+
+/// The script made its runner executable and failed without it.
+fn install_runner(s: &Sandbox) {
+    s.write(
+        "repo/scripts/run-nightly-elite-gate.sh",
+        "#!/bin/sh
+",
+    );
 }
 
 #[test]
@@ -318,18 +341,35 @@ fn install_writes_the_plist_without_loading() {
 
 #[test]
 fn install_loads_the_agent() {
-    let extra = ["--hour", "7", "--minute", "5", "--label-prefix", "org.example"];
+    let extra = [
+        "--hour",
+        "7",
+        "--minute",
+        "5",
+        "--label-prefix",
+        "org.example",
+    ];
     install("install_load", &extra, vec![]);
 }
 
 #[test]
 fn install_stops_when_bootstrap_fails() {
-    install("install_bootstrap_fail", &[], vec![("FAKE_BOOTSTRAP_RC", "5".to_string())]);
+    install(
+        "install_bootstrap_fail",
+        &[],
+        vec![("FAKE_BOOTSTRAP_RC", "5".to_string())],
+    );
 }
 
 #[test]
 fn install_honours_custom_folders() {
-    let extra = ["--no-load", "--agents-dir", "<ROOT>/home/agents", "--log-dir", "<ROOT>/home/l"];
+    let extra = [
+        "--no-load",
+        "--agents-dir",
+        "<ROOT>/home/agents",
+        "--log-dir",
+        "<ROOT>/home/l",
+    ];
     install("install_folders", &extra, vec![]);
 }
 
@@ -353,8 +393,14 @@ fn status(name: &'static str, extra: &[&str], setup: fn(&Sandbox)) {
 
 fn status_logs(s: &Sandbox) {
     let out: String = (1..=40).map(|i| format!("out line {i}\n")).collect();
-    s.write("home/.hermes-agent-ultra/logs/elite-gate-launchd.out.log", &out);
-    s.write("home/.hermes-agent-ultra/logs/elite-gate-launchd.err.log", "e1\ne2\ne3");
+    s.write(
+        "home/.hermes-agent-ultra/logs/elite-gate-launchd.out.log",
+        &out,
+    );
+    s.write(
+        "home/.hermes-agent-ultra/logs/elite-gate-launchd.err.log",
+        "e1\ne2\ne3",
+    );
     s.write(
         "home/.hermes-agent-ultra/logs/elite-gate/nightly-elite-gate-latest.json",
         "{\n  \"ok\": true\n}\n",
@@ -370,26 +416,36 @@ fn status_reports_an_unloaded_agent() {
 fn status_reports_pid_and_log_tails() {
     status("status_loaded", &["--tail", "3"], |s| {
         status_logs(s);
-        s.write("print.txt", "gui/501/x = {\n\tstate = running\n\tpid = 4242\n}\n");
+        s.write(
+            "print.txt",
+            "gui/501/x = {\n\tstate = running\n\tpid = 4242\n}\n",
+        );
     });
 }
 
 #[test]
 fn status_verbose_prints_the_record_head() {
-    status("status_verbose", &["--verbose", "--log-dir", "<ROOT>/home/none"], |s| {
-        let record: String = (1..=200).map(|i| format!("\trow {i}\n")).collect();
-        s.write("print.txt", &format!("\tpid = abc\n{record}"));
-    });
+    status(
+        "status_verbose",
+        &["--verbose", "--log-dir", "<ROOT>/home/none"],
+        |s| {
+            let record: String = (1..=200).map(|i| format!("\trow {i}\n")).collect();
+            s.write("print.txt", &format!("\tpid = abc\n{record}"));
+        },
+    );
 }
 
 #[test]
 fn status_handles_a_record_without_a_pid_and_no_tail() {
     status("status_no_pid", &["--tail", "0"], |s| {
         status_logs(s);
-        s.write("print.txt", "gui/501/x = {
+        s.write(
+            "print.txt",
+            "gui/501/x = {
 	state = waiting
 }
-");
+",
+        );
     });
 }
 
