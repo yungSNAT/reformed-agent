@@ -50,7 +50,11 @@ async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adap
             cfg!(feature = "gateway-telegram"),
             serde_json::json!({
                 "token": value,
-                "extra": {"polling": false, "command_menu": {"enabled": false}},
+                "extra": {
+                    "polling": false,
+                    "webhook_secret": "fixture-webhook-value",
+                    "command_menu": {"enabled": false},
+                },
             }),
         ),
         (
