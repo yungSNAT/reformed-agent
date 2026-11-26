@@ -1048,6 +1048,38 @@
                 ..Default::default()
             }
         }
+
+        fn invalid_argument_batch(attempt: u32) -> Message {
+            let tool_call = |id: String, name: &str, arguments: &str| ToolCall {
+                id,
+                function: hermes_core::FunctionCall {
+                    name: name.into(),
+                    arguments: arguments.into(),
+                },
+                extra_content: None,
+            };
+            let calls = match attempt {
+                1..=2 => vec![
+                    tool_call(
+                        format!("invalid-fixture-{attempt}"),
+                        "fixture_invalid",
+                        STREAM_UNREPRESENTABLE_ARGUMENT,
+                    ),
+                    tool_call(
+                        format!("skipped-fixture-{attempt}"),
+                        "fixture_valid",
+                        r#"{"value":"skipped"}"#,
+                    ),
+                ],
+                3 => vec![tool_call(
+                    "valid-fixture-3".into(),
+                    "fixture_valid",
+                    r#"{"value":"recovered"}"#,
+                )],
+                _ => return Message::assistant("Recovered after the tool result"),
+            };
+            Message::assistant_with_tool_calls(None, calls)
+        }
     }
 
     #[async_trait::async_trait]
@@ -1068,6 +1100,22 @@
                     usage: Some(Self::cost_limit_usage()),
                     model: "fixture-model".into(),
                     finish_reason: Some("stop".into()),
+                });
+            }
+            if matches!(self.scenario, StreamRetryScenario::InvalidArgumentBatch) {
+                let mut calls = self.calls.lock().expect("calls lock");
+                *calls += 1;
+                let message = Self::invalid_argument_batch(*calls);
+                let finish_reason = if message.tool_calls.is_some() {
+                    "tool_calls"
+                } else {
+                    "stop"
+                };
+                return Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "fixture-model".into(),
+                    finish_reason: Some(finish_reason.into()),
                 });
             }
             if !matches!(self.scenario, StreamRetryScenario::SemanticRetry) {
@@ -1267,30 +1315,27 @@
                     Ok(stream_chunk_content("Recorded the complete fixture.")),
                     Ok(stream_chunk_finish("stop")),
                 ],
-                StreamRetryScenario::InvalidArgumentBatch if attempt <= 2 => vec![
-                    Ok(stream_chunk_tool_name(
-                        0,
-                        &format!("invalid-fixture-{attempt}"),
-                        "fixture_invalid",
-                    )),
-                    Ok(stream_chunk_tool_args(0, STREAM_UNREPRESENTABLE_ARGUMENT)),
-                    Ok(stream_chunk_tool_name(
-                        1,
-                        &format!("skipped-fixture-{attempt}"),
-                        "fixture_valid",
-                    )),
-                    Ok(stream_chunk_tool_args(1, r#"{"value":"skipped"}"#)),
-                    Ok(stream_chunk_finish("tool_calls")),
-                ],
-                StreamRetryScenario::InvalidArgumentBatch if attempt == 3 => vec![
-                    Ok(stream_chunk_tool_name(0, "valid-fixture-3", "fixture_valid")),
-                    Ok(stream_chunk_tool_args(0, r#"{"value":"recovered"}"#)),
-                    Ok(stream_chunk_finish("tool_calls")),
-                ],
-                StreamRetryScenario::InvalidArgumentBatch => vec![
-                    Ok(stream_chunk_content("Recovered after the tool result")),
-                    Ok(stream_chunk_finish("stop")),
-                ],
+                StreamRetryScenario::InvalidArgumentBatch => {
+                    let message = Self::invalid_argument_batch(attempt);
+                    if let Some(calls) = message.tool_calls {
+                        let mut chunks = Vec::new();
+                        for (index, call) in (0..).zip(calls) {
+                            chunks.push(Ok(stream_chunk_tool_name(
+                                index,
+                                &call.id,
+                                &call.function.name,
+                            )));
+                            chunks.push(Ok(stream_chunk_tool_args(index, &call.function.arguments)));
+                        }
+                        chunks.push(Ok(stream_chunk_finish("tool_calls")));
+                        chunks
+                    } else {
+                        vec![
+                            Ok(stream_chunk_content(message.content.as_deref().unwrap())),
+                            Ok(stream_chunk_finish("stop")),
+                        ]
+                    }
+                }
             };
 
             let events = futures::stream::iter(events);
@@ -1872,6 +1917,15 @@
 
     #[tokio::test]
     async fn streamed_tool_batches_retry_invalid_arguments_before_executing_siblings() {
+        assert_invalid_tool_batch_retries(true).await;
+    }
+
+    #[tokio::test]
+    async fn plain_tool_batches_retry_invalid_arguments_before_executing_siblings() {
+        assert_invalid_tool_batch_retries(false).await;
+    }
+
+    async fn assert_invalid_tool_batch_retries(streaming: bool) {
         assert!(serde_json::from_str::<serde::de::IgnoredAny>(STREAM_UNREPRESENTABLE_ARGUMENT)
             .is_ok());
         assert!(serde_json::from_str::<Value>(STREAM_UNREPRESENTABLE_ARGUMENT).is_err());
@@ -1914,14 +1968,13 @@
                 })),
                 ..AgentCallbacks::default()
             });
-        let result = agent
-            .run_stream(
-                vec![Message::user("Use the local fixture tool")],
-                None,
-                Some(Box::new(|_| {})),
-            )
-            .await
-            .unwrap();
+        let messages = vec![Message::user("Use the local fixture tool")];
+        let outcome = if streaming {
+            agent.run_stream(messages, None, Some(Box::new(|_| {}))).await
+        } else {
+            agent.run(messages, None).await
+        };
+        let result = outcome.unwrap();
         assert!(result.finished_naturally && !result.interrupted);
         assert_eq!(*provider.calls.lock().unwrap(), 4);
         assert_eq!(
