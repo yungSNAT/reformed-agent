@@ -70,19 +70,31 @@ pub fn load_website_blocklist(
     let path = config_path
         .map(Path::to_path_buf)
         .unwrap_or_else(hermes_config::config_path);
-    if !path.exists() {
+    let user = if path.exists() {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| WebsitePolicyError::new(format!("Failed to read config YAML: {e}")))?;
+        let root: serde_yaml::Value = serde_yaml::from_str(&raw)
+            .map_err(|e| WebsitePolicyError::new(format!("Invalid config YAML: {e}")))?;
+        if !root.is_mapping() {
+            return Err(WebsitePolicyError::new("config root must be a mapping"));
+        }
+        Some(root)
+    } else {
+        None
+    };
+    // With the managed scope laid over it, as `load_config` reads it, so a
+    // blocklist the administrator pins applies and the profile cannot lift it.
+    let root = match hermes_config::managed_scope_dir() {
+        Some(_) => hermes_config::load_effective_config_yaml_value(&path)
+            .and_then(|merged| serde_yaml::to_value(merged).ok())
+            .or(user),
+        None => user,
+    };
+    let Some(serde_yaml::Value::Mapping(root)) = root else {
         return Ok(WebsiteBlocklistPolicy {
             enabled: false,
             rules: Vec::new(),
         });
-    }
-
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| WebsitePolicyError::new(format!("Failed to read config YAML: {e}")))?;
-    let root: serde_yaml::Value = serde_yaml::from_str(&raw)
-        .map_err(|e| WebsitePolicyError::new(format!("Invalid config YAML: {e}")))?;
-    let serde_yaml::Value::Mapping(root) = root else {
-        return Err(WebsitePolicyError::new("config root must be a mapping"));
     };
 
     let Some(security) = mapping_get(&root, "security") else {

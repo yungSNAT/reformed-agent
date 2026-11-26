@@ -11,6 +11,9 @@
 //! refuses the call: a missing or crashing guard, a timeout, an unreadable
 //! answer, or a profile config that cannot be read. Cron scripts ask as commands.
 //!
+//! A guard the administrator names in the managed scope's `config.yaml` comes
+//! before the profile's.
+//!
 //! The config is read on each call until it names a guard, and that guard then
 //! stays in force until the process exits. The model can write the config, so
 //! a rewrite mid-run can add a guard but cannot remove or replace one.
@@ -106,21 +109,29 @@ async fn configured_guard(home: &Path) -> Result<Option<ToolGuardConfig>, String
     guard_in_scopes(crate::managed_scope_dir().as_deref(), home).await
 }
 
+/// The administrator's guard (the managed scope's `config.yaml`) is used whole
+/// when it names one; the profile's guard applies only when it names none.
 async fn guard_in_scopes(
-    _managed: Option<&Path>,
+    managed: Option<&Path>,
     home: &Path,
 ) -> Result<Option<ToolGuardConfig>, String> {
-    let text = match tokio::fs::read_to_string(home.join("config.yaml")).await {
+    if let Some(managed) = managed {
+        let guard = guard_in(&managed.join("config.yaml"), "the managed config").await?;
+        if guard.is_some() {
+            return Ok(guard);
+        }
+    }
+    guard_in(&home.join("config.yaml"), "the profile config").await
+}
+
+async fn guard_in(path: &Path, name: &str) -> Result<Option<ToolGuardConfig>, String> {
+    let text = match tokio::fs::read_to_string(path).await {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(undecided(format!(
-                "the profile config could not be read ({e})"
-            )))
-        }
+        Err(e) => return Err(undecided(format!("{name} could not be read ({e})"))),
     };
     let config: serde_yaml::Value = serde_yaml::from_str(&text)
-        .map_err(|e| undecided(format!("the profile config could not be parsed ({e})")))?;
+        .map_err(|e| undecided(format!("{name} could not be parsed ({e})")))?;
     match config
         .get("security")
         .and_then(|security| security.get("tool_guard"))

@@ -9,10 +9,6 @@ static SESSION_PASSTHROUGH: LazyLock<Mutex<BTreeSet<String>>> =
 static CONFIG_PASSTHROUGH: LazyLock<Mutex<Option<BTreeSet<String>>>> =
     LazyLock::new(|| Mutex::new(None));
 
-fn mapping_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
-    map.get(serde_yaml::Value::String(key.to_string()))
-}
-
 fn load_config_passthrough_uncached() -> BTreeSet<String> {
     let home = hermes_config::hermes_home();
     // A relative home (no HOME or USERPROFILE) sits in the working folder,
@@ -21,26 +17,18 @@ fn load_config_passthrough_uncached() -> BTreeSet<String> {
     if home.is_relative() {
         return BTreeSet::new();
     }
-    let path = home.join("config.yaml");
-    let Ok(raw) = std::fs::read_to_string(path) else {
+    // With the managed scope laid over it, as `load_config` reads it, so a list
+    // the administrator pins applies.
+    let Some(config) = hermes_config::load_effective_config_yaml_value(&home.join("config.yaml"))
+    else {
         return BTreeSet::new();
     };
-    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else {
-        return BTreeSet::new();
-    };
-    let serde_yaml::Value::Mapping(root) = root else {
-        return BTreeSet::new();
-    };
-    let Some(serde_yaml::Value::Mapping(terminal)) = mapping_get(&root, "terminal") else {
-        return BTreeSet::new();
-    };
-    let Some(serde_yaml::Value::Sequence(values)) = mapping_get(terminal, "env_passthrough") else {
-        return BTreeSet::new();
-    };
-
-    values
-        .iter()
-        .filter_map(serde_yaml::Value::as_str)
+    config
+        .pointer("/terminal/env_passthrough")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
         .filter_map(normalize_name)
         .collect()
 }
