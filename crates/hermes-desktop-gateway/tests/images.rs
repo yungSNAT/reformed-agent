@@ -489,7 +489,7 @@ async fn image_attach_refuses_share_and_device_paths() {
         r#""\\nohost.invalid\share\a b.png" and words"#,
         "file://nohost.invalid/share/a.png",
     ];
-    assert!(paths[0].starts_with("\\\\") && paths[0].as_bytes()[..2] == [b'\\', b'\\']);
+    assert!(paths[0].as_bytes().starts_with(br"\\"));
     let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
     expect_refused(&mut client, &session, &paths).await;
 }
@@ -543,7 +543,10 @@ async fn image_attach_refuses_reserved_device_names() {
 }
 
 /// The read is bounded by what it reads, not by the size the file reports: the kernel's page
-/// map reports 0 bytes and holds far more.
+/// map reports 0 bytes and holds far more. The kernel refuses a page-map read that is not a
+/// whole number of 8-byte entries, so the bounded read's last, odd-sized read fails (5027)
+/// rather than reaching the size limit (4018); either way nothing is staged, where an
+/// unbounded read takes gigabytes.
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn image_attach_bounds_the_read_itself() {
@@ -555,7 +558,8 @@ async fn image_attach_bounds_the_read_itself() {
     std::os::unix::fs::symlink("/proc/self/pagemap", &link).unwrap();
     let params = json!({"session_id": session, "path": link.display().to_string()});
     let reply = client.call(2, "image.attach", params).await;
-    assert_eq!(reply["error"]["code"], 4018, "{reply}");
+    let code = reply["error"]["code"].as_i64();
+    assert!(matches!(code, Some(4018 | 5027)), "{reply}");
     assert!(staged_images(started.home.path()).is_empty());
 }
 

@@ -402,3 +402,53 @@ mod tests {
         assert!(local_only(Origin::Local).is_ok());
     }
 }
+
+#[cfg(test)]
+mod answers_at_once {
+    use std::sync::Arc;
+
+    use futures::FutureExt as _;
+    use serde_json::{json, Value};
+
+    use super::super::{Chat, Conn, Origin, Request};
+
+    /// `image.attach` stages the image before it returns, so a `prompt.submit` the connection
+    /// reads next takes it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn image_attach_answers_in_its_first_poll() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "model:\n  default: mock-model\n",
+        )
+        .unwrap();
+        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+        let chat = Arc::new(Chat::new(config));
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let mut conn = Conn::new(1, outbox, false);
+        conn.origin = Origin::Local;
+        let id = chat.create(&conn)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let image = home.path().join("shot.png");
+        std::fs::write(
+            &image,
+            [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'x'],
+        )
+        .unwrap();
+        let Value::Object(params) = json!({"session_id": id, "path": image.display().to_string()})
+        else {
+            unreachable!()
+        };
+        let request = Request {
+            chat: Arc::clone(&chat),
+            conn,
+            params,
+        };
+        let reply = super::attach(request)
+            .now_or_never()
+            .expect("answered at once");
+        assert_eq!(reply.unwrap()["count"], 1);
+    }
+}
