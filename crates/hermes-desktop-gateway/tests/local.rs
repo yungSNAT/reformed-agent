@@ -738,6 +738,20 @@ fn ensure_refuses_a_stdio_log_that_is_not_a_regular_file() {
     assert_eq!(verdict["reason_code"], "runtime_start_failed", "{text}");
 }
 
+/// A FIFO in the log's place with no reader fails at once rather than blocking the open.
+#[test]
+fn ensure_does_not_wait_on_a_stdio_log_fifo_with_no_reader() {
+    let (_dir, home) = private_home();
+    std::fs::create_dir(home.join("logs")).unwrap();
+    let log = home.join("logs").join("gateway-stdio.log");
+    assert!(Command::new("mkfifo").arg(&log).status().unwrap().success());
+    let mut command = Command::new("sh");
+    command.args(["-c", "echo written; exit 3"]);
+    let (verdict, text, code) = ensure(&home, Duration::from_secs(10), command);
+    assert_eq!(code, 7, "{text}");
+    assert_eq!(verdict["reason_code"], "runtime_start_failed", "{text}");
+}
+
 #[test]
 fn ensure_does_not_follow_a_linked_stdio_log() {
     let (_dir, home) = private_home();

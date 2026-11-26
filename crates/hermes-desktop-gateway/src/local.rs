@@ -231,8 +231,9 @@ fn open_lock(home: &Path, create: bool) -> std::io::Result<std::fs::File> {
         )));
     }
     // A lock an older build created under the umask keeps its mode, as creation sets it only
-    // once: narrow it here, through this descriptor (upstream `_private_lock`).
-    if meta.mode() & 0o077 != 0 {
+    // once: the claim narrows it, through this descriptor (upstream `_private_lock`). A probe
+    // leaves it, so a lock it cannot narrow (a read-only mount) does not refuse the home.
+    if create && meta.mode() & 0o077 != 0 {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(file)
@@ -850,12 +851,13 @@ fn spawn(
         .mode(0o700)
         .create(&logs)?;
     let log_path = logs.join("gateway-stdio.log");
-    // A planted link must not point the gateway's output at another file.
+    // A planted link must not point the gateway's output at another file, and a FIFO with no
+    // reader must not block the open (O_NONBLOCK makes it fail; a regular file ignores the flag).
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(&log_path)?;
     let meta = log.metadata()?;
     if !meta.is_file() {
