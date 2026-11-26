@@ -12,22 +12,43 @@ fn browserless_login_options() -> GeminiOAuthLoginOptions {
     }
 }
 
-// A stand-in HTTPS proxy that records the first request head and refuses it,
+// A stand-in HTTPS proxy that records the request line and refuses it,
 // so the user-info lookup fails on loopback instead of reaching the network.
-fn refusing_proxy() -> (String, std::sync::mpsc::Receiver<String>) {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind proxy stand-in");
+async fn refusing_proxy() -> (String, impl std::future::Future<Output = String>) {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind proxy stand-in");
     let address = format!("http://{}", listener.local_addr().expect("proxy address"));
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        let mut buf = [0u8; 4096];
-        let read = stream.read(&mut buf).unwrap_or(0);
-        let _ = sender.send(String::from_utf8_lossy(&buf[..read]).into_owned());
-        let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
-    });
-    (address, receiver)
+    let request = async move {
+        let (mut stream, _) = listener.accept().await.expect("proxy connection");
+        let mut line = String::new();
+        let mut request = BufReader::new((&mut stream).take(4096));
+        request
+            .read_line(&mut line)
+            .await
+            .expect("proxy request line");
+        let mut header = String::new();
+        loop {
+            let count = request.read_line(&mut header).await.expect("proxy header");
+            assert!(count > 0, "incomplete proxy request");
+            if header == "\r\n" {
+                break;
+            }
+            header.clear();
+        }
+        stream
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("refuse proxy request");
+        line
+    };
+    (address, async move {
+        tokio::time::timeout(Duration::from_secs(30), request)
+            .await
+            .expect("user-info lookup reached the proxy stand-in")
+    })
 }
 
 struct BrowserlessLogin {
@@ -64,62 +85,82 @@ async fn drive_browserless_login(
     }
     let mut child = command.spawn().expect("spawn login child");
     let mut lines = BufReader::new(child.stdout.take().expect("child stdout")).lines();
+    let mut stderr = child.stderr.take().expect("child stderr");
+    let mut errors = Vec::new();
     let mut printed = Vec::new();
-    let authorize = tokio::time::timeout(Duration::from_secs(30), async {
-        while let Some(line) = lines.next_line().await.expect("read child stdout") {
-            let trimmed = line.trim().to_string();
+    let interaction = async {
+        let url = loop {
+            let line = lines
+                .next_line()
+                .await
+                .expect("read child stdout")
+                .unwrap_or_else(|| {
+                    panic!("child exited before printing the authorisation URL: {printed:?}")
+                });
             printed.push(line);
-            if trimmed.starts_with(GEMINI_AUTH_ENDPOINT) {
-                return reqwest::Url::parse(&trimmed).expect("authorisation URL");
+            let line = printed.last().expect("captured stdout").trim();
+            if line.starts_with(GEMINI_AUTH_ENDPOINT) {
+                break reqwest::Url::parse(line).expect("authorisation URL");
             }
+        };
+        let authorize: BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+
+        let mut redirect = reqwest::Url::parse(&authorize["redirect_uri"]).expect("redirect URI");
+        assert_eq!(redirect.scheme(), "http");
+        assert_eq!(redirect.host_str(), Some(GEMINI_CALLBACK_HOST));
+        assert_eq!(redirect.path(), GEMINI_CALLBACK_PATH);
+        redirect
+            .query_pairs_mut()
+            .append_pair("state", &authorize["state"])
+            .append_pair("code", code);
+        let reply = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(10))
+            .build()
+            .expect("callback client")
+            .get(redirect)
+            .send()
+            .await
+            .expect("deliver callback");
+        assert_eq!(reply.status(), reqwest::StatusCode::OK);
+        assert!(reply
+            .text()
+            .await
+            .expect("callback page")
+            .contains("Signed in to Google"));
+
+        while let Some(line) = lines.next_line().await.expect("read remaining stdout") {
+            printed.push(line);
         }
-        panic!("child exited before printing the authorisation URL: {printed:?}");
+        (authorize, child.wait().await.expect("child exit status"))
+    };
+    let ((authorize, status), stderr_read) = tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::join!(interaction, stderr.read_to_end(&mut errors))
     })
     .await
-    .expect("child printed the authorisation URL");
-    let authorize: BTreeMap<_, _> = authorize.query_pairs().into_owned().collect();
-
-    let mut redirect = reqwest::Url::parse(&authorize["redirect_uri"]).expect("redirect URI");
-    assert_eq!(redirect.scheme(), "http");
-    assert_eq!(redirect.host_str(), Some(GEMINI_CALLBACK_HOST));
-    assert_eq!(redirect.path(), GEMINI_CALLBACK_PATH);
-    redirect
-        .query_pairs_mut()
-        .append_pair("state", &authorize["state"])
-        .append_pair("code", code);
-    let reply = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .expect("callback client")
-        .get(redirect)
-        .send()
-        .await
-        .expect("deliver callback");
-    assert_eq!(reply.status(), reqwest::StatusCode::OK);
-    assert!(reply
-        .text()
-        .await
-        .expect("callback page")
-        .contains("Signed in to Google"));
-
-    let mut rest = String::new();
-    lines
-        .into_inner()
-        .read_to_string(&mut rest)
-        .await
-        .expect("read remaining stdout");
-    let mut output = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
-        .await
-        .expect("child finished")
-        .expect("child output");
-    output.stdout = format!("{}\n{rest}", printed.join("\n")).into_bytes();
-    BrowserlessLogin { authorize, output }
+    .unwrap_or_else(|_| {
+        panic!(
+            "login child timed out: {printed:?}, {}",
+            String::from_utf8_lossy(&errors)
+        )
+    });
+    stderr_read.expect("read child stderr");
+    BrowserlessLogin {
+        authorize,
+        output: Output {
+            status,
+            stdout: printed.join("\n").into_bytes(),
+            stderr: errors,
+        },
+    }
 }
 
 fn posted_form(request: &wiremock::Request) -> BTreeMap<String, String> {
     let mut parsed = reqwest::Url::parse("http://127.0.0.1/").expect("base URL");
-    parsed.set_query(Some(std::str::from_utf8(&request.body).expect("UTF-8 form")));
+    parsed.set_query(Some(
+        std::str::from_utf8(&request.body).expect("UTF-8 form"),
+    ));
     parsed.query_pairs().into_owned().collect()
 }
 
@@ -158,25 +199,22 @@ async fn browserless_login_exchanges_the_callback_code_and_saves_credentials() {
         .expect(1)
         .mount(&server)
         .await;
-    let (proxy, proxied) = refusing_proxy();
+    let (proxy, proxied) = refusing_proxy().await;
     let home = tempfile::tempdir().expect("temporary home");
     let started = jiff::Timestamp::now().as_millisecond();
-    let login = drive_browserless_login(
-        TEST,
-        home.path(),
-        &[
-            (
-                "HERMES_GEMINI_OAUTH_TOKEN_URL",
-                format!(" {}/token ", server.uri()),
-            ),
-            ("HERMES_GEMINI_PROJECT_ID", " fixture-project ".to_string()),
-            ("HTTPS_PROXY", proxy.clone()),
-            ("https_proxy", proxy),
-            (LOGIN_EXPECTED_ACCESS, access.clone()),
-        ],
-        " fixture-code ",
-    )
-    .await;
+    let env = [
+        (
+            "HERMES_GEMINI_OAUTH_TOKEN_URL",
+            format!(" {}/token ", server.uri()),
+        ),
+        ("HERMES_GEMINI_PROJECT_ID", " fixture-project ".to_string()),
+        ("HTTPS_PROXY", proxy),
+        (LOGIN_EXPECTED_ACCESS, access.clone()),
+    ];
+    let (login, head) = tokio::join!(
+        drive_browserless_login(TEST, home.path(), &env, " fixture-code "),
+        proxied,
+    );
     assert_child_success(&login.output);
     let stdout = String::from_utf8_lossy(&login.output.stdout);
     assert!(stdout.contains("Authorize Hermes with Google (Gemini CLI OAuth)."));
@@ -209,9 +247,6 @@ async fn browserless_login_exchanges_the_callback_code_and_saves_credentials() {
     );
 
     // The user-info lookup went to the proxy stand-in and was refused.
-    let head = proxied
-        .recv_timeout(Duration::from_secs(10))
-        .expect("user-info lookup reached the proxy stand-in");
     let host = reqwest::Url::parse(GEMINI_USERINFO_ENDPOINT)
         .expect("user-info URL")
         .host_str()
