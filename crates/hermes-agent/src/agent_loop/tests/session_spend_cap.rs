@@ -120,11 +120,12 @@ async fn a_named_budget_survives_two_runs_and_a_process_restart() {
     let root = tempfile::tempdir().unwrap();
     let thread = std::thread::current();
     for step in ["first", "second", "third"] {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", thread.name().unwrap(), "--nocapture"])
             .env(CHILD, step)
             .env(ROOT, root.path())
             .output()
+            .await
             .unwrap();
         assert!(
             output.status.success(),
