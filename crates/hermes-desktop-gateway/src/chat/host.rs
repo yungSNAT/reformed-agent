@@ -995,13 +995,14 @@ mod unix {
             assert!(!survived, "a descendant in the run's session outlived it");
         }
 
-        #[test]
-        fn a_connection_runs_at_most_2_children() {
-            let first = Slot::take(9004).unwrap();
-            let _second = Slot::take(9004).unwrap();
+        // Other tests hold slots too, so the first 2 and the last wait for the process's 4.
+        #[tokio::test]
+        async fn a_connection_runs_at_most_2_children() {
+            let first = slot(9004).await;
+            let _second = slot(9004).await;
             assert_eq!(Slot::take(9004).err().unwrap().0, BUSY);
             drop(first);
-            assert!(Slot::take(9004).is_ok());
+            slot(9004).await;
         }
     }
 }
@@ -1016,14 +1017,27 @@ mod tests {
         let mut conn = Conn::new(1, outbox, false);
         for origin in [Origin::Remote, Origin::Webapp, Origin::Local] {
             conn.origin = origin;
-            assert_eq!(admit(&conn).unwrap_err().0, NOT_AVAILABLE);
+            assert_eq!(admit(&conn, true).unwrap_err().0, NOT_AVAILABLE);
         }
         conn.host_input = true;
         for origin in [Origin::Remote, Origin::Webapp] {
             conn.origin = origin;
-            assert_eq!(admit(&conn).unwrap_err().0, NOT_AVAILABLE);
+            assert_eq!(admit(&conn, true).unwrap_err().0, NOT_AVAILABLE);
         }
         conn.origin = Origin::Local;
-        assert!(admit(&conn).is_ok());
+        assert!(admit(&conn, true).is_ok());
+    }
+
+    /// Run on every platform, so weakening the Windows refusal fails here, not only on Windows.
+    #[test]
+    fn a_host_that_cannot_serve_refuses_even_the_capability() {
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let mut conn = Conn::new(1, outbox, false);
+        conn.host_input = true;
+        conn.origin = Origin::Local;
+        assert_eq!(
+            admit(&conn, false).unwrap_err(),
+            (NOT_AVAILABLE, NOT_ON_THIS_HOST.to_string())
+        );
     }
 }
