@@ -185,6 +185,9 @@ pub(crate) struct LiveSession {
     budget: Arc<Budget>,
     /// Images staged by `image.attach_bytes` for the next prompt.
     images: Mutex<Vec<StagedImage>>,
+    /// The model `config.set model` chose for this session's turns (`provider:model` when it
+    /// named a provider); the gateway's model when unset.
+    model: Mutex<Option<String>>,
 }
 
 impl LiveSession {
@@ -193,6 +196,7 @@ impl LiveSession {
             hub: Mutex::default(),
             budget: Arc::clone(&budget),
             images: Mutex::default(),
+            model: Mutex::default(),
         });
         budget
             .sessions
@@ -206,6 +210,17 @@ impl LiveSession {
         // Every update leaves the hub whole before it can panic (sends do not panic), so a
         // poisoned lock is still safe to use.
         self.hub.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The model chosen for this session's turns, if one was.
+    pub(super) fn model(&self) -> Option<String> {
+        // A whole value is swapped in, so a poisoned lock is still whole.
+        self.model.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Chooses the model for this session's next turns.
+    pub(super) fn set_model(&self, model: Option<String>) {
+        *self.model.lock().unwrap_or_else(|e| e.into_inner()) = model;
     }
 
     pub(super) fn images(&self) -> MutexGuard<'_, Vec<StagedImage>> {

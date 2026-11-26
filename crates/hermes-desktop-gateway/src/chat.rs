@@ -33,6 +33,7 @@ use tokio::time::Instant;
 use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
+mod model;
 mod session;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
@@ -148,7 +149,7 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 }
 
 /// Every area's methods; a new area adds its table here.
-const AREAS: &[&[(&str, Handler)]] = &[METHODS];
+const AREAS: &[&[(&str, Handler)]] = &[METHODS, model::METHODS];
 
 /// The methods served on both wires.
 const METHODS: &[(&str, Handler)] = &[
@@ -918,11 +919,11 @@ impl Turn {
         session: &Arc<LiveSession>,
         streamed: &Arc<Mutex<Streamed>>,
     ) -> Result<(String, Option<String>), String> {
-        let model = self
-            .chat
+        // The session's own choice (`config.set model`), else the gateway's.
+        let model = session
             .model()
-            .ok_or("no model is configured: run `hermes model`")?
-            .to_string();
+            .or_else(|| self.chat.model().map(str::to_string))
+            .ok_or("no model is configured: run `hermes model`")?;
         let sent_images = !images.is_empty();
         let text = if sent_images {
             with_markers(text, &images)

@@ -211,8 +211,9 @@ async fn bad_requests_are_refused_with_upstreams_codes_and_change_nothing() {
     assert_eq!(code(&reply), 4004);
     let reply = client.call(5, "model.disconnect", json!({})).await;
     assert_eq!(code(&reply), 4001);
+    // A known provider with no key saved (another test saves `SAVED`'s meanwhile).
     let reply = client
-        .call(6, "model.disconnect", json!({"slug": SAVED}))
+        .call(6, "model.disconnect", json!({"slug": "deepseek"}))
         .await;
     assert_eq!(code(&reply), 4005);
     assert_eq!(env_lines(started.home.path()), before);
@@ -292,9 +293,10 @@ async fn model_options_lists_the_configured_providers_and_the_current_model() {
         .call(2, "model.options", json!({"include_unconfigured": true}))
         .await;
     let rows = reply["result"]["providers"].as_array().unwrap();
+    // A known provider no test sets a key for.
     let saved = rows
         .iter()
-        .find(|row| row["slug"] == SAVED)
+        .find(|row| row["slug"] == "xai")
         .unwrap_or_else(|| panic!("{reply}"));
     assert_eq!(saved["models"], json!([]));
     assert_eq!(saved["is_current"], false);
