@@ -611,11 +611,13 @@ impl Forwards {
 
     /// Runs one request.
     pub(crate) fn call(&self, method: &str, mut params: Value) -> Reply {
-        let named = match params.get("profile") {
-            Some(Value::String(name)) => Some(name.clone()),
-            // Not a name: the method's own checks answer it.
-            Some(_) => return self.chat.call(&self.conn, method, params),
-            None => self.scope.clone(),
+        // Fail closed: a socket opened for a profile runs only there, and a profile that is
+        // not a name is refused; a null one is no profile.
+        let named = match (params.get("profile"), &self.scope) {
+            (None | Some(Value::Null), scope) => scope.clone(),
+            (Some(Value::String(name)), None) => Some(name.clone()),
+            (Some(Value::String(name)), Some(scope)) if name == scope => Some(name.clone()),
+            _ => return self.refuse(),
         };
         let Some(name) = named else {
             return self.chat.call(&self.conn, method, params);
