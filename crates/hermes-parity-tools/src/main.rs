@@ -4,6 +4,8 @@
 //! `cargo run --locked -q -p hermes-parity-tools -- <script name> <flags>`.
 
 mod adapter_matrix;
+mod automation_summary;
+mod automation_summary_sinks;
 mod background_queue;
 mod behavioral_parity;
 mod cargo_surface_gates;
@@ -15,10 +17,13 @@ mod decimal_limit;
 mod deep_problem_solving;
 mod differential_parity;
 mod divergence;
+mod elite_sync_gate;
 mod eval_trend_gate;
 mod fork_carry;
 mod git;
 mod global_proof;
+mod golden_parity;
+mod golden_parity_upstream;
 mod gpar_closure;
 mod harness_hardening;
 mod hotpath_bench;
@@ -199,6 +204,15 @@ enum Command {
     /// Download crates.io source, reapply local RustSec patches and check/refresh overrides.
     #[command(name = "refresh-rustsec-patches")]
     RefreshRustsecPatches(rustsec_patches::RefreshRustsecPatchesArgs),
+    /// Run consolidated ELITE sync gates and emit a single pass/fail report.
+    #[command(name = "run-elite-sync-gate")]
+    RunEliteSyncGate(elite_sync_gate::EliteSyncGateArgs),
+    /// Publish automation summaries with ContextLattice-first sink fallback.
+    #[command(name = "publish-automation-summary")]
+    PublishAutomationSummary(automation_summary::AutomationSummaryArgs),
+    /// Golden parity harness for CLI command surface and key TUI flow contracts.
+    #[command(name = "run-golden-parity-harness")]
+    RunGoldenParityHarness(golden_parity::GoldenParityArgs),
 }
 
 fn main() {
@@ -251,6 +265,9 @@ fn main() {
             cargo_surface_gates::run_ultra_feature_benchmarks(args)
         }
         Command::RefreshRustsecPatches(args) => rustsec_patches::run(args),
+        Command::RunEliteSyncGate(args) => elite_sync_gate::run(args),
+        Command::PublishAutomationSummary(args) => automation_summary::run(args),
+        Command::RunGoldenParityHarness(args) => golden_parity::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),

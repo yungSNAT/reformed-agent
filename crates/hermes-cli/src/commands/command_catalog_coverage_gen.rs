@@ -27,10 +27,11 @@ fn masks_empty_short_and_multibyte_secrets() {
     }
 
     assert_eq!(mask_secret_value(""), "(empty)");
-    assert_eq!(mask_secret_value("a"), "*");
+    assert_eq!(mask_secret_value("a"), "********");
     assert_eq!(mask_secret_value("12345678"), "********");
-    assert_eq!(mask_secret_value("é"), "**");
-    assert_eq!(mask_secret_value("éé-middle-🦀"), "éé***🦀");
+    assert_eq!(mask_secret_value("é"), "********");
+    assert_eq!(mask_secret_value("éé-middle-🦀"), "********");
+    assert_eq!(mask_secret_value("éé-middle-of-a-key-🦀"), "éé***🦀");
 }
 
 #[test]

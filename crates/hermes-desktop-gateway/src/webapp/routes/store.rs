@@ -1,0 +1,184 @@
+//! What the route groups that keep a machine-level file share: who may call a Webapp-only route,
+//! the machine root those files sit in, blocking work off the event loop, and the `<store>.lock`
+//! folder lock native Desktop's writers take too (upstream `hermes_cli/ui_preferences.py`
+//! `_store_lock`, which `hermes_cli/gateway_connections.py` reuses).
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
+
+use axum::http::StatusCode;
+
+use crate::webapp::api::{ApiError, Caller, Ctx};
+
+const LOCK_WAIT: Duration = Duration::from_secs(3);
+const LOCK_STALE: Duration = Duration::from_secs(10);
+const LOCK_POLL: Duration = Duration::from_millis(20);
+
+pub(crate) fn not_found(detail: &str) -> ApiError {
+    ApiError(StatusCode::NOT_FOUND, detail.to_owned())
+}
+
+/// Upstream mounts these routes only where the Webapp is served; elsewhere they do not exist.
+pub(crate) fn webapp_only(ctx: &Ctx) -> Result<(), ApiError> {
+    match ctx.caller {
+        Caller::Browser { .. } => Ok(()),
+        Caller::Native | Caller::Token => Err(not_found("Not Found")),
+    }
+}
+
+/// The Hermes home this gateway serves.
+pub(crate) fn home(ctx: &Ctx) -> PathBuf {
+    ctx.api
+        .home
+        .clone()
+        .unwrap_or_else(hermes_config::hermes_home)
+}
+
+/// The install root of the served home, where machine-level stores live (UI preferences, saved
+/// gateways), resolved through links as upstream resolves it (`Path.resolve`, which keeps a
+/// missing path as given).
+pub(crate) fn install_root(ctx: &Ctx) -> PathBuf {
+    let root = install_root_of(&home(ctx));
+    std::fs::canonicalize(&root).unwrap_or(root)
+}
+
+/// The home itself, or its grandparent when the home is a profile's folder `<root>/profiles/<name>`.
+pub(crate) fn install_root_of(home: &Path) -> PathBuf {
+    match home.parent() {
+        Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
+            parent.parent().unwrap_or(parent).to_path_buf()
+        }
+        _ => home.to_path_buf(),
+    }
+}
+
+/// Runs file work on the blocking pool; a panic in it is a 500.
+pub(crate) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(work).await.unwrap_or_else(|_| {
+        Err(ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".into(),
+        ))
+    })
+}
+
+/// The `<store>.lock` folder; its `owner` file names the holder. Dropping it releases the lock
+/// only whilst it is still ours.
+pub(crate) struct StoreLock {
+    dir: PathBuf,
+    token: String,
+}
+
+impl StoreLock {
+    /// Takes the lock for the file at `path`, waiting up to 3 s and breaking a lock older than
+    /// 10 s. The error is the 'busy' text for a 503, naming `what` (say 'preferences store').
+    pub(crate) fn take(path: &Path, what: &str) -> Result<Self, String> {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".lock");
+        let dir = path.with_file_name(name);
+        let token = format!(
+            "{}-{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..16]
+        );
+        let deadline = Instant::now() + LOCK_WAIT;
+        loop {
+            match std::fs::create_dir(&dir) {
+                Ok(()) => break,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    break_if_stale(&dir);
+                    if Instant::now() > deadline {
+                        return Err(format!("{what} is busy"));
+                    }
+                    std::thread::sleep(LOCK_POLL);
+                }
+                Err(_) => return Err(format!("{what} is unreadable")),
+            }
+        }
+        let lock = StoreLock { dir, token };
+        if std::fs::write(lock.dir.join("owner"), &lock.token).is_err() {
+            return Err(format!("{what} is busy"));
+        }
+        Ok(lock)
+    }
+
+    /// Still ours: a lock broken as stale and taken by another writer is not.
+    pub(crate) fn held(&self) -> bool {
+        std::fs::read(self.dir.join("owner")).is_ok_and(|owner| owner == self.token.as_bytes())
+    }
+}
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        if self.held() {
+            let _ = std::fs::remove_file(self.dir.join("owner"));
+            let _ = std::fs::remove_dir(&self.dir);
+        }
+    }
+}
+
+/// A writer that died holding the lock must not wedge every later write.
+fn break_if_stale(dir: &Path) {
+    if let Some(seen) = stale_owner(dir) {
+        break_stale(dir, &seen);
+    }
+}
+
+fn is_stale(dir: &Path) -> bool {
+    std::fs::metadata(dir)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age > LOCK_STALE)
+}
+
+/// The owner token of a lock older than the stale limit (empty when it names none).
+fn stale_owner(dir: &Path) -> Option<Vec<u8>> {
+    is_stale(dir).then(|| std::fs::read(dir.join("owner")).unwrap_or_default())
+}
+
+/// Removes the lock judged stale with owner `seen`. It is first moved aside under a name of its
+/// own, which only one waiter's rename can do, then removed only if it still names the stale owner;
+/// a lock another writer re-took since the judgement goes back untouched.
+fn break_stale(dir: &Path, seen: &[u8]) {
+    let mut name = dir.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".stale-{}", uuid::Uuid::new_v4().simple()));
+    let aside = dir.with_file_name(name);
+    if std::fs::rename(dir, &aside).is_err() {
+        return;
+    }
+    let owner = std::fs::read(aside.join("owner")).unwrap_or_default();
+    if owner == seen {
+        let _ = std::fs::remove_file(aside.join("owner"));
+        let _ = std::fs::remove_dir(&aside);
+    } else if std::fs::rename(&aside, dir).is_err() {
+        // A third writer took the free name meanwhile; the moved holder sees `held()` false and
+        // stops, so still only one writer holds the lock.
+        let _ = std::fs::remove_file(aside.join("owner"));
+        let _ = std::fs::remove_dir(&aside);
+    }
+}
+
+/// Replaces `path` whole. A new file is made owner-only before any bytes land; the atomic writer
+/// keeps an existing file's mode.
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path);
+    }
+    hermes_config::loader::atomic_write_bytes(path, bytes).map_err(|err| err.to_string())
+}
+
+#[cfg(test)]
+pub(crate) const TEST_LOCK_WAIT: Duration = LOCK_WAIT;
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

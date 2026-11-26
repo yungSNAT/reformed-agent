@@ -65,6 +65,8 @@ fn in_isolated_process(test_name: &str, exercise: impl FnOnce(&Path)) {
         .env("HINDSIGHT_MODE", " local_embedded ")
         .env("HINDSIGHT_BANK_ID", "environment-bank")
         .env("HINDSIGHT_BUDGET", "mid")
+        .env("NO_PROXY", "127.0.0.1")
+        .env("no_proxy", "127.0.0.1")
         .env_remove("HINDSIGHT_API_KEY")
         .env_remove("HINDSIGHT_API_URL")
         .output()
@@ -356,6 +358,129 @@ fn background_prefetch_reports_recall_and_reflect_request_errors() {
 
 fn tool_output(plugin: &HindsightPlugin, name: &str, args: &Value) -> Value {
     serde_json::from_str(&plugin.handle_tool_call(name, args)).unwrap()
+}
+
+#[test]
+fn tools_process_loopback_memory_replies() {
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    in_isolated_process("tools_process_loopback_memory_replies", |_| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let server = MockServer::start().await;
+                let config = HindsightConfig {
+                    api_url: server.uri(),
+                    timeout_secs: 10,
+                    ..offline_config()
+                };
+                let auth = format!("Bearer {}", config.api_key);
+                let plugin = Arc::new(configured_plugin(config));
+                let recall = |query| {
+                    json!({"query": query, "budget": "low", "max_tokens": 128, "types": ["observation"]})
+                };
+                let reflect = |query| json!({"query": query, "budget": "low"});
+                let cases = [
+                    (
+                        "hindsight_recall",
+                        "memories/recall",
+                        json!({"query": "tea"}),
+                        recall("tea"),
+                        ResponseTemplate::new(200).set_body_json(json!({"results": [
+                            {"text": "Prefers tea"}, {"ignored": true}, {"text": 42},
+                            {"text": "Uses a blue cup"}
+                        ]})),
+                        json!({"result": "- Prefers tea\n- Uses a blue cup"}),
+                    ),
+                    (
+                        "hindsight_recall",
+                        "memories/recall",
+                        json!({"query": "coffee"}),
+                        recall("coffee"),
+                        ResponseTemplate::new(200).set_body_json(json!({"results": []})),
+                        json!({"result": "No relevant memories found."}),
+                    ),
+                    (
+                        "hindsight_recall",
+                        "memories/recall",
+                        json!({"query": "unavailable"}),
+                        recall("unavailable"),
+                        ResponseTemplate::new(503).set_body_string("recall unavailable"),
+                        json!({"error": "recall HTTP 503 Service Unavailable: recall unavailable"}),
+                    ),
+                    (
+                        "hindsight_reflect",
+                        "reflect",
+                        json!({"query": "tea"}),
+                        reflect("tea"),
+                        ResponseTemplate::new(200).set_body_json(json!({"text": "Offer tea."})),
+                        json!({"result": "Offer tea."}),
+                    ),
+                    (
+                        "hindsight_reflect",
+                        "reflect",
+                        json!({"query": "coffee"}),
+                        reflect("coffee"),
+                        ResponseTemplate::new(200).set_body_json(json!({})),
+                        json!({"result": "No relevant memories found."}),
+                    ),
+                    (
+                        "hindsight_reflect",
+                        "reflect",
+                        json!({"query": "unavailable"}),
+                        reflect("unavailable"),
+                        ResponseTemplate::new(503).set_body_string("reflect unavailable"),
+                        json!({"error": "reflect HTTP 503 Service Unavailable: reflect unavailable"}),
+                    ),
+                    (
+                        "hindsight_retain",
+                        "memories",
+                        json!({"content": "Prefers tea", "context": "drink", "tags": ["tea"]}),
+                        json!({"items": [{
+                            "content": "Prefers tea", "context": "drink", "tags": ["default", "tea"],
+                            "observation_scopes": "per_tag"
+                        }], "async": false}),
+                        ResponseTemplate::new(204),
+                        json!({"result": "Memory stored successfully."}),
+                    ),
+                    (
+                        "hindsight_retain",
+                        "memories",
+                        json!({"content": "Unwritten note"}),
+                        json!({"items": [{
+                            "content": "Unwritten note", "tags": ["default"],
+                            "observation_scopes": "per_tag"
+                        }], "async": false}),
+                        ResponseTemplate::new(503).set_body_string("retain unavailable"),
+                        json!({"error": "retain HTTP 503 Service Unavailable: retain unavailable"}),
+                    ),
+                ];
+
+                let expected_requests = cases.len();
+                for (tool, route, args, request, response, expected) in cases {
+                    Mock::given(method("POST"))
+                        .and(path(format!("/v1/default/banks/{OFFLINE_BANK}/{route}")))
+                        .and(header("authorization", auth.as_str()))
+                        .and(body_json(request))
+                        .respond_with(response)
+                        .expect(1)
+                        .mount(&server)
+                        .await;
+                    let plugin = Arc::clone(&plugin);
+                    let output = tokio::task::spawn_blocking(move || tool_output(&plugin, tool, &args))
+                        .await
+                        .unwrap();
+                    assert_eq!(output, expected, "{tool}");
+                }
+                assert_eq!(
+                    server.received_requests().await.unwrap().len(),
+                    expected_requests
+                );
+            });
+    });
 }
 
 #[test]

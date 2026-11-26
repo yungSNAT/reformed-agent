@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashSet};
-use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -37,72 +36,19 @@ fn load_auth_store(path: &Path) -> Result<AuthStore, AgentError> {
 }
 
 fn write_owner_only_atomic(path: &Path, raw: &str) -> Result<(), AgentError> {
-    // A symlinked store keeps its link: the target is replaced. A link whose
-    // folder is missing is refused, not given a new folder.
-    let path = &hermes_config::resolve_credential_link_target(path)
-        .map_err(|e| AgentError::Io(e.to_string()))?;
-    let parent = path.parent().ok_or_else(|| {
-        AgentError::Io(format!(
+    if path.parent().is_none() {
+        return Err(AgentError::Io(format!(
             "credential path {} has no parent directory",
             path.display()
-        ))
-    })?;
-    std::fs::create_dir_all(parent)
-        .map_err(|e| AgentError::Io(format!("mkdir {}: {}", parent.display(), e)))?;
-
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("credentials.json");
-    let nonce = rand::random::<u64>();
-    let tmp_path = parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), nonce));
-
-    let result = (|| -> Result<(), AgentError> {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&tmp_path)
-            .map_err(|e| AgentError::Io(format!("create {}: {}", tmp_path.display(), e)))?;
-        file.write_all(raw.as_bytes())
-            .map_err(|e| AgentError::Io(format!("write {}: {}", tmp_path.display(), e)))?;
-        file.sync_all()
-            .map_err(|e| AgentError::Io(format!("fsync {}: {}", tmp_path.display(), e)))?;
-        drop(file);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600)).map_err(
-                |e| AgentError::Io(format!("set permissions on {}: {}", tmp_path.display(), e)),
-            )?;
-        }
-        std::fs::rename(&tmp_path, path).map_err(|e| {
-            AgentError::Io(format!(
-                "rename {} -> {}: {}",
-                tmp_path.display(),
-                path.display(),
-                e
-            ))
-        })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(
-                |e| AgentError::Io(format!("set permissions on {}: {}", path.display(), e)),
-            )?;
-        }
-        let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
+        )));
     }
-    result
+    // The writer reports I/O failures as `ParseError`; keep only the message.
+    hermes_config::atomic_write_owner_only(path, raw.as_bytes()).map_err(|e| {
+        AgentError::Io(match e {
+            hermes_core::ConfigError::ParseError(message) => message,
+            other => other.to_string(),
+        })
+    })
 }
 
 fn save_auth_store(path: &Path, store: &AuthStore) -> Result<(), AgentError> {

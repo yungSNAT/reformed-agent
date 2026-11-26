@@ -13,27 +13,12 @@ mod tests {
         assert!(cfg.delegation.max_spawn_depth.is_none());
         assert!(cfg.tts.is_null());
         assert!(cfg.proxy.is_none());
-        assert_eq!(
-            cfg.platform_toolsets
-                .get("cli")
-                .cloned()
-                .unwrap_or_default(),
-            vec!["hermes-cli".to_string()]
-        );
-        assert_eq!(
-            cfg.platform_toolsets
-                .get("telegram")
-                .cloned()
-                .unwrap_or_default(),
-            vec!["hermes-telegram".to_string()]
-        );
-        assert_eq!(
-            cfg.platform_toolsets
-                .get("cron")
-                .cloned()
-                .unwrap_or_default(),
-            vec!["hermes-cron".to_string()]
-        );
+        // No entry is set; each platform falls back to its default.
+        assert!(cfg.platform_toolsets.is_empty());
+        let defaults = default_platform_toolsets();
+        assert_eq!(defaults["cli"], ["hermes-cli"]);
+        assert_eq!(defaults["telegram"], ["hermes-telegram"]);
+        assert_eq!(defaults["cron"], ["hermes-cron"]);
     }
 
     #[test]
@@ -134,6 +119,14 @@ llm_providers:
             .expect("load stream lifetime");
         assert_eq!(config.agent.stream_max_lifetime, Some(0.25));
         assert_eq!(GatewayConfig::default().agent.stream_max_lifetime, None);
+    }
+
+    #[test]
+    fn agent_config_loads_max_session_cost_usd_from_yaml() {
+        let config: GatewayConfig =
+            serde_yaml::from_str("agent:\n  max_session_cost_usd: 2.5\n").expect("load spend cap");
+        assert_eq!(config.agent.max_session_cost_usd, Some(2.5));
+        assert_eq!(GatewayConfig::default().agent.max_session_cost_usd, None);
     }
 
     #[test]

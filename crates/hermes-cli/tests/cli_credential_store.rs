@@ -233,3 +233,53 @@ async fn secret_vault_masks_and_removes_the_isolated_fixture() {
     .await;
     credential_cli(home, &["secrets", "list"], true, "(empty)").await;
 }
+
+#[tokio::test]
+async fn top_level_login_and_logout_update_the_profile_vault() {
+    const PROVIDER: &str = "openrouter";
+    const VALUE: &str = "fixture-router-key";
+    let sandbox = tempfile::tempdir().expect("isolated CLI profile");
+    let home = sandbox.path();
+
+    credential_cli(
+        home,
+        &["login", PROVIDER],
+        false,
+        "Missing API key for provider 'openrouter'",
+    )
+    .await;
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(20),
+        isolated_hermes::isolated_hermes(home)
+            .env("OPENROUTER_API_KEY", VALUE)
+            .stdin(Stdio::null())
+            .args(["login", PROVIDER])
+            .output(),
+    )
+    .await
+    .expect("login finishes")
+    .expect("run login");
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 stdout");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 stderr");
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("LLM API key stored for provider 'openrouter'."));
+    assert!(!stdout.contains(VALUE) && !stderr.contains(VALUE));
+
+    let masked = credential_cli(home, &["secrets", "get", PROVIDER], true, "********").await;
+    assert!(!masked.contains(VALUE));
+    credential_cli(
+        home,
+        &["logout", PROVIDER],
+        true,
+        "Removed stored credential for provider 'openrouter'.",
+    )
+    .await;
+    credential_cli(
+        home,
+        &["secrets", "get", PROVIDER],
+        false,
+        "No secret stored for provider 'openrouter'",
+    )
+    .await;
+}
