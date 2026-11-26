@@ -162,6 +162,32 @@ mod tests {
     }
 
     #[test]
+    fn app_debug_keeps_conversation_content_out_of_diagnostics() {
+        if !crate::isolated_test_profile::enter(
+            "app::tests::app_debug_keeps_conversation_content_out_of_diagnostics",
+        ) {
+            return;
+        }
+        let mut app = build_minimal_test_app_with_state_root(hermes_home_dir());
+        app.messages
+            .push(hermes_core::Message::user("raw conversation fixture"));
+        app.input_history.push("raw editable input fixture".into());
+        app.current_model = "debug-fixture-model".into();
+        app.running = false;
+
+        let report = format!("{app:?}");
+        assert!(report.starts_with("App {"), "{report}");
+        assert!(report.contains(r#"session_id: "test-session""#), "{report}");
+        assert!(
+            report.contains(r#"current_model: "debug-fixture-model""#),
+            "{report}"
+        );
+        assert!(report.contains("running: false"), "{report}");
+        assert!(!report.contains("raw conversation fixture"), "{report}");
+        assert!(!report.contains("raw editable input fixture"), "{report}");
+    }
+
+    #[test]
     fn refresh_agent_tool_snapshot_adds_late_registered_tool() {
         let mut app = build_minimal_test_app();
 

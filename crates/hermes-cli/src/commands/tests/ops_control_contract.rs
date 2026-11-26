@@ -57,6 +57,59 @@ async fn policy_simulation_reports_decisions_without_dispatch() {
     assert_eq!(registry.policy_counters(), counters);
 }
 
+#[tokio::test]
+async fn slash_plugins_reports_profile_metadata_and_respects_project_opt_in() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::ops_control_contract::slash_plugins_reports_profile_metadata_and_respects_project_opt_in",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    let empty = command_output(&mut app, "/plugins", &[]).await;
+    assert!(
+        empty.starts_with("No plugin bundles discovered."),
+        "{empty}"
+    );
+    assert!(empty.contains(&format!(
+        "User plugin dir: {}",
+        home.join("plugins").display()
+    )));
+
+    let user = home.join("plugins/local-fixture");
+    let project = home.join(".hermes/plugins/project-fixture");
+    for (dir, name) in [(&user, "local-fixture"), (&project, "project-fixture")] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.yaml"),
+            format!("name: {name}\nversion: '1.2'\ndescription: Plugin fixture for {name}\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(user.join(".disabled"), "").unwrap();
+
+    let profile_only = command_output(&mut app, "/plugins", &[]).await;
+    assert!(
+        profile_only.starts_with("Plugin surface (1 entries):"),
+        "{profile_only}"
+    );
+    assert!(profile_only.contains("local-fixture v1.2 [disabled; source=user;"));
+    assert!(profile_only.contains("Plugin fixture for local-fixture"));
+    assert!(!profile_only.contains("project-fixture"));
+
+    std::env::set_var("HERMES_ENABLE_PROJECT_PLUGINS", "1");
+    let opted_in = command_output(&mut app, "/plugins", &[]).await;
+    assert!(
+        opted_in.starts_with("Plugin surface (2 entries):"),
+        "{opted_in}"
+    );
+    assert!(opted_in.contains("local-fixture v1.2 [disabled; source=user;"));
+    assert!(opted_in.contains("project-fixture v1.2 [enabled; source=project;"));
+    assert!(opted_in.contains("Plugin fixture for project-fixture"));
+    assert!(user.join(".disabled").is_file());
+    assert!(!project.join(".disabled").exists());
+}
+
 struct DashboardFixture {
     exchanges: Mutex<VecDeque<(Value, Value)>>,
 }
