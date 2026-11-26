@@ -380,9 +380,14 @@ async fn canonical_requests_refuse_another_profile_unknown_sessions_and_launch_o
         .request("session.resume", json!({"session_id": "no-such-session"}))
         .await;
     assert_eq!(refused["error"]["code"], 4001, "{refused}");
-    // Methods the canonical wire does not serve get JSON-RPC 'method not found'.
+    // Methods the canonical wire does not serve get JSON-RPC 'method not found', in
+    // upstream's words.
     let unknown = client.request("no.such.method", json!({})).await;
     assert_eq!(unknown["error"]["code"], -32601, "{unknown}");
+    assert_eq!(
+        unknown["error"]["message"],
+        "unknown method: no.such.method \u{2014} not available on this Hermes backend"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
