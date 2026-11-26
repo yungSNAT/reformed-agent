@@ -1158,6 +1158,7 @@ tools_config:
     fn an_explicit_empty_cron_list_offers_no_tool() {
         let mut cfg = GatewayConfig::default();
         cfg.platform_toolsets.insert("cron".to_string(), Vec::new());
+        cfg.tools_config.enabled = vec!["web_search".to_string()];
         let live_names: HashSet<String> = ["terminal", "web_search"]
             .into_iter()
             .map(String::from)

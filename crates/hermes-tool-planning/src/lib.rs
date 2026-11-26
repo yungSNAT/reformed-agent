@@ -1122,6 +1122,8 @@ mod tests {
         register_live_mcp_tool(&reg);
         let mut cfg = GatewayConfig::default();
         cfg.platform_toolsets.insert("cli".to_string(), Vec::new());
+        // The platform's own empty list outranks the global allow-list.
+        cfg.tools_config.enabled = vec!["terminal".to_string()];
 
         assert_eq!(
             configured_platform_toolsets(&cfg, "cli"),
