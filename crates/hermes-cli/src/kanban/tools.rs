@@ -37,6 +37,26 @@ pub const ENV_TASK: &str = "HERMES_KANBAN_TASK";
 pub const ENV_RUN_ID: &str = "HERMES_KANBAN_RUN_ID";
 /// Every variable of a worker binding.
 pub const KANBAN_WORKER_ENV: [&str; 3] = [ENV_BOARD, ENV_TASK, ENV_RUN_ID];
+/// Task id of the dispatched worker whose process tree this is. Unlike the
+/// binding it is not stripped from child processes, so a worker's terminal
+/// children keep it and the CLI holds them to the worker's own task. It
+/// guards against a misdirected task id, not against a child that edits its
+/// own environment.
+pub const ENV_WORKER_TASK: &str = "HERMES_KANBAN_WORKER_TASK";
+
+/// What [`ENV_WORKER_TASK`] says about this process: `None` outside a worker
+/// tree, the worker's task id, or `Err` with a value that is not a plain id
+/// (which fails closed).
+fn worker_tree_task(raw: Option<String>) -> Option<Result<String, String>> {
+    let raw = raw?;
+    let id = raw.trim();
+    let plain = !id.is_empty()
+        && id.len() <= MAX_NAME_CHARS
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    Some(if plain { Ok(id.to_string()) } else { Err(raw) })
+}
 
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 200;
@@ -264,6 +284,12 @@ pub fn kanban_toolset_named(config: &GatewayConfig, platform: &str) -> bool {
         })
 }
 
+/// Whether a session without a binding gets the orchestrator tools: its CLI
+/// list names `kanban`, and it is not running under a dispatched worker.
+fn orchestrator_opted_in(config: &GatewayConfig, in_worker_tree: bool) -> bool {
+    !in_worker_tree && kanban_toolset_named(config, "cli")
+}
+
 /// The folder `/background` keeps its job status files in.
 fn background_jobs_path() -> PathBuf {
     hermes_config::hermes_home().join("background_jobs")
@@ -283,15 +309,19 @@ pub fn check_cli_lifecycle(
     completes: bool,
     force: bool,
 ) -> Result<(), String> {
-    check_cli_lifecycle_with(
-        board,
-        task,
-        verb,
-        completes,
-        force,
-        KanbanWorkerBinding::from_env().as_ref(),
-        &background_jobs_path(),
-    )
+    let caller = CliCaller {
+        binding: KanbanWorkerBinding::from_env(),
+        worker_tree: worker_tree_task(std::env::var(ENV_WORKER_TASK).ok()),
+        jobs_dir: background_jobs_path(),
+    };
+    check_cli_lifecycle_with(board, task, verb, completes, force, &caller)
+}
+
+/// Who is running a `hermes kanban` lifecycle command.
+struct CliCaller {
+    binding: Option<KanbanWorkerBinding>,
+    worker_tree: Option<Result<String, String>>,
+    jobs_dir: PathBuf,
 }
 
 fn check_cli_lifecycle_with(
@@ -300,22 +330,36 @@ fn check_cli_lifecycle_with(
     verb: &str,
     completes: bool,
     force: bool,
-    binding: Option<&KanbanWorkerBinding>,
-    jobs_dir: &Path,
+    caller: &CliCaller,
 ) -> Result<(), String> {
     let command = format!("kanban {verb}");
-    match binding {
-        Some(_) if force => {
+    match (&caller.binding, &caller.worker_tree) {
+        (Some(_), _) if force => {
             return Err(format!(
                 "Refusing `{command} --force`: this process is a dispatched kanban worker, and --force is for operators."
             ))
         }
-        Some(binding) => {
+        (Some(binding), _) => {
             check_worker_owns(binding, task, &command).map_err(|error| error.to_string())?
         }
-        None => {
+        // A worker's terminal child: the binding was stripped, the marker kept.
+        (None, Some(Err(raw))) => {
+            return Err(format!(
+                "Refusing `{command}`: this process runs under a dispatched kanban worker, and its {ENV_WORKER_TASK} value `{raw}` is not a task id, so it may not change any task."
+            ))
+        }
+        (None, Some(Ok(own))) => {
+            if !task.id.eq_ignore_ascii_case(own) {
+                return Err(format!(
+                    "Refusing `{command}` on {}: this process runs under the dispatched worker for task {own}, which may change only its own task.",
+                    task.id
+                ));
+            }
+        }
+        (None, None) => {
             if let Some(run) = task.background_job_id.as_deref() {
-                if !force && task.lane == KanbanLane::Doing && run_is_live(jobs_dir, run) {
+                if !force && task.lane == KanbanLane::Doing && run_is_live(&caller.jobs_dir, run)
+                {
                     return Err(format!(
                         "Refusing `{command}` on {}: a live worker is running it (background job {run}). Wait for the worker, stop that job, or re-run with --force.",
                         task.id
@@ -339,13 +383,13 @@ fn check_cli_lifecycle_with(
 
 /// Register the kanban tools on `registry`: bound to `binding` when this
 /// process is a dispatched worker, otherwise only when the CLI's toolset list
-/// names `kanban`.
+/// names `kanban` and no dispatched worker started this process.
 pub fn register_kanban_tools(
     registry: &ToolRegistry,
     config: &GatewayConfig,
     binding: Option<KanbanWorkerBinding>,
 ) {
-    let opted_in = kanban_toolset_named(config, "cli");
+    let opted_in = orchestrator_opted_in(config, std::env::var_os(ENV_WORKER_TASK).is_some());
     let ctx = KanbanToolContext {
         store_path: super::kanban_store_path(),
         // The folder `/background` keeps its job status files in.

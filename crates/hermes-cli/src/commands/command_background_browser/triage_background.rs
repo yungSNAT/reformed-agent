@@ -921,8 +921,9 @@ fn kanban_binding_from_status(
     Ok(Some(binding))
 }
 
-/// A kanban worker's child gets its binding; any other child gets none, even
-/// when this process is itself a bound worker.
+/// A kanban worker's child gets its binding and the worker-tree marker; any
+/// other child gets no binding, even when this process is itself a bound
+/// worker, and keeps whatever marker this process inherited.
 fn apply_kanban_binding_env(
     cmd: &mut tokio::process::Command,
     kanban: Option<&crate::kanban::KanbanWorkerBinding>,
@@ -934,6 +935,7 @@ fn apply_kanban_binding_env(
         for (key, value) in binding.env() {
             cmd.env(key, value);
         }
+        cmd.env(crate::kanban::ENV_WORKER_TASK, &binding.task);
     }
 }
 

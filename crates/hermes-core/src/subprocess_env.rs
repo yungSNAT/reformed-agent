@@ -364,11 +364,20 @@ mod tests {
                 ("HERMES_KANBAN_BOARD", "main"),
                 ("HERMES_KANBAN_TASK", "K-0001"),
                 ("HERMES_KANBAN_RUN_ID", "run-a"),
+                ("HERMES_KANBAN_WORKER_TASK", "K-0001"),
+                ("GITHUB_TOKEN", "placeholder"),
                 ("SAFE_VAR", "keep"),
             ],
             true,
         );
         assert_eq!(env.get("SAFE_VAR").map(String::as_str), Some("keep"));
+        // The worker-tree marker is a task id, not a credential: it stays so
+        // the CLI can hold a worker's terminal children to the worker's task.
+        assert_eq!(
+            env.get("HERMES_KANBAN_WORKER_TASK").map(String::as_str),
+            Some("K-0001")
+        );
+        assert!(!env.contains_key("GITHUB_TOKEN"));
         for key in [
             "HERMES_KANBAN_BOARD",
             "HERMES_KANBAN_TASK",

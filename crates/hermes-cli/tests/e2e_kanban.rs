@@ -274,7 +274,7 @@ fn refused(output: &Output, needle: &str) {
 }
 
 #[tokio::test]
-async fn a_worker_terminal_cannot_change_another_workers_live_task() {
+async fn the_cli_refuses_a_live_task_and_holds_a_bound_child_to_its_own() {
     let sandbox = tempfile::tempdir().unwrap();
     let home = sandbox.path();
     two_running_workers(home, "running").await;
@@ -363,4 +363,46 @@ async fn kanban_move_to_done_checks_parents_too() {
     );
     assert_kanban(home, &["move", "K-0002", "doing"], "Moved K-0002 -> doing").await;
     assert_eq!(lanes(home), [KanbanLane::Todo, KanbanLane::Doing]);
+}
+
+#[tokio::test]
+async fn a_worker_terminal_with_only_the_marker_is_held_to_its_own_task() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path();
+    two_running_workers(home, "running").await;
+    let store = home.join("hermes/alpha/kanban/boards.json");
+    let before = std::fs::read(&store).unwrap();
+    // What the terminal of the worker for K-0001 keeps after the strip.
+    let marker = [("HERMES_KANBAN_WORKER_TASK", "K-0001")];
+    for args in [
+        &["done", "K-0002", "x"][..],
+        &["done", "K-0002", "x", "--force"],
+        &["block", "K-0002", "stop", "--force"],
+        &["move", "K-0002", "todo", "--force"],
+    ] {
+        let output = kanban_as(home, &marker, args).await;
+        refused(&output, "may change only its own task");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains("re-run with --force"), "{stderr}");
+    }
+    refused(
+        &kanban_as(
+            home,
+            &[("HERMES_KANBAN_WORKER_TASK", "../K-0001")],
+            &["done", "K-0002", "--force"],
+        )
+        .await,
+        "is not a task id",
+    );
+    assert_eq!(std::fs::read(&store).unwrap(), before);
+    // Its own task, and an operator with --force, still work.
+    assert!(kanban_as(home, &marker, &["done", "K-0001", "ok"])
+        .await
+        .status
+        .success());
+    assert!(kanban_as(home, &[], &["done", "K-0002", "--force"])
+        .await
+        .status
+        .success());
+    assert_eq!(lanes(home), [KanbanLane::Done, KanbanLane::Done]);
 }

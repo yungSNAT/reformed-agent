@@ -1257,6 +1257,14 @@ fn oversized_input_is_refused_without_a_trace() {
 
 // ---- the human CLI's lifecycle checks ----
 
+fn caller(fx: &Fixture, binding: Option<KanbanWorkerBinding>, marker: Option<&str>) -> CliCaller {
+    CliCaller {
+        binding,
+        worker_tree: worker_tree_task(marker.map(str::to_string)),
+        jobs_dir: fx.jobs.clone(),
+    }
+}
+
 #[test]
 fn the_cli_holds_a_bound_process_to_its_own_task_and_others_to_live_runs() {
     let fx = fixture();
@@ -1265,7 +1273,14 @@ fn the_cli_holds_a_bound_process_to_its_own_task_and_others_to_live_runs() {
     let (own, other) = (&board.tasks[0], &board.tasks[2]);
     let bound = worker("run-a");
     let check = |task: &KanbanTask, force: bool, binding: Option<&KanbanWorkerBinding>| {
-        check_cli_lifecycle_with(board, task, "done", true, force, binding, &fx.jobs)
+        check_cli_lifecycle_with(
+            board,
+            task,
+            "done",
+            true,
+            force,
+            &caller(&fx, binding.cloned(), None),
+        )
     };
     assert!(check(own, false, bound.as_ref()).is_ok());
     let foreign = check(other, false, bound.as_ref()).unwrap_err();
@@ -1288,23 +1303,66 @@ fn the_cli_refuses_open_parents_even_with_force() {
     let fx = fixture_with_open_parent();
     let store = store(&fx);
     let board = &store.boards[0];
-    let error =
-        check_cli_lifecycle_with(board, &board.tasks[0], "done", true, true, None, &fx.jobs)
-            .unwrap_err();
+    let operator = caller(&fx, None, None);
+    let error = check_cli_lifecycle_with(board, &board.tasks[0], "done", true, true, &operator)
+        .unwrap_err();
     assert!(
         error.contains("unfinished parent(s) K-0002 (todo)"),
         "{error}"
     );
-    assert!(check_cli_lifecycle_with(
-        board,
-        &board.tasks[0],
-        "block",
-        false,
-        false,
-        None,
-        &fx.jobs
-    )
-    .is_ok());
+    assert!(
+        check_cli_lifecycle_with(board, &board.tasks[0], "block", false, false, &operator).is_ok()
+    );
+}
+
+#[test]
+fn a_worker_terminal_may_change_only_the_workers_own_task() {
+    let fx = fixture();
+    let store = store(&fx);
+    let board = &store.boards[0];
+    let (own, other, idle) = (&board.tasks[0], &board.tasks[2], &board.tasks[1]);
+    // The terminal child of the worker for K-0001: no binding, only the marker.
+    let child = caller(&fx, None, Some("K-0001"));
+    fx.job_status("run-z", "running");
+    for (task, force) in [(other, false), (other, true), (idle, false), (idle, true)] {
+        let error = check_cli_lifecycle_with(board, task, "done", true, force, &child).unwrap_err();
+        assert!(
+            error.contains("runs under the dispatched worker for task K-0001"),
+            "{error}"
+        );
+        assert!(!error.contains("--force"), "{error}");
+    }
+    assert!(check_cli_lifecycle_with(board, own, "done", true, false, &child).is_ok());
+    // An operator's terminal keeps the hint and may force.
+    let operator = caller(&fx, None, None);
+    let error = check_cli_lifecycle_with(board, other, "done", true, false, &operator).unwrap_err();
+    assert!(error.contains("re-run with --force"), "{error}");
+    assert!(check_cli_lifecycle_with(board, other, "done", true, true, &operator).is_ok());
+}
+
+#[test]
+fn a_malformed_worker_marker_fails_closed() {
+    let fx = fixture();
+    let store = store(&fx);
+    let board = &store.boards[0];
+    for raw in ["", "  ", "../K-0001", "K-0001 K-0002", &"K".repeat(101)] {
+        let child = caller(&fx, None, Some(raw));
+        for task in &board.tasks {
+            let error =
+                check_cli_lifecycle_with(board, task, "block", false, true, &child).unwrap_err();
+            assert!(error.contains("is not a task id"), "{raw:?}: {error}");
+        }
+    }
+}
+
+#[test]
+fn a_session_under_a_worker_never_gets_the_orchestrator_tools() {
+    let mut config = hermes_config::GatewayConfig::default();
+    config
+        .platform_toolsets
+        .insert("cli".to_string(), vec![KANBAN_TOOLSET.to_string()]);
+    assert!(orchestrator_opted_in(&config, false));
+    assert!(!orchestrator_opted_in(&config, true));
 }
 
 #[test]
