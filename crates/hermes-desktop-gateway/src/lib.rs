@@ -6,6 +6,12 @@
 //! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
 //! self-update as off. Other methods get JSON-RPC 'method not found' (-32601).
 //!
+//! One connection's requests can run at the same time and be answered out of order, as JSON-RPC
+//! allows: a request whose handler waits (a turn, an approval) does not hold up the next. A
+//! client that needs one request's effect before another waits for the first reply: an
+//! `image.attach_bytes` or `file.attach` before the `prompt.submit` that should carry it, and a
+//! `session.create` before any request that names its session.
+//!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
 //! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token in its
 //! query and the messages route needs it in `X-Hermes-Session-Token`, as the desktop sends
@@ -35,6 +41,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use futures::future::FutureExt;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
@@ -419,9 +426,14 @@ async fn session(mut socket: WebSocket, chat: Arc<Chat>, canonical: bool, origin
     chat.disconnect(conn.id);
 }
 
-/// Most requests one connection has waiting on their handlers; past it, the connection's
-/// next frame is read once one is answered.
+/// Most frames one connection has waiting on their handlers. Past it the connection still
+/// reads: a request whose handler answers at once is answered (an approval's or a prompt's
+/// answer, which a waiting turn needs), and one that would wait gets [`CONNECTION_BUSY`].
 const MAX_IN_FLIGHT: usize = 16;
+
+/// The code for a request refused because its connection has [`MAX_IN_FLIGHT`] waiting
+/// (JSON-RPC's range for server errors).
+const CONNECTION_BUSY: i64 = -32001;
 
 /// A frame's reply, once its handlers are done.
 type InFlight<'a> = Pin<Box<dyn Future<Output = Option<Value>> + Send + 'a>>;
@@ -431,7 +443,8 @@ type InFlight<'a> = Pin<Box<dyn Future<Output = Option<Value>> + Send + 'a>>;
 ///
 /// A frame's handlers run whilst the connection goes on: a handler that waits holds up
 /// neither the connection's events nor its other requests, and its reply goes out when it is
-/// done. Each pass writes a finished reply first, then a queued event, and only then reads
+/// done, so replies can come out of order. Past [`MAX_IN_FLIGHT`] waiting frames, a request is
+/// still read and answered if its handler answers at once. Each pass writes a finished reply first, then a queued event, and only then reads
 /// another frame, so a handler that answers at once is answered before the next frame is read,
 /// and a client that reads slowly cannot start more turns whilst finished ones wait. A turn
 /// keeps its slot until its last event is written to the connection that prompted it, so the
@@ -445,18 +458,32 @@ async fn serve_socket(
     write_timeout: std::time::Duration,
 ) {
     let mut in_flight: FuturesUnordered<InFlight<'_>> = FuturesUnordered::new();
+    // A handler that would wait is dropped before its first wait, which the handler contract
+    // makes safe (`chat::Handler`).
+    let at_once: &Call<'_> = &|method, params| {
+        match call(method, params).now_or_never() {
+        Some(result) => chat::ready(result),
+        None => chat::ready(Err((
+            CONNECTION_BUSY,
+            format!(
+                "busy: {MAX_IN_FLIGHT} requests wait on this connection; send again when one is answered"
+            ),
+        ))),
+    }
+    };
     loop {
         let frame = tokio::select! {
             biased;
             Some(reply) = in_flight.next(), if !in_flight.is_empty() => reply.map(Outgoing::from),
             Some(event) = events.recv() => Some(event),
-            inbound = socket.recv(), if in_flight.len() < MAX_IN_FLIGHT => {
+            inbound = socket.recv() => {
+                let run = if in_flight.len() < MAX_IN_FLIGHT { call } else { at_once };
                 match inbound {
                     Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
-                        in_flight.push(Box::pin(async move { reply_to(&text, call).await }));
+                        in_flight.push(Box::pin(async move { reply_to(&text, run).await }));
                     }
                     Some(Ok(Message::Text(text))) => match attach_request(&text) {
-                        Some(request) => in_flight.push(Box::pin(reply_to_one(request, call))),
+                        Some(request) => in_flight.push(Box::pin(reply_to_one(request, run))),
                         None => break,
                     },
                     Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,

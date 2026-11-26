@@ -37,6 +37,9 @@ const CREATE_KEYS: [&str; 4] = ["request_id", "source", "profile", "service_tier
 /// so a remembered id opens its session to whoever sends it again: a short one could be
 /// guessed, where the desktop sends a UUID (36 characters).
 const MIN_REMEMBERED_REQUEST_ID: usize = 16;
+/// Longest `submission_id` (`input_id`) taken. The desktop sends a UUID (36 characters); the id
+/// is kept with a queued prompt and repeated in each `pending` row.
+const MAX_INPUT_ID: usize = 128;
 
 /// The methods a canonical connection answers its own way; the rest are the legacy wire's.
 pub(super) const METHODS: &[(&str, Handler)] = &[
@@ -111,7 +114,7 @@ impl Admission {
 
     /// Bytes it holds besides its prompt's text, which a queue counts against its limits.
     pub(super) fn held_bytes(&self) -> usize {
-        self.text.len()
+        self.text.len() + self.input_id.as_ref().map_or(0, String::len)
     }
 
     /// The `session.info` payload as the turn starts (`running`) and once it has ended, with
@@ -252,6 +255,12 @@ impl Chat {
         // The desktop names its input `submission_id`; upstream's wire calls it `input_id`.
         let input_id = match params.get("submission_id").or(params.get("input_id")) {
             None => None,
+            Some(Value::String(input)) if input.len() > MAX_INPUT_ID => {
+                return Err((
+                    REFUSED,
+                    format!("invalid_params: submission_id is longer than {MAX_INPUT_ID} bytes"),
+                ))
+            }
             Some(Value::String(input)) => Some(input.clone()),
             Some(_) => {
                 return Err((
