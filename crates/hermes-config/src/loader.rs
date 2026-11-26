@@ -515,7 +515,11 @@ fn replace_temp_file(tmp_path: &Path, path: &Path, no_follow: bool) -> Result<()
             let _ = std::fs::remove_file(tmp_path);
             Ok(())
         }
-        Err(err) => Err(io_to_config_error(err)),
+        Err(err) => Err(ConfigError::ParseError(format!(
+            "rename {} -> {}: {err}",
+            tmp_path.display(),
+            path.display()
+        ))),
     }
 }
 

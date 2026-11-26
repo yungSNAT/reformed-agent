@@ -28,18 +28,14 @@ fn insert_session(
 
 #[test]
 fn fts5_unavailable_detection() {
-    assert!(SqliteSessionSearchBackend::is_fts5_unavailable_message(
+    assert!(hermes_core::is_fts5_unavailable_message(
         "no such module: fts5"
     ));
-    assert!(SqliteSessionSearchBackend::is_fts5_unavailable_message(
+    assert!(hermes_core::is_fts5_unavailable_message(
         "Unknown Tokenizer: foo"
     ));
-    assert!(SqliteSessionSearchBackend::is_fts5_unavailable_message(
-        "FTS5 broke"
-    ));
-    assert!(!SqliteSessionSearchBackend::is_fts5_unavailable_message(
-        "disk I/O error"
-    ));
+    assert!(hermes_core::is_fts5_unavailable_message("FTS5 broke"));
+    assert!(!hermes_core::is_fts5_unavailable_message("disk I/O error"));
     assert!(SqliteSessionSearchBackend::is_fts5_unavailable_error(
         &rusqlite::Error::InvalidColumnName("fts5_col".to_string())
     ));
