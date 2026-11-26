@@ -2,7 +2,8 @@
 //! `<working folder>/.hermes/attachments/`, so the next prompt can name it with an `@file:`
 //! reference, which the agent confines to the working folder.
 //!
-//! No host path a client names is read: in remote mode the desktop always sends the bytes.
+//! `file.attach` reads no host path a client names: in remote mode the desktop always sends
+//! the bytes. (`image.attach` does read one, as upstream's does; see `chat/images.rs`.)
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
