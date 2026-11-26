@@ -128,11 +128,22 @@ async fn diagnostics_list_and_remove_local_reports_and_read_recent_logs() {
     fs::write(&report, "Synthetic survey report\n").unwrap();
     fs::write(&other, "Synthetic archive report\n").unwrap();
     let listing = command(root, &["debug", "list"], 0).await;
-    assert!(listing.contains("Debug reports (2)"));
-    assert!(listing.contains("survey-debug-report.md"));
-    assert!(listing.contains("archive-debug-report.md"));
+    assert!(listing.contains("Debug reports ("));
+    let listed: Vec<_> = listing
+        .lines()
+        .filter_map(|line| Path::new(line.trim()).file_name()?.to_str())
+        .filter(|name| name.ends_with("-debug-report.md"))
+        .collect();
+    assert_eq!(
+        listed,
+        ["archive-debug-report.md", "survey-debug-report.md"]
+    );
 
-    let delete = ["debug", "delete", report.to_str().unwrap()];
+    let delete = [
+        "debug",
+        "delete",
+        "hermes/debug-reports/survey-debug-report.md",
+    ];
     assert!(command(root, &delete, 0)
         .await
         .contains("Removed debug report"));
