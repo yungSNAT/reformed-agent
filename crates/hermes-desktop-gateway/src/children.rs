@@ -14,7 +14,9 @@
 //! `?profile=<name>`, and a request whose `params.profile` names a profile (the Webapp keeps the
 //! default socket and names the tab's profile in each request). Each client connection gets its own
 //! connection to each child it uses, so the child's events for that client's sessions reach only
-//! it. Forwarded requests run one at a time, in order, like every request on a connection.
+//! it, and the child sees the client's origin, so a forwarded request keeps the client's
+//! restrictions. Forwarded requests wait for their replies as in-process handlers do: as long
+//! as the child's handler takes, or until the child connection closes.
 //!
 //! At most [`MAX_CHILDREN`] children live at once, counted from spawn until their exit has been
 //! awaited. A client connection holds a lease on each child it uses; a child with no lease is
@@ -38,7 +40,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::{self, protocol::WebSocketConfig};
 
 use crate::chat::profiles::{install_root, named_profile_home};
-use crate::chat::{ready, Chat, Conn, Outgoing, Reply, RpcError};
+use crate::chat::{ready, Chat, Conn, Origin, Outgoing, Reply, RpcError};
 use crate::{ATTACH_MAX_MESSAGE_BYTES, CANONICAL_PROTOCOL, TOKEN_ENV};
 
 /// Environment variables a child inherits; `LC_` and `XDG_` names too. Nothing else, so no
@@ -72,6 +74,10 @@ const ALLOWED_ENV: [&str; 25] = [
     "PATHEXT",
 ];
 const ALLOWED_ENV_PREFIXES: [&str; 2] = ["LC_", "XDG_"];
+
+/// The header a parent's dial names its client's [`Origin`] in; a child (`--child`) trusts it
+/// on a dial with its private token, so a forwarded request keeps the client's restrictions.
+pub(crate) const CHILD_ORIGIN_HEADER: &str = "x-hermes-child-origin";
 
 /// Most children alive at once.
 pub const MAX_CHILDREN: usize = 4;
@@ -402,39 +408,82 @@ async fn spawn(config: &ChildGateways, home: &Path) -> Result<Running, String> {
 struct Link {
     _lease: Lease,
     to_child: mpsc::UnboundedSender<String>,
-    /// Where the reply to the request in flight goes; requests are sent one at a time.
-    waiting: Arc<Mutex<Waiting>>,
-    /// The id of the last request sent.
-    sent: std::sync::atomic::AtomicU64,
+    /// The requests sent and not yet answered, by id.
+    pending: Arc<Mutex<Pending>>,
 }
 
-/// The state of a link's one request slot.
 #[derive(Default)]
-enum Waiting {
-    #[default]
-    Idle,
-    /// The request with this id waits for its reply here.
-    Reply(u64, oneshot::Sender<Value>),
-    /// The child connection is gone: every later request fails at once.
-    Closed,
+struct Pending {
+    /// The id of the last request sent.
+    last: u64,
+    waiting: HashMap<u64, oneshot::Sender<Value>>,
+    /// The child connection is gone: every request waiting and every later one fails at once.
+    closed: bool,
 }
 
-/// Marks `waiting` closed, which drops any request in flight unanswered.
-fn close(waiting: &Mutex<Waiting>) {
-    *waiting.lock().unwrap_or_else(|e| e.into_inner()) = Waiting::Closed;
+impl Pending {
+    fn lock(pending: &Mutex<Pending>) -> std::sync::MutexGuard<'_, Pending> {
+        // A map and a flag, each update whole: a poisoned lock is still safe to use.
+        pending.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Marks the link closed, which drops every waiting request unanswered.
+    fn close(pending: &Mutex<Pending>) {
+        let mut pending = Self::lock(pending);
+        pending.closed = true;
+        pending.waiting.clear();
+    }
+}
+
+/// Forgets a request whose caller went away (its connection closed) before the reply came.
+struct Forget<'a> {
+    pending: &'a Mutex<Pending>,
+    id: u64,
+}
+
+impl Drop for Forget<'_> {
+    fn drop(&mut self) {
+        Pending::lock(self.pending).waiting.remove(&self.id);
+    }
+}
+
+/// The value of [`CHILD_ORIGIN_HEADER`] for `origin`.
+fn origin_name(origin: Origin) -> &'static str {
+    match origin {
+        Origin::Remote => "remote",
+        Origin::Webapp => "webapp",
+        Origin::Local => "local",
+    }
+}
+
+/// The origin a parent named for its client in [`CHILD_ORIGIN_HEADER`]; anything else is
+/// [`Origin::Remote`], the most restricted.
+pub(crate) fn child_origin(headers: &axum::http::HeaderMap) -> Origin {
+    match headers
+        .get(CHILD_ORIGIN_HEADER)
+        .and_then(|v| v.to_str().ok())
+    {
+        Some("local") => Origin::Local,
+        Some("webapp") => Origin::Webapp,
+        _ => Origin::Remote,
+    }
 }
 
 impl Link {
-    /// Dials the leased child on the client's wire and starts copying its events to `conn`.
+    /// Dials the leased child on the client's wire, as the client's origin, and starts copying
+    /// its events to `conn`.
     async fn dial(lease: Lease, conn: &Conn) -> Result<Self, String> {
         let url = format!("ws://127.0.0.1:{}/api/ws?token={}", lease.port, lease.token);
         let mut request = url.into_client_request().map_err(|e| e.to_string())?;
+        let headers = request.headers_mut();
         if conn.canonical {
             let protocol = tungstenite::http::HeaderValue::from_static(CANONICAL_PROTOCOL);
-            request
-                .headers_mut()
-                .insert(tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL, protocol);
+            headers.insert(tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL, protocol);
         }
+        headers.insert(
+            CHILD_ORIGIN_HEADER,
+            tungstenite::http::HeaderValue::from_static(origin_name(conn.origin)),
+        );
         let config = WebSocketConfig::default()
             .max_message_size(Some(ATTACH_MAX_MESSAGE_BYTES))
             .max_frame_size(Some(ATTACH_MAX_MESSAGE_BYTES));
@@ -444,18 +493,18 @@ impl Link {
                 .map_err(|e| e.to_string())?;
         let (mut sink, mut stream) = socket.split();
         let (to_child, mut outgoing) = mpsc::unbounded_channel::<String>();
-        let waiting: Arc<Mutex<Waiting>> = Arc::default();
-        let sent = Arc::clone(&waiting);
+        let pending: Arc<Mutex<Pending>> = Arc::default();
+        let sent = Arc::clone(&pending);
         tokio::spawn(async move {
             while let Some(text) = outgoing.recv().await {
                 if sink.send(tungstenite::Message::text(text)).await.is_err() {
                     break;
                 }
             }
-            close(&sent);
+            Pending::close(&sent);
             let _ = sink.close().await;
         });
-        let replies = Arc::clone(&waiting);
+        let replies = Arc::clone(&pending);
         let outbox = conn.outbox.clone();
         tokio::spawn(async move {
             while let Some(Ok(message)) = stream.next().await {
@@ -466,13 +515,12 @@ impl Link {
                     continue;
                 };
                 if frame.get("method").is_none() {
-                    // Only the reply to the request in flight is delivered; a late one, to a
-                    // request that timed out, is dropped.
-                    let mut slot = replies.lock().unwrap_or_else(|e| e.into_inner());
-                    if matches!(&*slot, Waiting::Reply(id, _) if frame["id"] == *id) {
-                        if let Waiting::Reply(_, waiter) = std::mem::take(&mut *slot) {
-                            let _ = waiter.send(frame);
-                        }
+                    // A reply goes to the request with its id, if that one still waits.
+                    let waiter = frame["id"]
+                        .as_u64()
+                        .and_then(|id| Pending::lock(&replies).waiting.remove(&id));
+                    if let Some(waiter) = waiter {
+                        let _ = waiter.send(frame);
                     }
                 } else if frame["params"]["type"] != "gateway.ready" {
                     let text: &str = &text;
@@ -482,46 +530,43 @@ impl Link {
                     }
                 }
             }
-            // The child connection is gone: a request in flight, and every later one, fails.
-            close(&replies);
+            // The child connection is gone: every request waiting, and every later one, fails.
+            Pending::close(&replies);
         });
         Ok(Self {
             _lease: lease,
             to_child,
-            waiting,
-            sent: std::sync::atomic::AtomicU64::new(0),
+            pending,
         })
     }
 
-    /// Sends one request and waits up to `limit` for its reply.
-    async fn call(
-        &self,
-        method: &str,
-        params: Map<String, Value>,
-        limit: Duration,
-    ) -> Result<Value, RpcError> {
+    /// Sends one request and waits for its reply for as long as the child's handler takes (a
+    /// handler may wait for a turn or an approval), or until the child connection closes.
+    async fn call(&self, method: &str, params: Map<String, Value>) -> Result<Value, RpcError> {
         let gone = || {
             (
                 CHILD_FAILED,
                 "profile gateway connection closed".to_string(),
             )
         };
-        let id = 1 + self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = oneshot::channel();
-        {
-            let mut slot = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
-            if matches!(*slot, Waiting::Closed) {
+        let id = {
+            let mut pending = Pending::lock(&self.pending);
+            if pending.closed {
                 return Err(gone());
             }
-            *slot = Waiting::Reply(id, reply);
-        }
+            pending.last += 1;
+            let id = pending.last;
+            pending.waiting.insert(id, reply);
+            id
+        };
+        let _forget = Forget {
+            pending: &self.pending,
+            id,
+        };
         let frame = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         self.to_child.send(frame.to_string()).map_err(|_| gone())?;
-        let frame = match tokio::time::timeout(limit, answer).await {
-            Ok(Ok(frame)) => frame,
-            Ok(Err(_)) => return Err(gone()),
-            Err(_) => return Err((CHILD_FAILED, "profile gateway did not answer".into())),
-        };
+        let frame = answer.await.map_err(|_| gone())?;
         match (frame.get("result"), frame.get("error")) {
             (Some(result), _) => Ok(result.clone()),
             (None, Some(error)) => Err((
@@ -598,7 +643,6 @@ impl Forwards {
         let scope_lease = Arc::clone(&self.scope_lease);
         let conn = self.conn.clone();
         let method = method.to_string();
-        let limit = self.chat.write_timeout();
         Box::pin(async move {
             let mut held = links.lock().await;
             let link = match held.get(&name) {
@@ -621,7 +665,7 @@ impl Forwards {
                 }
             };
             drop(held);
-            let result = link.call(&method, params, limit).await;
+            let result = link.call(&method, params).await;
             if matches!(&result, Err((CHILD_FAILED, _))) {
                 // Drop a link that failed; the next request dials again.
                 links.lock().await.remove(&name);
@@ -641,5 +685,29 @@ impl Forwards {
         } else {
             ready(Err(Refused::Unknown.rpc()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_child_takes_the_origin_its_parent_names_and_otherwise_the_most_restricted() {
+        for origin in [Origin::Remote, Origin::Webapp, Origin::Local] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                CHILD_ORIGIN_HEADER,
+                axum::http::HeaderValue::from_static(origin_name(origin)),
+            );
+            assert_eq!(child_origin(&headers), origin);
+        }
+        assert_eq!(child_origin(&axum::http::HeaderMap::new()), Origin::Remote);
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            CHILD_ORIGIN_HEADER,
+            axum::http::HeaderValue::from_static("Local"),
+        );
+        assert_eq!(child_origin(&headers), Origin::Remote);
     }
 }

@@ -440,7 +440,9 @@ async fn upgrade(
     let canonical = offered.is_some() || (gw.child && offers_canonical(&headers));
     // Both listeners take loopback connections only: the token one checks `Host` and `Origin`,
     // and the ticket one is local mode's. A new kind of listener must choose here.
+    // A child serves its parent's clients: it takes the origin the parent names for each.
     let origin = match gw.auth {
+        Auth::Token(_) if gw.child => children::child_origin(&headers),
         Auth::Token(_) | Auth::Native(_) => Origin::Local,
     };
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
