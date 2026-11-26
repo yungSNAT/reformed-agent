@@ -580,6 +580,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
             let override_msg = args.get(2..).unwrap_or_default().join(" ");
             let dispatch_result = {
                 let board = ensure_board(&mut store, None);
+                let board_id = board.id.clone();
                 if let Some(task) = find_task_mut(board, task_ref) {
                     if task.lane == KanbanLane::Triage {
                         return Ok(
@@ -591,9 +592,11 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                     } else {
                         override_msg.clone()
                     };
-                    let job = queue_background_job(&task_message)?;
-                    task.background_job_id = Some(job.id.clone());
+                    let job = queue_background_job_bound(&task_message, Some((&board_id, &task.id)))?;
+                    // The store lock is held until the save below, so the
+                    // worker's first kanban tool call waits for this run id.
                     move_task(task, KanbanLane::Doing, None);
+                    task.background_job_id = Some(job.id.clone());
                     Some((task.id.clone(), job, task_message, board.clone()))
                 } else {
                     None

@@ -75,6 +75,8 @@ impl App {
         let skill_provider: Arc<dyn hermes_core::SkillProvider> =
             Arc::new(SkillManager::new(skill_store));
         hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
+        let kanban_binding = crate::kanban::KanbanWorkerBinding::from_env();
+        crate::kanban::register_kanban_tools(&tool_registry, kanban_binding.clone());
         wire_stdio_clarify_backend(&tool_registry);
         connect_configured_mcp_servers(&config, &state_root, &tool_registry).await;
         let cron_data_dir = state_root.join("cron");
@@ -93,8 +95,9 @@ impl App {
             .map_err(|e| AgentError::Config(format!("cron load: {e}")))?;
         cron_scheduler.start().await;
         wire_cron_scheduler_backend(&tool_registry, cron_scheduler.clone());
-        let tool_schemas =
+        let mut tool_schemas =
             hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &tool_registry);
+        crate::kanban::offer_kanban_worker_tools(&mut tool_schemas, kanban_binding.as_ref());
         let agent_tool_registry = Arc::new(bridge_offered_tools(&tool_registry, &tool_schemas));
 
         let session_id = Uuid::new_v4().to_string();

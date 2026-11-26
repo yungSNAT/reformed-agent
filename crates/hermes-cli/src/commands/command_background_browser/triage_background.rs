@@ -810,6 +810,16 @@ fn handle_trigger_triage_command(
 }
 
 fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
+    queue_background_job_bound(task, None)
+}
+
+/// Queue a background job. `kanban` names the board and task of a kanban
+/// worker run: the job id becomes the run id, and the status file keeps all 3
+/// so a job recovered after a restart starts bound the same way.
+fn queue_background_job_bound(
+    task: &str,
+    kanban: Option<(&str, &str)>,
+) -> Result<QueuedBackgroundJob, AgentError> {
     let task = task.trim();
     if task.is_empty() {
         return Err(AgentError::Config(
@@ -825,7 +835,7 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
     let status_path = jobs_dir.join(format!("{}.json", job_id));
     let log_path = jobs_dir.join(format!("{}.log", job_id));
 
-    let status = serde_json::json!({
+    let mut status = serde_json::json!({
         "id": job_id,
         "task": task,
         "status": "queued",
@@ -836,6 +846,9 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
         "exit_code": serde_json::Value::Null,
         "log_path": log_path,
     });
+    if let Some((board, task_id)) = kanban {
+        status["kanban"] = serde_json::json!({"board": board, "task": task_id, "run": job_id});
+    }
     std::fs::write(
         &status_path,
         serde_json::to_string_pretty(&status).unwrap_or_else(|_| "{}".to_string()),
@@ -884,9 +897,45 @@ fn background_jobs_dir() -> Result<PathBuf, AgentError> {
 /// Starts `exe chat --query -` for a background task and writes the task to
 /// its standard input: on the command line, other local users could read it
 /// while the child runs.
+/// The kanban worker binding a job's status file records, if any.
+fn kanban_binding_from_status(
+    status: &serde_json::Map<String, serde_json::Value>,
+) -> Option<crate::kanban::KanbanWorkerBinding> {
+    let kanban = status.get("kanban")?.as_object()?;
+    let field = |key: &str| {
+        kanban
+            .get(key)
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    Some(crate::kanban::KanbanWorkerBinding {
+        board: field("board"),
+        task: field("task"),
+        run: field("run"),
+    })
+}
+
+/// A kanban worker's child gets its binding; any other child gets none, even
+/// when this process is itself a bound worker.
+fn apply_kanban_binding_env(
+    cmd: &mut tokio::process::Command,
+    kanban: Option<&crate::kanban::KanbanWorkerBinding>,
+) {
+    for key in crate::kanban::KANBAN_WORKER_ENV {
+        cmd.env_remove(key);
+    }
+    if let Some(binding) = kanban {
+        for (key, value) in binding.env() {
+            cmd.env(key, value);
+        }
+    }
+}
+
 fn spawn_background_child(
     exe: &std::path::Path,
     task: &str,
+    kanban: Option<&crate::kanban::KanbanWorkerBinding>,
 ) -> std::io::Result<tokio::process::Child> {
     let mut cmd = tokio::process::Command::new(exe);
     cmd.arg("chat")
@@ -902,6 +951,7 @@ fn spawn_background_child(
     if let Ok(home) = std::env::var("HERMES_HOME") {
         cmd.env("HERMES_HOME", home);
     }
+    apply_kanban_binding_env(&mut cmd, kanban);
     let mut child = cmd.spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         let task = task.to_string();
@@ -1218,7 +1268,8 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
             }
         };
 
-        let child = match spawn_background_child(&exe, &task) {
+        let kanban = kanban_binding_from_status(&queued);
+        let child = match spawn_background_child(&exe, &task, kanban.as_ref()) {
             Ok(child) => child,
             Err(e) => {
                 let mut failed = queued.clone();

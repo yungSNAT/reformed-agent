@@ -6,6 +6,7 @@ use serde_json::json;
 mod attachments;
 mod specify;
 mod store;
+mod tools;
 mod worker;
 
 pub use attachments::{
@@ -14,6 +15,10 @@ pub use attachments::{
 pub use specify::specify_kanban;
 pub(crate) use store::lock_store;
 pub use store::{kanban_store_path, load_store, save_store};
+pub use tools::{
+    offer_kanban_worker_tools, register_kanban_tools, KanbanWorkerBinding, KANBAN_TOOLSET,
+    KANBAN_WORKER_ENV,
+};
 pub use worker::{
     build_worker_context, run_kanban_goal_loop, KanbanGoalBlockFn, KanbanGoalJudgeFn,
     KanbanGoalJudgment, KanbanGoalLoopCallbacks, KanbanGoalLoopOutcome, KanbanGoalLoopResult,
@@ -296,9 +301,16 @@ pub fn find_task_mut<'a>(
         .find(|task| task.title.eq_ignore_ascii_case(needle))
 }
 
+/// Move `task` to `lane`. Only `kanban dispatch` gives a task a run: any
+/// other move, back into doing included, ends the run's ownership, so a
+/// worker of an earlier run cannot finish or block the task afterwards. A
+/// done task keeps the id of the run that finished it.
 pub fn move_task(task: &mut KanbanTask, lane: KanbanLane, note: Option<String>) {
     let now = now_rfc3339();
     task.lane = lane;
+    if lane != KanbanLane::Done {
+        task.background_job_id = None;
+    }
     task.updated_at = now.clone();
     if lane == KanbanLane::Doing && task.started_at.is_none() {
         task.started_at = Some(now.clone());
@@ -318,6 +330,7 @@ pub fn move_task(task: &mut KanbanTask, lane: KanbanLane, note: Option<String>) 
 
 pub fn set_blocked(task: &mut KanbanTask, reason: Option<String>) {
     task.lane = KanbanLane::Blocked;
+    task.background_job_id = None;
     task.blocked_reason = normalize_optional(reason);
     task.updated_at = now_rfc3339();
 }

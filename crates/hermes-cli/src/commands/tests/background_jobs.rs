@@ -26,7 +26,7 @@
             "review canary 7f3a: {}",
             "the conversation so far ".repeat(50_000)
         );
-        let child = spawn_background_child(&exe, &task).expect("spawn");
+        let child = spawn_background_child(&exe, &task, None).expect("spawn");
         let output = child.wait_with_output().await.expect("wait");
         assert!(output.status.success(), "{output:?}");
 
