@@ -13,8 +13,16 @@
 //!   target address must not be link-local, cloud metadata, unspecified, multicast, broadcast,
 //!   IPv4-mapped, zoned or this listener itself; a private or ULA address needs the entry's
 //!   `allowPrivateNetwork`. Every relayed connection is pinned to the addresses checked;
-//! - the public view is built from a field list, and `tokenPreview` never shows the secret;
+//! - the public view is built from a field list, `tokenPreview` never shows the secret, and a URL
+//!   is shown without the user name or password native Desktop may have saved in it;
+//! - an edit that changes a gateway's address must send its token again, and saved header values
+//!   and private-network consent do not follow it to the new address;
+//! - only upstream's methods are relayed, only to `fetch` and XHR (`Sec-Fetch-Dest: empty`), a
+//!   percent-encoded plain character in the path is refused, and a response body that stalls for
+//!   `BODY_IDLE_TIMEOUT` or passes `MAX_RESPONSE` bytes ends the relayed response;
 //! - error texts are fixed: no transport error (which can hold a URL) reaches a response or log.
+//!
+//! Unix only, as the Webapp's local mode is: the store's owner-only guard is Unix's.
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
@@ -134,7 +142,6 @@ pub(crate) fn read_doc(path: &Path) -> Result<(Option<Map<String, Value>>, bool)
     }
 }
 
-#[cfg(unix)]
 fn guard_permissions(path: &Path) -> Result<(), StoreError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let meta = std::fs::symlink_metadata(path)
@@ -149,11 +156,6 @@ fn guard_permissions(path: &Path) -> Result<(), StoreError> {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn guard_permissions(_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
@@ -218,6 +220,17 @@ fn public_connection(entry: &Map<String, Value>) -> Value {
             entry.get(field)
         {
             out.insert(field.to_owned(), value.clone());
+        }
+    }
+    // Native Desktop keeps a user name and password in a saved URL; the browser never sees them.
+    match str_field(entry, "url").map(url::Url::parse) {
+        Some(Ok(mut url)) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            out.insert("url".into(), json!(stored_url(&url)));
+        }
+        Some(Err(_)) | None => {
+            out.remove("url");
         }
     }
     let token_set = plain(entry.get("token")).is_some();
@@ -435,6 +448,9 @@ pub(crate) fn judge_address(ip: IpAddr, allow_private: bool) -> Result<(), &'sta
             if v4.is_link_local() {
                 return Err("a link-local address (cloud metadata lives there)");
             }
+            if v4 == std::net::Ipv4Addr::new(168, 63, 129, 16) {
+                return Err("a cloud platform address");
+            }
             if v4.is_private() || (v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 64) {
                 return if allow_private {
                     Ok(())
@@ -447,6 +463,19 @@ pub(crate) fn judge_address(ip: IpAddr, allow_private: bool) -> Result<(), &'sta
         IpAddr::V6(v6) => {
             if v6.to_ipv4_mapped().is_some() {
                 return Err("an IPv4-mapped address; use the IPv4 address");
+            }
+            let s = v6.segments();
+            // NAT64 (64:ff9b::/96) reaches the IPv4 address it wraps: judge that one.
+            if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                let [a, b] = s[6].to_be_bytes();
+                let [c, d] = s[7].to_be_bytes();
+                return judge_address(IpAddr::V4([a, b, c, d].into()), allow_private);
+            }
+            // IPv4-compatible (::a.b.c.d) and site-local (fec0::/10): both deprecated.
+            if (s[..6] == [0; 6] && !v6.is_loopback() && !v6.is_unspecified())
+                || s[0] & 0xffc0 == 0xfec0
+            {
+                return Err("a deprecated address form");
             }
             if v6.is_unspecified() || v6.is_multicast() {
                 return Err("not a gateway address");
@@ -512,8 +541,9 @@ fn valid_header_name(name: &str) -> bool {
         && !name.to_ascii_lowercase().starts_with("proxy-")
 }
 
+/// A header value of visible characters, spaces and tabs only: no control character.
 fn valid_header_value(value: &str) -> bool {
-    !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
+    !value.chars().any(|c| c.is_control() && c != '\t')
 }
 
 /// Upstream's `encryptIncomingRemoteHeaders`: a string is a new value, `null` keeps the stored
@@ -540,7 +570,7 @@ fn incoming_headers(
             }
             Value::String(_) => {
                 return Err(refused(format!(
-                    "Header \"{name}\" holds a line break or NUL."
+                    "Header \"{name}\" holds a control character."
                 )));
             }
             Value::Null => {
@@ -597,6 +627,13 @@ pub(crate) fn save(path: &Path, payload: &Map<String, Value>) -> Result<DocAndEn
             .unwrap_or("");
         let url = normalize_url(raw_url)?;
         let stored = stored_url(&url);
+        // A secret saved for one address never follows the entry to another: a move sends its
+        // token again, and saved header values and private-network consent stay behind.
+        let kept = existing.as_ref().filter(|e| {
+            str_field(e, "url")
+                .and_then(|u| normalize_url(u).ok())
+                .is_some_and(|u| stored_url(&u) == stored)
+        });
         let label = payload
             .get("label")
             .and_then(Value::as_str)
@@ -634,21 +671,22 @@ pub(crate) fn save(path: &Path, payload: &Map<String, Value>) -> Result<DocAndEn
         }
         let token = match payload.get("token").and_then(Value::as_str).map(str::trim) {
             Some(t) if !t.is_empty() => Some(envelope(t)),
-            _ => existing.as_ref().and_then(|e| e.get("token")).cloned(),
+            _ => kept.and_then(|e| e.get("token")).cloned(),
         };
         if plain(token.as_ref()).is_none() {
-            return Err(refused("Remote gateway session token is required."));
+            return Err(refused(if existing.is_some() && kept.is_none() {
+                "A gateway moved to another address needs its session token again."
+            } else {
+                "Remote gateway session token is required."
+            }));
         }
         let headers = match payload.get("headers") {
             Some(Value::Object(raw)) => incoming_headers(
                 raw,
-                existing
-                    .as_ref()
-                    .and_then(|e| e.get("headers"))
+                kept.and_then(|e| e.get("headers"))
                     .and_then(Value::as_object),
             )?,
-            Some(Value::Null) | None => existing
-                .as_ref()
+            Some(Value::Null) | None => kept
                 .and_then(|e| e.get("headers"))
                 .and_then(Value::as_object)
                 .cloned()
@@ -657,8 +695,7 @@ pub(crate) fn save(path: &Path, payload: &Map<String, Value>) -> Result<DocAndEn
         };
         let allow_private = match payload.get("allowPrivateNetwork") {
             Some(Value::Bool(b)) => *b,
-            None | Some(Value::Null) => existing
-                .as_ref()
+            None | Some(Value::Null) => kept
                 .and_then(|e| e.get("allowPrivateNetwork"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
@@ -777,7 +814,28 @@ const PREFIX: &str = "/api/relay/";
 /// The most a relayed request body may carry: the largest frame upstream's gateway accepts.
 pub(crate) const MAX_BODY: usize = 384 * 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// From the request's start until the gateway's headers arrive, the request body's upload
+/// included: an upload slower than this fails with 502.
 pub(crate) const HEADERS_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long the gateway may go without sending a byte, its headers or its body, before the
+/// relayed response ends.
+pub(crate) const BODY_IDLE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(1)
+} else {
+    HEADERS_TIMEOUT
+};
+/// The most a relayed response body may carry.
+pub(crate) const MAX_RESPONSE: usize = if cfg!(test) { 64 * 1024 } else { MAX_BODY };
+/// Upstream's relayed methods; any other answers 405 (`TRACE` would echo the saved secrets).
+const RELAYED_METHODS: [Method; 7] = [
+    Method::GET,
+    Method::HEAD,
+    Method::POST,
+    Method::PUT,
+    Method::PATCH,
+    Method::DELETE,
+    Method::OPTIONS,
+];
 /// Request headers that never cross: hop-by-hop, this gateway's credentials and the browser's
 /// provenance. Names starting `x-forwarded-`, `proxy-` or `sec-websocket-` and names the request's
 /// `Connection` header lists are dropped as well.
@@ -829,9 +887,13 @@ fn detail(status: StatusCode, text: &str) -> Response {
 
 /// The path and query a relayed request names on the gateway, or `None` when it is not one this
 /// relay carries: not under the prefix, a second relay hop, a dot segment in any spelling, an
-/// encoded slash or backslash, a backslash or a control character.
+/// encoded slash or backslash, a percent-encoded plain character (`%61pi` would hide a second hop
+/// from a gateway that decodes before routing), a backslash or a control character.
 pub(crate) fn relay_target(raw_path: &str, query: Option<&str>, id: &str) -> Option<String> {
     let rest = raw_path.strip_prefix(PREFIX)?.strip_prefix(id)?;
+    if encodes_a_plain_character(rest) {
+        return None;
+    }
     let rest = if rest.is_empty() { "/" } else { rest };
     if !rest.starts_with('/') || rest.starts_with("//") || rest.starts_with(PREFIX) {
         return None;
@@ -856,6 +918,18 @@ pub(crate) fn relay_target(raw_path: &str, query: Option<&str>, id: &str) -> Opt
         }
         _ => Some(rest.to_owned()),
     }
+}
+
+/// Whether `path` percent-encodes an unreserved character (a letter, digit, `-`, `.`, `_` or
+/// `~`), which no client needs to encode.
+fn encodes_a_plain_character(path: &str) -> bool {
+    path.as_bytes().windows(3).any(|w| {
+        w[0] == b'%'
+            && std::str::from_utf8(&w[1..])
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                .is_some_and(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
+    })
 }
 
 /// Resolves `dot` segments of an absolute path as a browser does.
@@ -912,10 +986,13 @@ pub(crate) async fn checked_addresses(
     let addrs: Vec<SocketAddr> = match url.host() {
         Some(url::Host::Ipv4(ip)) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
         Some(url::Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
-        Some(url::Host::Domain(name)) => tokio::net::lookup_host((name, port))
-            .await
-            .map_err(|_| "the name does not resolve")?
-            .collect(),
+        Some(url::Host::Domain(name)) => {
+            tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::lookup_host((name, port)))
+                .await
+                .map_err(|_| "the name does not resolve in time")?
+                .map_err(|_| "the name does not resolve")?
+                .collect()
+        }
         None => return Err("no host"),
     };
     if addrs.is_empty() {
@@ -1052,6 +1129,19 @@ pub(crate) async fn relay(
     own: Option<SocketAddr>,
     request: Request,
 ) -> Response {
+    if !RELAYED_METHODS.contains(request.method()) {
+        return detail(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed");
+    }
+    // Only `fetch` and XHR: a relayed script, style or frame would run under this origin.
+    if request.headers().get_all("sec-fetch-dest").iter().any(|v| {
+        !v.to_str()
+            .is_ok_and(|v| v.trim().eq_ignore_ascii_case("empty"))
+    }) {
+        return detail(
+            StatusCode::FORBIDDEN,
+            "Relayed requests must come from this Webapp's scripts.",
+        );
+    }
     if request.headers().get_all("sec-fetch-site").iter().any(|v| {
         !v.to_str()
             .is_ok_and(|v| v.trim().eq_ignore_ascii_case("same-origin"))
@@ -1092,6 +1182,7 @@ pub(crate) async fn relay(
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
         .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(BODY_IDLE_TIMEOUT)
         .pool_max_idle_per_host(0);
     if let Some(name) = dial.base.domain() {
         builder = builder.resolve_to_addrs(name, &addrs);
@@ -1182,7 +1273,15 @@ pub(crate) async fn relay(
     );
     out.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     let status = response.status();
-    let body = Body::from_stream(response.bytes_stream());
+    let mut seen = 0usize;
+    let body = Body::from_stream(response.bytes_stream().map(move |chunk| {
+        let chunk = chunk.map_err(|_| std::io::Error::other("relayed response failed"))?;
+        seen += chunk.len();
+        if seen > MAX_RESPONSE {
+            return Err(std::io::Error::other("relayed response too large"));
+        }
+        Ok::<_, std::io::Error>(chunk)
+    }));
     let mut relayed = Response::new(body);
     *relayed.status_mut() = status;
     *relayed.headers_mut() = out;
