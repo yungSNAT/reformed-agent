@@ -1006,11 +1006,9 @@ async fn run_gateway(
             // takes the default action and leaves the socket and state file behind.
             let shutdown = gateway_shutdown_signal();
             let own_pid = std::process::id();
-            tokio::fs::write(&pid_path, format!("{}\n", own_pid))
-                .await
-                .map_err(|e| {
-                    AgentError::Io(format!("failed to write {}: {}", pid_path.display(), e))
-                })?;
+            write_gateway_pid(&pid_path, own_pid).map_err(|e| {
+                AgentError::Io(format!("failed to write {}: {}", pid_path.display(), e))
+            })?;
             // Ready for the desktop only now, so `gateway stop` can stop what ensure reports.
             #[cfg(unix)]
             if let Some(runtime) = desktop.as_mut() {
@@ -1113,8 +1111,14 @@ async fn run_gateway(
                 return Ok(());
             }
             let pid_path = gateway_pid_path_for_cli(&cli);
+            let still_stopping = || gateway_still_stopping(&hermes_state_root(&cli));
             let Some(pid) = read_gateway_pid(&pid_path) else {
-                println!("Gateway stop: no PID file (nothing to stop).");
+                println!(
+                    "{}",
+                    still_stopping().unwrap_or_else(|| {
+                        "Gateway stop: no PID file (nothing to stop).".to_string()
+                    })
+                );
                 return Ok(());
             };
             if !gateway_pid_is_alive(pid) {
@@ -1124,6 +1128,9 @@ async fn run_gateway(
                     pid,
                     pid_path.display()
                 );
+                if let Some(stopping) = still_stopping() {
+                    println!("{stopping}");
+                }
                 return Ok(());
             }
             match gateway_pid_terminate(pid) {
