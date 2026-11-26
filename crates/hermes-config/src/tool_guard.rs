@@ -563,6 +563,9 @@ mod tests {
         for config in [
             "security: [unclosed",
             "security:\n  tool_guard:\n    args: []\n",
+            // Not a mapping, or not readable as JSON: the shared loader skips both.
+            "- security\n",
+            "? [a, b]\n: x\n",
         ] {
             let managed = tempfile::tempdir().unwrap();
             std::fs::write(managed.path().join("config.yaml"), config).unwrap();
@@ -573,6 +576,40 @@ mod tests {
         let managed = tempfile::tempdir().unwrap();
         std::fs::create_dir(managed.path().join("config.yaml")).unwrap();
         assert!(read_once(Some(managed.path()), home.path()).await.is_err());
+    }
+
+    #[test]
+    fn a_guard_names_its_program_as_load_config_reads_it() {
+        let managed = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        write_guard(managed.path(), "${HERMES_TEST_GUARD_BIN}");
+        write_guard(home.path(), "${HERMES_TEST_GUARD_BIN}");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _env = crate::managed_gateway::test_lock::lock();
+        std::env::set_var("HERMES_TEST_GUARD_BIN", "expanded.exe");
+        let managed_read = runtime.block_on(read_once(Some(managed.path()), home.path()));
+        let profile_read = runtime.block_on(read_once(None, home.path()));
+        std::env::remove_var("HERMES_TEST_GUARD_BIN");
+        assert_eq!(managed_read, Ok(guard_named("expanded.exe")));
+        assert_eq!(profile_read, Ok(guard_named("expanded.exe")));
+    }
+
+    #[tokio::test]
+    async fn a_managed_config_naming_nothing_defers_to_the_profile() {
+        let home = tempfile::tempdir().unwrap();
+        write_guard(home.path(), "profile.exe");
+        for config in ["", "# none yet\n", "display: {}\n"] {
+            let managed = tempfile::tempdir().unwrap();
+            std::fs::write(managed.path().join("config.yaml"), config).unwrap();
+            assert_eq!(
+                read_once(Some(managed.path()), home.path()).await,
+                Ok(guard_named("profile.exe")),
+                "{config:?}"
+            );
+        }
     }
 
     #[tokio::test]
