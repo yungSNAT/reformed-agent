@@ -247,4 +247,35 @@ mod tests {
 
         reset();
     }
+
+    #[test]
+    fn config_passthrough_honours_the_managed_scope() {
+        let _global_env = test_lock::lock();
+        reset();
+        let home = tempfile::tempdir().expect("home");
+        let managed = tempfile::tempdir().expect("managed");
+        std::fs::write(
+            managed.path().join("config.yaml"),
+            "terminal:\n  env_passthrough:\n    - MANAGED_ONLY_KEY\n",
+        )
+        .expect("write managed config");
+        let _home = EnvVarGuard::set("HERMES_HOME", home.path());
+        let _managed = EnvVarGuard::set("HERMES_MANAGED_DIR", managed.path());
+
+        // A list only the administrator sets still applies.
+        reset_config_passthrough_cache_for_tests();
+        assert!(is_env_passthrough("MANAGED_ONLY_KEY"));
+
+        // The administrator's list replaces the profile's, as `load_config` merges it.
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "terminal:\n  env_passthrough:\n    - PROFILE_KEY\n",
+        )
+        .expect("write config");
+        reset_config_passthrough_cache_for_tests();
+        assert!(is_env_passthrough("MANAGED_ONLY_KEY"));
+        assert!(!is_env_passthrough("PROFILE_KEY"));
+
+        reset();
+    }
 }

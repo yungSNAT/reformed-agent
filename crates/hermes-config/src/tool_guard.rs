@@ -103,6 +103,13 @@ fn undecided(why: impl std::fmt::Display) -> String {
 /// unrelated setting cannot switch it off. A config that exists but cannot be
 /// read refuses, as it may name a guard.
 async fn configured_guard(home: &Path) -> Result<Option<ToolGuardConfig>, String> {
+    guard_in_scopes(crate::managed_scope_dir().as_deref(), home).await
+}
+
+async fn guard_in_scopes(
+    _managed: Option<&Path>,
+    home: &Path,
+) -> Result<Option<ToolGuardConfig>, String> {
     let text = match tokio::fs::read_to_string(home.join("config.yaml")).await {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -464,6 +471,64 @@ mod tests {
             let home = tempfile::tempdir().unwrap();
             std::fs::write(home.path().join("config.yaml"), config).unwrap();
             let refused = check_command_in(home.path(), "echo hi", &cwd).await;
+            assert!(refused.is_err(), "{config}");
+        }
+    }
+
+    fn write_guard(dir: &Path, command: &str) {
+        std::fs::write(
+            dir.join("config.yaml"),
+            format!("security:\n  tool_guard:\n    command: {command}\n"),
+        )
+        .unwrap();
+    }
+
+    fn guard_named(command: &str) -> Option<ToolGuardConfig> {
+        Some(ToolGuardConfig {
+            command: command.into(),
+            args: Vec::new(),
+            timeout_secs: 15,
+        })
+    }
+
+    #[tokio::test]
+    async fn the_managed_scope_names_the_guard_first() {
+        let managed = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let read = || guard_in_scopes(Some(managed.path()), home.path());
+        assert_eq!(read().await, Ok(None));
+
+        write_guard(managed.path(), "managed.exe");
+        assert_eq!(read().await, Ok(guard_named("managed.exe")));
+
+        // The profile's own guard does not replace the administrator's.
+        write_guard(home.path(), "profile.exe");
+        assert_eq!(read().await, Ok(guard_named("managed.exe")));
+
+        // A managed config that names none leaves the profile's.
+        std::fs::write(
+            managed.path().join("config.yaml"),
+            "display:\n  tool_progress: all\n",
+        )
+        .unwrap();
+        assert_eq!(read().await, Ok(guard_named("profile.exe")));
+        assert_eq!(
+            guard_in_scopes(None, home.path()).await,
+            Ok(guard_named("profile.exe"))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_or_invalid_managed_guard_refuses() {
+        let home = tempfile::tempdir().unwrap();
+        write_guard(home.path(), "profile.exe");
+        for config in [
+            "security: [unclosed",
+            "security:\n  tool_guard:\n    args: []\n",
+        ] {
+            let managed = tempfile::tempdir().unwrap();
+            std::fs::write(managed.path().join("config.yaml"), config).unwrap();
+            let refused = guard_in_scopes(Some(managed.path()), home.path()).await;
             assert!(refused.is_err(), "{config}");
         }
     }

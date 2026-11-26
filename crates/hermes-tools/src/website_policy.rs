@@ -244,9 +244,11 @@ fn dedupe_rules(rules: &mut Vec<WebsiteBlockRule>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hermes_config::managed_gateway::test_lock;
 
     #[test]
     fn load_website_blocklist_merges_config_and_shared_file() {
+        let _env = test_lock::lock();
         let tmp = tempfile::tempdir().unwrap();
         let shared = tmp.path().join("community-blocklist.txt");
         std::fs::write(&shared, "# comment\nexample.org\nsub.bad.net\n").unwrap();
@@ -315,6 +317,7 @@ security:
 
     #[test]
     fn load_website_blocklist_uses_disabled_default_when_section_missing() {
+        let _env = test_lock::lock();
         let tmp = tempfile::tempdir().unwrap();
         let config = tmp.path().join("config.yaml");
         std::fs::write(&config, "display:\n  tool_progress: all\n").unwrap();
@@ -325,6 +328,7 @@ security:
 
     #[test]
     fn load_website_blocklist_rejects_invalid_shapes_cleanly() {
+        let _env = test_lock::lock();
         let tmp = tempfile::tempdir().unwrap();
         let cases = [
             ("[]", "config root must be a mapping"),
@@ -356,10 +360,64 @@ security:
 
     #[test]
     fn load_website_blocklist_rejects_malformed_yaml() {
+        let _env = test_lock::lock();
         let tmp = tempfile::tempdir().unwrap();
         let config = tmp.path().join("config.yaml");
         std::fs::write(&config, "security: [oops\n").unwrap();
         let err = load_website_blocklist(Some(&config)).unwrap_err();
         assert!(err.to_string().contains("Invalid config YAML"));
+    }
+
+    /// Points `HERMES_MANAGED_DIR` at a folder until dropped. Holders keep `test_lock`.
+    struct ManagedDir(Option<std::ffi::OsString>);
+
+    impl ManagedDir {
+        fn set(dir: &Path) -> Self {
+            let original = std::env::var_os("HERMES_MANAGED_DIR");
+            std::env::set_var("HERMES_MANAGED_DIR", dir);
+            Self(original)
+        }
+    }
+
+    impl Drop for ManagedDir {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("HERMES_MANAGED_DIR", value),
+                None => std::env::remove_var("HERMES_MANAGED_DIR"),
+            }
+        }
+    }
+
+    #[test]
+    fn load_website_blocklist_honours_the_managed_scope() {
+        let _env = test_lock::lock();
+        let home = tempfile::tempdir().unwrap();
+        let managed = tempfile::tempdir().unwrap();
+        std::fs::write(
+            managed.path().join("config.yaml"),
+            "security:\n  website_blocklist:\n    enabled: true\n    domains:\n      - managed-only.invalid\n",
+        )
+        .unwrap();
+        let _managed = ManagedDir::set(managed.path());
+        let config = home.path().join("config.yaml");
+
+        // A blocklist only the administrator sets applies with no profile config.
+        let policy = load_website_blocklist(Some(&config)).unwrap();
+        assert!(policy.enabled);
+        assert!(
+            check_website_access_with_policy("https://managed-only.invalid/", &policy).is_some()
+        );
+
+        // The profile cannot switch it off.
+        std::fs::write(
+            &config,
+            "security:\n  website_blocklist:\n    enabled: false\n    domains: []\n",
+        )
+        .unwrap();
+        let policy = load_website_blocklist(Some(&config)).unwrap();
+        assert!(policy.enabled);
+        assert!(
+            check_website_access_with_policy("https://managed-only.invalid/", &policy).is_some()
+        );
     }
 }
