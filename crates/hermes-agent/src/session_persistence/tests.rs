@@ -186,6 +186,34 @@ fn duplicate_fts_schema_makes_first_statement_fail() {
 }
 
 #[test]
+fn repair_reports_missing_database_and_preserves_bytes_of_unreadable_database() {
+    let home = tempfile::tempdir().unwrap();
+    let store = SessionPersistence::new(home.path());
+    let missing = store.repair_malformed_schema(true);
+    assert!(!missing.repaired);
+    assert!(missing.strategy.is_none());
+    assert!(missing.backup_path.is_none());
+    assert!(missing.error.unwrap().contains("does not exist"));
+    assert!(!store.db_path().exists());
+
+    let original = b"Unreadable local session database fixture\n";
+    std::fs::write(store.db_path(), original).unwrap();
+    assert!(store.db_health_error().unwrap().contains("not a database"));
+
+    let repair = store.repair_malformed_schema(true);
+    assert!(!repair.repaired);
+    assert!(repair.strategy.is_none());
+    assert!(repair.error.unwrap().contains("not a database"));
+    let backup = repair
+        .backup_path
+        .expect("preserve a copy on repair failure");
+    assert_eq!(backup.parent(), Some(home.path()));
+    assert_ne!(backup, store.db_path());
+    assert_eq!(std::fs::read(backup).unwrap(), original);
+    assert_eq!(std::fs::read(store.db_path()).unwrap(), original);
+}
+
+#[test]
 fn repair_malformed_schema_preserves_sessions_messages_and_search() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());
