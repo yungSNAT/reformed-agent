@@ -208,7 +208,7 @@ fn cli_action_contract_matches_fixture() {
     let action_sources: BTreeMap<&str, (&str, &str)> = [
         ("tools", ("main", "run_tools")),
         ("gateway", ("main", "run_gateway")),
-        ("auth", ("main", "run_auth")),
+        ("auth", ("main", "run_auth_with_gemini_login")),
         ("cron", ("main", "run_cron")),
         ("webhook", ("main", "run_webhook")),
         ("profile", ("main", "run_profile")),

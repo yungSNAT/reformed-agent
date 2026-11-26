@@ -30,8 +30,29 @@ while keeping Rust-first implementation ownership.
 6. WS7: security/secrets/store/webhook hardening parity.
 7. WS8: this compatibility contract and auditability rules.
 
-## Release Gate
-A parity release requires:
-1. `docs/parity/parity-matrix.json` refreshed against current `upstream/main`.
-2. `docs/parity/workstream-status.json` refreshed and showing complete status for WS2-WS8.
+## Gates
+Both threshold profiles are functional: they check what the Rust port does, never how far
+the upstream tree has moved. Upstream tree drift (commits behind, missing patches,
+upstream-only files) is reported against `drift_alert_thresholds` in the release readiness
+summary, and neither profile gates on it. The limits live in
+`docs/parity/global-parity-thresholds.json`.
+
+1. CI profile (`ci_thresholds`): no functional regression. It checks divergence ownership and
+   review dates, test-intent mapping, coverage audit integrity, and the SOTA, behavioural and
+   deep problem-solving harnesses. The daily Parity Audit checks it against the regenerated
+   proof; `global_parity_governance`, which runs on every pull request, covers most of the same
+   checks. Rows deferred or not rechecked at the pin do not fail it; `global_parity_governance`
+   ratchets their counts so they can only fall.
+2. Release gate (`release_thresholds`): every CI profile check at the same or a stricter
+   limit, plus every tracked row shown matching (coverage ratio 1.0, no deferred shared-diff
+   rows, no rows not rechecked at the pin), an empty upstream queue and GPAR-01 to GPAR-11
+   complete.
+
+`global_parity_governance` fails if either profile holds a drift metric or if the release gate
+is less strict than the CI profile on any shared check.
+
+A parity release also requires:
+1. The `docs/parity/` artefacts regenerated against the pinned revision in
+   `docs/parity/upstream-reference.txt`.
+2. `docs/parity/workstream-status.json` showing complete status for WS2-WS8.
 3. Any non-`rust-native` item documented with rationale and owner.

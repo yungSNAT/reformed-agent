@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -657,4 +657,136 @@ fn ensure_refuses_a_control_socket_other_users_can_reach() {
     let (verdict, text, code) = ensure(&home, Duration::from_secs(2), never_spawned());
     assert_eq!(code, 7, "{text}");
     assert_eq!(verdict["reason_code"], "unsafe_control_permissions");
+}
+
+/// A lock no runtime can claim (a link, a FIFO) is named at once, as upstream's discovery does,
+/// not read as a start in progress until the deadline.
+#[test]
+fn ensure_names_a_lock_no_runtime_can_claim_at_once() {
+    for plant in ["link", "fifo"] {
+        let (_dir, home) = private_home();
+        let lock = home.join("gateway.lock");
+        if plant == "link" {
+            std::fs::write(home.join("elsewhere"), "").unwrap();
+            std::os::unix::fs::symlink(home.join("elsewhere"), &lock).unwrap();
+        } else {
+            assert!(Command::new("mkfifo")
+                .arg(&lock)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let started = std::time::Instant::now();
+        let (verdict, text, code) = ensure(&home, Duration::from_secs(20), never_spawned());
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{plant}: {text}"
+        );
+        assert_eq!(code, 7, "{plant}: {text}");
+        assert_eq!(verdict["state"], "inaccessible", "{plant}: {text}");
+        assert!(verdict["reason_code"].is_null(), "{plant}: {text}");
+        let detail = verdict["detail"].as_str().unwrap_or_default();
+        assert!(detail.contains("gateway.lock"), "{plant}: {text}");
+    }
+}
+
+/// Creation sets a lock's mode once, so a lock an older build left under the umask is narrowed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lock_left_with_an_open_mode_is_narrowed_to_0600() {
+    let (_dir, home) = private_home();
+    let lock = home.join("gateway.lock");
+    std::fs::write(&lock, "").unwrap();
+    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let _runtime = start(&home);
+    assert_eq!(std::fs::metadata(&lock).unwrap().mode() & 0o777, 0o600);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn staging_folders_a_killed_bind_left_are_removed_at_start() {
+    let (_dir, home) = private_home();
+    let stale = home.join(".g0a1b2c");
+    std::fs::create_dir(&stale).unwrap();
+    std::fs::write(stale.join("gateway.sock"), "").unwrap();
+    let unrelated = home.join(".gnupg1");
+    std::fs::create_dir(&unrelated).unwrap();
+    let _runtime = start(&home);
+    assert!(!stale.exists(), "the stale staging folder stayed");
+    assert!(
+        unrelated.exists(),
+        "a folder outside the staging pattern went"
+    );
+}
+
+/// A FIFO in the log's place is refused, not opened for the runtime's output.
+#[test]
+fn ensure_refuses_a_stdio_log_that_is_not_a_regular_file() {
+    let (_dir, home) = private_home();
+    std::fs::create_dir(home.join("logs")).unwrap();
+    let log = home.join("logs").join("gateway-stdio.log");
+    assert!(Command::new("mkfifo").arg(&log).status().unwrap().success());
+    // A reader keeps the FIFO's open from blocking, so the old code would start the runtime.
+    let reader = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&log)
+        .unwrap();
+    let mut command = Command::new("sh");
+    command.args(["-c", "echo written; exit 3"]);
+    let (verdict, text, code) = ensure(&home, Duration::from_secs(10), command);
+    drop(reader);
+    assert_eq!(code, 7, "{text}");
+    assert_eq!(verdict["reason_code"], "runtime_start_failed", "{text}");
+}
+
+/// A FIFO in the log's place with no reader fails at once rather than blocking the open.
+#[test]
+fn ensure_does_not_wait_on_a_stdio_log_fifo_with_no_reader() {
+    let (_dir, home) = private_home();
+    std::fs::create_dir(home.join("logs")).unwrap();
+    let log = home.join("logs").join("gateway-stdio.log");
+    assert!(Command::new("mkfifo").arg(&log).status().unwrap().success());
+    let mut command = Command::new("sh");
+    command.args(["-c", "echo written; exit 3"]);
+    let (verdict, text, code) = ensure(&home, Duration::from_secs(10), command);
+    assert_eq!(code, 7, "{text}");
+    assert_eq!(verdict["reason_code"], "runtime_start_failed", "{text}");
+}
+
+#[test]
+fn ensure_does_not_follow_a_linked_stdio_log() {
+    let (_dir, home) = private_home();
+    let target = home.join("precious");
+    std::fs::write(&target, "keep").unwrap();
+    std::fs::create_dir(home.join("logs")).unwrap();
+    std::os::unix::fs::symlink(&target, home.join("logs").join("gateway-stdio.log")).unwrap();
+    let mut command = Command::new("sh");
+    command.args(["-c", "echo written; exit 3"]);
+    let (verdict, text, code) = ensure(&home, Duration::from_secs(10), command);
+    assert_eq!(code, 7, "{text}");
+    assert_eq!(verdict["reason_code"], "runtime_start_failed", "{text}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+}
+
+/// One launch's policy, session and supervisor markers must not become the shared runtime's.
+#[test]
+fn ensure_starts_the_runtime_without_the_callers_session_and_policy() {
+    let (_dir, home) = private_home();
+    let seen = home.join("env.txt");
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", &format!("env > '{}'; exit 3", seen.display())])
+        .env("HERMES_YOLO_MODE", "1")
+        .env("HERMES_SESSION_ID", "s1")
+        .env("INVOCATION_ID", "unit")
+        .env("HERMES_KEEP_ME", "1");
+    let (_, text, code) = ensure(&home, Duration::from_secs(10), command);
+    assert_eq!(code, 7, "{text}");
+    let env = std::fs::read_to_string(&seen).unwrap();
+    for key in ["HERMES_YOLO_MODE=", "HERMES_SESSION_ID=", "INVOCATION_ID="] {
+        assert!(
+            !env.lines().any(|line| line.starts_with(key)),
+            "{key} reached the runtime"
+        );
+    }
+    assert!(env.lines().any(|line| line == "HERMES_KEEP_ME=1"), "{env}");
 }

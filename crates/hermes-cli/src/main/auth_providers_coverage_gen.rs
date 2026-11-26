@@ -41,6 +41,36 @@ fn config_msg(err: AgentError) -> String {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn default_auth_provider_uses_explicit_pool_environment_then_config() {
+    if !crate::isolated_test_profile::enter(
+        "coverage_gen_main_auth_providers::default_auth_provider_uses_explicit_pool_environment_then_config",
+    ) {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HERMES_HOME").expect("isolated HERMES_HOME"));
+    let config = home.join("config.yaml");
+    std::fs::write(&config, "model: bare-model\n").unwrap();
+    assert_eq!(resolve_auth_provider(None), "nous");
+
+    std::fs::write(&config, "model: openrouter:fixture-model\n").unwrap();
+    assert_eq!(resolve_auth_provider(None), "openrouter");
+
+    std::env::set_var("HERMES_AUTH_DEFAULT_PROVIDER", " DEEPSEEK ");
+    assert_eq!(resolve_auth_provider(None), "deepseek");
+
+    std::env::set_var("HERMES_AUTH_PROVIDER_POOL", " , Kimi-Coding, openrouter ");
+    assert_eq!(resolve_auth_provider(None), "kimi-coding");
+    assert_eq!(resolve_auth_provider(Some("  ".into())), "kimi-coding");
+    assert_eq!(resolve_auth_provider(Some(" GROQ ".into())), "groq");
+
+    std::env::set_var("HERMES_AUTH_PROVIDER_POOL", " , ");
+    assert_eq!(resolve_auth_provider(None), "deepseek");
+    std::env::set_var("HERMES_AUTH_DEFAULT_PROVIDER", " ");
+    assert_eq!(resolve_auth_provider(None), "openrouter");
+}
+
 #[test]
 fn normalize_rare_aliases() {
     assert_eq!(

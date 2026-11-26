@@ -26,6 +26,7 @@ members = [
     "crates/hermes-source-parity-tests",
     "crates/hermes-protocol-parity-tests",
     "crates/hermes-parity-tools",
+    "crates/hermes-entrypoint",
     "crates/hermes-py",
 ]
 
