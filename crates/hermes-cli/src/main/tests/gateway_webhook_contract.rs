@@ -45,12 +45,16 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
     );
     let adapter = Arc::new(WebhookAdapter::new(config));
     gateway.register_adapter("webhook", adapter.clone()).await;
+    let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observations = observed.clone();
     gateway
-        .set_message_handler_with_context(Arc::new(|messages, context| {
+        .set_message_handler_with_context(Arc::new(move |messages, context| {
+            let observations = observations.clone();
             Box::pin(async move {
                 assert_eq!(context.platform, "webhook");
                 assert!(context.thread_id.is_none());
                 let text = messages.last().unwrap().content.as_deref().unwrap();
+                observations.lock().unwrap().push(text.to_owned());
                 if text == "First count" {
                     return Err(hermes_gateway::GatewayError::Platform(
                         "fixture failure".into(),
@@ -83,6 +87,10 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
     )
     .await
     .expect("the webhook loop drains its closed channel");
+    assert_eq!(
+        std::mem::take(&mut *observed.lock().unwrap()),
+        ["First count", "Bird count", "Rain count"]
+    );
 
     let replies = adapter.drain_outbound().await;
     let replies: Vec<_> = replies
@@ -125,6 +133,7 @@ async fn gateway_webhook_routes_explicit_and_default_senders_to_their_chats() {
         )
         .await
         .expect("the shared inbound loop drains its closed channel");
+        assert_eq!(*observed.lock().unwrap(), ["First count", "Cloud count"]);
 
         let replies = adapter.drain_outbound().await;
         assert_eq!(replies.len(), 1);

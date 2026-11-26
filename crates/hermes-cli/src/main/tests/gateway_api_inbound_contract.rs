@@ -8,8 +8,9 @@ async fn gateway_api_inbound_routes_requests_with_session_overrides_after_handle
 
     let mut dm = DmManager::with_ignore_behavior();
     dm.authorize_user_for_platform("api_server", "field-user");
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
     let gateway = Arc::new(Gateway::new(
-        Arc::new(SessionManager::new(SessionConfig::default())),
+        sessions.clone(),
         dm,
         hermes_gateway::gateway::GatewayConfig::default(),
     ));
@@ -92,4 +93,17 @@ async fn gateway_api_inbound_routes_requests_with_session_overrides_after_handle
             ),
         ]
     );
+    for (chat, expected) in [
+        ("field-session", "First survey"),
+        ("other-session", "Survey received"),
+    ] {
+        let session = sessions.compose_session_key("api_server", chat, "field-user");
+        let transcript = sessions.get_messages(&session).await;
+        assert_eq!(
+            transcript
+                .last()
+                .and_then(|message| message.content.as_deref()),
+            Some(expected)
+        );
+    }
 }
