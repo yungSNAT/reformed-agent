@@ -230,6 +230,54 @@ async fn copilot_sends_gpt_5_and_later_to_the_responses_api() {
 }
 
 #[tokio::test]
+async fn copilot_routes_by_the_body_model_and_renames_the_token_limit() {
+    let server = MockServer::start().await;
+    mock_chat(&server).await;
+    let provider = CopilotProvider::new(server.uri(), "synthetic-test-value").with_model("gpt-4o");
+    // The body's model outranks the call's and the default.
+    one_shot(
+        &provider,
+        Some("gpt-4.1"),
+        &json!({"model": "gpt-5.1", "max_completion_tokens": 100}),
+    )
+    .await;
+    one_shot(
+        &provider,
+        Some("gpt-5.1"),
+        &json!({"model": "gpt-4.1", "max_completion_tokens": 100}),
+    )
+    .await;
+    let stream = provider.chat_completion_stream(
+        &[Message::user("hello")],
+        &[],
+        None,
+        None,
+        None,
+        Some(&json!({"model": "gpt-5.1", "max_tokens": 50})),
+    );
+    let _ = stream.collect::<Vec<_>>().await;
+
+    let requests = server.received_requests().await.unwrap();
+    let sent: Vec<(&str, Value)> = requests
+        .iter()
+        .map(|request| (request.url.path(), request.body_json().unwrap()))
+        .collect();
+    assert_eq!(sent[0].0, "/responses");
+    assert_eq!(sent[0].1["model"], "gpt-5.1");
+    assert_eq!(sent[0].1["max_output_tokens"], 100);
+    assert!(
+        sent[0].1.get("max_completion_tokens").is_none(),
+        "{}",
+        sent[0].1
+    );
+    assert_eq!(sent[1].0, "/chat/completions");
+    assert_eq!(sent[1].1["model"], "gpt-4.1");
+    assert_eq!(sent[2].0, "/responses");
+    assert_eq!(sent[2].1["max_output_tokens"], 50);
+    assert!(sent[2].1.get("max_tokens").is_none(), "{}", sent[2].1);
+}
+
+#[tokio::test]
 async fn copilot_responses_route_honours_disabled_reasoning_and_streams() {
     let server = MockServer::start().await;
     mock_chat(&server).await;
