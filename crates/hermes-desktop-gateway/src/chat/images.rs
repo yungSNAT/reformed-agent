@@ -347,21 +347,30 @@ fn resolve(raw: &str, cwd: &Path) -> Result<Option<PathBuf>, Refused> {
         .then_some(path))
 }
 
-/// Whether `name` is a Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to
-/// `COM9`, `LPT1` to `LPT9`), in any case, with or without an extension or trailing spaces and
-/// dots. Refused on every platform, so a path means the same file everywhere.
+/// Whether `name` is a Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`,
+/// `CONOUT$`, `COM0` to `COM9`, `LPT0` to `LPT9`, and `COM` or `LPT` with a superscript 1, 2
+/// or 3), in any case, with or without an extension or trailing spaces and dots. Refused on
+/// every platform, so a path means the same file everywhere.
 fn reserved_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or_default();
     let stem = stem.trim_end_matches([' ', '.']).to_ascii_uppercase();
-    match stem.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" => true,
-        _ => {
-            let bytes = stem.as_bytes();
-            bytes.len() == 4
-                && (stem.starts_with("COM") || stem.starts_with("LPT"))
-                && (b'1'..=b'9').contains(&bytes[3])
-        }
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
     }
+    let Some(port) = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+    else {
+        return false;
+    };
+    let mut chars = port.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+    )
 }
 
 /// The user's home folder, as `~` names it.
