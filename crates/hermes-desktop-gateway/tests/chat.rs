@@ -1234,3 +1234,20 @@ async fn events_since_replays_what_a_client_missed() {
         .await;
     assert_eq!(bad["error"]["code"], -32602, "{bad}");
 }
+
+/// A session stages at most 16 images: the 17th is refused, and its file is not kept.
+#[tokio::test]
+async fn a_seventeenth_staged_image_is_refused() {
+    let started = start(vec!["ok"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    for n in 0..16u64 {
+        let params = json!({"session_id": session, "content_base64": b64(&png(&format!("{n}")))});
+        let reply = client.call(2 + n, "image.attach_bytes", params).await;
+        assert_eq!(reply["result"]["count"], n + 1, "{reply}");
+    }
+    let params = json!({"session_id": session, "content_base64": b64(&png("over"))});
+    let reply = client.call(20, "image.attach_bytes", params).await;
+    assert_eq!(reply["error"]["code"], 4018, "{reply}");
+    assert_eq!(staged_images(started.home.path()).len(), 16);
+}
