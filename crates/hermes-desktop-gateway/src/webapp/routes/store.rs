@@ -139,11 +139,26 @@ fn stale_owner(dir: &Path) -> Option<Vec<u8>> {
     is_stale(dir).then(|| std::fs::read(dir.join("owner")).unwrap_or_default())
 }
 
-/// Removes the lock judged stale with owner `seen`.
+/// Removes the lock judged stale with owner `seen`. It is first moved aside under a name of its
+/// own, which only one waiter's rename can do, then removed only if it still names the stale owner;
+/// a lock another writer re-took since the judgement goes back untouched.
 fn break_stale(dir: &Path, seen: &[u8]) {
-    let _ = seen;
-    let _ = std::fs::remove_file(dir.join("owner"));
-    let _ = std::fs::remove_dir(dir);
+    let mut name = dir.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".stale-{}", uuid::Uuid::new_v4().simple()));
+    let aside = dir.with_file_name(name);
+    if std::fs::rename(dir, &aside).is_err() {
+        return;
+    }
+    let owner = std::fs::read(aside.join("owner")).unwrap_or_default();
+    if owner == seen {
+        let _ = std::fs::remove_file(aside.join("owner"));
+        let _ = std::fs::remove_dir(&aside);
+    } else if std::fs::rename(&aside, dir).is_err() {
+        // A third writer took the free name meanwhile; the moved holder sees `held()` false and
+        // stops, so still only one writer holds the lock.
+        let _ = std::fs::remove_file(aside.join("owner"));
+        let _ = std::fs::remove_dir(&aside);
+    }
 }
 
 /// Replaces `path` whole. A new file is made owner-only before any bytes land; the atomic writer
