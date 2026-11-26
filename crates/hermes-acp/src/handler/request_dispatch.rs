@@ -330,6 +330,8 @@ impl AcpHandler for HermesAcpHandler {
                     } else {
                         user_text.trim()
                     };
+                    #[cfg(test)]
+                    after_busy(session_id);
                     self.session_manager
                         .push_queued_prompt(session_id, queued_text);
                     self.event_sink.push(AcpEvent::message_complete(
