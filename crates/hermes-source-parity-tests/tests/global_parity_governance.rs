@@ -635,19 +635,19 @@ fn test_release_gate_holds_rows_not_shown_matching() {
 }
 
 /// Upstream tree drift (commits behind, missing patches, upstream-only files) grows with
-/// every upstream commit, so it is reported through `drift_alert_thresholds` and never
-/// gates a pull request or a release.
+/// every upstream commit, so it is reported through `drift_alert_thresholds` and neither
+/// threshold profile gates on it.
 const TREE_DRIFT_METRICS: [&str; 3] = [
     "max_commits_behind",
     "max_upstream_patch_missing",
     "max_files_only_upstream",
 ];
 
-/// The pull request and release gates share one functional policy: no tree drift in
-/// either, and every pull request check is also a release check that is at least as strict,
-/// so a release cannot pass a check a pull request would fail.
+/// The CI profile and the release gate share one functional policy: no tree drift in
+/// either, and every CI profile check is also a release check that is at least as strict,
+/// so a release cannot pass a check the CI profile would fail.
 #[test]
-fn test_pull_request_and_release_gates_share_the_functional_policy() {
+fn test_ci_and_release_profiles_share_the_functional_policy() {
     let thresholds = read_json("docs/parity/global-parity-thresholds.json");
     let ci = thresholds["ci_thresholds"]
         .as_object()
@@ -701,7 +701,7 @@ fn test_pull_request_and_release_gates_share_the_functional_policy() {
         };
         assert!(
             as_strict,
-            "release limit for {metric} ({release_limit}) must be at least as strict as the pull request limit ({limit})"
+            "release limit for {metric} ({release_limit}) must be at least as strict as the CI profile limit ({limit})"
         );
     }
 }
