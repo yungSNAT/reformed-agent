@@ -6,6 +6,12 @@
 //! and the reply's text comes back without a wrapping code fence. The call runs on this
 //! gateway's configured model, the one its turns use; upstream's `task` routing to a separate
 //! auxiliary model is not served, so `task` and `session_id` are accepted and unused.
+//!
+//! Limits upstream does not set (`llm.oneshot` at `ae2a81cc` has none beyond its template's
+//! truncation and `run_oneshot`'s 60 seconds): at most [`MAX_RUNNING`] calls at once across the
+//! gateway, instructions and input of at most [`MAX_TEXT_BYTES`] each, `max_tokens` at most
+//! [`MAX_TOKENS`] and `temperature` within 0 to 2. A call whose connection closes is dropped
+//! with the handler, which cancels the request to the model.
 
 use std::time::Duration;
 
@@ -13,7 +19,9 @@ use hermes_agent::{render_oneshot_template, strip_wrapping_code_fence, OneShotEr
 use hermes_core::Message;
 use serde_json::{json, Map, Value};
 
-use super::{Handler, Reply, Request, RpcError};
+use tokio::sync::Semaphore;
+
+use super::{Handler, Reply, Request, RpcError, INVALID_PARAMS, NO_TURN_SLOT};
 
 pub(super) const METHODS: &[(&str, Handler)] = &[("llm.oneshot", oneshot)];
 
@@ -25,6 +33,15 @@ const FAILED: i64 = 5030;
 /// As upstream's `run_oneshot` default.
 const TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Calls running at once across the gateway; past it a call is refused, as a turn is when
+/// every turn slot is taken.
+const MAX_RUNNING: usize = 4;
+static RUNNING: Semaphore = Semaphore::const_new(MAX_RUNNING);
+
+/// Largest `instructions` or `input`, in bytes, and largest `max_tokens`.
+const MAX_TEXT_BYTES: usize = 64 << 10;
+const MAX_TOKENS: u64 = 4096;
+
 fn oneshot(req: Request) -> Reply {
     Box::pin(async move {
         let (instructions, input, temperature, max_tokens) = prompt(&req.params)?;
@@ -34,6 +51,12 @@ fn oneshot(req: Request) -> Reply {
             .model()
             .ok_or_else(|| failed("no model is configured".into()))?
             .to_string();
+        let Ok(_running) = RUNNING.try_acquire() else {
+            return Err((
+                NO_TURN_SLOT,
+                format!("{MAX_RUNNING} one-shot calls are running; send again when one ends"),
+            ));
+        };
         let mut messages = Vec::new();
         if !instructions.trim().is_empty() {
             messages.push(Message::system(instructions));
@@ -63,12 +86,20 @@ fn oneshot(req: Request) -> Reply {
 }
 
 /// The system and user text, temperature and token limit `params` ask for, as upstream reads
-/// them: a bad temperature or limit falls back to its default rather than refusing.
+/// them: a temperature or limit that is not a number falls back to its default rather than
+/// refusing, and one out of range is brought within it.
 fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), RpcError> {
-    let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default();
-    let template = text("template").trim();
+    let text = |key: &str| match params.get(key) {
+        None | Some(Value::Null) => Ok(""),
+        Some(Value::String(text)) => Ok(text.as_str()),
+        Some(_) => Err((INVALID_PARAMS, format!("{key} must be a string"))),
+    };
+    let template = text("template")?.trim();
     let (instructions, input) = if template.is_empty() {
-        (text("instructions").to_string(), text("input").to_string())
+        (
+            text("instructions")?.to_string(),
+            text("input")?.to_string(),
+        )
     } else {
         let variables = match params.get("variables") {
             Some(Value::Object(variables)) => variables.clone(),
@@ -82,6 +113,14 @@ fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), Rpc
             other => (PROMPT_REQUIRED, other.to_string()),
         })?
     };
+    for (key, text) in [("instructions", &instructions), ("input", &input)] {
+        if text.len() > MAX_TEXT_BYTES {
+            return Err((
+                INVALID_PARAMS,
+                format!("{key} longer than {MAX_TEXT_BYTES} bytes"),
+            ));
+        }
+    }
     if instructions.trim().is_empty() && input.trim().is_empty() {
         return Err((
             PROMPT_REQUIRED,
@@ -91,11 +130,12 @@ fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), Rpc
     let temperature = params
         .get("temperature")
         .and_then(Value::as_f64)
-        .unwrap_or(0.3);
+        .unwrap_or(0.3)
+        .clamp(0.0, 2.0);
     let max_tokens = params
         .get("max_tokens")
         .and_then(Value::as_u64)
         .filter(|n| *n > 0)
-        .map_or(1024, |n| u32::try_from(n).unwrap_or(u32::MAX));
+        .map_or(1024, |n| n.min(MAX_TOKENS) as u32);
     Ok((instructions, input, temperature, max_tokens))
 }
