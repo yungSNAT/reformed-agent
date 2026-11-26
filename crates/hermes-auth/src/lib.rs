@@ -739,6 +739,13 @@ mod tests {
     async fn file_token_store_migrates_legacy_plaintext() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tokens.json");
+        let log = dir.path().join("migration.log");
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(std::fs::File::create(&log).unwrap())
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
 
         let mut legacy = HashMap::new();
         legacy.insert(
@@ -756,6 +763,10 @@ mod tests {
         assert!(!raw.contains("legacy-token"));
         let envelope: TokenStoreEnvelope = serde_json::from_str(&raw).unwrap();
         assert_eq!(envelope.version, TOKEN_STORE_ENVELOPE_VERSION);
+        let warning = std::fs::read_to_string(log).unwrap();
+        assert!(warning.contains("Legacy plaintext token store detected"));
+        assert!(warning.contains("tokens.json"));
+        assert!(!warning.contains("legacy-token"));
     }
 
     #[tokio::test]

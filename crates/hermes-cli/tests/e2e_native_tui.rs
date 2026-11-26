@@ -288,6 +288,69 @@ async fn native_tui_filters_pickers_and_applies_skin_and_personality() {
 }
 
 #[tokio::test]
+async fn native_tui_model_picker_cancels_or_persists_the_confirmed_model() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    let config = home.join("config.yaml");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(
+        &config,
+        r#"model:
+  default: fixture-a
+  provider: local-test
+tools: []
+llm_providers:
+  local-test:
+    base_url: http://127.0.0.1:1/v1
+    api_key: local-provider-fixture
+    discover_models: false
+    models:
+      fixture-a: {}
+      fixture-b: {}
+"#,
+    )
+    .unwrap();
+
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["--ignore-rules"], false);
+    read_until(&mut terminal, b"\x1b[?1049h").await;
+    let original = std::fs::read(&config).unwrap();
+    let open_picker = b"\x1b[200~/model local-test\x1b[201~\r";
+    terminal.write_all(open_picker).unwrap();
+    read_until(&mut terminal, "❯ fixture-a".as_bytes()).await;
+    terminal.write_all(b"j").unwrap();
+    read_until(&mut terminal, "❯ fixture-b".as_bytes()).await;
+    terminal.write_all(b"q").unwrap();
+    read_until(&mut terminal, b"Model switch cancelled.").await;
+    assert_eq!(std::fs::read(&config).unwrap(), original);
+
+    terminal.write_all(open_picker).unwrap();
+    read_until(&mut terminal, "❯ fixture-a".as_bytes()).await;
+    terminal.write_all(b"j").unwrap();
+    read_until(&mut terminal, "❯ fixture-b".as_bytes()).await;
+    terminal.write_all(b"\r").unwrap();
+    read_until(&mut terminal, b"Persisted default model").await;
+    let persisted: serde_yaml::Value =
+        serde_yaml::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    assert_eq!(persisted["model"]["default"].as_str(), Some("fixture-b"));
+    assert_eq!(persisted["model"]["provider"].as_str(), Some("local-test"));
+    assert_eq!(
+        persisted["model"]["base_url"].as_str(),
+        Some("http://127.0.0.1:1/v1")
+    );
+
+    terminal.write_all(b"\x1b[200~/quit\x1b[201~\r").unwrap();
+    let restored = read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(restored.windows(8).any(|bytes| bytes == b"\x1b[?2004l"));
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("TUI shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+}
+
+#[tokio::test]
 async fn native_tui_streams_a_loopback_turn_and_persists_the_full_reply() {
     let provider = MockServer::start().await;
     let prompt = "Read back the synthetic fixture";
@@ -374,6 +437,35 @@ streaming:
     .await
     .expect("completed provider turn is saved in the isolated session");
 
+    terminal.write_all(b"\x1b[200~/undo\x1b[201~\r!").unwrap();
+    let edited = format!("{prompt}!");
+    let draft_path = home.join("composer-drafts.json");
+    timeout(Duration::from_secs(12), async {
+        loop {
+            if let Ok(bytes) = std::fs::read(&draft_path) {
+                if let Ok(drafts) = serde_json::from_slice::<Value>(&bytes) {
+                    if drafts["drafts"][0]["text"] == edited {
+                        break;
+                    }
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("undo restores the prompt at the cursor and stores the edit as a draft");
+
+    terminal.write_all(b"\x03").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("TUI shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+
+    let saved_draft: Value = serde_json::from_slice(&std::fs::read(&draft_path).unwrap()).unwrap();
+    assert_eq!(saved_draft["drafts"][0]["text"], edited);
     let requests = provider.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
     let request: Value = requests[0].body_json().unwrap();
@@ -384,15 +476,113 @@ streaming:
         .rfind(|message| message["role"] == "user")
         .expect("request has a user message");
     assert_eq!(message["content"], prompt);
+}
 
-    terminal.write_all(b"\x1b[200~/quit\x1b[201~\r").unwrap();
+#[tokio::test]
+async fn native_tui_resume_uses_the_saved_model_and_conversation() {
+    let provider = MockServer::start().await;
+    let first_prompt = "Where is the fixture train going?";
+    let first_reply = "It is heading north.";
+    let followup = "What direction did you say?";
+    let reply = "ResumeFixtureAnswer";
+    let stream = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        json!({
+            "id": "fixture-resume",
+            "object": "chat.completion.chunk",
+            "model": "restored",
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": reply},
+                "finish_reason": "stop",
+            }],
+        })
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_partial_json(
+            json!({"model": "restored", "stream": true}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream"))
+        .expect(1)
+        .mount(&provider)
+        .await;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        home.join("config.yaml"),
+        format!(
+            r#"model: local-test:initial
+tools: []
+llm_providers:
+  local-test:
+    base_url: {}
+    api_key: local-provider-fixture
+    discover_models: false
+    models: [initial, restored]
+streaming:
+  enabled: true
+"#,
+            provider.uri()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        sessions.join("session_fixture-resume.json"),
+        json!({
+            "session_info": {
+                "session_id": "fixture-resume",
+                "model": "local-test:restored",
+            },
+            "messages": [
+                {"role": "User", "content": first_prompt},
+                {"role": "Assistant", "content": first_reply},
+            ],
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut child, mut terminal, initial_flags) = start_in_pty(
+        sandbox.path(),
+        &["--ignore-rules", "resume", "fixture-resume"],
+        true,
+    );
+    read_until(&mut terminal, b"Resumed session").await;
+    write!(terminal, "\x1b[200~{followup}\x1b[201~\r").unwrap();
+    read_until(&mut terminal, reply.as_bytes()).await;
+    terminal.write_all(b"\x03").unwrap();
     read_until(&mut terminal, b"\x1b[?1049l").await;
     assert!(timeout(Duration::from_secs(10), child.wait())
         .await
-        .expect("TUI shutdown timeout")
-        .expect("wait for isolated CLI")
+        .expect("resumed TUI shutdown timeout")
+        .unwrap()
         .success());
     assert_eq!(terminal_flags(&terminal), initial_flags);
+
+    let requests = provider.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let request: Value = requests[0].body_json().unwrap();
+    let history = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|message| {
+            let role = message["role"].as_str()?;
+            matches!(role, "user" | "assistant").then(|| (role, message["content"].as_str()))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        history,
+        [
+            ("user", Some(first_prompt)),
+            ("assistant", Some(first_reply)),
+            ("user", Some(followup)),
+        ]
+    );
 }
 
 #[tokio::test]

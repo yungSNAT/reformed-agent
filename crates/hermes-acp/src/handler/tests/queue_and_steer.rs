@@ -197,6 +197,92 @@ async fn test_acp_prompt_drains_queued_turns_after_current_run() {
 }
 
 #[tokio::test]
+async fn failed_prompt_reports_error_and_leaves_later_queue_recoverable() {
+    const FAILED_PROMPT: &str = "fail this fixture prompt";
+    const FAILURE: &str = "fixture executor failure";
+    const REMAINING: &str = "remaining queued fixture";
+
+    struct FailOnePrompt;
+
+    #[async_trait::async_trait]
+    impl AcpPromptExecutor for FailOnePrompt {
+        async fn execute_prompt(
+            &self,
+            session: &SessionState,
+            text: &str,
+            history: &[Value],
+        ) -> Result<PromptExecutionOutput, String> {
+            if text == FAILED_PROMPT {
+                return Err(FAILURE.into());
+            }
+            EchoPromptExecutor
+                .execute_prompt(session, text, history)
+                .await
+        }
+    }
+
+    for fail_queued in [false, true] {
+        let handler = make_handler().with_prompt_executor(Arc::new(FailOnePrompt));
+        let session = create_session(&handler).await;
+        if fail_queued {
+            assert!(handler
+                .session_manager
+                .push_queued_prompt(&session, FAILED_PROMPT));
+        }
+        assert!(handler
+            .session_manager
+            .push_queued_prompt(&session, REMAINING));
+        let request = |id, text: &str| AcpRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(id)),
+            method: "prompt".into(),
+            params: Some(json!({"session_id": session, "text": text})),
+        };
+        let first = if fail_queued {
+            "first fixture prompt"
+        } else {
+            FAILED_PROMPT
+        };
+        let response = handler.handle_request(request(2, first)).await;
+        assert_eq!(response.id, Some(json!(2)));
+        assert!(response.result.is_none());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32000);
+        assert_eq!(error.message, FAILURE);
+
+        let events = handler.event_sink.drain_for_session(&session);
+        let errors: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == AcpEventKind::Error)
+            .collect();
+        let [event] = errors.as_slice() else {
+            panic!("expected one error event, received {}", errors.len());
+        };
+        assert_eq!(event.session_id, session);
+        assert_eq!(event.error.as_deref(), Some(FAILURE));
+        assert!(event.session_update_params().is_none());
+
+        let state = handler.session_manager.get_session(&session).unwrap();
+        assert_eq!(state.phase, SessionPhase::Failed);
+        assert!(state.turn_seq.is_none());
+        assert_eq!(state.queued_prompts, [REMAINING]);
+        assert_eq!(state.history.last().unwrap()["role"], "user");
+        assert_eq!(state.history.last().unwrap()["content"], FAILED_PROMPT);
+        assert_eq!(state.total_prompt_tokens, if fail_queued { 3 } else { 0 });
+
+        let recovered = handler.handle_request(request(3, "resume fixture")).await;
+        assert_eq!(recovered.result.unwrap()["stopReason"], "end_turn");
+        let state = handler.session_manager.get_session(&session).unwrap();
+        assert_eq!(state.phase, SessionPhase::Idle);
+        assert!(state.queued_prompts.is_empty());
+        assert_eq!(
+            state.history.last().unwrap()["content"],
+            format!("executor:{REMAINING}")
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_acp_regular_prompt_queues_while_session_is_active() {
     let executor = Arc::new(SteeringPromptExecutor::default());
     let handler = make_handler().with_prompt_executor(executor.clone());

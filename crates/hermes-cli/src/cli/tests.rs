@@ -660,6 +660,14 @@ fn cli_parse_profile() {
     }
 }
 
+/// `--profile` has no short form: `-p` stays `--personality`, as in earlier releases.
+#[test]
+fn dash_p_is_the_personality_not_the_profile() {
+    let cli = Cli::try_parse_from(vec!["hermes", "-p", "pirate", "--profile", "work"]).unwrap();
+    assert_eq!(cli.personality.as_deref(), Some("pirate"));
+    assert_eq!(cli.profile.as_deref(), Some("work"));
+}
+
 #[test]
 fn cli_parse_profile_create() {
     let cli = Cli::try_parse_from(vec!["hermes", "profile", "create", "work"]).unwrap();

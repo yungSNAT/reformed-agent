@@ -1676,6 +1676,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
  "wiremock",
@@ -1847,6 +1848,10 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "hermes-entrypoint"
+version = "0.22.0"
 
 [[package]]
 name = "hermes-environments"

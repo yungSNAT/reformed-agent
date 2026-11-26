@@ -36,6 +36,7 @@ pub struct AgentLoop {
     /// the front end with [`AgentLoop::set_session_spent_usd`]; the cost
     /// guard counts it against `max_cost_usd`.
     session_spent_usd: std::sync::atomic::AtomicU64,
+    session_budget_root: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone)]

@@ -194,6 +194,58 @@ async fn studio_verifies_replay_logs_and_diffs_export_hash_sets() {
 }
 
 #[tokio::test]
+async fn specpatch_reports_failed_candidates_and_stops_at_the_first_verified_fixture() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::evidence_reports_contract::specpatch_reports_failed_candidates_and_stops_at_the_first_verified_fixture",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    let verify = r#"if test -f "$HERMES_HOME/selected-fixture.txt"; then printf 'verified fixture\n'; else printf 'missing fixture\n' >&2; exit 3; fi"#;
+    let failed = "printf 'apply output\\n'; printf 'apply diagnostic\\n' >&2; exit 7";
+    let selected = r#"printf 'selected fixture\n' > "$HERMES_HOME/selected-fixture.txt""#;
+    let later = r#"printf 'later fixture\n' > "$HERMES_HOME/later-fixture.txt""#;
+
+    app.input_history
+        .push(format!("/specpatch {verify} | {failed}"));
+    let output = command_output(&mut app, "/specpatch", &[]).await;
+    assert!(
+        output.contains(
+            "apply_exit=7\n    apply_stdout=apply output\n    apply_stderr=apply diagnostic"
+        ),
+        "{output}"
+    );
+    assert!(
+        output.contains("verify_exit=3\n    verify_stderr=missing fixture"),
+        "{output}"
+    );
+    assert!(
+        output.ends_with("No candidate passed verify command."),
+        "{output}"
+    );
+    assert!(!output.lines().any(|line| line.starts_with("winner=")));
+    assert!(!home.join("selected-fixture.txt").exists());
+
+    app.input_history.push(format!(
+        "/specpatch {verify} | {failed} | {selected} | {later}"
+    ));
+    let output = command_output(&mut app, "/specpatch", &[]).await;
+    assert!(output.contains("[2] candidate:"), "{output}");
+    assert!(
+        output.contains("verify_exit=0\n    verify_stdout=verified fixture"),
+        "{output}"
+    );
+    assert!(output.ends_with(&format!("winner={selected}")), "{output}");
+    assert!(!output.contains("[3] candidate:"), "{output}");
+    assert_eq!(
+        std::fs::read_to_string(home.join("selected-fixture.txt")).unwrap(),
+        "selected fixture\n"
+    );
+    assert!(!home.join("later-fixture.txt").exists());
+}
+
+#[tokio::test]
 async fn heatmap_counts_git_files_and_ranks_transcript_and_ledger_evidence() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::evidence_reports_contract::heatmap_counts_git_files_and_ranks_transcript_and_ledger_evidence",
