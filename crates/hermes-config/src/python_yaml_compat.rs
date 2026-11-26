@@ -514,9 +514,7 @@ fn normalize_session_reset(map: &mut Mapping) {
 
 /// Normalize `platform_toolsets` entries so mixed scalar YAML values (e.g.
 /// bare numbers like `12306`) deserialize into `Vec<String>` safely. A `null`
-/// entry is no entry. Earlier releases wrote every default entry into the
-/// file, so a map holding the entries each of them wrote is read as theirs:
-/// its entries equal to the default were never chosen and are dropped.
+/// entry is no entry.
 fn normalize_platform_toolsets(map: &mut Mapping) {
     let ptk = key("platform_toolsets");
     let Some(Value::Mapping(existing)) = map.remove(&ptk) else {
@@ -557,22 +555,29 @@ fn normalize_platform_toolsets(map: &mut Mapping) {
         normalized.insert(key(platform_name), Value::Sequence(out));
     }
 
+    map.insert(ptk, Value::Mapping(normalized));
+}
+
+/// Earlier releases wrote every default entry into the user's file, so a
+/// user map holding the entries each of them wrote is read as theirs: its
+/// entries equal to the default were never chosen and are dropped. The
+/// managed scope's map is never read this way: its pins bind as written.
+pub(crate) fn drop_written_default_platform_toolsets(
+    toolsets: &mut std::collections::HashMap<String, Vec<String>>,
+) {
     // Every release that wrote the defaults wrote at least these.
     let written_by_every_release = ["cli", "telegram", "discord", "whatsapp", "slack"];
-    if written_by_every_release
+    if !written_by_every_release
         .iter()
-        .all(|platform| normalized.contains_key(key(platform)))
+        .all(|platform| toolsets.contains_key(*platform))
     {
-        for (platform, toolsets) in crate::config::default_platform_toolsets() {
-            let platform = key(&platform);
-            let toolsets = Value::Sequence(toolsets.into_iter().map(Value::String).collect());
-            if normalized.get(&platform) == Some(&toolsets) {
-                normalized.remove(&platform);
-            }
+        return;
+    }
+    for (platform, defaults) in crate::config::default_platform_toolsets() {
+        if toolsets.get(&platform) == Some(&defaults) {
+            toolsets.remove(&platform);
         }
     }
-
-    map.insert(ptk, Value::Mapping(normalized));
 }
 
 /// Python often declares `telegram:` / `discord:` at the **root** instead of under `platforms:`.
@@ -1197,7 +1202,9 @@ platform_toolsets:
             panic!();
         };
         normalize_config_yaml_root(m);
-        serde_yaml::from_value(root).unwrap()
+        let mut cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        drop_written_default_platform_toolsets(&mut cfg.platform_toolsets);
+        cfg
     }
 
     #[test]
