@@ -348,8 +348,9 @@ jobs:
           npm run build --prefix packages/hermes-ink
           npm test -- src/__tests__/gatewayClient.test.ts
 
-  # Process trees, command lines and program lookup differ on Windows; the
-  # cross build above compiles for Windows but runs nothing there.
+  # Process trees, command lines, program lookup and file access lists differ
+  # on Windows; the cross build above compiles for Windows but runs nothing
+  # there.
   windows-test:
     runs-on: windows-latest
     timeout-minutes: 45
@@ -365,4 +366,4 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native tests
-        run: cargo test --locked --no-fail-fast -p hermes-environments -p hermes-mcp
+        run: cargo test --locked --no-fail-fast -p hermes-config -p hermes-environments -p hermes-mcp

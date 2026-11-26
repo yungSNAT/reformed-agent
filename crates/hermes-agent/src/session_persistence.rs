@@ -213,10 +213,7 @@ impl SessionPersistence {
     }
 
     fn is_fts5_unavailable_message(message: &str) -> bool {
-        let lower = message.to_ascii_lowercase();
-        lower.contains("no such module")
-            || lower.contains("unknown tokenizer")
-            || lower.contains("fts5")
+        hermes_core::is_fts5_unavailable_message(message)
     }
 
     fn is_fts5_unavailable_error(error: &rusqlite::Error) -> bool {
