@@ -120,8 +120,8 @@ fn agent_tools() -> AgentToolRegistry {
 }
 
 /// Runs one session against `path` with results cut to `max_result_size_chars`;
-/// returns the `write_file` result as the model saw it.
-async fn read_then_write(path: &Path, max_result_size_chars: usize) -> String {
+/// returns the `read_file` and `write_file` results as the model saw them.
+async fn read_then_write(path: &Path, max_result_size_chars: usize) -> (String, String) {
     let provider = Arc::new(ReadThenWrite {
         path: path.to_path_buf(),
         turn: AtomicUsize::new(0),
@@ -139,29 +139,36 @@ async fn read_then_write(path: &Path, max_result_size_chars: usize) -> String {
         .run(vec![Message::user("rewrite the file")], None)
         .await
         .expect("agent loop should succeed");
-    result
-        .messages
-        .iter()
-        .find(|m| m.tool_call_id.as_deref() == Some("agent-write"))
-        .and_then(|m| m.content.clone())
-        .expect("write_file result")
+    let shown = |id: &str| {
+        result
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some(id))
+            .and_then(|m| m.content.clone())
+            .unwrap_or_else(|| panic!("{id} result"))
+    };
+    (shown("agent-read"), shown("agent-write"))
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_read_the_budget_cuts_does_not_bless_the_next_write() {
     let home = tempfile::tempdir().unwrap();
     std::env::set_var("HERMES_HOME", home.path());
-    let content = "a line long enough for the result budget to cut it short\n";
+    // About 5,000 bytes: over the 2,000-character cap, which leaves the
+    // refusal whole.
+    let content = "a line long enough for the result budget to cut it short\n".repeat(90);
 
     let cut = home.path().join("cut.txt");
-    std::fs::write(&cut, content).unwrap();
-    let refused = read_then_write(&cut, 20).await;
+    std::fs::write(&cut, &content).unwrap();
+    let (read, refused) = read_then_write(&cut, 2_000).await;
+    assert!(read.contains("[... truncated "), "{read}");
     assert!(refused.contains("Refusing to overwrite"), "{refused}");
     assert_eq!(std::fs::read_to_string(&cut).unwrap(), content);
 
     let whole = home.path().join("whole.txt");
-    std::fs::write(&whole, content).unwrap();
-    let written = read_then_write(&whole, 100_000).await;
+    std::fs::write(&whole, &content).unwrap();
+    let (read, written) = read_then_write(&whole, 100_000).await;
+    assert!(!read.contains("[... truncated "), "{read}");
     assert!(!written.contains("Refusing"), "{written}");
     assert_eq!(std::fs::read_to_string(&whole).unwrap(), "replacement\n");
 }

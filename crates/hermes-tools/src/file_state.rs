@@ -433,7 +433,7 @@ mod tests {
         delivered("read_file", &x, true, "x's view", true);
         settle_view("reused-call", "x's view");
 
-        assert!(state().peek("reused-id-y", &b).0.is_none());
+        assert!(state().peek("reused-id-y", &b) == (None, None));
         assert!(state().peek("reused-id-x", &a).0.is_none());
     }
 }
