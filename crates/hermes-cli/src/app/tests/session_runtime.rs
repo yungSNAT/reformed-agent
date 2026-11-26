@@ -282,6 +282,106 @@
         );
     }
 
+    #[tokio::test]
+    async fn transient_stream_error_exhausts_app_retry_budget() {
+        use futures::StreamExt;
+        use hermes_core::MessageRole::User;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        const TEST: &str = "app::tests::transient_stream_error_exhausts_app_retry_budget";
+        const PROMPT: &str = "When does the observatory open?";
+        if !crate::isolated_test_profile::enter(TEST) {
+            return;
+        }
+        std::env::set_var("HERMES_CONTEXTLATTICE_UI_STATUS", "off");
+        std::env::set_var("HERMES_TRANSIENT_MAX_RETRIES", "1");
+
+        #[derive(Default)]
+        struct Timeouts(AtomicUsize);
+
+        #[async_trait::async_trait]
+        impl LlmProvider for Timeouts {
+            async fn chat_completion(
+                &self,
+                _messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                panic!("the interactive fixture must stream");
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> futures::stream::BoxStream<'static, Result<hermes_core::StreamChunk, AgentError>>
+            {
+                let user_turns: Vec<_> = messages
+                    .iter()
+                    .filter(|message| message.role == User)
+                    .map(|message| message.content.as_deref())
+                    .collect();
+                assert_eq!(user_turns, [Some(PROMPT)]);
+                let attempt = self.0.fetch_add(1, Ordering::Relaxed) + 1;
+                futures::stream::iter([Err(AgentError::LlmApi(format!(
+                    "fixture request {attempt} timed out"
+                )))])
+                .boxed()
+            }
+        }
+
+        let provider = Arc::new(Timeouts::default());
+        let mut app = build_minimal_test_app();
+        Arc::make_mut(&mut app.config).streaming.enabled = true;
+        app.agent = Arc::new(AgentLoop::new(
+            hermes_agent::AgentConfig {
+                stream_read_max_retries: 0,
+                skip_memory: true,
+                skip_context_files: true,
+                ..Default::default()
+            },
+            Arc::new(AgentToolRegistry::new()),
+            provider.clone(),
+        ));
+        let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        app.set_stream_handle(Some(StreamHandle::from(tx)));
+
+        let error = tokio::time::timeout(std::time::Duration::from_secs(10), app.handle_input(PROMPT))
+            .await
+            .expect("app retry deadline")
+            .expect_err("both requests should time out");
+        assert!(matches!(error, AgentError::LlmApi(message) if message == "fixture request 2 timed out"));
+        assert_eq!(provider.0.load(Ordering::Relaxed), 2);
+        assert_eq!(app.input_history, [PROMPT]);
+
+        let mut recovery = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            match event {
+                crate::tui::Event::StreamChunk(chunk) => {
+                    if let Some(extra) = chunk.delta.and_then(|delta| delta.extra) {
+                        if extra["phase"] == "recovery" {
+                            recovery.push("recovery");
+                        } else if extra["message"].as_str().is_some_and(|message| {
+                            message.starts_with("transient runtime error retry 1/1 ")
+                        }) {
+                            recovery.push("retry");
+                        }
+                    }
+                }
+                crate::tui::Event::AgentDone => recovery.push("done"),
+                _ => {}
+            }
+        }
+        assert_eq!(recovery, ["recovery", "retry", "recovery", "done"]);
+    }
+
     #[test]
     fn test_apply_agent_result_and_persist_writes_updated_messages() {
         let _guard = env_test_lock();

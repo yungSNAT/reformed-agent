@@ -12,6 +12,10 @@ async fn operator_cockpit_combines_home_reports_and_mission_status() {
     }
 
     let home = hermes_config::hermes_home();
+    for proxy in ["HTTP_PROXY", "HTTPS_PROXY"] {
+        std::env::set_var(proxy, "http://127.0.0.1:0");
+    }
+    std::env::set_var("NO_PROXY", "127.0.0.1");
     std::env::set_var("AWS_SHARED_CREDENTIALS_FILE", home.join("unused-credentials"));
     std::env::set_var("AWS_CONFIG_FILE", home.join("unused-aws-config"));
     hermes_intelligence::models_dev::default_client().seed_cache(serde_json::json!({
@@ -22,7 +26,7 @@ async fn operator_cockpit_combines_home_reports_and_mission_status() {
     Mock::given(method("GET"))
         .and(path("/health"))
         .respond_with(ResponseTemplate::new(200))
-        .expect(1)
+        .expect(2)
         .mount(&memory)
         .await;
     std::env::set_var("CONTEXTLATTICE_ORCHESTRATOR_URL", memory.uri());
@@ -54,7 +58,13 @@ async fn operator_cockpit_combines_home_reports_and_mission_status() {
 
     let mut app = build_test_app_with_stream(&home).await;
     app.session_objective = Some("Review the local fixture".into());
-    let output = command_output(&mut app, "/ops", &["cockpit"]).await;
+    let command_deadline = std::time::Duration::from_secs(10);
+    let output = tokio::time::timeout(
+        command_deadline,
+        command_output(&mut app, "/ops", &["cockpit"]),
+    )
+    .await
+    .expect("the cockpit should finish in the isolated profile");
     assert!(output.starts_with("Ops Cockpit\n"), "{output}");
     for expected in [
         "qos: route_health=degraded score=0.70 @ fixture-time | learning_entries=2 | snapshots=1",
@@ -65,6 +75,62 @@ async fn operator_cockpit_combines_home_reports_and_mission_status() {
     ] {
         assert!(output.contains(expected), "{expected}: {output}");
     }
+
+    let loops = [
+        ("enabled-public-fixture", true, false),
+        ("disabled-private-fixture", false, true),
+        ("enabled-private-first", true, true),
+        ("enabled-private-second", true, true),
+        ("enabled-public-second", true, false),
+    ]
+    .map(|(id, enabled, trading_sensitive)| {
+        serde_json::json!({
+            "id": id,
+            "title": id,
+            "objective": "Observe synthetic status",
+            "cadence": "1m",
+            "target": "fixture:local",
+            "enabled": enabled,
+            "trading_sensitive": trading_sensitive,
+        })
+    });
+    let loop_path = home.join("alpha/loops.json");
+    let encoded_loops = serde_json::to_vec(&loops).unwrap();
+    std::fs::write(&loop_path, &encoded_loops).unwrap();
+    let jobs = home.join("background_jobs");
+    std::fs::create_dir_all(&jobs).unwrap();
+    for (name, status) in [
+        ("finished-1.json", "completed"),
+        ("finished-2.json", "completed"),
+        ("failed.json", "failed"),
+        ("running.json", "running"),
+        ("ignored.txt", "failed"),
+    ] {
+        std::fs::write(
+            jobs.join(name),
+            serde_json::json!({"status": status}).to_string(),
+        )
+        .unwrap();
+    }
+    let mission = tokio::time::timeout(
+        command_deadline,
+        command_output(&mut app, "/mission", &["status"]),
+    )
+    .await
+    .expect("mission status should finish in the isolated profile");
+    for expected in [
+        "session_objective: Review the local fixture",
+        &format!("- contextlattice: healthy ({})", memory.uri()),
+        "- enabled-public-fixture status=running health=0.67 success=2 failure=1",
+        "- disabled-private-fixture status=running health=0.67 success=2 failure=1",
+        "Loop inventory: total=5 enabled=4 trading_private=3 public=2",
+    ] {
+        assert!(
+            mission.lines().any(|line| line.trim() == expected),
+            "{expected}: {mission}"
+        );
+    }
+    assert_eq!(std::fs::read(loop_path).unwrap(), encoded_loops);
     memory.verify().await;
 }
 
