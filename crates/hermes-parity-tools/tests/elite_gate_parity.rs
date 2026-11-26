@@ -147,7 +147,7 @@ impl Sandbox {
         let program = Regex::new(r"(?s)<key>ProgramArguments</key>.*?</array>").expect("regex");
         let text = program.replace_all(&text, "<PROGRAM>");
         // Commit ids depend on the sandbox repository's files, not on the command.
-        let sha = Regex::new(r"[0-9a-f]{40}").expect("regex");
+        let sha = Regex::new(r"\b[0-9a-f]{40}\b").expect("regex");
         let text = sha.replace_all(&text, "<SHA>");
         let stamp = Regex::new(r"\d{8}T\d{6}Z").expect("regex");
         let text = stamp.replace_all(&text, "<STAMP>");
