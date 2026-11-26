@@ -385,6 +385,26 @@ impl LlmProvider for OpenRouterProvider {
 // SSE chunk parsing helpers
 // ---------------------------------------------------------------------------
 
+/// The parts of an OpenAI-style `usage` the provider read from and wrote to its prompt
+/// cache. Reads: `prompt_tokens_details.cached_tokens` (OpenAI, OpenRouter and most
+/// compatible servers) or `prompt_cache_hit_tokens` (DeepSeek). Writes:
+/// `prompt_tokens_details.cache_write_tokens` (OpenRouter). Together never more than
+/// `prompt_tokens`.
+fn openai_cache_tokens(usage: &Value, prompt_tokens: u64) -> (u64, u64) {
+    let read = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .or_else(|| usage.get("prompt_cache_hit_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(prompt_tokens);
+    let write = usage
+        .pointer("/prompt_tokens_details/cache_write_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(prompt_tokens - read);
+    (read, write)
+}
+
 /// Parse a single SSE data JSON object into a StreamChunk (OpenAI format).
 fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
     // The usage chunk that `include_usage` adds at the end has no choices.
@@ -442,15 +462,20 @@ fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
         .map(|s| s.to_string());
 
     // Usage may appear in the final chunk
-    let usage = json.get("usage").map(|u| UsageStats {
-        prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-        completion_tokens: u
-            .get("completion_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-        estimated_cost: None,
-        ..Default::default()
+    let usage = json.get("usage").map(|u| {
+        let prompt_tokens = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let (cache_read_tokens, cache_write_tokens) = openai_cache_tokens(u, prompt_tokens);
+        UsageStats {
+            prompt_tokens,
+            completion_tokens: u
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            estimated_cost: None,
+            cache_read_tokens,
+            cache_write_tokens,
+        }
     });
 
     if delta_obj.is_none() && finish_reason.is_none() && usage.is_none() {
@@ -521,12 +546,15 @@ fn parse_openai_response(json: &Value) -> Result<LlmResponse, AgentError> {
 
     // Parse usage
     let usage = json.get("usage").and_then(|u| {
+        let prompt_tokens = u.get("prompt_tokens")?.as_u64()?;
+        let (cache_read_tokens, cache_write_tokens) = openai_cache_tokens(u, prompt_tokens);
         Some(UsageStats {
-            prompt_tokens: u.get("prompt_tokens")?.as_u64()?,
+            prompt_tokens,
             completion_tokens: u.get("completion_tokens")?.as_u64()?,
             total_tokens: u.get("total_tokens")?.as_u64()?,
             estimated_cost: None,
-            ..Default::default()
+            cache_read_tokens,
+            cache_write_tokens,
         })
     });
 

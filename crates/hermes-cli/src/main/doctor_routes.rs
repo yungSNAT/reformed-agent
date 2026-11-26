@@ -346,80 +346,7 @@ async fn run_doctor(
     }
 
     if deep {
-        println!("\nDeep diagnostics:");
-        let svc = gateway_service_status()?;
-        let svc_ok = svc.is_some();
-        println!(
-            "  gateway service... {}",
-            if svc_ok { "✓" } else { "(not detected)" }
-        );
-        checks.push(serde_json::json!({
-            "name": "gateway_service_status",
-            "ok": true,
-            "detail": svc
-        }));
-
-        let pid_path = gateway_pid_path_for_cli(&cli);
-        let pid = read_gateway_pid(&pid_path);
-        let pid_alive = pid.map(gateway_pid_is_alive).unwrap_or(false);
-        println!(
-            "  gateway pid... {}",
-            if pid_alive { "✓" } else { "(not running)" }
-        );
-        checks.push(serde_json::json!({
-            "name": "gateway_pid",
-            "ok": pid_alive,
-            "pid": pid,
-            "pid_path": pid_path.display().to_string()
-        }));
-
-        let cl_health = reqwest::Client::new()
-            .get("http://127.0.0.1:8075/health")
-            .timeout(std::time::Duration::from_secs(3))
-            .send()
-            .await
-            .map(|resp| resp.status().is_success())
-            .unwrap_or(false);
-        println!(
-            "  contextlattice health... {}",
-            if cl_health { "✓" } else { "✗" }
-        );
-        checks.push(serde_json::json!({
-            "name": "contextlattice_health",
-            "ok": cl_health,
-            "url": "http://127.0.0.1:8075/health"
-        }));
-
-        let replay_dir = hermes_state_root(&cli).join("logs").join("replay");
-        let replay_summaries = replay_integrity_summaries(&replay_dir, 5);
-        let dir = replay_dir.clone();
-        let replay_count = tokio::task::spawn_blocking(move || {
-            std::fs::read_dir(&dir)
-                .map(|it| {
-                    it.filter_map(|e| e.ok().filter(|e| e.path().is_file()).map(|_| ()))
-                        .count()
-                })
-                .unwrap_or(0usize)
-        })
-        .await
-        .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()));
-        let replay_chain_ok = replay_summaries
-            .iter()
-            .all(|entry| entry.hash_chain_ok && entry.invalid_lines == 0);
-        println!(
-            "  replay traces... {} ({} files, chain {})",
-            if replay_count > 0 { "✓" } else { "(none)" },
-            replay_count,
-            if replay_chain_ok { "ok" } else { "warn" }
-        );
-        checks.push(serde_json::json!({
-            "name": "replay_traces",
-            "ok": true,
-            "dir": replay_dir.display().to_string(),
-            "count": replay_count,
-            "chain_ok": replay_chain_ok,
-            "summaries": replay_summaries
-        }));
+        append_deep_doctor_checks(&cli, &mut checks, "http://127.0.0.1:8075/health").await?;
     }
 
     let elite = build_elite_doctor_diagnostics(&cli);
@@ -522,6 +449,88 @@ async fn run_doctor(
     }
 
     println!("\nDone.");
+    Ok(())
+}
+
+async fn append_deep_doctor_checks(
+    cli: &Cli,
+    checks: &mut Vec<serde_json::Value>,
+    contextlattice_health_url: &str,
+) -> Result<(), AgentError> {
+    println!("\nDeep diagnostics:");
+    let svc = gateway_service_status()?;
+    let svc_ok = svc.is_some();
+    println!(
+        "  gateway service... {}",
+        if svc_ok { "✓" } else { "(not detected)" }
+    );
+    checks.push(serde_json::json!({
+        "name": "gateway_service_status",
+        "ok": true,
+        "detail": svc
+    }));
+
+    let pid_path = gateway_pid_path_for_cli(cli);
+    let pid = read_gateway_pid(&pid_path);
+    let pid_alive = pid.map(gateway_pid_is_alive).unwrap_or(false);
+    println!(
+        "  gateway pid... {}",
+        if pid_alive { "✓" } else { "(not running)" }
+    );
+    checks.push(serde_json::json!({
+        "name": "gateway_pid",
+        "ok": pid_alive,
+        "pid": pid,
+        "pid_path": pid_path.display().to_string()
+    }));
+
+    let cl_health = reqwest::Client::new()
+        .get(contextlattice_health_url)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .map(|resp| resp.status().is_success())
+        .unwrap_or(false);
+    println!(
+        "  contextlattice health... {}",
+        if cl_health { "✓" } else { "✗" }
+    );
+    checks.push(serde_json::json!({
+        "name": "contextlattice_health",
+        "ok": cl_health,
+        "url": contextlattice_health_url
+    }));
+
+    let replay_dir = hermes_state_root(cli).join("logs").join("replay");
+    let replay_summaries = replay_integrity_summaries(&replay_dir, 5);
+    let dir = replay_dir.clone();
+    let replay_count = tokio::task::spawn_blocking(move || {
+        std::fs::read_dir(&dir)
+            .map(|it| {
+                it.filter_map(|e| e.ok().filter(|e| e.path().is_file()).map(|_| ()))
+                    .count()
+            })
+            .unwrap_or(0usize)
+    })
+    .await
+    .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()));
+    let replay_chain_ok = replay_summaries
+        .iter()
+        .all(|entry| entry.hash_chain_ok && entry.invalid_lines == 0);
+    println!(
+        "  replay traces... {} ({} files, chain {})",
+        if replay_count > 0 { "✓" } else { "(none)" },
+        replay_count,
+        if replay_chain_ok { "ok" } else { "warn" }
+    );
+    checks.push(serde_json::json!({
+        "name": "replay_traces",
+        "ok": true,
+        "dir": replay_dir.display().to_string(),
+        "count": replay_count,
+        "chain_ok": replay_chain_ok,
+        "summaries": replay_summaries
+    }));
     Ok(())
 }
 

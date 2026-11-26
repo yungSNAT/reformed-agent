@@ -1028,6 +1028,105 @@ mod tests {
     }
 
     #[test]
+    fn sync_retries_blocked_copy_and_keeps_missing_tracked_skill_removed() {
+        let dir = tempdir().unwrap();
+        let bundled = setup_bundled(dir.path());
+        let cfg = config(dir.path(), bundled.clone());
+        assert_eq!(
+            sync_skills(&cfg, false).unwrap().copied,
+            ["new-skill", "old-skill"]
+        );
+        let mut manifest = read_manifest(&cfg.manifest_file);
+        let removed_hash = manifest.remove("new-skill").unwrap();
+        manifest.insert("retired-skill".into(), removed_hash.clone());
+        write_manifest(&cfg.manifest_file, &manifest).unwrap();
+
+        fs::remove_dir_all(cfg.skills_dir.join("old-skill")).unwrap();
+        let category = cfg.skills_dir.join("category");
+        fs::remove_dir_all(&category).unwrap();
+        fs::write(&category, "Local category placeholder").unwrap();
+
+        let blocked = sync_skills(&cfg, false).unwrap();
+        assert!(blocked.copied.is_empty());
+        assert!(blocked.updated.is_empty());
+        assert_eq!(blocked.skipped, 1);
+        assert_eq!(blocked.cleaned, ["retired-skill"]);
+        assert_eq!(blocked.errors.len(), 1);
+        assert!(blocked.errors[0].starts_with("Failed to copy new-skill:"));
+        assert_eq!(
+            fs::read_to_string(&category).unwrap(),
+            "Local category placeholder"
+        );
+        manifest.remove("retired-skill");
+        assert_eq!(read_manifest(&cfg.manifest_file), manifest);
+        assert!(!cfg.skills_dir.join("old-skill").exists());
+
+        fs::remove_file(&category).unwrap();
+        fs::create_dir(&category).unwrap();
+        fs::write(category.join("DESCRIPTION.md"), "Local description").unwrap();
+        let nested = bundled.join("category/new-skill/examples");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("sample.md"), "Bundled example").unwrap();
+
+        let retried = sync_skills(&cfg, false).unwrap();
+        assert_eq!(retried.copied, ["new-skill"]);
+        assert_eq!(retried.skipped, 1);
+        assert!(retried.errors.is_empty());
+        assert!(retried.cleaned.is_empty());
+        let new_skill = category.join("new-skill");
+        assert_eq!(
+            fs::read_to_string(new_skill.join("examples/sample.md")).unwrap(),
+            "Bundled example"
+        );
+        assert_eq!(
+            fs::read_to_string(category.join("DESCRIPTION.md")).unwrap(),
+            "Local description"
+        );
+        let current_hash = dir_hash(&bundled.join("category/new-skill"));
+        assert_eq!(dir_hash(&new_skill), current_hash);
+        assert_ne!(current_hash, removed_hash);
+        manifest.insert("new-skill".into(), current_hash);
+        assert_eq!(read_manifest(&cfg.manifest_file), manifest);
+        assert!(!cfg.skills_dir.join("old-skill").exists());
+    }
+
+    #[test]
+    fn sync_keeps_current_skill_when_update_staging_is_blocked() {
+        let dir = tempdir().unwrap();
+        let bundled = setup_bundled(dir.path());
+        let cfg = config(dir.path(), bundled.clone());
+        sync_skills(&cfg, true).unwrap();
+        let manifest = read_manifest(&cfg.manifest_file);
+        fs::write(bundled.join("old-skill/SKILL.md"), "# Updated").unwrap();
+        let installed = cfg.skills_dir.join("old-skill/SKILL.md");
+        let staging = cfg
+            .skills_dir
+            .join(format!(".old-skill.sync-{}", std::process::id()));
+        fs::write(&staging, "Blocking file").unwrap();
+
+        let blocked = sync_skills(&cfg, true).unwrap();
+        assert!(blocked.updated.is_empty());
+        assert_eq!(blocked.errors.len(), 1);
+        assert!(blocked.errors[0].starts_with("Failed to update old-skill:"));
+        assert_eq!(fs::read_to_string(&installed).unwrap(), "# Old");
+        assert_eq!(read_manifest(&cfg.manifest_file), manifest);
+        assert_eq!(fs::read_to_string(&staging).unwrap(), "Blocking file");
+
+        fs::remove_file(&staging).unwrap();
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("abandoned.md"), "Previous staging attempt").unwrap();
+        let recovered = sync_skills(&cfg, true).unwrap();
+        assert_eq!(recovered.updated, ["old-skill"]);
+        assert!(recovered.errors.is_empty());
+        assert_eq!(fs::read_to_string(&installed).unwrap(), "# Updated");
+        assert!(!staging.exists());
+        assert!(!cfg.skills_dir.join("old-skill/abandoned.md").exists());
+        let mut expected = manifest;
+        expected.insert("old-skill".into(), dir_hash(&bundled.join("old-skill")));
+        assert_eq!(read_manifest(&cfg.manifest_file), expected);
+    }
+
+    #[test]
     fn remove_pristine_bundled_skills_keeps_modified_and_local_then_opt_in_reseeds() {
         let dir = tempdir().unwrap();
         let bundled = setup_bundled(dir.path());

@@ -15,6 +15,7 @@ path = "src/main.rs"
 axum = { version = "0.8", features = ["ws"] }
 base64 = { workspace = true }
 clap = { workspace = true }
+futures = { workspace = true }
 getrandom = "0.4"
 hermes-agent = { workspace = true }
 hermes-app-runtime = { workspace = true }
@@ -43,7 +44,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
-futures = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
 tempfile = "3"
