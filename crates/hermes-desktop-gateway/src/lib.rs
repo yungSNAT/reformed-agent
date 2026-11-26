@@ -3,8 +3,9 @@
 //! Hermes Desktop's remote mode probes `GET /api/health` (or `/api/status`), then opens a WebSocket to
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
-//! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
-//! self-update as off. Other methods get JSON-RPC 'method not found' (-32601).
+//! a session's saved messages at `GET /api/sessions/{id}/messages`, lists the install's profiles
+//! at `GET /api/profiles` (behind the token, as the messages route), and reports the wake word
+//! and self-update as off. Other methods get JSON-RPC 'method not found' (-32601).
 //!
 //! One connection's requests can run at the same time and be answered out of order, as JSON-RPC
 //! allows: a request whose handler waits (a turn, an approval) does not hold up the next. A
