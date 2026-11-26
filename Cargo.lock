@@ -1760,6 +1760,7 @@ dependencies = [
  "hermes-core",
  "indexmap",
  "jiff",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

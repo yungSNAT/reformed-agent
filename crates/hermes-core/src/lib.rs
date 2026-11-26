@@ -24,8 +24,8 @@ pub mod version;
 
 // Re-export all error types
 pub use errors::{
-    classify_send_error_text, AgentError, ConfigError, GatewayError, SendErrorKind, ToolError,
-    SEND_ERROR_KINDS,
+    classify_send_error_text, is_fts5_unavailable_message, AgentError, ConfigError, GatewayError,
+    SendErrorKind, ToolError, SEND_ERROR_KINDS,
 };
 
 // Re-export all core types
