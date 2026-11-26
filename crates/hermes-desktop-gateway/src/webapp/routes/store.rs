@@ -34,15 +34,16 @@ pub(crate) fn home(ctx: &Ctx) -> PathBuf {
         .unwrap_or_else(hermes_config::hermes_home)
 }
 
-/// The install root, resolved through links as upstream resolves it (`Path.resolve`, which keeps
-/// a missing path as given).
-pub(crate) fn machine_root(ctx: &Ctx) -> PathBuf {
-    let root = install_root(&home(ctx));
+/// The install root of the served home, where machine-level stores live (UI preferences, saved
+/// gateways), resolved through links as upstream resolves it (`Path.resolve`, which keeps a
+/// missing path as given).
+pub(crate) fn install_root(ctx: &Ctx) -> PathBuf {
+    let root = install_root_of(&home(ctx));
     std::fs::canonicalize(&root).unwrap_or(root)
 }
 
 /// The home itself, or its grandparent when the home is a profile's folder `<root>/profiles/<name>`.
-pub(crate) fn install_root(home: &Path) -> PathBuf {
+pub(crate) fn install_root_of(home: &Path) -> PathBuf {
     match home.parent() {
         Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
             parent.parent().unwrap_or(parent).to_path_buf()
@@ -93,7 +94,7 @@ impl StoreLock {
                     }
                     std::thread::sleep(LOCK_POLL);
                 }
-                Err(err) => return Err(format!("{what} is unreadable: {err}")),
+                Err(_) => return Err(format!("{what} is unreadable")),
             }
         }
         let lock = StoreLock { dir, token };
@@ -120,15 +121,29 @@ impl Drop for StoreLock {
 
 /// A writer that died holding the lock must not wedge every later write.
 fn break_if_stale(dir: &Path) {
-    let stale = std::fs::metadata(dir)
+    if let Some(seen) = stale_owner(dir) {
+        break_stale(dir, &seen);
+    }
+}
+
+fn is_stale(dir: &Path) -> bool {
+    std::fs::metadata(dir)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-        .is_some_and(|age| age > LOCK_STALE);
-    if stale {
-        let _ = std::fs::remove_file(dir.join("owner"));
-        let _ = std::fs::remove_dir(dir);
-    }
+        .is_some_and(|age| age > LOCK_STALE)
+}
+
+/// The owner token of a lock older than the stale limit (empty when it names none).
+fn stale_owner(dir: &Path) -> Option<Vec<u8>> {
+    is_stale(dir).then(|| std::fs::read(dir.join("owner")).unwrap_or_default())
+}
+
+/// Removes the lock judged stale with owner `seen`.
+fn break_stale(dir: &Path, seen: &[u8]) {
+    let _ = seen;
+    let _ = std::fs::remove_file(dir.join("owner"));
+    let _ = std::fs::remove_dir(dir);
 }
 
 /// Replaces `path` whole. A new file is made owner-only before any bytes land; the atomic writer
@@ -148,3 +163,7 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 pub(crate) const TEST_LOCK_WAIT: Duration = LOCK_WAIT;
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

@@ -171,6 +171,24 @@ async fn every_route_refuses_a_caller_without_the_credential_or_from_another_ori
             403,
             "{method} {route} from another origin"
         );
+        let rebound = call(
+            &origin,
+            method,
+            route,
+            &[
+                ("X-Hermes-Session-Token", &token),
+                ("Origin", &origin),
+                ("Host", "evil.example"),
+            ],
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(
+            rebound.status(),
+            403,
+            "{method} {route} under another host name"
+        );
     }
     assert!(!home.join("ui-preferences.json").exists());
     assert!(!home.join("desktop-plugins").exists());

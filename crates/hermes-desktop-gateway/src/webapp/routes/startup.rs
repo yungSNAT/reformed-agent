@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::store::{
-    blocking, home, machine_root, not_found, webapp_only, write_private, StoreLock,
+    blocking, home, install_root, not_found, webapp_only, write_private, StoreLock,
 };
 use crate::webapp::api::{served_profile, ApiError, ApiResult, Ctx};
 
@@ -106,10 +106,8 @@ pub(crate) fn read_preferences(path: &Path) -> Result<Snapshot, PrefsError> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Snapshot::missing(false))
         }
-        Err(err) => {
-            return Err(PrefsError::Busy(format!(
-                "preferences store is unreadable: {err}"
-            )))
+        Err(_) => {
+            return Err(PrefsError::Busy("preferences store is unreadable".into()))
         }
     };
     let raw = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&raw);
@@ -167,7 +165,7 @@ pub(crate) fn write_preferences(
     validate(changes)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|err| PrefsError::Busy(format!("preferences store is unreadable: {err}")))?;
+            .map_err(|_| PrefsError::Busy("preferences store is unreadable".into()))?;
     }
     let _turn = WRITERS
         .lock()
@@ -221,14 +219,14 @@ pub(crate) fn write_preferences(
     let doc =
         json!({"version": 1, "generation": generation, "revision": revision, "values": values});
     write_private(path, &serde_json::to_vec(&doc).unwrap_or_default())
-        .map_err(|err| PrefsError::Busy(format!("preferences store is unwritable: {err}")))?;
+        .map_err(|_| PrefsError::Busy("preferences store is unwritable".into()))?;
     drop(lock);
     Ok(json!({"exists": true, "revision": revision, "values": values, "generation": generation}))
 }
 
 async fn get_ui_preferences(ctx: Ctx) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = machine_root(&ctx).join(PREFERENCES_FILE);
+    let path = install_root(&ctx).join(PREFERENCES_FILE);
     blocking(move || Ok(read_preferences(&path)?.to_json()))
         .await
         .map(Json)
@@ -244,7 +242,7 @@ struct PreferencesPatch {
 
 async fn patch_ui_preferences(ctx: Ctx, Json(body): Json<PreferencesPatch>) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = machine_root(&ctx).join(PREFERENCES_FILE);
+    let path = install_root(&ctx).join(PREFERENCES_FILE);
     let changes: Map<String, Value> = body
         .values
         .into_iter()
@@ -264,7 +262,12 @@ pub(crate) fn plugins_root(root: &Path) -> Result<PathBuf, ApiError> {
     let dir = root.join("desktop-plugins");
     std::fs::create_dir_all(&dir)
         .and_then(|()| std::fs::canonicalize(&dir))
-        .map_err(|err| ApiError(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+        .map_err(|_| {
+            ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "desktop plugins folder is unavailable".into(),
+            )
+        })
 }
 
 /// The entries of the plugins root or of one plugin folder in it. The path is judged as written
@@ -304,7 +307,7 @@ pub(crate) fn list_plugins(root: &Path, raw: &str) -> Result<Value, ApiError> {
 
 async fn desktop_plugins_root(ctx: Ctx) -> ApiResult {
     webapp_only(&ctx)?;
-    let root = machine_root(&ctx);
+    let root = install_root(&ctx);
     blocking(move || Ok(json!({"root": plugins_root(&root)?.to_string_lossy()})))
         .await
         .map(Json)
@@ -318,7 +321,7 @@ async fn desktop_plugins_list(ctx: Ctx, Query(q): Query<HashMap<String, String>>
             "path is required".into(),
         ));
     };
-    let root = machine_root(&ctx);
+    let root = install_root(&ctx);
     blocking(move || list_plugins(&plugins_root(&root)?, &path))
         .await
         .map(Json)
