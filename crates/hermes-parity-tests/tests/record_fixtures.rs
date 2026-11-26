@@ -3,7 +3,7 @@
 //! `tests/fixtures/record_fixtures/` were captured from that script.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use hermes_parity_tests::recorder::{record, Recorded};
 
@@ -46,8 +46,31 @@ fn golden(name: &str, py_root: &Path) -> String {
     text.replace("\"@SOURCE@\"", &source)
 }
 
-fn checkout(adapter: &str) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+/// An empty scratch folder for one test, removed when dropped.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(test: &str) -> Self {
+        let path =
+            std::env::temp_dir().join(format!("record-fixtures-{}-{test}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn checkout(test: &str, adapter: &str) -> Scratch {
+    let dir = Scratch::new(test);
     let agent = dir.path().join("hermes-agent/agent");
     fs::create_dir_all(&agent).unwrap();
     fs::write(agent.join("__init__.py"), "").unwrap();
@@ -57,7 +80,7 @@ fn checkout(adapter: &str) -> tempfile::TempDir {
 
 #[test]
 fn without_a_checkout_prints_the_checkpoint_cases_and_a_note() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = Scratch::new("no-checkout");
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, "python-that-must-not-run");
     assert_eq!(recorded.code, 0);
@@ -73,7 +96,7 @@ fn without_a_checkout_prints_the_checkpoint_cases_and_a_note() {
 
 #[test]
 fn with_a_checkout_records_the_adapter_cases_from_python() {
-    let dir = checkout(FAKE_ADAPTER);
+    let dir = checkout("fake", FAKE_ADAPTER);
     let py_root = dir.path().join("hermes-agent");
     let recorded = record(&py_root, &python());
     assert_eq!(recorded.stderr, "");
@@ -83,7 +106,10 @@ fn with_a_checkout_records_the_adapter_cases_from_python() {
 
 #[test]
 fn a_failing_adapter_import_fails_the_run_with_python_s_error() {
-    let dir = checkout("raise ImportError('adapter needs its dependencies')\n");
+    let dir = checkout(
+        "failing",
+        "raise ImportError('adapter needs its dependencies')\n",
+    );
     let py_root = dir.path().join("hermes-agent");
     let Recorded {
         stdout,
@@ -100,7 +126,7 @@ fn a_failing_adapter_import_fails_the_run_with_python_s_error() {
 
 #[test]
 fn a_missing_interpreter_fails_the_run() {
-    let dir = checkout(FAKE_ADAPTER);
+    let dir = checkout("no-interpreter", FAKE_ADAPTER);
     let recorded = record(
         &dir.path().join("hermes-agent"),
         "no-such-python-interpreter",
