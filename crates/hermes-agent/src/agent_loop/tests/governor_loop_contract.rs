@@ -1,24 +1,41 @@
+use std::sync::Mutex;
+
 use super::*;
 use hermes_core::{FunctionCall, FunctionCallDelta, JsonSchema, StreamDelta, ToolCallDelta};
 
 const TOOL: &str = "fixture_failure";
+const HOUSEKEEPING_TOOL: &str = "skill_manage";
 const SUMMARY: &str = "Fixture failed twice; inspect the test result.";
 const RECOVERED: &str = "The backup model finished the fixture.";
 const BACKUP_MODEL: &str = "fixture-backup";
+
+#[derive(Debug, PartialEq, Eq)]
+enum GuardEvent {
+    Mute(bool),
+    ToolFailure,
+    Summary,
+}
 
 #[derive(Default)]
 struct GuardProvider {
     complete_turns: std::sync::atomic::AtomicUsize,
     stream_turns: std::sync::atomic::AtomicUsize,
     summaries: std::sync::atomic::AtomicUsize,
+    housekeeping: bool,
+    events: Arc<Mutex<Vec<GuardEvent>>>,
 }
 
 impl GuardProvider {
-    fn call(index: usize) -> ToolCall {
+    fn call(&self, index: usize) -> ToolCall {
         ToolCall {
             id: format!("fixture-{index}"),
             function: FunctionCall {
-                name: TOOL.into(),
+                name: if self.housekeeping {
+                    HOUSEKEEPING_TOOL
+                } else {
+                    TOOL
+                }
+                .into(),
                 arguments: "{}".into(),
             },
             extra_content: None,
@@ -132,12 +149,13 @@ impl LlmProvider for GuardProvider {
                         text.contains("Tool-loop guard triggered after 2 consecutive error turn(s)")
                     })
             }));
+            self.events.lock().unwrap().push(GuardEvent::Summary);
             self.summaries.fetch_add(1, Ordering::Relaxed);
             (Message::assistant(SUMMARY), "stop")
         } else {
             let index = self.complete_turns.fetch_add(1, Ordering::Relaxed);
             (
-                Message::assistant_with_tool_calls(None, vec![Self::call(index)]),
+                Message::assistant_with_tool_calls(None, vec![self.call(index)]),
                 "tool_calls",
             )
         };
@@ -159,7 +177,7 @@ impl LlmProvider for GuardProvider {
         _extra_body: Option<&Value>,
     ) -> futures::stream::BoxStream<'static, Result<StreamChunk, AgentError>> {
         let index = self.stream_turns.fetch_add(1, Ordering::Relaxed);
-        let call = Self::call(index);
+        let call = self.call(index);
         Box::pin(futures::stream::iter([Ok(StreamChunk {
             delta: Some(StreamDelta {
                 tool_calls: Some(vec![ToolCallDelta {
@@ -170,7 +188,9 @@ impl LlmProvider for GuardProvider {
                         arguments: Some(call.function.arguments),
                     }),
                 }]),
-                content: None,
+                content: self
+                    .housekeeping
+                    .then(|| "Checking the fixture skill.".into()),
                 extra: None,
             }),
             finish_reason: Some("tool_calls".into()),
@@ -230,19 +250,31 @@ async fn tool_loop_guard_reports_repeated_failures_in_complete_and_streamed_turn
         return;
     }
 
-    for streaming in [false, true] {
+    for (streaming, housekeeping) in [(false, false), (true, false), (true, true)] {
         let directory = tempfile::tempdir().unwrap();
-        let provider = Arc::new(GuardProvider::default());
+        let provider = Arc::new(GuardProvider {
+            housekeeping,
+            ..GuardProvider::default()
+        });
+        let tool = if housekeeping {
+            HOUSEKEEPING_TOOL
+        } else {
+            TOOL
+        };
         let schema = ToolSchema::new(
-            TOOL,
+            tool,
             "Fail the synthetic tool call",
             JsonSchema::new("object"),
         );
         let mut tools = ToolRegistry::new();
+        let events = provider.events.clone();
         tools.register(
-            TOOL,
+            tool,
             schema.clone(),
-            Arc::new(|_| Err(ToolError::ExecutionFailed("fixture tool failure".into()))),
+            Arc::new(move |_| {
+                events.lock().unwrap().push(GuardEvent::ToolFailure);
+                Err(ToolError::ExecutionFailed("fixture tool failure".into()))
+            }),
         );
         let agent = AgentLoop::new(
             AgentConfig {
@@ -260,8 +292,24 @@ async fn tool_loop_guard_reports_repeated_failures_in_complete_and_streamed_turn
         let messages = vec![Message::user("Try the fixture tool.")];
         let schemas = Some(vec![schema]);
         let result = if streaming {
+            let events = provider.events.clone();
             agent
-                .run_stream(messages, schemas, Some(Box::new(|_| {})))
+                .run_stream(
+                    messages,
+                    schemas,
+                    Some(Box::new(move |chunk| {
+                        if let Some(control) = chunk
+                            .delta
+                            .and_then(|delta| delta.extra)
+                            .filter(|extra| extra["control"] == "mute_post_response")
+                        {
+                            events
+                                .lock()
+                                .unwrap()
+                                .push(GuardEvent::Mute(control["enabled"].as_bool().unwrap()));
+                        }
+                    })),
+                )
                 .await
         } else {
             agent.run(messages, schemas).await
@@ -272,7 +320,7 @@ async fn tool_loop_guard_reports_repeated_failures_in_complete_and_streamed_turn
         assert_eq!(result.total_turns, 2);
         assert_eq!(result.tool_errors.len(), 2);
         assert!(result.tool_errors.iter().all(|error| {
-            error.tool_name == TOOL && error.error.contains("fixture tool failure")
+            error.tool_name == tool && error.error.contains("fixture tool failure")
         }));
         assert_eq!(
             result.messages.last().unwrap().content.as_deref(),
@@ -287,6 +335,13 @@ async fn tool_loop_guard_reports_repeated_failures_in_complete_and_streamed_turn
             if streaming { 2 } else { 0 },
         );
         assert_eq!(provider.summaries.load(Ordering::Relaxed), 1);
+        use GuardEvent::{Mute, Summary, ToolFailure};
+        let expected: &[GuardEvent] = if housekeeping {
+            &[Mute(true), ToolFailure, ToolFailure, Summary, Mute(false)]
+        } else {
+            &[ToolFailure, ToolFailure, Summary]
+        };
+        assert_eq!(provider.events.lock().unwrap().as_slice(), expected);
     }
 }
 
