@@ -136,7 +136,7 @@ pub fn sync_command(repo_root: &Path, report_dir: &Path, options: &SyncOptions) 
         "--redteam-gate",
         Some("--no-redteam-gate"),
     );
-    let mut valued = |cmd: &mut Vec<String>, name: &str, value: &str| {
+    let valued = |cmd: &mut Vec<String>, name: &str, value: &str| {
         let value = hermes_py::strip(value);
         if !value.is_empty() {
             cmd.extend([name.to_string(), value.to_string()]);
@@ -178,7 +178,7 @@ pub fn find_report(output: &str, report_dir: &Path) -> String {
             l.split_once("Report:")
                 .map(|(_, p)| hermes_py::strip(p).to_string())
         })
-        .last();
+        .next_back();
     if let Some(path) = named {
         return path;
     }
