@@ -27,13 +27,12 @@ pub fn default_platform_toolsets() -> HashMap<String, Vec<String>> {
     map
 }
 
-/// Configured toolset tokens for a platform, with default fallback.
+/// Configured toolset tokens for a platform: its entry, even an empty one,
+/// else the platform default.
 pub fn configured_platform_toolsets(config: &GatewayConfig, platform: &str) -> Vec<String> {
     let key = normalize_platform_key(platform);
     if let Some(custom) = config.platform_toolsets.get(&key) {
-        if !custom.is_empty() {
-            return custom.clone();
-        }
+        return custom.clone();
     }
     default_platform_toolsets()
         .remove(&key)
@@ -72,16 +71,7 @@ fn canonical_toolset_token(token: &str) -> String {
 }
 
 fn platform_has_custom_toolsets(config: &GatewayConfig, key: &str) -> bool {
-    let Some(configured) = config.platform_toolsets.get(key) else {
-        return false;
-    };
-    if configured.is_empty() {
-        return false;
-    }
-    match default_platform_toolsets().get(key) {
-        Some(defaults) => configured != defaults,
-        None => true,
-    }
+    config.platform_toolsets.contains_key(key)
 }
 
 fn append_live_mcp_toolsets(requested: &mut Vec<String>, manager: &ToolsetManager) {

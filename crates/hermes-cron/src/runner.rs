@@ -913,7 +913,6 @@ fn configured_cron_toolsets(config: &GatewayConfig) -> Vec<String> {
     config
         .platform_toolsets
         .get(CRON_PLATFORM)
-        .filter(|tokens| !tokens.is_empty())
         .cloned()
         .unwrap_or_else(|| vec![CRON_DEFAULT_TOOLSET.to_string()])
 }

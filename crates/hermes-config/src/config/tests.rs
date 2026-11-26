@@ -13,27 +13,12 @@ mod tests {
         assert!(cfg.delegation.max_spawn_depth.is_none());
         assert!(cfg.tts.is_null());
         assert!(cfg.proxy.is_none());
-        assert_eq!(
-            cfg.platform_toolsets
-                .get("cli")
-                .cloned()
-                .unwrap_or_default(),
-            vec!["hermes-cli".to_string()]
-        );
-        assert_eq!(
-            cfg.platform_toolsets
-                .get("telegram")
-                .cloned()
-                .unwrap_or_default(),
-            vec!["hermes-telegram".to_string()]
-        );
-        assert_eq!(
-            cfg.platform_toolsets
-                .get("cron")
-                .cloned()
-                .unwrap_or_default(),
-            vec!["hermes-cron".to_string()]
-        );
+        // No entry is set; each platform falls back to its default.
+        assert!(cfg.platform_toolsets.is_empty());
+        let defaults = default_platform_toolsets();
+        assert_eq!(defaults["cli"], ["hermes-cli"]);
+        assert_eq!(defaults["telegram"], ["hermes-telegram"]);
+        assert_eq!(defaults["cron"], ["hermes-cron"]);
     }
 
     #[test]

@@ -513,7 +513,10 @@ fn normalize_session_reset(map: &mut Mapping) {
 }
 
 /// Normalize `platform_toolsets` entries so mixed scalar YAML values (e.g.
-/// bare numbers like `12306`) deserialize into `Vec<String>` safely.
+/// bare numbers like `12306`) deserialize into `Vec<String>` safely. A `null`
+/// entry is no entry. Earlier releases wrote every default entry into the
+/// file, so a map holding the entries each of them wrote is read as theirs:
+/// its entries equal to the default were never chosen and are dropped.
 fn normalize_platform_toolsets(map: &mut Mapping) {
     let ptk = key("platform_toolsets");
     let Some(Value::Mapping(existing)) = map.remove(&ptk) else {
@@ -525,6 +528,9 @@ fn normalize_platform_toolsets(map: &mut Mapping) {
         let Some(platform_name) = platform.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
             continue;
         };
+        if raw_values.is_null() {
+            continue;
+        }
 
         let mut out = Vec::new();
         match raw_values {
@@ -549,6 +555,26 @@ fn normalize_platform_toolsets(map: &mut Mapping) {
         }
 
         normalized.insert(key(platform_name), Value::Sequence(out));
+    }
+
+    let defaults: Vec<(Value, Value)> = crate::config::default_platform_toolsets()
+        .into_iter()
+        .map(|(platform, toolsets)| {
+            let toolsets = toolsets.into_iter().map(Value::String).collect();
+            (key(&platform), Value::Sequence(toolsets))
+        })
+        .collect();
+    // Every release that wrote the defaults wrote at least these.
+    let written_by_every_release = ["cli", "telegram", "discord", "whatsapp", "slack"];
+    if written_by_every_release
+        .iter()
+        .all(|platform| normalized.contains_key(key(platform)))
+    {
+        for (platform, toolsets) in &defaults {
+            if normalized.get(platform) == Some(toolsets) {
+                normalized.remove(platform);
+            }
+        }
     }
 
     map.insert(ptk, Value::Mapping(normalized));
@@ -1078,6 +1104,16 @@ platform_toolsets:
                 ("telegram".to_string(), vec!["web".to_string()]),
             ]
         );
+
+        // The first release to write them wrote 5.
+        let april = "platform_toolsets:\n  cli: [hermes-cli]\n  telegram: [hermes-telegram]\n  \
+                     discord: [hermes-discord]\n  whatsapp: [hermes-whatsapp]\n  slack: [hermes-slack]\n";
+        assert!(load(april).platform_toolsets.is_empty());
+
+        // Without all 5, an entry equal to its default was the user's.
+        let chosen =
+            load("platform_toolsets:\n  cli: [hermes-cli]\n  telegram: [hermes-telegram]\n");
+        assert_eq!(chosen.platform_toolsets.len(), 2);
     }
 
     #[test]
