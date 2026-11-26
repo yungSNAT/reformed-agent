@@ -1,7 +1,5 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
@@ -80,70 +78,9 @@ fn merge_object_values(existing: &mut Map<String, Value>, incoming: &Map<String,
 }
 
 pub(crate) fn write_owner_only_atomic(path: &Path, value: &Value) -> Result<(), String> {
-    // A symlinked config keeps its link: the target is replaced. A link whose
-    // folder is missing is refused, not given a new folder.
-    let path = &hermes_config::resolve_credential_link_target(path).map_err(|e| e.to_string())?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("config path {} has no parent directory", path.display()))?;
-    fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("config.json");
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let tmp_path = parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), nonce));
-    let raw = serde_json::to_vec_pretty(value).map_err(|e| format!("serialize config: {e}"))?;
-
-    let result = (|| -> Result<(), String> {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-
-        let mut file = options
-            .open(&tmp_path)
-            .map_err(|e| format!("create {}: {e}", tmp_path.display()))?;
-        file.write_all(&raw)
-            .map_err(|e| format!("write {}: {e}", tmp_path.display()))?;
-        file.write_all(b"\n")
-            .map_err(|e| format!("write {}: {e}", tmp_path.display()))?;
-        file.sync_all()
-            .map_err(|e| format!("fsync {}: {e}", tmp_path.display()))?;
-        drop(file);
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("chmod {}: {e}", tmp_path.display()))?;
-        }
-
-        fs::rename(&tmp_path, path)
-            .map_err(|e| format!("rename {} -> {}: {e}", tmp_path.display(), path.display()))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("chmod {}: {e}", path.display()))?;
-        }
-
-        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp_path);
-    }
-    result
+    let mut raw = serde_json::to_vec_pretty(value).map_err(|e| format!("serialize config: {e}"))?;
+    raw.push(b'\n');
+    hermes_config::atomic_write_owner_only(path, &raw).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
