@@ -75,9 +75,10 @@ fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), Rpc
             _ => Map::new(),
         };
         render_oneshot_template(template, &variables).map_err(|e| match e {
-            OneShotError::UnknownTemplate(name) => {
-                (UNKNOWN_TEMPLATE, format!("unknown one-shot template: {name}"))
-            }
+            OneShotError::UnknownTemplate(name) => (
+                UNKNOWN_TEMPLATE,
+                format!("unknown one-shot template: {name}"),
+            ),
             other => (PROMPT_REQUIRED, other.to_string()),
         })?
     };

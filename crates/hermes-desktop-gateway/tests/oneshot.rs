@@ -73,7 +73,11 @@ async fn start(with_model: bool) -> (SocketAddr, Requests, tempfile::TempDir) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let chat = hermes_desktop_gateway::Chat::new(config);
-    tokio::spawn(hermes_desktop_gateway::serve(listener, TOKEN.to_string(), chat));
+    tokio::spawn(hermes_desktop_gateway::serve(
+        listener,
+        TOKEN.to_string(),
+        chat,
+    ));
     (addr, requests, home)
 }
 
@@ -85,7 +89,10 @@ async fn connect(addr: SocketAddr) -> Socket {
         .into_client_request()
         .unwrap();
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
-    assert_eq!(next_json(&mut socket).await["params"]["type"], "gateway.ready");
+    assert_eq!(
+        next_json(&mut socket).await["params"]["type"],
+        "gateway.ready"
+    );
     socket
 }
 
@@ -146,9 +153,16 @@ async fn the_commit_message_template_goes_to_the_model() {
     assert_eq!(messages.len(), 2, "{body}");
     assert_eq!(messages[0]["role"], "system");
     let system = messages[0]["content"].as_str().unwrap();
-    assert!(system.starts_with("You write git commit messages."), "{system}");
+    assert!(
+        system.starts_with("You write git commit messages."),
+        "{system}"
+    );
     let user = messages[1]["content"].as_str().unwrap();
-    for part in ["+fn served() {}", "fix: an earlier one", "feat: the last proposal"] {
+    for part in [
+        "+fn served() {}",
+        "fix: an earlier one",
+        "feat: the last proposal",
+    ] {
         assert!(user.contains(part), "{part} missing from {user}");
     }
 }
