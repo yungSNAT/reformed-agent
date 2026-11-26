@@ -188,11 +188,22 @@ fn shim_command(python: &str, py_root: &Path) -> Command {
     command
 }
 
-/// What the shim printed ahead of its results, the results, and its stderr.
+/// What the shim printed around its results, the results, its stderr and exit code.
 struct Upstream {
     printed: String,
     results: Vec<Value>,
+    after: String,
     stderr: String,
+    code: i32,
+}
+
+/// Splits the shim's stdout into what the adapter printed before the results, the results,
+/// and what it printed after them (at interpreter exit); `None` when no complete results.
+fn split_results(stdout: &str) -> Option<(&str, Vec<Value>, &str)> {
+    let (printed, rest) = stdout.split_once(RESULTS_MARKER)?;
+    let mut values = serde_json::Deserializer::from_str(rest).into_iter::<Vec<Value>>();
+    let results = values.next()?.ok()?;
+    Some((printed, results, &rest[values.byte_offset()..]))
 }
 
 fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> {
@@ -202,21 +213,20 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
     // Python ends lines with CRLF on Windows; `Recorded` holds LF, as the binary restores them.
     let stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n");
     let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-    if !output.status.success() {
-        // As the script did, keep what the adapter printed before it failed, and its exit code.
-        return Err(Recorded {
-            stdout,
-            stderr,
-            code: output.status.code().unwrap_or(1),
-        });
-    }
-    // The results follow the marker; anything the adapter printed comes before it.
-    let unreadable = |error: String| failure(format!("unreadable output from {python}: {error}\n"));
-    let (printed, last) = stdout
-        .rsplit_once(RESULTS_MARKER)
-        .ok_or_else(|| unreadable("no results".into()))?;
-    let results: Vec<Value> =
-        serde_json::from_str(last).map_err(|error| unreadable(error.to_string()))?;
+    let code = output.status.code().unwrap_or(1);
+    let Some((printed, results, after)) = split_results(&stdout) else {
+        if code != 0 {
+            // As the script did, keep what the adapter printed before it failed, and its exit code.
+            return Err(Recorded {
+                stdout,
+                stderr,
+                code,
+            });
+        }
+        return Err(failure(format!(
+            "unreadable output from {python}: no results\n"
+        )));
+    };
     let expected = anthropic_inputs().len();
     if results.len() != expected {
         return Err(failure(format!(
@@ -224,10 +234,13 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
             results.len()
         )));
     }
+    // A failure after the results (at interpreter exit) still printed the recording.
     Ok(Upstream {
         printed: printed.to_owned(),
         results,
+        after: after.to_owned(),
         stderr,
+        code,
     })
 }
 
@@ -236,7 +249,11 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
 pub fn record(py_root: &Path, python: &str) -> Recorded {
     let mut cases = checkpoint_cases();
     let source = py_root.display().to_string();
-    let (printed, stderr) = if py_root.join("agent").join("anthropic_adapter.py").is_file() {
+    let (printed, after, stderr, code) = if py_root
+        .join("agent")
+        .join("anthropic_adapter.py")
+        .is_file()
+    {
         let upstream = match upstream_results(python, py_root) {
             Ok(upstream) => upstream,
             Err(failed) => return failed,
@@ -248,17 +265,22 @@ pub fn record(py_root: &Path, python: &str) -> Recorded {
                 py: Output::Json(py),
             },
         ));
-        (upstream.printed, upstream.stderr)
+        (
+            upstream.printed,
+            upstream.after,
+            upstream.stderr,
+            upstream.code,
+        )
     } else {
         let note = format!(
             "Note: Python Hermes not found at {source} \u{2014} only checkpoint hash cases emitted.\n"
         );
-        (String::new(), note)
+        (String::new(), String::new(), note, 0)
     };
     Recorded {
-        stdout: printed + &python_json(&Recording { source, cases }),
+        stdout: printed + &python_json(&Recording { source, cases }) + &after,
         stderr,
-        code: 0,
+        code,
     }
 }
 

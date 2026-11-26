@@ -169,6 +169,22 @@ fn what_the_adapter_prints_before_failing_is_kept_with_its_exit_code() {
 }
 
 #[test]
+fn what_the_adapter_prints_at_exit_follows_the_json_with_its_exit_code() {
+    let adapter = format!(
+        "import atexit, os, sys\n\ndef _bye():\n    sys.stdout.write('bye\\n')\n    sys.stdout.flush()\n    os._exit(3)\n\natexit.register(_bye)\n{FAKE_ADAPTER}"
+    );
+    let dir = checkout("exits-late", &adapter);
+    let py_root = dir.path().join("hermes-agent");
+    let recorded = record(&py_root, &python());
+    assert_eq!(recorded.stderr, "");
+    assert_eq!(recorded.code, 3);
+    assert_eq!(
+        recorded.stdout,
+        format!("{}bye\n", golden("fake_checkout.json", &py_root))
+    );
+}
+
+#[test]
 fn the_checkout_beside_is_found_from_the_resolved_repository_root() {
     let dir = Scratch::new("resolve");
     let repo = dir.path().join("reformed-agent");
