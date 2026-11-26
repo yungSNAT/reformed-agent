@@ -37,6 +37,10 @@ const QUEUE_BYTES: usize = 1 << 20;
 /// Most bytes of queued prompt text across the gateway.
 const PROCESS_QUEUE_BYTES: usize = 16 << 20;
 
+/// Most images one session holds staged for its next prompt, and their total bytes.
+pub(crate) const MAX_STAGED_IMAGES: usize = 16;
+pub(crate) const MAX_STAGED_BYTES: usize = 64 << 20;
+
 /// Bytes kept in event logs and prompt queues across the gateway's sessions.
 #[derive(Default)]
 pub(crate) struct Budget {
@@ -207,6 +211,24 @@ impl LiveSession {
     pub(super) fn images(&self) -> MutexGuard<'_, Vec<StagedImage>> {
         // Pushes and takes only, so a poisoned lock is still whole.
         self.images.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether an image of `bytes` more would stay within [`MAX_STAGED_IMAGES`] and
+    /// [`MAX_STAGED_BYTES`]; a method may ask before it reads or writes an image.
+    pub(crate) fn has_room_for_image(&self, bytes: usize) -> bool {
+        fits(&self.images(), bytes)
+    }
+
+    /// Stages `image` for the next prompt if the session stays within [`MAX_STAGED_IMAGES`]
+    /// and [`MAX_STAGED_BYTES`], answering how many it then holds; past them it hands the
+    /// image back, whose file the caller removes. Every method that stages an image calls it.
+    pub(crate) fn stage_image(&self, image: StagedImage) -> Result<usize, StagedImage> {
+        let mut images = self.images();
+        if !fits(&images, image.bytes) {
+            return Err(image);
+        }
+        images.push(image);
+        Ok(images.len())
     }
 
     /// Streams this session's events to connection `id` too; once per connection.
@@ -405,6 +427,12 @@ impl LiveSession {
     }
 }
 
+/// Whether `staged` and one more image of `bytes` stay within the staging limits.
+fn fits(staged: &[StagedImage], bytes: usize) -> bool {
+    let held: usize = staged.iter().map(|image| image.bytes).sum();
+    staged.len() < MAX_STAGED_IMAGES && held.saturating_add(bytes) <= MAX_STAGED_BYTES
+}
+
 impl Hub {
     /// Drops the whole log, so a replay from before now reports `truncated`.
     fn clear_log(&mut self, budget: &Budget) {
@@ -540,6 +568,30 @@ mod tests {
         live.publish(json!({"type": "message.complete"}), Some((1, slot)));
         assert_eq!(slots.available_permits(), 1);
         assert!(viewer_rx.try_recv().is_ok());
+    }
+
+    fn image(bytes: usize) -> StagedImage {
+        StagedImage {
+            path: std::path::PathBuf::from("staged.png"),
+            mime: "image/png",
+            bytes,
+        }
+    }
+
+    #[test]
+    fn a_session_stages_at_most_16_images_and_64_mib() {
+        let live = session();
+        for n in 1..=MAX_STAGED_IMAGES {
+            assert_eq!(live.stage_image(image(1)).ok(), Some(n));
+        }
+        assert!(!live.has_room_for_image(0));
+        assert!(live.stage_image(image(1)).is_err(), "a 17th image");
+
+        let live = session();
+        assert!(live.stage_image(image(MAX_STAGED_BYTES - 1)).is_ok());
+        assert!(live.has_room_for_image(1));
+        assert!(live.stage_image(image(2)).is_err(), "a byte over 64 MiB");
+        assert_eq!(live.stage_image(image(1)).ok(), Some(2));
     }
 
     #[test]

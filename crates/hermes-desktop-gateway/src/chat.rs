@@ -36,7 +36,7 @@ mod canonical;
 mod session;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
-use session::{Admitted, Budget, Next, Queued, Refused};
+use session::{Admitted, Budget, Next, Queued, Refused, MAX_STAGED_BYTES, MAX_STAGED_IMAGES};
 
 /// Marks a message whose content is a JSON array of text and image parts, which the agent's
 /// providers send as such (`ACP_MULTIMODAL_PREFIX` in hermes-agent).
@@ -491,6 +491,17 @@ impl Chat {
         let Some(session) = self.lock_sessions().get(id).cloned() else {
             return Err((SESSION_NOT_FOUND, "session not found".into()));
         };
+        let full = || {
+            (
+                IMAGE_TOO_LARGE,
+                format!(
+                    "a session holds at most {MAX_STAGED_IMAGES} images ({MAX_STAGED_BYTES} bytes)"
+                ),
+            )
+        };
+        if !session.has_room_for_image(0) {
+            return Err(full());
+        }
         let images = self.home.join("images");
         let stage = || crate::attach::stage_image(&images, payload);
         let staged = match tokio::runtime::Handle::current().runtime_flavor() {
@@ -522,9 +533,13 @@ impl Chat {
             "remainder": "",
             "text": format!("[User attached image: {name}]"),
         });
-        let mut queued = session.images();
-        queued.push(staged);
-        reply["count"] = queued.len().into();
+        match session.stage_image(staged) {
+            Ok(count) => reply["count"] = count.into(),
+            Err(refused) => {
+                let _ = std::fs::remove_file(&refused.path);
+                return Err(full());
+            }
+        }
         Ok(reply)
     }
 
