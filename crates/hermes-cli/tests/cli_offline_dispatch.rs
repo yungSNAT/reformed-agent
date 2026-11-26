@@ -6,6 +6,69 @@ use std::time::Duration;
 use support::isolated_hermes;
 
 #[tokio::test]
+async fn offline_model_completions_list_unique_providers_and_qualified_models() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir(&home).unwrap();
+
+    // Give every built-in provider an explicit catalogue to keep both
+    // completion commands independent of credentials and live discovery.
+    let mut providers = hermes_cli::model_switch::curated_provider_slugs();
+    providers.push("fixture-local");
+    let entries = providers
+        .iter()
+        .map(|provider| {
+            (
+                (*provider).to_string(),
+                serde_json::json!({
+                    "discover_models": false,
+                    "models": ["fixture-model", "FIXTURE-MODEL", "second-model"]
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    std::fs::write(
+        home.join("config.yaml"),
+        serde_json::json!({"llm_providers": entries}).to_string(),
+    )
+    .unwrap();
+
+    for (flag, expected) in [
+        (
+            "--completion-providers",
+            providers
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "--completion-values",
+            providers
+                .iter()
+                .flat_map(|provider| {
+                    [
+                        format!("{provider}:fixture-model"),
+                        format!("{provider}:second-model"),
+                    ]
+                })
+                .collect(),
+        ),
+    ] {
+        let mut command = isolated_hermes(sandbox.path());
+        command
+            .args(["model", flag])
+            .env("HTTPS_PROXY", "http://127.0.0.1:0");
+        let output = tokio::time::timeout(Duration::from_secs(15), command.output())
+            .await
+            .expect("model completions timed out")
+            .unwrap();
+        assert!(output.status.success(), "{flag}: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), expected, "{flag}");
+    }
+}
+
+#[tokio::test]
 async fn offline_systems_replay_reports_damaged_traces_and_exports_json() {
     let sandbox = tempfile::tempdir().unwrap();
     let replay = sandbox.path().join("hermes/logs/replay");
