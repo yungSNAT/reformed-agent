@@ -6,7 +6,7 @@
 //!
 //! - Fixture layout: `fixtures/<logical_module>/*.json`
 //! - Schema: see [`harness::ParityFixtureFile`]
-//! - Recording: `scripts/record_fixtures.py` (requires local Python checkout)
+//! - Recording: `cargo run -p hermes-parity-tests --bin record_fixtures` ([`recorder`])
 
 pub mod harness;
 pub mod recorder;
