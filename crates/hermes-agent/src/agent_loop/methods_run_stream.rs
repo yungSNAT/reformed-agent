@@ -15,6 +15,7 @@ impl AgentLoop {
                 let _cache_use =
                     tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
                 self.cancel_cache_keep_alive();
+                let _budget_lock = self.restore_session_budget()?;
                 if let Some(refused) = self.session_cap_refusal(&messages) {
                     return Ok(refused);
                 }
@@ -483,7 +484,7 @@ impl AgentLoop {
                                 if let Some(cost) =
                                     estimate_usage_cost_usd(u, partial.model.as_str(), &self.config)
                                 {
-                                    session_cost_usd += cost;
+                                    session_cost_usd += self.charge_session_budget(cost)?;
                                 }
                             }
                             ctx.add_message(partial.message);
@@ -547,10 +548,9 @@ impl AgentLoop {
                 };
                 inner_attempt = inner_attempt.saturating_add(1);
 
+                let cost = r.usage.as_ref().and_then(|u| estimate_usage_cost_usd(u, r.model.as_str(), &self.config)).unwrap_or(0.0);
+                session_cost_usd += cost;
                 if let Some(ref u) = r.usage {
-                    // Context pricing tiers are measured per provider request.
-                    session_cost_usd +=
-                        estimate_usage_cost_usd(u, r.model.as_str(), &self.config).unwrap_or(0.0);
                     turn_usage_acc = Some(merge_usage(turn_usage_acc, u));
                 }
 
