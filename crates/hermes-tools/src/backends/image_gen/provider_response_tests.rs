@@ -464,6 +464,44 @@ async fn krea_poll_reports_last_status_when_its_deadline_expires() {
 }
 
 #[tokio::test]
+async fn krea_poll_retries_rate_limit_and_stops_on_permanent_failure() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let backend = krea_backend(
+        KreaTransport::Direct {
+            api_key: "local-krea-fixture".into(),
+            base_url: server.uri(),
+        },
+        directory.path().join("krea-cache"),
+    );
+    Mock::given(method("GET"))
+        .and(path("/jobs/fixture-job"))
+        .and(header("authorization", "Bearer local-krea-fixture"))
+        .respond_with(ResponseTemplate::new(429))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/jobs/fixture-job"))
+        .and(header("authorization", "Bearer local-krea-fixture"))
+        .respond_with(
+            ResponseTemplate::new(410).set_body_json(json!({"message": "fixture removed"})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let error = backend.poll_krea_job("fixture-job").await.unwrap_err();
+    assert!(matches!(
+        error,
+        ToolError::ExecutionFailed(detail)
+            if detail == "Krea poll failed (410 Gone) for job fixture-job: fixture removed"
+    ));
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn managed_image_generation_normalises_images_and_reports_rejected_responses() {
     let server = MockServer::start().await;
     let image_url = format!("{}/fixture-artifact.png", server.uri());
@@ -591,6 +629,75 @@ async fn malformed_provider_responses_do_not_create_an_image() {
         assert!(!cache.exists());
     }
     server.verify().await;
+}
+
+#[tokio::test]
+async fn codex_generation_reports_failures_without_creating_an_image() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("codex-cache");
+    let mut backend = OpenAICodexImageGenBackend {
+        client: Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap(),
+        config: OpenAICodexImageGenConfig {
+            access_token: None,
+            base_url: server.uri(),
+            chat_model: "fixture-chat-model".into(),
+            tier_id: "gpt-image-2-low".into(),
+            quality: "low".into(),
+            output_dir: cache.clone(),
+        },
+    };
+
+    let error = backend
+        .generate(request("Fixture image"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ToolError::ExecutionFailed(detail) if detail.contains("requires Codex OAuth credentials")
+    ));
+    assert!(server.received_requests().await.unwrap().is_empty());
+    backend.config.access_token = Some("fixture-only".into());
+
+    for (reply, expected) in [
+        (
+            ResponseTemplate::new(422).set_body_string("fixture rejected"),
+            "Codex Responses API returned HTTP 422 Unprocessable Entity: fixture rejected",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_raw("data: [DONE]\n\n", "text/event-stream"),
+            "Codex response contained no image_generation_call result",
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(header("authorization", "Bearer fixture-only"))
+            .respond_with(reply)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = backend
+            .generate(request("Fixture image"))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ToolError::ExecutionFailed(detail) if detail == expected));
+        server.verify().await;
+        server.reset().await;
+    }
+    backend.config.base_url = "http://127.0.0.1:0".into();
+    let error = backend
+        .generate(request("Fixture image"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ToolError::ExecutionFailed(detail) if detail.starts_with("Codex image generation request failed:")
+    ));
+    assert!(!cache.exists());
 }
 
 #[tokio::test]

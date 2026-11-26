@@ -104,6 +104,7 @@ pub struct WeComAdapter {
     base: BasePlatformAdapter,
     config: WeComConfig,
     client: Client,
+    api_base: String,
     access_token: RwLock<Option<String>>,
     stop_signal: Arc<Notify>,
 }
@@ -117,6 +118,7 @@ impl WeComAdapter {
             base,
             config,
             client,
+            api_base: WECOM_API_BASE.into(),
             access_token: RwLock::new(None),
             stop_signal: Arc::new(Notify::new()),
         })
@@ -134,7 +136,7 @@ impl WeComAdapter {
 
         let result = super::helpers::wecom_access_token_reply(
             &self.client,
-            WECOM_API_BASE,
+            &self.api_base,
             &self.config.corp_id,
             &self.config.secret,
         )
@@ -157,7 +159,7 @@ impl WeComAdapter {
     /// (group broadcast) instead of `touser` (single-user / pipe-separated user list).
     pub async fn send_text(&self, user_id: &str, text: &str) -> Result<(), GatewayError> {
         let token = self.get_access_token().await?;
-        let url = format!("{}/message/send?access_token={}", WECOM_API_BASE, token);
+        let url = format!("{}/message/send?access_token={}", self.api_base, token);
 
         let agent_id = self.config.agent_id.parse::<i64>().unwrap_or(0);
         let body = if looks_like_wecom_group_chat_id(user_id) {
@@ -259,7 +261,7 @@ impl PlatformAdapter for WeComAdapter {
         // Step 1: Upload media to WeCom
         let upload_url = format!(
             "{}/media/upload?access_token={}&type={}",
-            WECOM_API_BASE, token, media_type
+            self.api_base, token, media_type
         );
 
         let part = reqwest::multipart::Part::bytes(file_bytes)
@@ -294,7 +296,7 @@ impl PlatformAdapter for WeComAdapter {
             .ok_or_else(|| GatewayError::SendFailed("No media_id in WeCom response".into()))?;
 
         // Step 2: Send message with media
-        let send_url = format!("{}/message/send?access_token={}", WECOM_API_BASE, token);
+        let send_url = format!("{}/message/send?access_token={}", self.api_base, token);
         let agent_id = self.config.agent_id.parse::<i64>().unwrap_or(0);
         let group = looks_like_wecom_group_chat_id(chat_id);
 
@@ -469,6 +471,188 @@ impl PlatformAdapter for WeComAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use wiremock::matchers::{body_json, body_string_contains, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn fixture_adapter(server: &MockServer) -> WeComAdapter {
+        let mut adapter = WeComAdapter::new(WeComConfig {
+            corp_id: "fixture-company".into(),
+            agent_id: "42".into(),
+            secret: "fixture".into(),
+            proxy: AdapterProxyConfig::default(),
+        })
+        .unwrap();
+        adapter.api_base = server.uri();
+        adapter.client = Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap();
+        adapter
+    }
+
+    async fn mount_access_token(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/gettoken"))
+            .and(query_param("corpid", "fixture-company"))
+            .and(query_param("corpsecret", "fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "fixture-session",
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn wecom_reuses_its_token_and_routes_group_and_direct_text() {
+        let server = MockServer::start().await;
+        mount_access_token(&server).await;
+        let adapter = fixture_adapter(&server);
+        assert_eq!(adapter.config().agent_id, "42");
+        assert_eq!(adapter.platform_name(), "wecom");
+        assert!(!adapter.is_running());
+        adapter.start().await.unwrap();
+        assert!(adapter.is_running());
+
+        for (recipient, id_field) in [("person", "touser"), ("wr-group-fixture", "chatid")] {
+            Mock::given(method("POST"))
+                .and(path("/message/send"))
+                .and(query_param("access_token", "fixture-session"))
+                .and(body_json(json!({
+                    (id_field): recipient,
+                    "msgtype": "text",
+                    "agentid": 42,
+                    "text": {"content": "Fixture message"}
+                })))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&server)
+                .await;
+            adapter
+                .send_message(recipient, "Fixture message", None)
+                .await
+                .unwrap();
+        }
+        adapter.stop().await.unwrap();
+        assert!(!adapter.is_running());
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn wecom_uploads_local_media_then_sends_the_returned_id() {
+        let server = MockServer::start().await;
+        mount_access_token(&server).await;
+        let adapter = fixture_adapter(&server);
+        let directory = tempfile::tempdir().unwrap();
+
+        for (ext, category) in [
+            ("png", "image"),
+            ("wav", "voice"),
+            ("mp4", "video"),
+            ("txt", "file"),
+        ] {
+            let file_name = format!("fixture.{ext}");
+            let file = directory.path().join(&file_name);
+            let contents = format!("bytes for {file_name}");
+            std::fs::write(&file, &contents).unwrap();
+            let media_id = format!("uploaded-{category}");
+            Mock::given(method("POST"))
+                .and(path("/media/upload"))
+                .and(query_param("access_token", "fixture-session"))
+                .and(query_param("type", category))
+                .and(body_string_contains(format!(
+                    "name=\"media\"; filename=\"{file_name}\""
+                )))
+                .and(body_string_contains(contents))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "media_id": media_id
+                })))
+                .expect(2)
+                .mount(&server)
+                .await;
+
+            for (recipient, id_field, caption) in [
+                ("person", "touser", None),
+                ("wm-group-fixture", "chatid", Some("Group clip")),
+            ] {
+                let media = if category == "video" {
+                    json!({"media_id": media_id, "title": caption.unwrap_or(&file_name)})
+                } else {
+                    json!({"media_id": media_id})
+                };
+                Mock::given(method("POST"))
+                    .and(path("/message/send"))
+                    .and(query_param("access_token", "fixture-session"))
+                    .and(body_json(json!({
+                        (id_field): recipient,
+                        "msgtype": category,
+                        "agentid": 42,
+                        (category): media
+                    })))
+                    .respond_with(ResponseTemplate::new(200))
+                    .expect(1)
+                    .mount(&server)
+                    .await;
+                adapter
+                    .send_file(recipient, file.to_str().unwrap(), caption)
+                    .await
+                    .unwrap();
+            }
+        }
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn wecom_surfaces_auth_and_failed_upload_without_sending_a_message() {
+        let server = MockServer::start().await;
+        let adapter = fixture_adapter(&server);
+        Mock::given(method("POST"))
+            .and(path("/message/send"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let token_mock = Mock::given(method("GET"))
+            .and(path("/gettoken"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"errcode": 1})))
+            .expect(1)
+            .mount_as_scoped(&server)
+            .await;
+        assert!(matches!(
+            adapter.send_text("person", "Fixture message").await,
+            Err(GatewayError::Auth(message)) if message.contains("No access_token")
+        ));
+        drop(token_mock);
+
+        mount_access_token(&server).await;
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("fixture.txt");
+        std::fs::write(&file, b"fixture file").unwrap();
+        for (response, expected) in [
+            (
+                ResponseTemplate::new(503).set_body_string("fixture upload unavailable"),
+                "fixture upload unavailable",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_json(json!({})),
+                "No media_id in WeCom response",
+            ),
+        ] {
+            let _upload = Mock::given(method("POST"))
+                .and(path("/media/upload"))
+                .respond_with(response)
+                .expect(1)
+                .mount_as_scoped(&server)
+                .await;
+            assert!(matches!(
+                adapter.send_file("person", file.to_str().unwrap(), None).await,
+                Err(GatewayError::SendFailed(message)) if message.contains(expected)
+            ));
+        }
+        server.verify().await;
+    }
 
     #[test]
     fn remote_image_file_name_keeps_extension() {
