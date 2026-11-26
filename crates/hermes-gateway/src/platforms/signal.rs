@@ -783,7 +783,7 @@ mod tests {
                     "source": "+12025550124",
                     "timestamp": 1234,
                     "dataMessage": {
-                        "message": "Meet in Varrock",
+                        "message": "Meet at the library",
                         "groupInfo": {"groupId": "group-123"},
                         "attachments": [{"id": "map"}, {}, {"id": "note"}]
                     }
@@ -808,7 +808,7 @@ mod tests {
         let group = SignalAdapter::parse_received_message(group).expect("group message");
         assert_eq!(group.source, "+12025550124");
         assert_eq!(group.timestamp, 1234);
-        assert_eq!(group.text, "Meet in Varrock");
+        assert_eq!(group.text, "Meet at the library");
         assert_eq!(group.group_id.as_deref(), Some("group-123"));
         assert_eq!(group.attachments, ["map", "note"]);
 
