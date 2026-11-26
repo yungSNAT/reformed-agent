@@ -824,3 +824,60 @@ fn a_header_value_with_a_control_byte_is_refused_at_save() {
     }
     save(&path, &obj(json!({"kind": "remote", "label": "W", "url": "https://gw.example", "token": "t", "headers": {"X-Key": "a\tb"}}))).unwrap();
 }
+
+// ---- Review round 2 -------------------------------------------------------------------------
+
+#[test]
+fn a_url_without_a_web_scheme_is_never_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    let sealed = json!({"encoding": "safeStorage", "value": "djEwAAAA"});
+    let doc = json!({"version": 2, "connections": [
+        {"id": "bare", "kind": "remote", "label": "Bare", "url": "user:pw-secret@gw.example", "authMode": "token", "token": sealed},
+        {"id": "file", "kind": "remote", "label": "File", "url": "file:///home/u/pw-secret", "authMode": "token", "token": sealed}
+    ]});
+    std::fs::write(&path, doc.to_string()).unwrap();
+    let (doc, _) = read_doc(&path).unwrap();
+    let view = public_registry(doc.as_ref());
+    assert!(!view.to_string().contains("pw-secret"), "{view}");
+    for entry in view["connections"].as_array().unwrap() {
+        if entry["id"] != "local" {
+            assert!(entry.get("url").is_none(), "{entry}");
+        }
+    }
+}
+
+#[test]
+fn a_move_carries_only_what_the_edit_sends() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    // An entry native Desktop wrote, with fields this gateway does not manage.
+    let entry = json!({"id": "gw", "kind": "remote", "label": "Gw", "url": "https://gw.example", "authMode": "token",
+        "token": envelope("first"), "deviceSecret": "native-only", "remoteProfile": "work"});
+    std::fs::write(&path, json!({"connections": [entry]}).to_string()).unwrap();
+    // An edit at the same address keeps them.
+    let (_, kept) = save(&path, &obj(json!({"id": "gw", "label": "Gw 2"}))).unwrap();
+    assert_eq!(kept["deviceSecret"], "native-only");
+    assert_eq!(kept["remoteProfile"], "work");
+    // A move starts afresh: id, kind, label, URL, auth mode, the new token and consent only.
+    let (_, moved) = save(
+        &path,
+        &obj(json!({"id": "gw", "url": "https://collector.example", "token": "second"})),
+    )
+    .unwrap();
+    let mut keys: Vec<&str> = moved.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "allowPrivateNetwork",
+            "authMode",
+            "id",
+            "kind",
+            "label",
+            "token",
+            "url"
+        ]
+    );
+    assert_eq!(moved["label"], "Gw 2");
+}
