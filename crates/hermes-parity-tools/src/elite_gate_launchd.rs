@@ -125,30 +125,58 @@ fn find_program(path_var: &str, name: &str) -> Option<String> {
         .split(':')
         .filter(|dir| dir.starts_with('/'))
         .map(|dir| std::path::Path::new(dir).join(name))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| is_executable(candidate))
         .map(|candidate| candidate.to_string_lossy().into_owned())
 }
 
-/// How the plist starts cargo: the installer's own `cargo` by absolute path,
-/// because launchd's `PATH` below lacks `~/.cargo/bin`; else `env cargo`.
-fn cargo_launcher() -> Vec<String> {
-    match find_program(&std::env::var("PATH").unwrap_or_default(), "cargo") {
-        Some(cargo) => vec![cargo],
-        None => vec!["/usr/bin/env".to_string(), "cargo".to_string()],
+fn is_executable(path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        path.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
     }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+/// The `cargo` the plist starts, by absolute path, because launchd's `PATH`
+/// below lacks `~/.cargo/bin`: the first on the installer's `PATH`, else
+/// `$CARGO_HOME/bin/cargo`, else `~/.cargo/bin/cargo`. Without one the
+/// installer refuses, as the agent could never start the gate.
+fn cargo_launcher(
+    path_var: &str,
+    cargo_home: Option<&str>,
+    home: Option<&str>,
+) -> Result<String, String> {
+    let fallbacks = [
+        cargo_home.map(|dir| format!("{dir}/bin")),
+        home.map(|dir| format!("{dir}/.cargo/bin")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(":");
+    find_program(path_var, "cargo")
+        .or_else(|| find_program(&fallbacks, "cargo"))
+        .ok_or_else(|| {
+            "cannot find an executable cargo on PATH, in $CARGO_HOME/bin or in ~/.cargo/bin"
+                .to_string()
+        })
 }
 
 fn plist(
     label: &str,
-    launcher: &[String],
+    launcher: &str,
     repo_root: &str,
     log_dir: &str,
     hour: u32,
     minute: u32,
 ) -> String {
-    let program: String = launcher
-        .iter()
-        .cloned()
+    let program: String = [launcher.to_string()]
+        .into_iter()
         .chain([
             "run".to_string(),
             "--locked".to_string(),
@@ -246,6 +274,11 @@ pub fn run_install(args: InstallArgs) -> Result<i32, String> {
         return Ok(2);
     };
 
+    let launcher = cargo_launcher(
+        &std::env::var("PATH").unwrap_or_default(),
+        std::env::var("CARGO_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )?;
     let label = format!("{}.nightly_elite_gate", args.label_prefix);
     let plist_path = format!("{agents}/{label}.plist");
     for dir in [agents.clone(), logs.clone(), format!("{logs}/elite-gate")] {
@@ -253,7 +286,7 @@ pub fn run_install(args: InstallArgs) -> Result<i32, String> {
     }
     fs::write(
         &plist_path,
-        plist(&label, &cargo_launcher(), &repo_root, &logs, hour, minute),
+        plist(&label, &launcher, &repo_root, &logs, hour, minute),
     )
     .map_err(|e| format!("{plist_path}: {e}"))?;
 
@@ -424,26 +457,76 @@ mod tests {
         assert_eq!(tail_lines(b"a\n", 0), b"");
     }
 
-    #[test]
-    fn cargo_is_found_by_absolute_path() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let bin = dir.path().join("cargo");
+    #[cfg(unix)]
+    fn tool(dir: &std::path::Path, mode: u32) -> String {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::create_dir_all(dir).expect("mkdir");
+        let bin = dir.join("cargo");
         fs::write(&bin, "").expect("write");
-        let root = dir.path().to_string_lossy().into_owned();
-        let path_var = format!("relative:/nonexistent:{root}");
+        fs::set_permissions(&bin, fs::Permissions::from_mode(mode)).expect("chmod");
+        bin.to_string_lossy().into_owned()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cargo_is_found_by_absolute_path_and_must_be_executable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sub = |rel: &str| dir.path().join(rel).to_string_lossy().into_owned();
+        let on_path = tool(&dir.path().join("path"), 0o755);
+        tool(&dir.path().join("plain"), 0o644);
+        let in_home = tool(&dir.path().join("home/.cargo/bin"), 0o755);
+        let in_cargo_home = tool(&dir.path().join("ch/bin"), 0o755);
+        let path_var = format!("relative:/nonexistent:{}:{}", sub("plain"), sub("path"));
+        let (home, cargo_home) = (sub("home"), sub("ch"));
+
+        assert_eq!(find_program(&path_var, "cargo"), Some(on_path.clone()));
+        assert_eq!(find_program(&sub("plain"), "cargo"), None);
         assert_eq!(
-            find_program(&path_var, "cargo"),
-            Some(bin.to_string_lossy().into_owned())
+            cargo_launcher(&path_var, Some(&cargo_home), Some(&home)),
+            Ok(on_path)
         );
-        assert_eq!(find_program("relative:/nonexistent", "cargo"), None);
+        assert_eq!(
+            cargo_launcher("/nonexistent", Some(&cargo_home), Some(&home)),
+            Ok(in_cargo_home)
+        );
+        assert_eq!(
+            cargo_launcher("/nonexistent", None, Some(&home)),
+            Ok(in_home)
+        );
+        let missing = cargo_launcher(&sub("plain"), None, Some("/nonexistent"));
+        assert!(missing
+            .expect_err("no cargo")
+            .contains("cannot find an executable cargo"));
     }
 
     #[test]
-    fn plist_escapes_xml_and_runs_the_rust_gate() {
-        let launcher = vec!["/usr/bin/env".to_string(), "cargo".to_string()];
-        let text = plist("p.nightly_elite_gate", &launcher, "/r/a&b", "/l", 3, 30);
-        assert!(text.contains("<string>/r/a&amp;b/Cargo.toml</string>"));
-        assert!(text.contains("<string>run-nightly-elite-gate</string>"));
+    fn plist_starts_the_rust_gate_with_every_argument() {
+        let text = plist("p.nightly_elite_gate", "/c/cargo", "/r/a&b", "/l", 3, 30);
+        let start = text.find("<key>ProgramArguments</key>").expect("program");
+        let end = start + text[start..].find("</array>").expect("end");
+        let args: Vec<&str> = text[start..end]
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("<string>")?.strip_suffix("</string>"))
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "/c/cargo",
+                "run",
+                "--locked",
+                "-q",
+                "--manifest-path",
+                "/r/a&amp;b/Cargo.toml",
+                "-p",
+                "hermes-parity-tools",
+                "--",
+                "run-nightly-elite-gate",
+                "--repo-root",
+                "/r/a&amp;b",
+                "--log-dir",
+                "/l/elite-gate",
+            ]
+        );
         assert!(text.contains("<string>a&amp;b</string>"));
         assert!(text.contains("<integer>30</integer>"));
     }
