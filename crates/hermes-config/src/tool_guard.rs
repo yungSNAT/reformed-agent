@@ -83,12 +83,11 @@ impl Pins {
         if let Some(guard) = self.pinned() {
             return Ok(Some(guard));
         }
-        Ok(
-            match guard_in(&home.join("config.yaml"), "the profile config").await? {
-                Some(read) => Some(self.profile.get_or_init(|| read)),
-                None => self.pinned(),
-            },
-        )
+        if let Some(read) = guard_in(&home.join("config.yaml"), "the profile config").await? {
+            self.profile.get_or_init(|| read);
+        }
+        // A managed guard another call pinned during this read governs.
+        Ok(self.pinned())
     }
 
     fn pinned(&self) -> Option<&ToolGuardConfig> {

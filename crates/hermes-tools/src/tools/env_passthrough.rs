@@ -20,14 +20,18 @@ fn load_config_passthrough_uncached() -> BTreeSet<String> {
     // With the managed scope laid over it, as `load_config` reads it, so a list
     // the administrator pins applies. A managed config that cannot be used
     // passes nothing through, rather than the profile's list.
-    if let Some(problem) = hermes_config::managed_scope_dir()
-        .and_then(|dir| crate::website_policy::managed_config_problem(&dir))
-    {
-        tracing::warn!("terminal.env_passthrough ignored: {problem}");
-        return BTreeSet::new();
-    }
-    let Some(config) = hermes_config::load_effective_config_yaml_value(&home.join("config.yaml"))
-    else {
+    let read = || hermes_config::load_effective_config_yaml_value(&home.join("config.yaml"));
+    let config = match hermes_config::managed_scope_dir() {
+        Some(dir) => match crate::website_policy::with_managed_config(&dir, read) {
+            Ok(config) => config,
+            Err(problem) => {
+                tracing::warn!("terminal.env_passthrough ignored: {problem}");
+                return BTreeSet::new();
+            }
+        },
+        None => read(),
+    };
+    let Some(config) = config else {
         return BTreeSet::new();
     };
     config
