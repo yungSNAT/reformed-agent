@@ -106,9 +106,7 @@ pub(crate) fn read_preferences(path: &Path) -> Result<Snapshot, PrefsError> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Snapshot::missing(false))
         }
-        Err(_) => {
-            return Err(PrefsError::Busy("preferences store is unreadable".into()))
-        }
+        Err(_) => return Err(PrefsError::Busy("preferences store is unreadable".into())),
     };
     let raw = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&raw);
     let Ok(Value::Object(doc)) = serde_json::from_slice::<Value>(raw) else {

@@ -14,7 +14,10 @@ fn dead_lock(path: &Path) {
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("owner"), "dead").unwrap();
     let old = SystemTime::now() - Duration::from_secs(60);
-    std::fs::File::open(&dir).unwrap().set_modified(old).unwrap();
+    std::fs::File::open(&dir)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
 }
 
 #[test]
@@ -65,7 +68,8 @@ fn writers_racing_a_stale_lock_never_hold_it_together() {
     let start = Arc::new(Barrier::new(8));
     let writers: Vec<_> = (0..8)
         .map(|_| {
-            let (path, holding, most, start) = (path.clone(), holding.clone(), most.clone(), start.clone());
+            let (path, holding, most, start) =
+                (path.clone(), holding.clone(), most.clone(), start.clone());
             std::thread::spawn(move || {
                 start.wait();
                 let Ok(lock) = StoreLock::take(&path, "store") else {
@@ -81,8 +85,15 @@ fn writers_racing_a_stale_lock_never_hold_it_together() {
         })
         .collect();
     let held: Vec<bool> = writers.into_iter().map(|w| w.join().unwrap()).collect();
-    assert_eq!(most.load(Ordering::SeqCst), 1, "2 writers held the lock at once");
-    assert!(held.iter().all(|&h| h), "a writer lost its lock whilst holding it");
+    assert_eq!(
+        most.load(Ordering::SeqCst),
+        1,
+        "2 writers held the lock at once"
+    );
+    assert!(
+        held.iter().all(|&h| h),
+        "a writer lost its lock whilst holding it"
+    );
 }
 
 #[test]
