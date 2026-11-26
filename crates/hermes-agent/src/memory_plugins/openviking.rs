@@ -971,5 +971,8 @@ include!("openviking/recall.rs");
 mod tests;
 
 #[cfg(test)]
+mod recall_config_tests;
+
+#[cfg(test)]
 #[path = "openviking_coverage_gen.rs"]
 mod coverage_gen;
