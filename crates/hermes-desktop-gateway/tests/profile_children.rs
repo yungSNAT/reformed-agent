@@ -12,7 +12,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::Router;
 use futures::{SinkExt, StreamExt};
 use hermes_desktop_gateway::{Chat, ChildGateways};
 use serde_json::{json, Value};
@@ -276,12 +276,13 @@ async fn each_profile_runs_with_its_own_keys_and_keeps_its_own_sessions() {
         ["Bearer inbox-key", "Bearer root-key"]
     );
 
-    // Each turn is kept in its own profile only.
+    // Each turn is kept in its own profile only; a session a profile does not have reads as an
+    // empty history there, as the history route answers for any unknown session.
     assert_eq!(history(addr, &in_inbox, Some("inbox")).await, (200, 2));
-    assert_eq!(history(addr, &in_inbox, None).await.0, 404);
+    assert_eq!(history(addr, &in_inbox, None).await, (200, 0));
     assert_eq!(history(addr, &in_default, None).await, (200, 2));
     assert_eq!(history(addr, &in_default, Some("default")).await, (200, 2));
-    assert_eq!(history(addr, &in_default, Some("inbox")).await.0, 404);
+    assert_eq!(history(addr, &in_default, Some("inbox")).await, (200, 0));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -300,7 +301,7 @@ async fn a_request_naming_a_profile_runs_in_that_profile() {
         history(addr, &in_research, Some("research")).await,
         (200, 2)
     );
-    assert_eq!(history(addr, &in_research, None).await.0, 404);
+    assert_eq!(history(addr, &in_research, None).await, (200, 0));
     assert_eq!(history(addr, &in_default, None).await, (200, 2));
 }
 
