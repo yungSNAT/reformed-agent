@@ -888,3 +888,7 @@ fn extract_session_objective(messages: &[hermes_core::Message]) -> Option<String
             .map(ToOwned::to_owned)
     })
 }
+
+#[cfg(test)]
+#[path = "interactive_resume_coverage_gen.rs"]
+mod coverage_gen_main_interactive_resume;

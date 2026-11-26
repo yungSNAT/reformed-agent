@@ -840,6 +840,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auxiliary_retries_update_only_rejected_fields_in_extra_body() {
+        let provider = ScriptedProvider::new(
+            "anthropic",
+            vec![
+                Outcome::Err("Unsupported parameter: temperature".into()),
+                Outcome::Err("Unknown parameter: max_tokens".into()),
+                Outcome::Ok("Matching draft".into()),
+            ],
+        );
+        let client = AuxiliaryClient::builder()
+            .extend_candidates([ProviderCandidate::new(
+                AuxiliarySource::Anthropic,
+                "fixture-model",
+                provider.clone(),
+            )])
+            .config(AuxiliaryConfig {
+                consult_env: false,
+                ..AuxiliaryConfig::default()
+            })
+            .build();
+        let mut request = AuxiliaryRequest::new(
+            AuxiliaryTask::SessionSearch,
+            vec![user_msg("Find the draft")],
+        )
+        .with_temperature(0.3)
+        .with_max_tokens(320);
+        request.extra_body = Some(serde_json::json!({
+            "temperature": 0.3, "max_tokens": 320, "metadata": {"purpose": "draft"}
+        }));
+
+        let response = client.call(request).await.unwrap();
+        assert_eq!(response.text(), Some("Matching draft"));
+        let calls = provider.recorded_calls();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].temperature, Some(0.3));
+        assert_eq!(calls[1].temperature, None);
+        assert_eq!(calls[1].max_tokens, Some(320));
+        assert_eq!(
+            calls[1].extra_body,
+            Some(serde_json::json!({"max_tokens": 320, "metadata": {"purpose": "draft"}}))
+        );
+        assert_eq!(calls[2].max_tokens, None);
+        assert_eq!(
+            calls[2].extra_body,
+            Some(
+                serde_json::json!({"max_completion_tokens": 320, "metadata": {"purpose": "draft"}})
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn replacing_auxiliary_config_applies_task_provider_and_model_to_next_call() {
+        let first = ScriptedProvider::new("anthropic", vec![Outcome::Ok("First draft".into())]);
+        let second = ScriptedProvider::new("openrouter", vec![Outcome::Ok("Second draft".into())]);
+        let mut config = AuxiliaryConfig {
+            consult_env: false,
+            ..AuxiliaryConfig::default()
+        };
+        let mut client = AuxiliaryClient::builder()
+            .extend_candidates([
+                ProviderCandidate::new(AuxiliarySource::Anthropic, "first-model", first.clone()),
+                ProviderCandidate::new(AuxiliarySource::OpenRouter, "second-model", second.clone()),
+            ])
+            .config(config.clone())
+            .build();
+        let task = AuxiliaryTask::SessionSearch;
+        let request = AuxiliaryRequest::new(task.clone(), vec![user_msg("Find the draft")]);
+        assert_eq!(
+            client.call(request.clone()).await.unwrap().text(),
+            Some("First draft")
+        );
+        config.set_task(
+            &task,
+            super::super::config::TaskOverride {
+                provider: Some("openrouter".into()),
+                model: Some("configured-model".into()),
+                ..Default::default()
+            },
+        );
+        client.set_config(config);
+        assert!(!client.config().consult_env);
+        let response = client.call(request).await.unwrap();
+        assert_eq!(response.provider_label, "openrouter");
+        assert_eq!(response.model, "configured-model");
+        assert_eq!(response.text(), Some("Second draft"));
+        assert_eq!(first.recorded_calls().len(), 1);
+        assert_eq!(second.recorded_calls().len(), 1);
+    }
+
+    #[tokio::test]
     async fn unsupported_max_tokens_retries_with_max_completion_tokens() {
         let p1 = ScriptedProvider::new(
             "anthropic",

@@ -1355,3 +1355,7 @@ async fn run_verify_provenance(
 }
 
 include!("doctor_routes/route_health.rs");
+
+#[cfg(test)]
+#[path = "doctor_routes_coverage_gen.rs"]
+mod coverage_gen_main_doctor_routes;

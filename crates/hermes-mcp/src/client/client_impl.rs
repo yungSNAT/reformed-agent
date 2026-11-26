@@ -1371,3 +1371,7 @@ impl ToolHandler for RegisteredMcpToolHandler {
         self.schema.clone()
     }
 }
+
+#[cfg(test)]
+#[path = "client_impl_coverage_gen.rs"]
+mod coverage_gen_client_client_impl;

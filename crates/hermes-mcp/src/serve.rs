@@ -622,6 +622,10 @@ impl HermesMcpServe {
 mod tests {
     use super::*;
 
+    mod session_event_contract {
+        include!("serve_session_event_tests.rs");
+    }
+
     #[test]
     fn test_event_bridge_push_poll() {
         let bridge = EventBridge::new();

@@ -366,6 +366,45 @@ mod tests {
         assert!(matches!(result, Err(TitleError::EmptyResult)));
     }
 
+    #[tokio::test]
+    async fn title_generation_handles_wrappers_and_omits_contentless_assistant_calls() {
+        let messages = [
+            Message::user("Review the draft"),
+            Message::assistant_with_tool_calls(
+                None,
+                vec![hermes_core::ToolCall {
+                    id: "draft-1".into(),
+                    function: hermes_core::FunctionCall {
+                        name: "read_draft".into(),
+                        arguments: "{}".into(),
+                    },
+                    extra_content: None,
+                }],
+            ),
+            Message::tool_result("draft-1", "Draft ready"),
+        ];
+        for (response, expected) in [
+            ("'TITLE: \"Café notes\"'", Some("Café notes")),
+            ("Title: ' '", None),
+            ("T", Some("T")),
+            ("'Title revision", Some("'Title revision")),
+        ] {
+            let provider = ScriptedProvider::with_response(response);
+            let generator = TitleGenerator::new(provider.clone(), "title-fixture");
+            let result = generator.generate_title(&messages).await;
+            if let Some(expected) = expected {
+                assert_eq!(result.unwrap(), expected);
+            } else {
+                assert!(matches!(result, Err(TitleError::EmptyResult)));
+            }
+            let calls = provider.recorded();
+            assert_eq!(
+                calls[0].messages[1].content.as_deref(),
+                Some("User: Review the draft\nTool: Draft ready")
+            );
+        }
+    }
+
     #[test]
     fn test_generate_title_surfaces_provider_errors() {
         let provider = ScriptedProvider::with_error("no provider");
@@ -404,6 +443,27 @@ mod tests {
         assert!(user_prompt.contains("User:"));
         assert!(user_prompt.contains("Assistant:"));
         assert!(user_prompt.len() < 100);
+    }
+
+    #[tokio::test]
+    async fn title_prompt_applies_message_limit_and_preserves_complete_characters() {
+        let provider = ScriptedProvider::with_response("Draft Review");
+        let generator = TitleGenerator::new(provider.clone(), "title-fixture")
+            .with_max_messages(3)
+            .with_max_message_chars(5);
+        let messages = [
+            Message::system("aé🧩z"),
+            Message::user("Draft"),
+            Message::tool_result("draft-1", "Ready"),
+            Message::assistant("Later"),
+        ];
+        assert_eq!(
+            generator.generate_title(&messages).await.unwrap(),
+            "Draft Review"
+        );
+        let calls = provider.recorded();
+        let prompt = calls[0].messages[1].content.as_deref().unwrap();
+        assert_eq!(prompt, "System: aé\nUser: Draft\nTool: Ready");
     }
 
     // Helper for tests that don't need a real provider

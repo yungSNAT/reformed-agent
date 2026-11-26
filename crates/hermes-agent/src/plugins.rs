@@ -778,6 +778,99 @@ mod tests {
         assert_eq!(mgr.list_plugins()[0].name, "test");
     }
 
+    #[tokio::test]
+    async fn plugin_manager_runs_lifecycle_and_preserves_registration_on_failure() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct LifecyclePlugin {
+            start_fails: bool,
+            stopped: AtomicBool,
+        }
+
+        #[async_trait::async_trait]
+        impl Plugin for LifecyclePlugin {
+            fn meta(&self) -> PluginMeta {
+                TestPlugin.meta()
+            }
+
+            async fn initialize(&self) -> Result<(), AgentError> {
+                if self.start_fails {
+                    return Err(AgentError::Io("fixture initialization failed".into()));
+                }
+                Ok(())
+            }
+
+            async fn shutdown(&self) -> Result<(), AgentError> {
+                self.stopped.store(true, Ordering::Relaxed);
+                Err(AgentError::Io("fixture shutdown failed".into()))
+            }
+
+            fn register(&self, ctx: &mut PluginContext) {
+                ctx.register_cli_command(PluginCliCommand {
+                    name: "fixture-command".into(),
+                    description: "Local fixture command".into(),
+                    plugin_name: self.meta().name,
+                });
+            }
+        }
+
+        for start_fails in [false, true] {
+            let plugin = Arc::new(LifecyclePlugin {
+                start_fails,
+                stopped: AtomicBool::new(false),
+            });
+            let mut mgr = PluginManager::default();
+            mgr.register(plugin.clone());
+            assert_eq!(mgr.get("test").unwrap().meta().name, "test");
+            assert!(mgr.get("missing").is_none());
+            let commands = mgr.get_plugin_cli_commands();
+            assert_eq!(commands.len(), 1);
+            assert_eq!(commands[0].name, "fixture-command");
+            assert_eq!(commands[0].plugin_name, "test");
+            assert!(mgr.get_plugin_tools().is_empty());
+            assert!(mgr.all_tools().is_empty());
+            let result = mgr.initialize_all().await;
+            if start_fails {
+                assert!(
+                    matches!(result, Err(AgentError::Io(message)) if message == "fixture initialization failed")
+                );
+            } else {
+                result.unwrap();
+            }
+            mgr.shutdown_all().await.unwrap();
+            assert!(plugin.stopped.load(Ordering::Relaxed));
+            assert!(mgr.get("test").is_some());
+        }
+    }
+
+    #[test]
+    fn plugin_discovery_ignores_disabled_and_invalid_manifests() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("plugins");
+        std::fs::write(&path, "fixture file").unwrap();
+        assert!(PluginManager::discover_plugins(home.path()).is_empty());
+        std::fs::remove_file(&path).unwrap();
+        for name in ["valid", "disabled", "bad-yaml", "unreadable", "no-manifest"] {
+            std::fs::create_dir_all(path.join(name)).unwrap();
+        }
+        std::fs::write(path.join("ordinary-file.txt"), "fixture").unwrap();
+        for name in ["valid", "disabled"] {
+            std::fs::write(
+                path.join(name).join("plugin.yaml"),
+                format!("name: {name}\nversion: '1.0'\ndescription: Fixture plugin\n"),
+            )
+            .unwrap();
+        }
+        std::fs::write(path.join("disabled/.disabled"), "").unwrap();
+        std::fs::write(path.join("bad-yaml/plugin.yaml"), "[").unwrap();
+        std::fs::create_dir(path.join("unreadable/plugin.yaml")).unwrap();
+
+        let entries = PluginManager::discover_plugins(home.path());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0.name, "valid");
+        assert_eq!(entries[0].1, path.join("valid"));
+    }
+
     #[test]
     fn test_hook_invocation() {
         let mut mgr = PluginManager::new();

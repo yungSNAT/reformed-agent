@@ -849,6 +849,8 @@ fn contains_normalized_whatsapp_id(list: &[String], candidate: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    mod cloud_contract;
+
     use super::*;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

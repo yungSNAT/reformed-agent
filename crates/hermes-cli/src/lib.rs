@@ -43,6 +43,9 @@ pub mod tui;
 pub mod update;
 pub mod webhook_delivery;
 
+#[cfg(all(test, unix))]
+mod isolated_test_profile;
+
 #[cfg(test)]
 pub(crate) mod test_env_lock;
 

@@ -110,3 +110,7 @@ fn main() {
     };
     exit(1);
 }
+
+#[cfg(test)]
+#[path = "hermes-ultra_coverage_gen.rs"]
+mod coverage_gen_bin_hermes_ultra;

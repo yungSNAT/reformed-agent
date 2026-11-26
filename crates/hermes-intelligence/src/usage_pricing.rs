@@ -23,11 +23,13 @@ pub struct CanonicalUsage {
 
 impl CanonicalUsage {
     pub fn prompt_tokens(&self) -> u64 {
-        self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
+        self.input_tokens
+            .saturating_add(self.cache_read_tokens)
+            .saturating_add(self.cache_write_tokens)
     }
 
     pub fn total_tokens(&self) -> u64 {
-        self.prompt_tokens() + self.output_tokens
+        self.prompt_tokens().saturating_add(self.output_tokens)
     }
 }
 
@@ -564,7 +566,9 @@ pub fn normalize_usage(
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         return CanonicalUsage {
-            input_tokens: input_total.saturating_sub(cache_read + cache_write),
+            input_tokens: input_total
+                .saturating_sub(cache_read)
+                .saturating_sub(cache_write),
             output_tokens,
             cache_read_tokens: cache_read,
             cache_write_tokens: cache_write,
@@ -599,7 +603,9 @@ pub fn normalize_usage(
         .unwrap_or(0);
 
     CanonicalUsage {
-        input_tokens: prompt_total.saturating_sub(cache_read + cache_write),
+        input_tokens: prompt_total
+            .saturating_sub(cache_read)
+            .saturating_sub(cache_write),
         output_tokens: completion_tokens,
         cache_read_tokens: cache_read,
         cache_write_tokens: cache_write,
@@ -722,6 +728,89 @@ mod tests {
     }
 
     #[test]
+    fn billing_routes_preserve_subscription_and_catalogue_pricing() {
+        let model = "fixture-family/fixture-model";
+        let route = resolve_billing_route(model, Some(" OpenAI-Codex "), None);
+        assert_eq!(route.billing_mode, BillingMode::SubscriptionIncluded);
+        assert_eq!(route.model, model);
+        assert!(has_known_pricing(model, Some("openai-codex"), None));
+        assert_eq!(get_pricing(model, Some("openai-codex"), None), (0.0, 0.0));
+
+        let relay = " HTTPS://OPENROUTER.AI/API/V1 ";
+        let route = resolve_billing_route(model, None, Some(relay));
+        assert_eq!(route.billing_mode, BillingMode::ProviderModelsApi);
+        assert_eq!(route.model, model);
+        assert_eq!(route.base_url, "https://openrouter.ai/api/v1");
+        assert!(get_pricing_entry(model, None, Some(relay)).is_none());
+        assert_eq!(get_pricing(model, None, Some(relay)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn compact_usage_labels_handle_each_unit_transition() {
+        assert_eq!(format_token_count_compact(1_000_000_000), "1.0B");
+        for (seconds, label) in [
+            (59.0, "59s"),
+            (60.0, "1m"),
+            (3600.0, "1h"),
+            (3660.0, "1h 1m"),
+            (86400.0, "1.0d"),
+        ] {
+            assert_eq!(format_duration_compact(seconds), label);
+        }
+    }
+
+    #[test]
+    fn codex_responses_keep_cached_tokens_separate_from_uncached_input() {
+        let raw = serde_json::json!({
+            "input_tokens": 100,
+            "output_tokens": 8,
+            "input_tokens_details": { "cached_tokens": 12, "cache_creation_tokens": 5 }
+        });
+        let usage = normalize_usage(&raw, None, Some(" CODEX_RESPONSES "));
+        assert_eq!(usage.input_tokens, 83);
+        assert_eq!(usage.output_tokens, 8);
+        assert_eq!(usage.cache_read_tokens, 12);
+        assert_eq!(usage.cache_write_tokens, 5);
+        assert_eq!(usage.request_count, 1);
+
+        let raw = serde_json::json!({ "input_tokens": 21, "output_tokens": 3 });
+        let usage = normalize_usage(&raw, None, Some("codex_responses"));
+        assert_eq!(usage.input_tokens, 21);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn inconsistent_cache_totals_cannot_overflow_uncached_input_accounting() {
+        for (mode, raw) in [
+            (
+                "codex_responses",
+                serde_json::json!({
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "input_tokens_details": { "cached_tokens": u64::MAX, "cache_creation_tokens": 1 }
+                }),
+            ),
+            (
+                "chat_completions",
+                serde_json::json!({
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "prompt_tokens_details": { "cached_tokens": u64::MAX, "cache_write_tokens": 1 }
+                }),
+            ),
+        ] {
+            let usage = normalize_usage(&raw, None, Some(mode));
+            assert_eq!(usage.input_tokens, 0, "{mode}");
+            assert_eq!(usage.cache_read_tokens, u64::MAX, "{mode}");
+            assert_eq!(usage.cache_write_tokens, 1, "{mode}");
+            assert_eq!(usage.output_tokens, 2, "{mode}");
+            assert_eq!(usage.prompt_tokens(), u64::MAX, "{mode}");
+            assert_eq!(usage.total_tokens(), u64::MAX, "{mode}");
+        }
+    }
+
+    #[test]
     fn test_normalize_usage_anthropic() {
         let raw = serde_json::json!({
             "input_tokens": 1000,
@@ -814,16 +903,19 @@ mod tests {
 
     #[test]
     fn test_cache_usage_without_matching_rate_is_unknown() {
-        let usage = CanonicalUsage {
-            input_tokens: 1000,
-            output_tokens: 500,
-            cache_read_tokens: 100,
-            request_count: 1,
-            ..Default::default()
-        };
-        let result = calculate_cost("gemini-2.5-pro", &usage, Some("google"), None);
-        assert_eq!(result.status, CostStatus::Unknown);
-        assert_eq!(result.amount_usd, None);
+        for (cache_read_tokens, cache_write_tokens) in [(100, 0), (0, 100)] {
+            let usage = CanonicalUsage {
+                input_tokens: 1000,
+                output_tokens: 500,
+                cache_read_tokens,
+                cache_write_tokens,
+                request_count: 1,
+                ..Default::default()
+            };
+            let result = calculate_cost("gemini-2.5-pro", &usage, Some("google"), None);
+            assert_eq!(result.status, CostStatus::Unknown);
+            assert_eq!(result.amount_usd, None);
+        }
     }
 
     #[test]

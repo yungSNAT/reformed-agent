@@ -9,6 +9,87 @@ use hermes_cron::{CronCompletionEvent, CronJob};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[path = "support/isolated_hermes.rs"]
+mod isolated;
+
+#[tokio::test]
+async fn webhook_cli_test_sends_its_default_and_custom_payloads_to_loopback() {
+    use hmac::Mac;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/webhooks/fixture"))
+        .respond_with(ResponseTemplate::new(202).set_body_string("fixture accepted"))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.yaml"),
+        format!(
+            "platforms:\n  webhook:\n    enabled: true\n    host: 0.0.0.0\n    port: {}\n",
+            server.address().port()
+        ),
+    )
+    .unwrap();
+
+    let signing_value = "synthetic-subscription-value";
+    let custom_payload = r#"{"event_type":"test","message":"Estuary survey complete"}"#;
+    for args in [
+        &["subscribe", "fixture", "--secret", signing_value][..],
+        &["test", "fixture"],
+        &["test", "fixture", "--payload", custom_payload],
+    ] {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            isolated::isolated_hermes(sandbox.path())
+                .arg("webhook")
+                .args(args)
+                .output(),
+        )
+        .await
+        .expect("webhook CLI timed out")
+        .unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(output.status.success(), "{args:?}: {stdout}");
+        if args[0] == "test" {
+            assert!(stdout.contains(&format!(
+                "Test POST {}/webhooks/fixture -> 202 Accepted",
+                server.uri()
+            )));
+            assert!(stdout.contains("fixture accepted"));
+        }
+        assert!(!stdout.contains(signing_value));
+    }
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].body_json::<serde_json::Value>().unwrap(),
+        serde_json::json!({
+            "test": true, "event_type": "test", "message": "Hello from hermes webhook test"
+        })
+    );
+    assert_eq!(requests[1].body, custom_payload.as_bytes());
+    for request in requests {
+        assert_eq!(request.headers["content-type"], "application/json");
+        assert_eq!(request.headers["x-github-event"], "test");
+        let encoded = request.headers["x-hub-signature-256"]
+            .to_str()
+            .unwrap()
+            .strip_prefix("sha256=")
+            .unwrap();
+        let mut signature =
+            hmac::Hmac::<sha2::Sha256>::new_from_slice(signing_value.as_bytes()).unwrap();
+        signature.update(&request.body);
+        signature
+            .verify_slice(&hex::decode(encoded).unwrap())
+            .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn cron_completion_delivers_json_to_registered_webhook_url() {
     let mock = MockServer::start().await;

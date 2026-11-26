@@ -1349,6 +1349,7 @@ fn telegram_approval_callback_parses_and_tracks_state() {
 // -----------------------------------------------------------------------
 
 include!("tests/update_media_config.rs");
+include!("tests/media_delivery_contract.rs");
 
 #[tokio::test]
 async fn approval_card_answers_only_the_request_it_showed() {

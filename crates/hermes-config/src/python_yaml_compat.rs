@@ -619,6 +619,89 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_empty_providers_preserve_native_settings_and_lift_agent_limits() {
+        let raw = r#"
+agent: {max_turns: 17}
+tools: terminal
+toolsets: [web]
+custom_providers: []
+providers: {}
+llm_providers:
+  office: {base_url: 'https://office.invalid/v1'}
+discord: {enabled: false}
+platforms:
+  discord: {enabled: true, require_mention: true}
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+
+        assert_eq!(root[key("max_turns")].as_u64(), Some(17));
+        assert_eq!(root[key("tools")].as_str(), Some("terminal"));
+        assert!(!root.contains_key(key("custom_providers")));
+        assert!(!root.contains_key(key("providers")));
+        let providers = root[key("llm_providers")].as_mapping().unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(
+            providers[key("office")]["base_url"].as_str(),
+            Some("https://office.invalid/v1")
+        );
+        let platforms = root[key("platforms")].as_mapping().unwrap();
+        assert_eq!(platforms[key("discord")]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            platforms[key("discord")]["require_mention"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn legacy_unknown_reset_mode_and_model_value_survive_normalisation() {
+        let raw = r#"
+model: true
+session_reset: {mode: future}
+session: {max_context_messages: 40}
+"#;
+        let expected: Mapping = serde_yaml::from_str(raw).unwrap();
+        let mut root = expected.clone();
+        normalize_config_yaml_root(&mut root);
+
+        assert_eq!(root, expected);
+    }
+
+    #[test]
+    fn python_provider_only_model_preserves_scalar_switch_value() {
+        let raw = r#"
+model:
+  provider: 'custom:office'
+  persist_switch_by_default: false
+model_switch: legacy
+"#;
+        let expected = r#"
+model: 'office:'
+model_switch:
+  value: legacy
+  persist_switch_by_default: false
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+        assert_eq!(root, serde_yaml::from_str::<Mapping>(expected).unwrap());
+    }
+
+    #[test]
+    fn python_model_without_route_keeps_mapping_and_lifts_switch_flag() {
+        let raw = r#"
+model:
+  default: { provider: office }
+  persist_switch_by_default: true
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        let original_model = root[key("model")].clone();
+        normalize_config_yaml_root(&mut root);
+        assert_eq!(root[key("model")], original_model);
+        assert_eq!(root[key("model_switch")]["persist_switch_by_default"], true);
+        assert!(!root.contains_key(key("llm_providers")));
+    }
+
+    #[test]
     fn python_model_block_to_string_and_llm() {
         let raw = r#"
 model:
@@ -847,6 +930,29 @@ providers:
     }
 
     #[test]
+    fn python_providers_replace_scalar_root_and_skip_empty_names() {
+        let raw = r#"
+llm_providers: legacy
+providers:
+  7: { base_url: http://127.0.0.1:8123/v1 }
+  '': { base_url: http://127.0.0.1:8124/v1 }
+  office:
+    url: ' '
+    api: ' http://127.0.0.1:8125/v1/ '
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+        assert!(!root.contains_key(key("providers")));
+        let cfg: crate::config::GatewayConfig =
+            serde_yaml::from_value(Value::Mapping(root)).unwrap();
+        assert_eq!(cfg.llm_providers.len(), 1);
+        assert_eq!(
+            cfg.llm_providers["office"].base_url.as_deref(),
+            Some("http://127.0.0.1:8125/v1"),
+        );
+    }
+
+    #[test]
     fn python_custom_providers_merge_into_llm_provider_config() {
         let raw = r#"
 model:
@@ -1002,6 +1108,43 @@ session_reset:
     }
 
     #[test]
+    fn legacy_session_reset_modes_preserve_other_session_settings() {
+        use crate::session::SessionResetPolicy;
+
+        let cases = [
+            (
+                "{mode: DAILY, at_hour: 26}",
+                SessionResetPolicy::Daily { at_hour: 23 },
+            ),
+            ("{mode: daily}", SessionResetPolicy::Daily { at_hour: 0 }),
+            (
+                "{mode: idle, idle_minutes: 45}",
+                SessionResetPolicy::Idle {
+                    timeout_minutes: 45,
+                },
+            ),
+            (
+                "{mode: idle}",
+                SessionResetPolicy::Idle {
+                    timeout_minutes: 30,
+                },
+            ),
+            ("{mode: none}", SessionResetPolicy::None),
+        ];
+        for (reset, expected) in cases {
+            let mut root: Mapping =
+                serde_yaml::from_str(&format!("session_reset: {reset}\nsession: {{max_context_messages: 40, compression_enabled: true}}\n")).unwrap();
+            normalize_config_yaml_root(&mut root);
+            assert!(!root.contains_key(key("session_reset")));
+            let config: crate::config::GatewayConfig =
+                serde_yaml::from_value(Value::Mapping(root)).unwrap();
+            assert_eq!(config.session.reset_policy, expected, "legacy {reset}");
+            assert_eq!(config.session.max_context_messages, Some(40));
+            assert!(config.session.compression_enabled);
+        }
+    }
+
+    #[test]
     fn platform_toolsets_numeric_entries_normalized_to_strings() {
         let raw = r#"
 platform_toolsets:
@@ -1025,6 +1168,55 @@ platform_toolsets:
 
         let cron = cfg.platform_toolsets.get("cron").expect("cron");
         assert_eq!(cron, &vec!["42".to_string()]);
+    }
+
+    #[test]
+    fn legacy_route_lists_skip_empty_entries_and_keep_explicit_model_prefixes() {
+        let raw = r#"
+model: { provider: fixture }
+custom_providers:
+  - ignored
+  - { base_url: "https://unused.invalid/v1" }
+  - { name: fixture, base_url: " https://first.invalid/v1/ " }
+fallback_models:
+  - "primary:stable"
+  - "  "
+fallback_providers:
+  - - { provider: fixture, model: "secondary:routed", base_url: "https://second.invalid/v1/" }
+    - { provider: ignored }
+    - { model: "standalone" }
+    - false
+  - "PRIMARY:STABLE"
+fallback_model: "legacy:final"
+platform_toolsets:
+  " ": discarded
+  " cli ": [" tools ", "", null, { invalid: true }]
+  cron: { invalid: true }
+"#;
+        let mut root: Mapping = serde_yaml::from_str(raw).unwrap();
+        normalize_config_yaml_root(&mut root);
+        let cfg: crate::config::GatewayConfig =
+            serde_yaml::from_value(Value::Mapping(root)).unwrap();
+
+        assert_eq!(cfg.model.as_deref(), Some("fixture:"));
+        assert_eq!(
+            cfg.fallback_models,
+            [
+                "primary:stable",
+                "secondary:routed",
+                "standalone",
+                "legacy:final"
+            ]
+        );
+        assert_eq!(cfg.fallback_model.as_deref(), Some("primary:stable"));
+        assert_eq!(
+            cfg.llm_providers["fixture"].base_url.as_deref(),
+            Some("https://second.invalid/v1")
+        );
+        assert!(!cfg.llm_providers.contains_key("ignored"));
+        assert_eq!(cfg.platform_toolsets["cli"], ["tools"]);
+        assert!(cfg.platform_toolsets["cron"].is_empty());
+        assert!(!cfg.platform_toolsets.contains_key(" "));
     }
 
     #[test]

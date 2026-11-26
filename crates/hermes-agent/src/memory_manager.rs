@@ -1097,3 +1097,7 @@ fn fuse_memory_candidates(candidates: Vec<FusedMemoryCandidate>, query: &str) ->
 }
 
 include!("memory_manager/tests.rs");
+
+#[cfg(test)]
+#[path = "memory_manager_coverage_gen.rs"]
+mod coverage_gen;

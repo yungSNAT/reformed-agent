@@ -2164,3 +2164,7 @@ fn count_files_recursive(dir: &std::path::Path) -> usize {
 }
 
 include!("command_cli_sessions_acp/acp_backup.rs");
+
+#[cfg(test)]
+#[path = "command_cli_sessions_acp_coverage_gen.rs"]
+mod coverage_gen_commands_command_cli_sessions_acp;

@@ -253,6 +253,38 @@ fn unrepairable_sessions_db_fails_safely_with_backup() {
 }
 
 #[test]
+fn sessions_backup_keeps_the_database_and_readable_sidecar() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    assert!(SessionPersistence::backup_db_file(sp.db_path()).is_none());
+
+    let sidecar = |db: &std::path::Path, suffix: &str| {
+        let mut name = db.file_name().unwrap().to_os_string();
+        name.push(suffix);
+        db.with_file_name(name)
+    };
+    let db_contents = b"fixture database bytes";
+    let wal_contents = b"fixture journal bytes";
+    let wal = sidecar(sp.db_path(), "-wal");
+    let shm = sidecar(sp.db_path(), "-shm");
+    std::fs::write(sp.db_path(), db_contents).unwrap();
+    std::fs::write(&wal, wal_contents).unwrap();
+    std::fs::create_dir(&shm).unwrap();
+
+    let backup = SessionPersistence::backup_db_file(sp.db_path()).unwrap();
+    assert_eq!(backup.parent(), Some(tmp.path()));
+    assert_ne!(backup.as_path(), sp.db_path());
+    assert_eq!(std::fs::read(&backup).unwrap(), db_contents);
+    assert_eq!(
+        std::fs::read(sidecar(&backup, "-wal")).unwrap(),
+        wal_contents
+    );
+    assert_eq!(std::fs::read(sp.db_path()).unwrap(), db_contents);
+    assert_eq!(std::fs::read(wal).unwrap(), wal_contents);
+    assert!(shm.is_dir());
+}
+
+#[test]
 fn test_persist_and_load_session() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());

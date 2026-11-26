@@ -365,3 +365,7 @@ mod tests {
         assert!(matches!(err, EvalError::DatasetLoad(_)));
     }
 }
+
+#[cfg(test)]
+#[path = "runner_coverage_gen.rs"]
+mod coverage_gen;

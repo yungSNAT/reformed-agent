@@ -886,3 +886,7 @@ mod tests {
         assert!(kept.exists());
     }
 }
+
+#[cfg(test)]
+#[path = "skills_coverage_gen.rs"]
+mod coverage_gen;
