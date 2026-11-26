@@ -608,8 +608,9 @@ fn with_login_profile_sources(
             subprocess_home,
         ));
         // The command goes into the script once, as a variable each branch
-        // appends: Linux caps one argument at 128 KiB, and a copy per shell
-        // branch reached that cap with a third of the command.
+        // appends. With a copy per shell branch, the one `sh -c` argument
+        // held the command 2 or 3 times and passed Linux's 128 KiB cap on a
+        // single argument for commands of about 40,000 characters.
         let command_var = shell_single_quote(command);
         let bash_setup = shell_single_quote(&format!("{bash_prelude}{cleanup}"));
         let zsh_setup = shell_single_quote(&format!("{zsh_prelude}{cleanup}"));
@@ -841,8 +842,10 @@ mod login_wrapper_size_tests {
         assert_eq!(wrapped.matches("marker-7f3a").count(), 1, "{wrapped}");
     }
 
-    /// Linux caps one argument at 128 KiB. With a copy of the command for
-    /// each login shell branch (2 or 3), a 70,000-character command passed it.
+    /// Linux caps one argument at 128 KiB (MAX_ARG_STRLEN). With a copy of
+    /// the command for each login shell branch (2 or 3), a 70,000-character
+    /// command passed it. macOS has no per-argument cap, so it runs on Linux.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_70000_character_command_runs_through_the_login_wrapper() {
         let command = format!("x={}; echo ${{#x}}", "a".repeat(70_000));
