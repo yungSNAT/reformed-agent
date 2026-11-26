@@ -400,3 +400,136 @@ async fn image_detach_refuses_bad_requests() {
         assert_eq!(reply["error"]["code"], *code, "{params}: {reply}");
     }
 }
+
+/// A PNG signature followed by zeros, `len` bytes long, made without writing them.
+fn sparse_png(path: &Path, len: u64) {
+    std::fs::write(path, png("")).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_len(len)
+        .unwrap();
+}
+
+/// An empty image file and a session at its staging limits are refused, and nothing more is
+/// staged: 16 images, or 64 MiB, whichever comes first.
+#[tokio::test]
+async fn image_attach_keeps_each_session_within_its_limits() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let attach = |p: &Path| json!({"session_id": session, "path": p.display().to_string()});
+
+    let empty = folder.path().join("empty.png");
+    std::fs::write(&empty, b"").unwrap();
+    let reply = client.call(2, "image.attach", attach(&empty)).await;
+    assert_eq!(reply["error"]["code"], 4017, "{reply}");
+
+    // 24 MiB each: the third would pass 64 MiB.
+    let big = folder.path().join("big.png");
+    sparse_png(&big, 24 << 20);
+    for n in 0..2 {
+        let reply = client.call(3 + n, "image.attach", attach(&big)).await;
+        assert_eq!(reply["result"]["count"], n + 1, "{reply}");
+    }
+    let reply = client.call(5, "image.attach", attach(&big)).await;
+    assert_eq!(reply["error"]["code"], 4018, "{reply}");
+    assert_eq!(staged_images(started.home.path()).len(), 2);
+
+    let session = client.create().await;
+    let small = folder.path().join("small.png");
+    std::fs::write(&small, png("small")).unwrap();
+    let attach = json!({"session_id": session, "path": small.display().to_string()});
+    for n in 0..16 {
+        let reply = client.call(10 + n, "image.attach", attach.clone()).await;
+        assert_eq!(reply["result"]["count"], n + 1, "{reply}");
+    }
+    let reply = client.call(30, "image.attach", attach).await;
+    assert_eq!(reply["error"]["code"], 4018, "{reply}");
+    assert_eq!(staged_images(started.home.path()).len(), 18);
+}
+
+/// A network share or device namespace path is refused without being opened.
+#[tokio::test]
+async fn image_attach_refuses_share_and_device_paths() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let paths = [
+        r"\nohost.invalid\share\a.png",
+        r"\?\C:\a.png",
+        r"\.\pipe\a.png",
+        "file://nohost.invalid/share/a.png",
+    ];
+    for (n, path) in paths.iter().enumerate() {
+        let params = json!({"session_id": session, "path": path});
+        let reply = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.call(10 + n as u64, "image.attach", params),
+        )
+        .await
+        .expect("refused at once");
+        assert_eq!(reply["error"]["code"], 4016, "{path}: {reply}");
+    }
+}
+
+/// The read is bounded by what it reads, not by the size the file reports: the kernel's page
+/// map reports 0 bytes and holds far more.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn image_attach_bounds_the_read_itself() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let link = folder.path().join("map.png");
+    std::os::unix::fs::symlink("/proc/self/pagemap", &link).unwrap();
+    let params = json!({"session_id": session, "path": link.display().to_string()});
+    let reply = client.call(2, "image.attach", params).await;
+    assert_eq!(reply["error"]["code"], 4018, "{reply}");
+    assert!(staged_images(started.home.path()).is_empty());
+}
+
+/// A FIFO is refused at once instead of waiting for a writer.
+#[cfg(unix)]
+#[tokio::test]
+async fn image_attach_refuses_a_fifo() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let fifo = folder.path().join("pipe.png");
+    let name = std::ffi::CString::new(fifo.display().to_string()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let params = json!({"session_id": session, "path": fifo.display().to_string()});
+    let reply = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.call(2, "image.attach", params),
+    )
+    .await
+    .expect("refused at once");
+    assert_eq!(reply["error"]["code"], 4016, "{reply}");
+}
+
+/// A session cannot take back another session's staged image.
+#[tokio::test]
+async fn image_detach_reaches_only_its_own_session() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let first = client.create().await;
+    let second = client.create().await;
+    let attach = json!({"session_id": first, "content_base64": b64(&png("mine"))});
+    let reply = client.call(2, "image.attach_bytes", attach).await;
+    let path = reply["result"]["path"].as_str().unwrap().to_string();
+
+    let detach = json!({"session_id": second, "path": path});
+    let reply = client.call(3, "image.detach", detach).await;
+    assert_eq!(
+        reply["result"],
+        json!({"detached": false, "count": 0}),
+        "{reply}"
+    );
+    assert!(Path::new(&path).exists());
+}
