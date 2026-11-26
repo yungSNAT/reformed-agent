@@ -271,7 +271,6 @@ fn render(sources: &Sources) -> Result<String, String> {
                 "Tracked behavior coverage ratio",
                 "tracked_behavior_coverage_ratio",
             ),
-            ("Rust test functions", "rust_test_functions"),
             ("Missing Rust test refs", "missing_rust_test_refs"),
         ],
         "tracked_behavior_coverage_ratio",
