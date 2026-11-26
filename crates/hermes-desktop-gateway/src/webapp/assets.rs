@@ -29,6 +29,13 @@ pub const DIST_ENV: &str = "HERMES_WEBAPP_DIST";
 pub const STALE_MARKER: &str = ".hermes-stale";
 /// How every missing-bundle reason starts (upstream `NOT_BUILT`).
 pub const NOT_BUILT: &str = "The Webapp is not built";
+/// What HTTP clients are told for a missing, stale or unreadable bundle: never its path, which
+/// only the logs and `webapp-status` on the control socket carry.
+const MISSING_DETAIL: &str =
+    "The Webapp is not built on this machine: `hermes webapp --status` there says why.";
+const STALE_DETAIL: &str = "The Webapp is not built for this version of Hermes: \
+     `hermes webapp --status` on this machine says why.";
+const UNREADABLE_DETAIL: &str = "The Webapp bundle could not be read.";
 /// Largest file served.
 const MAX_FILE: u64 = 64 << 20;
 
@@ -152,8 +159,9 @@ fn not_found(detail: String) -> Result<Page, Refused> {
     Err((StatusCode::NOT_FOUND, detail))
 }
 
-fn unavailable(status: StatusCode, detail: String) -> Refused {
-    (status, detail)
+fn unreadable(e: std::io::Error) -> Refused {
+    tracing::warn!("the Webapp bundle could not be read: {e}");
+    (StatusCode::NOT_FOUND, UNREADABLE_DETAIL.into())
 }
 
 /// Serves `path` from the bundle at `dist` (blocking file reads; call it off the async threads).
@@ -169,21 +177,21 @@ fn resolve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Result<Page, Re
         return not_found(format!("No such API endpoint: {path}"));
     }
     if let Some(reason) = missing_reason(dist) {
-        let status = if reason.contains(STALE_MARKER) {
-            StatusCode::SERVICE_UNAVAILABLE
+        tracing::warn!("the Webapp bundle is not served: {reason}");
+        return Err(if reason.contains(STALE_MARKER) {
+            (StatusCode::SERVICE_UNAVAILABLE, STALE_DETAIL.into())
         } else {
-            StatusCode::NOT_FOUND
-        };
-        return Err(unavailable(status, reason));
+            (StatusCode::NOT_FOUND, MISSING_DETAIL.into())
+        });
     }
     let dist = dist.expect("missing_reason refuses an unset bundle");
     let Some(segments) = segments(path) else {
         return not_found("not found".into());
     };
-    let root = open_root(dist).map_err(|e| unavailable(StatusCode::NOT_FOUND, e.to_string()))?;
+    let root = open_root(dist).map_err(unreadable)?;
     let index = open_beneath(&root, &["index.html"])
         .and_then(|f| f.metadata())
-        .map_err(|e| unavailable(StatusCode::NOT_FOUND, e.to_string()))?;
+        .map_err(unreadable)?;
     let refs: Vec<&str> = segments.iter().map(String::as_str).collect();
     let file = if refs.is_empty() {
         None
@@ -196,7 +204,7 @@ fn resolve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Result<Page, Re
         Some(file) => {
             let meta = file
                 .metadata()
-                .map_err(|e| unavailable(StatusCode::NOT_FOUND, e.to_string()))?;
+                .map_err(unreadable)?;
             if (meta.dev(), meta.ino()) == (index.dev(), index.ino()) {
                 return entry(&root, boot);
             }
@@ -206,7 +214,7 @@ fn resolve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Result<Page, Re
             let mut body = Vec::with_capacity(meta.len() as usize);
             file.take(MAX_FILE)
                 .read_to_end(&mut body)
-                .map_err(|e| unavailable(StatusCode::NOT_FOUND, e.to_string()))?;
+                .map_err(unreadable)?;
             Ok(Page {
                 status: StatusCode::OK,
                 content_type: content_type(refs.last().copied().unwrap_or_default()),
@@ -223,7 +231,7 @@ fn entry(root: &File, boot: &Bootstrap) -> Result<Page, Refused> {
     let mut html = String::new();
     open_beneath(root, &["index.html"])
         .and_then(|f| f.take(MAX_FILE).read_to_string(&mut html))
-        .map_err(|e| unavailable(StatusCode::NOT_FOUND, e.to_string()))?;
+        .map_err(unreadable)?;
     let html = html.trim_start_matches('\u{feff}');
     Ok(Page {
         status: StatusCode::OK,

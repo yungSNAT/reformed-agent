@@ -197,7 +197,7 @@ fn router(auth: Auth, port: u16, chat: Chat, extras: Extras) -> Router {
 
 /// True when `authority` (a `Host` value or an origin's host and port) names a loopback
 /// address and `port`. A missing port means 80.
-fn is_loopback_authority(authority: &str, port: u16) -> bool {
+pub(crate) fn is_loopback_authority(authority: &str, port: u16) -> bool {
     let (name, given_port) = match authority.rsplit_once(':') {
         Some((name, p)) if !p.contains(']') => (name, p.parse::<u16>().ok()),
         _ => (authority, Some(80)),
@@ -325,7 +325,7 @@ fn browser_admit(gw: &Gateway, headers: &HeaderMap) -> Option<Result<Caller, Sta
     let Some(webapp) = gw.webapp.as_ref() else {
         return Some(Err(StatusCode::UNAUTHORIZED));
     };
-    if !webapp::origin_absent_or_own(headers) {
+    if !webapp::origin_absent_or_own(headers, gw.port) {
         return Some(Err(StatusCode::FORBIDDEN));
     }
     Some(
@@ -491,7 +491,7 @@ fn browser_socket(
     if !matches!(gw.auth, Auth::Native(_)) || !headers.contains_key(header::ORIGIN) {
         return None;
     }
-    if !webapp::own_origin(headers) {
+    if !webapp::own_origin(headers, gw.port) {
         return Some(Err(StatusCode::FORBIDDEN));
     }
     let ticket = match (offered, query_ticket) {

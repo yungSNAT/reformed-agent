@@ -4,15 +4,18 @@
 //!
 //! A group is one file `src/webapp/routes/<group>.rs` with `pub fn router() -> Router` and
 //! handlers such as `async fn get_config(ctx: Ctx, Query(q): Query<HashMap<String, String>>) ->
-//! ApiResult`, plus one line in [`GROUPS`]. Groups add no auth layer of their own and never see a
-//! credential: [`Ctx`] exists only for a request the guard admitted.
+//! ApiResult`, plus one [`Group`] in [`GROUPS`] naming its [`Audience`]: `Browser` when the
+//! Webapp calls it, `NativeOnly` when a browser credential must not reach it. Groups add no auth
+//! layer of their own, set no fallback and never see a credential: [`Ctx`] exists only for a
+//! request the guard admitted.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::http::StatusCode;
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde_json::{json, Value};
@@ -72,10 +75,25 @@ impl IntoResponse for ApiError {
 
 pub type ApiResult<T = Value> = Result<Json<T>, ApiError>;
 
-/// One group of routes.
-pub type Group = fn() -> Router;
+/// Which admitted callers a group's routes serve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Audience {
+    /// Every caller the guard admits, a Webapp tab's browser credential included: upstream's
+    /// dashboard routes, which its Webapp calls.
+    Browser,
+    /// Native clients and the remote session token only; the browser credential gets 403.
+    NativeOnly,
+}
 
-/// Every group, merged once behind the credential guard. One line per group.
+/// One group of routes and who they serve. `routes` holds at least one route and sets no
+/// fallback (the router's fallback serves the bundle).
+pub struct Group {
+    pub audience: Audience,
+    pub routes: fn() -> Router,
+}
+
+/// Every group, merged once behind the credential guard. One entry per group, such as
+/// `Group { audience: Audience::Browser, routes: routes::config::router }`.
 pub const GROUPS: &[Group] = &[];
 
 /// Checks the profile a request names (`?profile=`) against the one this gateway serves: absent
@@ -93,17 +111,38 @@ pub fn served_profile(api: &Api, requested: Option<&str>) -> Result<(), ApiError
 
 /// The groups as one router, ready to merge into a router of any state.
 pub(crate) fn groups<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    GROUPS
+    merge(GROUPS)
+}
+
+fn merge<S: Clone + Send + Sync + 'static>(groups: &[Group]) -> Router<S> {
+    groups
         .iter()
-        .fold(Router::new(), |router, group| router.merge(group()))
+        .fold(Router::new(), |router, group| {
+            let routes = (group.routes)();
+            router.merge(match group.audience {
+                Audience::Browser => routes,
+                Audience::NativeOnly => routes.route_layer(middleware::from_fn(native_only)),
+            })
+        })
         .with_state(())
+}
+
+/// Runs inside the credential guard, which records the caller: a browser credential, or a
+/// request with no recorded caller, is refused.
+async fn native_only(request: Request, next: Next) -> Response {
+    match request.extensions().get::<Caller>() {
+        Some(Caller::Native | Caller::Token) => next.run(request).await,
+        Some(Caller::Browser { .. }) | None => ApiError(
+            StatusCode::FORBIDDEN,
+            "this route serves native clients only".into(),
+        )
+        .into_response(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::extract::Request;
-    use axum::middleware::{self, Next};
     use axum::routing::get;
 
     fn native_routes() -> Router {

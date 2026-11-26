@@ -122,20 +122,25 @@ pub fn profile_name(home: &Path) -> String {
     }
 }
 
-/// Whether `headers` hold no `Origin`, or exactly one naming this request's own `Host` (which the
-/// Host guard has already checked).
-pub fn origin_absent_or_own(headers: &HeaderMap) -> bool {
-    headers.get_all(header::ORIGIN).iter().next().is_none() || own_origin(headers)
+/// Whether `headers` hold no `Origin`, or exactly one that is [`own_origin`].
+pub fn origin_absent_or_own(headers: &HeaderMap, port: u16) -> bool {
+    headers.get_all(header::ORIGIN).iter().next().is_none() || own_origin(headers, port)
 }
 
-/// Whether `headers` hold exactly one `Origin` naming this request's own `Host`.
-pub fn own_origin(headers: &HeaderMap) -> bool {
+/// Whether `headers` hold exactly one `Origin` naming this request's own `Host`, and that `Host`
+/// is a loopback name on `port`, the listener's. The Host guard checks the same in front of every
+/// route; this does not rely on it, so a rebinding page (its own name as `Host` and `Origin`) is
+/// refused here too.
+pub fn own_origin(headers: &HeaderMap, port: u16) -> bool {
     let origins: Vec<_> = headers.get_all(header::ORIGIN).iter().collect();
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
     match (origins.as_slice(), host) {
-        ([origin], Some(host)) => origin
-            .to_str()
-            .is_ok_and(|o| o.eq_ignore_ascii_case(&format!("http://{host}"))),
+        ([origin], Some(host)) => {
+            crate::is_loopback_authority(host, port)
+                && origin
+                    .to_str()
+                    .is_ok_and(|o| o.eq_ignore_ascii_case(&format!("http://{host}")))
+        }
         _ => false,
     }
 }
@@ -372,7 +377,7 @@ async fn window_page() -> Response {
 /// must carry exactly one `Origin`, this listener's own.
 async fn window_session(State(webapp): State<Arc<Webapp>>, request: Request) -> Response {
     let headers = request.headers();
-    if !own_origin(headers) {
+    if !own_origin(headers, webapp.local.port()) {
         return detail(
             StatusCode::FORBIDDEN,
             "Webapp window handoff requires a same-origin request",
