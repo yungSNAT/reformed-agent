@@ -41,11 +41,37 @@ fn clip(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
-/// A checked roster row (upstream `_normalize_roster_row`), or `None` to drop it. A field that is
-/// not a string counts as empty.
+/// A field as upstream's `str(value or "")` reads it: a string as it is, a number as its digits,
+/// `true` as `True`; zero, `false`, null, lists and objects as empty (upstream would print a
+/// non-empty list or object, which no checked field accepts).
+fn py_text(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Bool(true)) => "True".into(),
+        Some(Value::Number(n)) if n.as_f64() != Some(0.0) => match (n.as_i64(), n.as_u64()) {
+            (Some(i), _) => i.to_string(),
+            (None, Some(u)) => u.to_string(),
+            _ => n.to_string(),
+        },
+        _ => String::new(),
+    }
+}
+
+/// A checked roster row (upstream `_normalize_roster_row`), or `None` to drop it.
 fn normalize(row: &Value) -> Option<Map<String, Value>> {
     let row = row.as_object()?;
-    let text = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("").trim();
+    let fields: Map<String, Value> = [
+        "profile",
+        "handle",
+        "connection_id",
+        "connection_label",
+        "title",
+        "description",
+    ]
+    .into_iter()
+    .map(|key| (key.to_string(), Value::String(py_text(row.get(key)))))
+    .collect();
+    let text = |key: &str| fields[key].as_str().unwrap_or("").trim();
     let profile = text("profile");
     let connection_id = text("connection_id");
     let handle = match text("handle").trim_start_matches('@') {
@@ -109,6 +135,11 @@ fn write_roster(root: &Path, agents: Option<&Value>) -> Result<usize, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("roster.json");
     create_private(&path).map_err(|e| e.to_string())?;
+    // Owner-only on every write, as upstream writes it, before the content goes in: the atomic
+    // write keeps the mode it finds.
+    #[cfg(unix)]
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
     hermes_config::atomic_json_write(&path, &roster).map_err(|e| e.to_string())?;
     Ok(count)
 }

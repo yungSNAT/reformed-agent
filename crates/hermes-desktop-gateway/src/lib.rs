@@ -359,8 +359,8 @@ fn admit(
 
 /// A session's saved user and assistant messages, oldest first: the first `limit` with
 /// `order=oldest` (the default), the last `limit` with `order=latest`. A `profile` naming
-/// another of the install's profiles reads that profile's sessions (404 for one not listed);
-/// other query keys are ignored.
+/// another of the install's profiles reads that profile's sessions where this gateway serves its
+/// children (404 otherwise, and for one not listed); other query keys are ignored.
 async fn messages(
     State(gw): State<Arc<Gateway>>,
     Path(session_id): Path<String>,
@@ -372,9 +372,10 @@ async fn messages(
         .unwrap_or(MAX_HISTORY)
         .clamp(1, MAX_HISTORY);
     let history = match query.get("profile").map(String::as_str) {
+        // Another profile's sessions only where its sockets are served too.
         Some(name) if !gw.chat.serves(name) => match gw.chat.named_profile(name) {
-            Some(home) => chat::profiles::history_in(&home, &session_id),
-            None => return StatusCode::NOT_FOUND.into_response(),
+            Some(home) if gw.children.is_some() => chat::profiles::history_in(&home, &session_id),
+            _ => return StatusCode::NOT_FOUND.into_response(),
         },
         _ => gw.chat.history(&session_id),
     };

@@ -85,6 +85,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(20);
 /// The refusal for a profile this gateway does not list (legacy wire; the canonical wire answers
 /// its own `profile_mismatch`).
 const INVALID_PARAMS: i64 = 4000;
+/// The canonical wire's refusal for a profile it does not serve (its `profile_mismatch`).
+const CANONICAL_REFUSED: i64 = 4001;
 /// A child that could not be started, reached or that stopped answering.
 const CHILD_FAILED: i64 = 5032;
 /// Every child slot is leased.
@@ -401,7 +403,25 @@ struct Link {
     _lease: Lease,
     to_child: mpsc::UnboundedSender<String>,
     /// Where the reply to the request in flight goes; requests are sent one at a time.
-    waiting: Arc<Mutex<Option<oneshot::Sender<Value>>>>,
+    waiting: Arc<Mutex<Waiting>>,
+    /// The id of the last request sent.
+    sent: std::sync::atomic::AtomicU64,
+}
+
+/// The state of a link's one request slot.
+#[derive(Default)]
+enum Waiting {
+    #[default]
+    Idle,
+    /// The request with this id waits for its reply here.
+    Reply(u64, oneshot::Sender<Value>),
+    /// The child connection is gone: every later request fails at once.
+    Closed,
+}
+
+/// Marks `waiting` closed, which drops any request in flight unanswered.
+fn close(waiting: &Mutex<Waiting>) {
+    *waiting.lock().unwrap_or_else(|e| e.into_inner()) = Waiting::Closed;
 }
 
 impl Link {
@@ -424,13 +444,15 @@ impl Link {
                 .map_err(|e| e.to_string())?;
         let (mut sink, mut stream) = socket.split();
         let (to_child, mut outgoing) = mpsc::unbounded_channel::<String>();
-        let waiting: Arc<Mutex<Option<oneshot::Sender<Value>>>> = Arc::default();
+        let waiting: Arc<Mutex<Waiting>> = Arc::default();
+        let sent = Arc::clone(&waiting);
         tokio::spawn(async move {
             while let Some(text) = outgoing.recv().await {
                 if sink.send(tungstenite::Message::text(text)).await.is_err() {
                     break;
                 }
             }
+            close(&sent);
             let _ = sink.close().await;
         });
         let replies = Arc::clone(&waiting);
@@ -444,9 +466,13 @@ impl Link {
                     continue;
                 };
                 if frame.get("method").is_none() {
-                    let waiter = replies.lock().unwrap_or_else(|e| e.into_inner()).take();
-                    if let Some(waiter) = waiter {
-                        let _ = waiter.send(frame);
+                    // Only the reply to the request in flight is delivered; a late one, to a
+                    // request that timed out, is dropped.
+                    let mut slot = replies.lock().unwrap_or_else(|e| e.into_inner());
+                    if matches!(&*slot, Waiting::Reply(id, _) if frame["id"] == *id) {
+                        if let Waiting::Reply(_, waiter) = std::mem::take(&mut *slot) {
+                            let _ = waiter.send(frame);
+                        }
                     }
                 } else if frame["params"]["type"] != "gateway.ready" {
                     let text: &str = &text;
@@ -456,13 +482,14 @@ impl Link {
                     }
                 }
             }
-            // The child connection is gone: a request in flight gets no reply.
-            replies.lock().unwrap_or_else(|e| e.into_inner()).take();
+            // The child connection is gone: a request in flight, and every later one, fails.
+            close(&replies);
         });
         Ok(Self {
             _lease: lease,
             to_child,
             waiting,
+            sent: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -473,15 +500,22 @@ impl Link {
         params: Map<String, Value>,
         limit: Duration,
     ) -> Result<Value, RpcError> {
-        let (reply, answer) = oneshot::channel();
-        *self.waiting.lock().unwrap_or_else(|e| e.into_inner()) = Some(reply);
-        let frame = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let gone = || {
             (
                 CHILD_FAILED,
                 "profile gateway connection closed".to_string(),
             )
         };
+        let id = 1 + self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (reply, answer) = oneshot::channel();
+        {
+            let mut slot = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(*slot, Waiting::Closed) {
+                return Err(gone());
+            }
+            *slot = Waiting::Reply(id, reply);
+        }
+        let frame = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         self.to_child.send(frame.to_string()).map_err(|_| gone())?;
         let frame = match tokio::time::timeout(limit, answer).await {
             Ok(Ok(frame)) => frame,
@@ -499,8 +533,8 @@ impl Link {
     }
 }
 
-/// One client connection's requests, routed by profile: the connection's own profile and
-/// `default` here, a named profile to its child.
+/// One client connection's requests, routed by profile: the profile this process serves here,
+/// another listed named profile to its child, anything else refused.
 pub(crate) struct Forwards {
     chat: Arc<Chat>,
     conn: Conn,
@@ -533,26 +567,27 @@ impl Forwards {
     /// Runs one request.
     pub(crate) fn call(&self, method: &str, mut params: Value) -> Reply {
         let named = match params.get("profile") {
-            Some(Value::String(name)) if name != "default" => Some(name.clone()),
-            Some(Value::String(_)) => None,
+            Some(Value::String(name)) => Some(name.clone()),
+            // Not a name: the method's own checks answer it.
             Some(_) => return self.chat.call(&self.conn, method, params),
             None => self.scope.clone(),
         };
         let Some(name) = named else {
             return self.chat.call(&self.conn, method, params);
         };
-        let Some(children) = self.children.clone() else {
-            return self.refuse(method, params);
-        };
-        let Some(home) = children.home_of(&name) else {
-            return self.refuse(method, params);
-        };
         if let Value::Object(map) = &mut params {
             map.remove("profile");
         }
-        if home == self.chat.home() {
-            // The profile this process runs in.
+        if self.chat.serves(&name) {
+            // The profile this process runs in, as the socket and history routes decide.
             return self.chat.call(&self.conn, method, params);
+        }
+        // Only a listed named profile has a child: `default` runs only in a gateway at the root.
+        let Some(children) = self.children.clone() else {
+            return self.refuse();
+        };
+        if children.home_of(&name).is_none() {
+            return self.refuse();
         }
         let params = match params {
             Value::Object(map) => map,
@@ -595,11 +630,14 @@ impl Forwards {
         })
     }
 
-    /// A profile this gateway does not serve: the canonical wire answers its own refusal; the
-    /// legacy wire's is 4000.
-    fn refuse(&self, method: &str, params: Value) -> Reply {
+    /// A profile this gateway does not serve: 4001 `profile_mismatch` on the canonical wire, as
+    /// its own check answers; 4000 on the legacy wire.
+    fn refuse(&self) -> Reply {
         if self.conn.canonical {
-            self.chat.call(&self.conn, method, params)
+            ready(Err((
+                CANONICAL_REFUSED,
+                "profile_mismatch: this gateway does not serve that profile".into(),
+            )))
         } else {
             ready(Err(Refused::Unknown.rpc()))
         }

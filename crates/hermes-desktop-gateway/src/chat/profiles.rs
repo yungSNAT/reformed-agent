@@ -38,7 +38,7 @@ const SUPPORT_DIRS: [&str; 4] = ["references", "templates", "assets", "scripts"]
 const MAX_SKILL_DEPTH: usize = 8;
 const MAX_SKILL_DIRS: usize = 10_000;
 
-/// Largest `profile.yaml` read; a larger one is treated as absent.
+/// Largest `profile.yaml` or `config.yaml` read; a larger one is treated as absent.
 const MAX_META_BYTES: u64 = 1 << 20;
 
 const AVATAR_EXTENSIONS: [&str; 3] = ["png", "jpg", "webp"];
@@ -126,7 +126,8 @@ fn profile_homes(root: &Path) -> Vec<(String, PathBuf, bool)> {
 /// string `model` is the model; a mapping gives `default` (else `model`) and `provider`.
 fn config_model(home: &Path) -> (Value, Value) {
     let path = home.join("config.yaml");
-    if !path.is_file() {
+    // Bounded like the metadata files: a listing poll reads every profile's config.
+    if !std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MAX_META_BYTES) {
         return (Value::Null, Value::Null);
     }
     let config = hermes_config::load_effective_config_yaml_value(&path).unwrap_or_default();
