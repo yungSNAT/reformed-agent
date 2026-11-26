@@ -439,6 +439,8 @@ async fn without_children_the_processs_own_profile_is_served_and_others_refused(
     let mut client = connect(addr, None).await;
     let own = client.turn(Some("inbox")).await;
     assert_eq!(history(addr, &own, None).await, (200, 2));
+    // Nor does its history route read another profile's sessions.
+    assert_eq!(history(addr, &own, Some("research")).await.0, 404);
     for name in ["research", "default"] {
         let refused = client
             .call(
