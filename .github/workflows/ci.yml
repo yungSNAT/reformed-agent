@@ -299,6 +299,9 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_upstream_webhook_launchd.py -v
       - name: Write guard tests
         run: cargo test --locked -p hermes-tools --lib credential_guard
+      - name: Reply recovery tests
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p hermes-gateway --lib reply_recovery
       - name: Native tests
         if: ${{ !cancelled() }}
         env:
