@@ -380,6 +380,21 @@ async fn canonical_requests_refuse_another_profile_unknown_sessions_and_launch_o
         .request("session.resume", json!({"session_id": "no-such-session"}))
         .await;
     assert_eq!(refused["error"]["code"], 4001, "{refused}");
+    // A submission id longer than any the desktop makes is refused before it is queued.
+    let made = client
+        .request("session.create", json!({"request_id": "r-3"}))
+        .await;
+    let session = made["result"]["session_id"].as_str().unwrap().to_string();
+    let long = "s".repeat(129);
+    let refused = client
+        .request(
+            "prompt.submit",
+            json!({"session_id": session, "text": "U1", "submission_id": long}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], 4001, "{refused}");
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("invalid_params"), "{refused}");
     // Methods the canonical wire does not serve get JSON-RPC 'method not found', in
     // upstream's words.
     let unknown = client.request("no.such.method", json!({})).await;
