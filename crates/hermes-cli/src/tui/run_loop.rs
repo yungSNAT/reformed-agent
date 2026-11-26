@@ -51,10 +51,10 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
     let event_shutdown_for_thread = std::sync::Arc::clone(&event_shutdown);
     let event_thread = std::thread::spawn(move || {
         while !event_shutdown_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
-            if crate::checklist::embedded_picker_active() {
+            let Some(_reader) = crate::checklist::tui_event_reader() else {
                 std::thread::sleep(Duration::from_millis(16));
                 continue;
-            }
+            };
             if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false) {
                 if let Ok(event) = crossterm::event::read() {
                     if let Some(msg) = tui_event(event) {
@@ -619,6 +619,7 @@ fn spawn_tui_direct_agent_turn(
     state.status_message = "Processing...".to_string();
 
     let agent = app.agent.clone();
+    agent.set_session_spent_usd(app.session_cost_usd);
     let stream_enabled = app.config.streaming.enabled;
     let tool_schemas = app.tool_schemas.clone();
     let messages = app.messages.clone();

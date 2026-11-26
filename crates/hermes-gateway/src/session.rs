@@ -1104,6 +1104,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replacing_and_popping_messages_updates_the_session() {
+        let manager = SessionManager::new(SessionConfig::default());
+        let key = "telegram:transcript-fixture";
+        let prompt = Message::user("First prompt");
+        let answer = Message::assistant("Replacement answer");
+        assert!(!manager.replace_messages(key, vec![prompt.clone()]).await);
+        assert!(manager.pop_last_message(key).await.is_none());
+
+        manager
+            .get_or_create_session("telegram", "transcript-fixture", "user1")
+            .await;
+        assert!(manager.pop_last_message(key).await.is_none());
+        manager
+            .add_message(key, Message::assistant("Superseded answer"))
+            .await;
+        assert!(
+            manager
+                .replace_messages(key, vec![prompt.clone(), answer.clone()])
+                .await
+        );
+        assert_eq!(
+            manager.get_messages(key).await,
+            [prompt.clone(), answer.clone()]
+        );
+
+        let stale: Timestamp = "2000-01-01T00:00:00Z".parse().unwrap();
+        manager
+            .sessions
+            .write()
+            .await
+            .get_mut(key)
+            .unwrap()
+            .session
+            .last_active_at = stale;
+        assert_eq!(manager.pop_last_message(key).await, Some(answer));
+        assert_eq!(manager.get_messages(key).await, [prompt]);
+        assert!(manager.get_session(key).await.unwrap().last_active_at > stale);
+    }
+
+    #[tokio::test]
+    async fn removing_a_group_session_only_removes_its_users_messages_from_that_chat() {
+        let manager = SessionManager::with_group_isolation(SessionConfig::default(), true);
+        let first = Message::user("First user's group message");
+        let other = Message::user("Second user's group message");
+        let dm = Message::user("First user's direct message");
+        for (platform, chat, user, key, message) in [
+            ("telegram", "-42", "first", "telegram:-42:first", &first),
+            ("telegram", "-42", "other", "telegram:-42:other", &other),
+            ("discord", "dm", "first", "discord:dm", &dm),
+        ] {
+            manager.get_or_create_session(platform, chat, user).await;
+            assert_eq!(manager.compose_session_key(platform, chat, user), key);
+            manager.add_message(key, message.clone()).await;
+        }
+        assert_eq!(
+            manager.get_cross_platform_messages("first").await,
+            [first, dm.clone()]
+        );
+
+        manager.remove_session("telegram:-42:first").await;
+        manager.remove_session("telegram:-42:first").await;
+        assert!(manager.get_session("telegram:-42:first").await.is_none());
+        assert_eq!(manager.get_cross_platform_messages("first").await, [dm]);
+        assert_eq!(manager.get_cross_platform_messages("other").await, [other]);
+    }
+
+    #[tokio::test]
+    async fn checking_an_idle_session_clears_the_transcript_and_rotates_its_generation() {
+        let manager = SessionManager::new(SessionConfig::default());
+        let key = "telegram:idle-fixture";
+        assert!(!manager.check_and_reset_if_needed(key).await);
+        let admission = manager
+            .admit_session("telegram", "idle-fixture", "user1", None)
+            .await
+            .unwrap();
+        let stale: Timestamp = "2000-01-01T00:00:00Z".parse().unwrap();
+        manager
+            .sessions
+            .write()
+            .await
+            .get_mut(key)
+            .unwrap()
+            .session
+            .created_at = stale;
+        manager
+            .add_message(key, Message::user("Previous transcript"))
+            .await;
+        assert!(!manager.check_and_reset_if_needed(key).await);
+
+        manager
+            .sessions
+            .write()
+            .await
+            .get_mut(key)
+            .unwrap()
+            .session
+            .last_active_at = stale;
+        assert!(manager.check_and_reset_if_needed(key).await);
+        let reset = manager.get_session(key).await.unwrap();
+        assert_eq!(reset.id, admission.session.id);
+        assert!(reset.messages.is_empty());
+        assert!(reset.created_at > stale);
+        assert!(reset.last_active_at >= reset.created_at);
+        assert!(manager
+            .turn_messages(key, &admission.generation)
+            .await
+            .is_none());
+        assert_eq!(manager.expire_idle_sessions().await, 0);
+    }
+
+    #[tokio::test]
     async fn compaction_rejects_a_stale_snapshot_in_the_same_generation() {
         let manager = SessionManager::new(SessionConfig::default());
         let admission = manager

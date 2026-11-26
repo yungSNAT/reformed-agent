@@ -1089,7 +1089,7 @@ fn test_finalizer_retries_need_tools() {
         );
         let messages = vec![Message::user("U1-abc hi remote")];
         let result = if stream {
-            rt.block_on(agent.run_stream(messages, Some(tools), None))
+            rt.block_on(agent.run_stream(messages, Some(tools), Some(Box::new(|_| {}))))
         } else {
             rt.block_on(agent.run(messages, Some(tools)))
         };
@@ -1146,7 +1146,11 @@ async fn stream_reissues_final_answers_with_the_required_contract() {
         );
         let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
         let result = agent
-            .run_stream(vec![Message::user(prompt)], Some(vec![schema]), None)
+            .run_stream(
+                vec![Message::user(prompt)],
+                Some(vec![schema]),
+                Some(Box::new(|_| {})),
+            )
             .await
             .expect("stream finalizer completes the fixture turn");
         assert!(result.finished_naturally, "{prompt}");
@@ -1159,6 +1163,114 @@ async fn stream_reissues_final_answers_with_the_required_contract() {
             result.messages.last().and_then(|message| message.content.as_deref()),
             Some(reply),
             "{prompt}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn workspace_finalizer_retries_unsupported_mail_claims_in_both_loops() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    for stream in [false, true] {
+        let mut config = AgentConfig {
+            skip_context_files: true,
+            skip_memory: true,
+            ..AgentConfig::default()
+        };
+        let home = isolate_route_learning_home(&mut config);
+        let scripts = home
+            .path()
+            .join("skills/productivity/google-workspace/scripts");
+        let setup = scripts.join("setup.py");
+        let api = scripts.join("google_api.py");
+        let setup_command = format!(
+            "env HERMES_HOME={} python3.12 {} --check",
+            home.path().display(),
+            setup.display()
+        );
+        let error = "NOT_AUTHENTICATED: workspace fixture has no token";
+        let reply = format!("GOOGLE_WORKSPACE_USED: no\nGmail is blocked.\ncmd={setup_command}\nerror={error}");
+        let calls = Arc::new(AtomicU32::new(0));
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(FinalizerReplyProvider {
+                calls: calls.clone(),
+                first_reply: Some(
+                    "GOOGLE_WORKSPACE_USED: yes\nI found an email titled Weekly Notes.",
+                ),
+                reply: reply.clone(),
+            }),
+        );
+        let messages = vec![
+            Message::user("Summarise recent Gmail messages."),
+            Message::assistant_with_tool_calls(
+                None,
+                vec![ToolCall {
+                    id: "workspace-setup".into(),
+                    function: hermes_core::FunctionCall {
+                        name: "terminal".into(),
+                        arguments: json!({"command": setup_command}).to_string(),
+                    },
+                    extra_content: None,
+                }],
+            ),
+            Message::tool_result_with_name("workspace-setup", "terminal", error),
+        ];
+        let tools = vec![
+            ToolSchema::new("skill_view", "Read a skill", JsonSchema::new("object")),
+            ToolSchema::new("terminal", "Run commands", JsonSchema::new("object")),
+        ];
+        let delivered = Arc::new(AtomicU32::new(0));
+        let result = if stream {
+            let chunks = delivered.clone();
+            agent
+                .run_stream(
+                    messages,
+                    Some(tools),
+                    Some(Box::new(move |chunk| {
+                        if chunk.delta.is_some_and(|delta| delta.content.is_some()) {
+                            chunks.fetch_add(1, Ordering::SeqCst);
+                        }
+                    })),
+                )
+                .await
+        } else {
+            agent.run(messages, Some(tools)).await
+        }
+        .expect("workspace finalizer completes the fixture turn");
+        assert!(result.finished_naturally, "stream={stream}");
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "stream={stream}");
+        assert_eq!(delivered.load(Ordering::SeqCst) > 0, stream);
+
+        let system_text = |marker: &str| {
+            result
+                .messages
+                .iter()
+                .filter(|message| message.role == MessageRole::System)
+                .filter_map(|message| message.content.as_deref())
+                .find(|text| text.contains(marker))
+        };
+        let initial = system_text("Google Workspace/Gmail execution contract active")
+            .expect("initial Workspace execution contract");
+        assert!(initial.contains("skills_tools=true, terminal=true"));
+        let retry = system_text("Google Workspace evidence contract failed")
+            .expect("Workspace evidence retry contract");
+        for text in [initial, retry] {
+            assert!(text.contains(&setup_command), "{text}");
+            assert!(
+                text.contains(&format!("{} gmail search", api.display())),
+                "{text}"
+            );
+            assert!(text.contains("GOOGLE_WORKSPACE_USED: no"), "{text}");
+        }
+        assert_eq!(
+            result
+                .messages
+                .last()
+                .and_then(|message| message.content.as_deref()),
+            Some(reply.as_str()),
+            "stream={stream}"
         );
     }
 }
@@ -1206,7 +1318,9 @@ async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
         );
         let messages = vec![Message::user("What does the fixture show?")];
         let result = if stream {
-            agent.run_stream(messages, Some(Vec::new()), None).await
+            agent
+                .run_stream(messages, Some(Vec::new()), Some(Box::new(|_| {})))
+                .await
         } else {
             agent.run(messages, Some(Vec::new())).await
         }
