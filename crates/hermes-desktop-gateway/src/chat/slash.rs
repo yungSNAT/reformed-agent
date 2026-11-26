@@ -156,7 +156,7 @@ fn skill(chat: &Chat, name: &str, arg: &str) -> Result<Option<(String, String)>,
 /// Skills come from this gateway's home only, filtered by its config.
 fn skill_config(chat: &Chat) -> SkillCommandResolverConfig {
     SkillCommandResolverConfig {
-        roots: vec![chat.home.join("skills")],
+        roots: vec![chat.skills_root()],
         enabled: chat.config.skills.enabled.clone(),
         disabled: chat.config.skills.disabled.clone(),
         ..SkillCommandResolverConfig::default()

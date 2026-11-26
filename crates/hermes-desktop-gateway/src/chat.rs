@@ -287,6 +287,13 @@ impl Drop for DrainGuard {
 }
 
 impl Chat {
+    /// The skills this gateway's profile offers: `<home>/skills`, the folder the tool-running
+    /// turns read too (`hermes_tools::register_builtins::skills_root` once that lands, which
+    /// this then calls).
+    pub(crate) fn skills_root(&self) -> PathBuf {
+        self.home.join("skills")
+    }
+
     /// Chat with `config`'s model; sessions are saved under `config`'s home.
     pub fn new(config: GatewayConfig) -> Self {
         let home = config

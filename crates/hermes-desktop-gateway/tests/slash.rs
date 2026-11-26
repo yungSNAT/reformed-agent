@@ -129,6 +129,8 @@ async fn slash_exec_answers_the_commands_this_backend_serves() {
         json!({"command": "tools", "session_id": id}),
     )
     .await;
+    // True until tool-running turns land: whichever of that change and this one merges second
+    // lists the offered tools here and changes this assertion.
     assert!(
         tools["result"]["output"]
             .as_str()
