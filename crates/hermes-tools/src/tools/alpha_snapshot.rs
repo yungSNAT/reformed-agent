@@ -1093,3 +1093,7 @@ mod tests {
         assert!(!raw.contains("secret-access-token"));
     }
 }
+
+#[cfg(test)]
+#[path = "alpha_snapshot_coverage_gen.rs"]
+mod coverage_gen;

@@ -321,6 +321,47 @@ mod tests {
         .collect()
     }
 
+    #[test]
+    fn switching_backends_keeps_the_previous_backend_on_rejection() {
+        let mut manager = BackendManager::new(TerminalConfig {
+            timeout: 42,
+            ..TerminalConfig::default()
+        });
+        let local = manager.terminal_backend();
+        for (backend, feature) in missing_backends() {
+            let error = manager.switch_backend(backend).unwrap_err();
+            assert!(error.to_string().contains("feature not enabled"));
+            assert_eq!(
+                manager.configured_backend_type(),
+                TerminalBackendType::Local,
+                "{feature}"
+            );
+            assert!(
+                Arc::ptr_eq(&manager.terminal_backend(), &local),
+                "{feature}"
+            );
+        }
+
+        for backend in [
+            #[cfg(feature = "docker")]
+            TerminalBackendType::Docker,
+            #[cfg(feature = "ssh")]
+            TerminalBackendType::Ssh,
+            #[cfg(feature = "singularity")]
+            TerminalBackendType::Singularity,
+        ]
+        .into_iter()
+        .chain([TerminalBackendType::Local])
+        {
+            let previous = manager.terminal_backend();
+            manager.switch_backend(backend).unwrap();
+            assert_eq!(manager.backend_type(), backend);
+            assert_eq!(manager.configured_backend_type(), backend);
+            assert_eq!(manager.config().timeout, 42);
+            assert!(!Arc::ptr_eq(&manager.terminal_backend(), &previous));
+        }
+    }
+
     /// A configured backend the build lacks must refuse every operation,
     /// never run it on the host: the user chose that backend for isolation.
     #[tokio::test]

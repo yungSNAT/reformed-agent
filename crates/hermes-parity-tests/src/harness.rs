@@ -351,6 +351,41 @@ mod tests {
     }
 
     #[test]
+    fn fixture_directory_ignores_documentation() {
+        let path = fixtures_dir().join("pending/send_message");
+        assert!(path.join("README.txt").is_file());
+        run_fixtures_in_dir(&path).expect("documentation is not a JSON fixture");
+    }
+
+    #[test]
+    fn reports_unsupported_fixture_version() {
+        let path = fixtures_dir().join("../tests/fixtures/harness_unsupported_version.json");
+        assert!(matches!(
+            run_fixture_file(&path),
+            Err(ParityError::Dispatch(message)) if message.contains("unsupported schema_version 2")
+        ));
+    }
+
+    #[test]
+    fn ignores_skipped_cases_and_reports_the_first_actual_mismatch() {
+        let path = fixtures_dir().join("../tests/fixtures/harness_mismatch_after_skipping.json");
+        let result = run_fixture_file(&path);
+        assert!(matches!(
+            result,
+            Err(ParityError::Mismatch { case, msg, .. })
+                if case == "empty_commit_hash" && msg.contains("Empty commit hash")
+        ));
+    }
+
+    #[test]
+    fn rejects_unrecognised_parity_operations() {
+        assert_eq!(
+            dispatch_case("unknown-fixture-op", &json!({})),
+            Err("unknown op: unknown-fixture-op".to_string())
+        );
+    }
+
+    #[test]
     fn checkpoint_shadow_dir_id_matches_python_sample() {
         assert_eq!(
             checkpoint_shadow_dir_id("/workspace/demo"),

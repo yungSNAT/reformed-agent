@@ -343,3 +343,6 @@ async fn fetch_nous_live_models() -> Vec<String> {
     dedup
 }
 
+#[cfg(test)]
+#[path = "live_catalog_coverage_gen.rs"]
+mod coverage_gen_model_switch_live_catalog;

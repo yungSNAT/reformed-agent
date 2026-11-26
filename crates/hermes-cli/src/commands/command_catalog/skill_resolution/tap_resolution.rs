@@ -1,3 +1,20 @@
+fn skill_directories<'a>(
+    tree: &'a [GitHubTreeEntry],
+    path_prefix: &'a str,
+) -> impl Iterator<Item = (&'a str, &'a str)> {
+    tree.iter().filter_map(move |entry| {
+        if entry.kind != "blob"
+            || !entry.path.starts_with(path_prefix)
+            || !entry.path.ends_with("/SKILL.md")
+        {
+            return None;
+        }
+        let directory = entry.path.trim_end_matches("/SKILL.md");
+        let name = directory.split('/').next_back().unwrap_or(directory);
+        Some((directory, name))
+    })
+}
+
 async fn resolve_skill_via_taps(
     client: &reqwest::Client,
     taps: &[String],
@@ -21,19 +38,7 @@ async fn resolve_skill_via_taps(
         } else {
             format!("{}/", spec.path.trim_matches('/'))
         };
-        for entry in tree {
-            if entry.kind != "blob" || !entry.path.ends_with("/SKILL.md") {
-                continue;
-            }
-            if !path_prefix.is_empty() && !entry.path.starts_with(&path_prefix) {
-                continue;
-            }
-            let skill_dir = entry.path.trim_end_matches("/SKILL.md");
-            let skill_name = skill_dir
-                .split('/')
-                .next_back()
-                .unwrap_or(skill_dir)
-                .to_string();
+        for (skill_dir, skill_name) in skill_directories(&tree, &path_prefix) {
             if skill_name.eq_ignore_ascii_case(requested_skill) {
                 return Ok(ResolvedSkillSource {
                     repo: spec.repo.clone(),
@@ -45,7 +50,7 @@ async fn resolve_skill_via_taps(
                 .to_ascii_lowercase()
                 .contains(&requested_skill.to_ascii_lowercase())
             {
-                suggestions.insert(skill_name);
+                suggestions.insert(skill_name.to_string());
             }
         }
     }
@@ -73,7 +78,21 @@ async fn resolve_skill_in_repo(
 ) -> Result<ResolvedSkillSource, AgentError> {
     let branch = github_default_branch(client, repo).await?;
     let tree = github_repo_tree(client, repo, &branch).await?;
+    let skill_dir = select_repository_skill(&tree, repo, requested_skill, preferred_prefix)?;
 
+    Ok(ResolvedSkillSource {
+        repo: repo.to_string(),
+        branch,
+        skill_dir,
+    })
+}
+
+fn select_repository_skill(
+    tree: &[GitHubTreeEntry],
+    repo: &str,
+    requested_skill: &str,
+    preferred_prefix: Option<&str>,
+) -> Result<String, AgentError> {
     let preferred_prefix = preferred_prefix
         .map(|v| v.trim_matches('/').to_string())
         .unwrap_or_default();
@@ -81,23 +100,14 @@ async fn resolve_skill_in_repo(
     let mut fuzzy_candidates: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
 
-    for entry in tree {
-        if entry.kind != "blob" || !entry.path.ends_with("/SKILL.md") {
-            continue;
-        }
-        let skill_dir = entry.path.trim_end_matches("/SKILL.md").to_string();
-        let skill_name = skill_dir
-            .split('/')
-            .next_back()
-            .unwrap_or(skill_dir.as_str())
-            .to_string();
+    for (skill_dir, skill_name) in skill_directories(tree, "") {
         if skill_name.eq_ignore_ascii_case(requested_skill) {
-            exact_candidates.push(skill_dir.clone());
+            exact_candidates.push(skill_dir.to_string());
         } else if skill_name
             .to_ascii_lowercase()
             .contains(&requested_skill.to_ascii_lowercase())
         {
-            fuzzy_candidates.insert(skill_name);
+            fuzzy_candidates.insert(skill_name.to_string());
         }
     }
 
@@ -127,16 +137,10 @@ async fn resolve_skill_in_repo(
         };
         (preferred, candidate.len(), candidate.clone())
     });
-    let skill_dir = exact_candidates
+    exact_candidates
         .into_iter()
         .next()
-        .ok_or_else(|| AgentError::Config("No matching skill path found.".into()))?;
-
-    Ok(ResolvedSkillSource {
-        repo: repo.to_string(),
-        branch,
-        skill_dir,
-    })
+        .ok_or_else(|| AgentError::Config("No matching skill path found.".into()))
 }
 
 async fn search_skills_via_taps(
@@ -166,15 +170,7 @@ async fn search_skills_via_taps(
         } else {
             format!("{}/", spec.path.trim_matches('/'))
         };
-        for entry in tree {
-            if entry.kind != "blob" || !entry.path.ends_with("/SKILL.md") {
-                continue;
-            }
-            if !path_prefix.is_empty() && !entry.path.starts_with(&path_prefix) {
-                continue;
-            }
-            let skill_dir = entry.path.trim_end_matches("/SKILL.md");
-            let skill_name = skill_dir.split('/').next_back().unwrap_or(skill_dir);
+        for (skill_dir, skill_name) in skill_directories(&tree, &path_prefix) {
             if !skill_name.to_ascii_lowercase().contains(&query_l) {
                 continue;
             }
@@ -280,9 +276,10 @@ async fn fetch_skill_files_from_github(
 
 async fn fetch_lobehub_skill_files(
     client: &reqwest::Client,
+    registry: &str,
     slug: &str,
 ) -> Result<Vec<(String, Bytes)>, AgentError> {
-    let url = format!("https://chat-agents.lobehub.com/{}.json", slug);
+    let url = format!("{registry}/{slug}.json");
     let resp = client
         .get(&url)
         .header("Accept", "application/json,text/plain,*/*")
@@ -402,10 +399,11 @@ fn extract_clawhub_archive(bytes: &[u8]) -> Result<Vec<(String, Bytes)>, AgentEr
 
 async fn fetch_clawhub_skill_files(
     client: &reqwest::Client,
+    registry: &str,
     slug: &str,
     version_hint: Option<&str>,
 ) -> Result<Vec<(String, Bytes)>, AgentError> {
-    let detail_url = format!("{}/skills/{}", CLAWHUB_API_BASE, slug);
+    let detail_url = format!("{registry}/skills/{slug}");
     let detail = client
         .get(&detail_url)
         .header("Accept", "application/json")
@@ -442,8 +440,7 @@ async fn fetch_clawhub_skill_files(
         })?;
 
     let download_url = format!(
-        "{}/download?slug={}&version={}",
-        CLAWHUB_API_BASE,
+        "{registry}/download?slug={}&version={}",
         urlencoding::encode(slug),
         urlencoding::encode(&version)
     );
@@ -482,3 +479,6 @@ async fn fetch_clawhub_skill_files(
     )))
 }
 
+#[cfg(test)]
+#[path = "tap_resolution_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog_skill_resolution_tap_resolution;

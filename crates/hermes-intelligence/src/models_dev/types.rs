@@ -188,3 +188,63 @@ impl Default for ModelCapabilities {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_summary_formats_rates_and_leaves_missing_cost_unknown() {
+        let mut model = ModelInfo::default();
+        assert_eq!(model.format_cost(), "unknown");
+        model.cost_input = 0.75;
+        model.cost_output = 2.5;
+        assert_eq!(model.format_cost(), "$0.75/M in, $2.50/M out");
+        model.cost_cache_read = Some(0.12);
+        assert_eq!(
+            model.format_cost(),
+            "$0.75/M in, $2.50/M out, cache read $0.12/M"
+        );
+    }
+
+    #[test]
+    fn lightweight_metadata_defaults_match_the_legacy_capability_contract() {
+        assert_eq!(
+            ModelCapabilities::default(),
+            ModelCapabilities {
+                supports_tools: true,
+                supports_vision: false,
+                supports_reasoning: false,
+                context_window: 200_000,
+                max_output_tokens: 8_192,
+                model_family: String::new(),
+            }
+        );
+        assert!(!InterleavedFlag::default().is_enabled());
+        assert!(InterleavedFlag::Bool(true).is_enabled());
+        assert!(InterleavedFlag::Field("reasoning_content".to_owned()).is_enabled());
+    }
+
+    #[test]
+    fn capability_summary_reports_modalities_and_flags_in_display_order() {
+        assert_eq!(ModelInfo::default().format_capabilities(), "basic");
+        let mut model = ModelInfo {
+            reasoning: true,
+            tool_call: true,
+            structured_output: true,
+            open_weights: true,
+            input_modalities: vec!["image".into(), "pdf".into(), "audio".into()],
+            ..ModelInfo::default()
+        };
+        assert_eq!(
+            model.format_capabilities(),
+            "reasoning, tools, vision, PDF, audio, structured output, open weights"
+        );
+        model.input_modalities.clear();
+        model.attachment = true;
+        assert_eq!(
+            model.format_capabilities(),
+            "reasoning, tools, vision, structured output, open weights"
+        );
+    }
+}

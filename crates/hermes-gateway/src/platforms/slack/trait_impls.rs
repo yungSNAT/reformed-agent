@@ -17,7 +17,7 @@ impl PlatformAdapter for SlackAdapter {
             describe_secret(&self.config.token)
         );
         if let Err(err) = self
-            .warn_if_slack_auth_test_health_issues(SLACK_API_BASE)
+            .warn_if_slack_auth_test_health_issues(&self.api_base)
             .await
         {
             debug!(error = %err, "Slack auth scope check skipped");

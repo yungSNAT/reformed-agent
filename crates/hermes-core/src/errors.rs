@@ -301,6 +301,14 @@ impl From<std::io::Error> for GatewayError {
     }
 }
 
+/// Whether a SQLite error message indicates FTS5 support or tokenizer setup is unavailable.
+pub fn is_fts5_unavailable_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("no such module")
+        || lower.contains("unknown tokenizer")
+        || lower.contains("fts5")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +344,8 @@ mod tests {
     #[test]
     fn send_error_kind_names_match_wire_contract() {
         let names: Vec<_> = SEND_ERROR_KINDS.iter().map(|kind| kind.as_str()).collect();
+        let displayed: Vec<_> = SEND_ERROR_KINDS.iter().map(ToString::to_string).collect();
+        assert_eq!(displayed, names);
         assert_eq!(
             names,
             vec![
@@ -408,19 +418,56 @@ mod tests {
     fn from_conversion_tool_to_agent() {
         let tool_err = ToolError::Timeout("10s".into());
         let agent_err: AgentError = tool_err.into();
-        match agent_err {
-            AgentError::ToolExecution(msg) => assert!(msg.contains("10s")),
-            _ => panic!("expected ToolExecution variant"),
-        }
+        assert!(matches!(agent_err, AgentError::ToolExecution(msg) if msg.contains("10s")));
     }
 
     #[test]
     fn from_conversion_io_to_agent() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
         let agent_err: AgentError = io_err.into();
-        match agent_err {
-            AgentError::Io(msg) => assert!(msg.contains("file missing")),
-            _ => panic!("expected Io variant"),
+        assert!(matches!(agent_err, AgentError::Io(msg) if msg.contains("file missing")));
+    }
+
+    #[test]
+    fn gateway_send_failure_prefers_the_provider_detail() {
+        assert_eq!(classify_send_error_text("  "), SendErrorKind::Unknown);
+        assert_eq!(
+            GatewayError::Auth("rate limit exceeded".into()).send_error_kind(),
+            SendErrorKind::RateLimited
+        );
+        assert_eq!(
+            GatewayError::ConnectionFailed("forbidden".into()).send_error_kind(),
+            SendErrorKind::Forbidden
+        );
+        for error in [
+            GatewayError::Platform("message is too long".into()),
+            GatewayError::SessionExpired("message is too long".into()),
+        ] {
+            assert_eq!(error.send_error_kind(), SendErrorKind::TooLong);
         }
+    }
+
+    #[test]
+    fn error_conversions_preserve_the_domain_and_diagnostic() {
+        let gateway = AgentError::from(GatewayError::Platform("adapter unavailable".into()));
+        assert!(matches!(gateway, AgentError::Gateway(msg) if msg.contains("adapter unavailable")));
+
+        let config = AgentError::from(ConfigError::ValidationError("invalid port".into()));
+        assert!(matches!(config, AgentError::Config(msg) if msg.contains("invalid port")));
+
+        let json = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let expected = json.to_string();
+        assert!(matches!(AgentError::from(json), AgentError::Config(msg) if msg == expected));
+
+        let tool = GatewayError::from(ToolError::Timeout("5s".into()));
+        assert!(matches!(tool, GatewayError::Platform(msg) if msg.contains("5s")));
+
+        let tool_io = ToolError::from(std::io::Error::other("fixture I/O"));
+        assert!(matches!(tool_io, ToolError::ExecutionFailed(msg) if msg == "fixture I/O"));
+
+        let gateway_io = GatewayError::from(std::io::Error::other("fixture connection"));
+        assert!(
+            matches!(gateway_io, GatewayError::ConnectionFailed(msg) if msg == "fixture connection")
+        );
     }
 }

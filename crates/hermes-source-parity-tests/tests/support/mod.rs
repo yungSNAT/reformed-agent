@@ -136,15 +136,35 @@ fn append_source_with_includes(path: &Path, source: &mut String, seen: &mut BTre
     let parent = path
         .parent()
         .unwrap_or_else(|| panic!("referenced Rust file has no parent: {}", path.display()));
+    let mut explicit_path = None;
     for line in raw.lines() {
+        if let Some(target) = path_attribute_target(line) {
+            explicit_path = Some(target);
+            continue;
+        }
+        if line.trim_start().starts_with("#[") {
+            continue;
+        }
+        let explicit = explicit_path.take();
         if let Some(target) = include_target(line) {
             append_source_with_includes(&parent.join(target), source, seen);
-        } else if declares_sidecar_tests(line) {
-            append_sidecar_tests(&path, source, seen);
-        } else if let Some(module_name) = module_decl_target(line) {
-            append_sidecar_module(&path, module_name, source, seen);
+        } else if declares_sidecar_tests(line) || module_decl_target(line).is_some() {
+            match (explicit, module_decl_target(line)) {
+                (Some(target), _) => {
+                    append_source_with_includes(&parent.join(target), source, seen)
+                }
+                (None, Some(module_name)) if !declares_sidecar_tests(line) => {
+                    append_sidecar_module(&path, module_name, source, seen)
+                }
+                (None, _) => append_sidecar_tests(&path, source, seen),
+            }
         }
     }
+}
+
+/// The file named by `#[path = "..."]`, which overrides where the next `mod` declaration is read from.
+fn path_attribute_target(line: &str) -> Option<&str> {
+    line.trim().strip_prefix("#[path = \"")?.strip_suffix("\"]")
 }
 
 pub fn read_rust_source_with_includes(file: &str) -> String {

@@ -1122,6 +1122,40 @@ mod tests {
     }
 
     #[test]
+    fn platform_toolsets_ignore_blanks_and_unregistered_entries() {
+        let mut config = GatewayConfig::default();
+        config.platform_toolsets.insert(
+            "custom-case".into(),
+            vec![" ".into(), "web".into(), "missing-toolset".into()],
+        );
+        config.tools_config.enabled = vec![" ".into(), "nonexistent".into(), "terminal".into()];
+        config.tools_config.disabled = vec![" ".into(), "web_crawl".into()];
+        config.agent.disabled_toolsets = vec![" ".into(), "nonexistent".into()];
+        let registry = registry_with_minimal_tools();
+
+        assert_eq!(
+            resolve_platform_tool_names(&config, "custom-case", &registry),
+            ["terminal", "web_extract", "web_search"]
+        );
+        assert_eq!(
+            configured_platform_toolsets(&config, "custom-case"),
+            [" ", "web", "missing-toolset"]
+        );
+        // A saved empty list is the user's choice of no toolset.
+        config
+            .platform_toolsets
+            .insert("telegram".into(), Vec::new());
+        assert_eq!(
+            resolve_platform_tool_names(&config, "telegram", &registry),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            configured_platform_toolsets(&config, "telegram"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
     fn an_explicit_empty_list_offers_no_tool() {
         let reg = registry_with_minimal_tools();
         register_live_mcp_tool(&reg);
@@ -1157,5 +1191,21 @@ mod tests {
         assert!(names.contains(&"terminal".to_string()));
         // A saved list names its MCP tools, as any other saved list does.
         assert!(!names.contains(&"mcp_lattice_search".to_string()));
+    }
+
+    #[test]
+    fn tool_definition_summary_preserves_order_and_leaves_out_schema_fields() {
+        let defs = [
+            tool_schema("read_file", "Read a file", JsonSchema::new("object")),
+            tool_schema("web_search", "Find documents", JsonSchema::new("object")),
+        ];
+        assert_eq!(
+            tool_definition_summary(&defs),
+            [
+                serde_json::json!({"name":"read_file","description":"Read a file"}),
+                serde_json::json!({"name":"web_search","description":"Find documents"}),
+            ]
+        );
+        assert!(tool_definition_summary(&[]).is_empty());
     }
 }

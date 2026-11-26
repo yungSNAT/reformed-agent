@@ -182,3 +182,7 @@ pub async fn start_copilot_device_flow() -> Result<String, AgentError> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "copilot_auth_coverage_gen.rs"]
+mod coverage_gen_copilot_auth;

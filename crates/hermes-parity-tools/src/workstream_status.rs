@@ -412,3 +412,7 @@ pub fn run(args: WorkstreamStatusArgs) -> Result<i32, String> {
     )?;
     Ok(0)
 }
+
+#[cfg(test)]
+#[path = "workstream_status_coverage_gen.rs"]
+mod coverage_gen;

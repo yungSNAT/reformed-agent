@@ -920,6 +920,49 @@ fn core_runtime_tool_schemas_cover_terminal_process_todo_and_tts_parity() {
 }
 
 #[tokio::test]
+async fn core_trait_contract_untracked_background_processes_return_tool_errors() {
+    let backend = MinimalTerminalBackend;
+    let session = "fixture";
+    for (result, expected) in [
+        (backend.list_processes().await, "process management"),
+        (backend.poll_process(session).await, "process polling"),
+        (
+            backend.read_process_log(session, Some(3), Some(5)).await,
+            "process log reads",
+        ),
+        (
+            backend.wait_process(session, Some(5)).await,
+            "process waiting",
+        ),
+        (backend.kill_process(session).await, "process termination"),
+        (
+            backend.write_process_stdin(session, "input").await,
+            "process stdin writes",
+        ),
+        (
+            backend.submit_process_stdin(session, "input").await,
+            "process stdin writes",
+        ),
+        (
+            backend.close_process_stdin(session).await,
+            "process stdin close",
+        ),
+    ] {
+        let prefix = format!("Background {expected} ");
+        let error = result.expect_err("unsupported process operation should fail");
+        assert!(
+            matches!(
+                &error,
+                AgentError::ToolExecution(message)
+                    if message.starts_with(&prefix)
+                        && message.ends_with("not supported by this terminal backend")
+            ),
+            "expected a {expected} error, got {error:?}",
+        );
+    }
+}
+
+#[tokio::test]
 async fn terminal_backend_contract_rejects_stdin_by_default() {
     let backend = MinimalTerminalBackend;
     let err = backend

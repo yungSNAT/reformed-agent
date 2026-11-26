@@ -433,6 +433,39 @@ display:
     }
 
     #[test]
+    fn legacy_flags_accept_integers_and_optional_nulls() {
+        let display: DisplayConfig = serde_yaml::from_str(
+            "tool_progress_command: -1\nbusy_ack_enabled: null\nmemory_notifications: 0\n",
+        )
+        .unwrap();
+        assert!(display.tool_progress_command_enabled());
+        assert_eq!(display.busy_ack_enabled, None);
+        assert_eq!(display.memory_notifications, Some(false));
+        let invalid = serde_yaml::from_str::<DisplayConfig>("tool_progress_command: maybe")
+            .unwrap_err();
+        assert!(invalid.to_string().contains("invalid bool-like value"));
+        let wrong_type = serde_yaml::from_str::<DisplayConfig>("tool_progress_command: [true]")
+            .unwrap_err();
+        assert!(wrong_type.to_string().contains("a bool or a bool-like string"));
+        assert_eq!(normalize_service_tier(Some("  ")), None);
+        assert_eq!(normalize_service_tier(Some("  BULK  ")).as_deref(), Some("bulk"));
+    }
+
+    #[test]
+    fn named_provider_models_accept_legacy_lists_and_mapping_keys() {
+        for source in [
+            "models: ' fixture-a, ,fixture-b  '",
+            "models: [' fixture-a ', '', fixture-b]",
+            "models: {' fixture-a ': {}, ' ': ignored, fixture-b: {context: 30}}",
+        ] {
+            let config: LlmProviderConfig = serde_yaml::from_str(source).unwrap();
+            assert_eq!(config.models, ["fixture-a", "fixture-b"], "{source}");
+        }
+        let invalid = serde_yaml::from_str::<LlmProviderConfig>("models: 42").unwrap_err();
+        assert!(invalid.to_string().contains("or map of model ids"));
+    }
+
+    #[test]
     fn tool_output_config_default_matches_upstream_limits() {
         let tool_output = ToolOutputConfig::default();
         assert_eq!(tool_output.max_bytes, DEFAULT_TOOL_OUTPUT_MAX_BYTES);

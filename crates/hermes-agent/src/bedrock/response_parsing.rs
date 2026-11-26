@@ -755,3 +755,7 @@ fn parse_openai_like_response(json: &Value, fallback_model: &str) -> Option<LlmR
             .map(str::to_string),
     })
 }
+
+#[cfg(test)]
+#[path = "response_parsing_coverage_gen.rs"]
+mod coverage_gen;

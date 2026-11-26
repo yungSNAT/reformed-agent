@@ -128,15 +128,8 @@ where
 }
 
 fn sanitize_schema_node(node: &mut Value, top_level: bool) {
-    match node {
-        Value::String(kind) => {
-            *node = schema_for_type(kind);
-        }
-        Value::Object(_) => {}
-        _ if top_level => {
-            *node = default_object_schema();
-        }
-        _ => return,
+    if let Value::String(kind) = node {
+        *node = schema_for_type(kind);
     }
 
     let Some(obj) = node.as_object_mut() else {
@@ -547,6 +540,90 @@ mod tests {
             normalized["$defs"]["Item"]["properties"]["child"]["$ref"],
             "#/$defs/Child"
         );
+    }
+
+    #[test]
+    fn normalization_merges_legacy_defs_without_overwriting_current_entries() {
+        let schema = json!({
+            "$defs": {"chosen": {"type": "string"}},
+            "definitions": {
+                "chosen": {"type": "number"},
+                "child": {"$ref": "#/definitions/chosen"}
+            },
+            "anyOf": [
+                {"$defs": true, "definitions": {"ignored": {}}},
+                {"$defs": {}, "definitions": "invalid"}
+            ]
+        });
+
+        assert_eq!(
+            normalize_schema_definitions_refs(&schema),
+            json!({
+                "$defs": {
+                    "chosen": {"type": "string"},
+                    "child": {"$ref": "#/$defs/chosen"}
+                },
+                "anyOf": [{"$defs": true}, {"$defs": {}}]
+            })
+        );
+        assert!(schema.get("definitions").is_some());
+    }
+
+    #[test]
+    fn sanitizer_handles_non_mapping_values_and_properties_without_a_type() {
+        let default = json!({"type": "object", "properties": {}});
+        assert_eq!(sanitize_tool_parameters(&json!(42)), default);
+        assert_eq!(sanitize_tool_schemas(Some(&json!({}))), Some(json!({})));
+
+        let schema = json!({
+            "properties": {
+                "name": {"type": ["null", 42, "string", "number"]}
+            },
+            "required": ["name", null],
+            "$defs": {"nested": "object", "boolean_schema": false}
+        });
+        assert_eq!(
+            sanitize_tool_parameters(&schema),
+            json!({
+                "type": "object",
+                "properties": {"name": {"type": "string", "nullable": true}},
+                "required": ["name"],
+                "$defs": {"nested": {"type": "object", "properties": {}}, "boolean_schema": false}
+            })
+        );
+        assert_eq!(
+            sanitize_tool_parameters(&json!({"type": ["null"], "required": ["missing"]})),
+            json!({"type": ["null"]})
+        );
+    }
+
+    #[test]
+    fn strip_only_visits_existing_parameters_and_preserves_boolean_schemas() {
+        let mut tools = json!([
+            {"function": {"name": "missing_parameters"}},
+            {"type": "function", "name": "nested", "parameters": {
+                "items": false,
+                "additionalProperties": {"format": "uri", "enum": ["name/path"]},
+                "$defs": {"child": {"pattern": "^child$", "enum": ["keep"]}}
+            }},
+            42
+        ]);
+
+        assert_eq!(strip_pattern_and_format(Some(&mut tools)), 2);
+        assert_eq!(strip_slash_enum(Some(&mut tools)), 1);
+        assert_eq!(
+            tools[0],
+            json!({"function": {"name": "missing_parameters"}})
+        );
+        assert_eq!(
+            tools[1]["parameters"],
+            json!({
+                "items": false,
+                "additionalProperties": {},
+                "$defs": {"child": {"enum": ["keep"]}}
+            })
+        );
+        assert_eq!(tools[2], json!(42));
     }
 
     #[test]

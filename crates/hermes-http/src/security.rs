@@ -399,3 +399,7 @@ mod tests {
         assert!(request_auth_rejection(&security, "/auth/status", &empty_headers).is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "security_coverage_gen.rs"]
+mod coverage_gen;

@@ -590,3 +590,118 @@ async fn renewal_skips_a_subscription_whose_new_expiry_is_out_of_range() {
         json!([{"subscription_id": "sub-1", "reason": "expiration_out_of_range"}])
     );
 }
+
+#[tokio::test]
+async fn renewal_previews_changes_and_persists_only_the_due_remote_patch() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = TeamsPipelineStore::new(temp.path().join("store.json")).unwrap();
+    store
+        .upsert_subscription("deleted", json!({"status": "active"}))
+        .unwrap();
+    let server = MockServer::start().await;
+    let now = Timestamp::from_second(Timestamp::now().as_second()).unwrap();
+    let date = |hours| format!("{:.0}", now + SignedDuration::from_hours(hours));
+    let subscription = |id: &str, expiry: &str| {
+        json!({
+            "id": id,
+            "resource": "communications/onlineMeetings/getAllTranscripts",
+            "changeType": "created",
+            "notificationUrl": "https://fixture.invalid/notifications",
+            "clientState": "fixture-client-state",
+            "expirationDateTime": expiry,
+        })
+    };
+    let mut imported = subscription("imported", &date(1));
+    let expiry = imported
+        .as_object_mut()
+        .unwrap()
+        .remove("expirationDateTime")
+        .unwrap();
+    imported["expiration_datetime"] = expiry;
+    let mut foreign = subscription("foreign", &date(1));
+    foreign["clientState"] = json!("another-client");
+
+    Mock::given(method("GET"))
+        .and(path("/subscriptions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"value": [
+            subscription("due", &date(1)), subscription("expired", &date(-2)),
+            subscription("far", &date(72)), subscription("invalid", "not a timestamp"),
+            imported, foreign, {},
+        ]})))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let extended = json!({"expirationDateTime": date(49)});
+    Mock::given(method("PATCH"))
+        .and(path("/subscriptions/due"))
+        .and(body_json(extended.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(extended))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let http = Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let client = MicrosoftGraphClient {
+        client: http.clone(),
+        token_provider: MicrosoftGraphTokenProvider {
+            client: http,
+            config: MicrosoftGraphAuthConfig {
+                direct_access_token: Some("fixture-bearer-value".into()),
+                tenant_id: None,
+                client_id: None,
+                client_secret: None,
+                scope: String::new(),
+                authority_url: String::new(),
+            },
+            cache: Arc::default(),
+        },
+        base_url: server.uri(),
+    };
+
+    let preview =
+        maintain_graph_subscriptions(&client, &store, 24, 48, true, Some("fixture-client-state"))
+            .await
+            .unwrap();
+    assert_eq!(preview["synced_subscription_count"], 5);
+    assert_eq!(preview["candidate_count"], 1);
+    assert_eq!(preview["renewed_count"], 0);
+    assert_eq!(preview["candidates"][0]["new_expiration"], date(49));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    let skipped = preview["skipped"].as_array().unwrap();
+    for (id, reason) in [
+        ("expired", "already_expired"),
+        ("far", "not_due"),
+        ("invalid", "invalid_expiration"),
+        ("imported", "missing_expiration"),
+        ("foreign", "not_managed_by_teams_pipeline"),
+    ] {
+        assert!(
+            skipped
+                .iter()
+                .any(|entry| entry["subscription_id"] == id && entry["reason"] == reason),
+            "{id}: {skipped:?}"
+        );
+    }
+
+    let applied =
+        maintain_graph_subscriptions(&client, &store, 24, 48, false, Some("fixture-client-state"))
+            .await
+            .unwrap();
+    assert_eq!(applied["renewed_count"], 1);
+    assert_eq!(applied["renewed"][0]["candidate"]["subscription_id"], "due");
+    let records = store.list_subscriptions().unwrap();
+    assert_eq!(records["due"]["status"], "active");
+    assert_eq!(records["due"]["expiration_datetime"], date(49));
+    assert!(records["due"]["latest_renewal_at"].is_string());
+    assert_eq!(records["expired"]["status"], "expired");
+    assert_eq!(records["deleted"]["status"], "missing_remote");
+    assert!(!records.contains_key("foreign"));
+}

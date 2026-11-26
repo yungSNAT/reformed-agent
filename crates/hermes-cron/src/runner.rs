@@ -1654,3 +1654,7 @@ tools_config:
         }
     }
 }
+
+#[cfg(test)]
+#[path = "runner_coverage_gen.rs"]
+mod coverage_gen;

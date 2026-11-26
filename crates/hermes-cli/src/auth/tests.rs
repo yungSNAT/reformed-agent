@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_env_lock;
+use serde_json::json;
 
 fn nous_test_jwt(seconds: i64, scope: Value) -> String {
     let header = serde_json::json!({ "alg": "none", "typ": "JWT" });
@@ -130,6 +131,152 @@ fn nous_invoke_jwt_selection_mirrors_access_token_to_agent_key_fields() {
     assert_eq!(state.expires_at, state.agent_key_expires_at);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn nous_device_login_polls_until_approved_and_keeps_the_requested_inference_url() {
+    if !crate::isolated_test_profile::enter(
+        "auth::tests::nous_device_login_polls_until_approved_and_keeps_the_requested_inference_url",
+    ) {
+        return;
+    }
+    use wiremock::matchers::{body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let portal = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/oauth/device/code"))
+        .and(body_string_contains("client_id=fixture-client"))
+        .and(body_string_contains("scope=fixture-scope"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "device_code": "fixture-device",
+            "user_code": "FIXTURE-1",
+            "verification_uri": format!("{}/verify", portal.uri()),
+            "interval": 1
+        })))
+        .expect(1)
+        .mount(&portal)
+        .await;
+
+    let jwt = nous_test_jwt(900, serde_json::json!([NOUS_INFERENCE_INVOKE_SCOPE]));
+    for (priority, status, response) in [
+        (
+            1,
+            400,
+            serde_json::json!({"error": "authorization_pending"}),
+        ),
+        (2, 400, serde_json::json!({"error": "slow_down"})),
+        (
+            3,
+            200,
+            serde_json::json!({
+                "access_token": jwt,
+                "refresh_token": "fixture-refresh",
+                "expires_in": 900,
+                "inference_base_url": "https://untrusted.example.invalid/v1",
+            }),
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/api/oauth/token"))
+            .and(body_string_contains("client_id=fixture-client"))
+            .and(body_string_contains("device_code=fixture-device"))
+            .and(body_string_contains(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code",
+            ))
+            .respond_with(ResponseTemplate::new(status).set_body_json(response))
+            .with_priority(priority)
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&portal)
+            .await;
+    }
+    let local_inference = format!("{}/inference/v1", portal.uri());
+    let state = tokio::time::timeout(
+        Duration::from_secs(16),
+        login_nous_device_code(NousDeviceCodeOptions {
+            portal_base_url: Some(format!("{}/", portal.uri())),
+            inference_base_url: Some(format!("{local_inference}/")),
+            client_id: Some("fixture-client".into()),
+            scope: Some("fixture-scope".into()),
+            open_browser: false,
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("fixture device login timed out")
+    .expect("device approval produces usable state");
+    assert_eq!(state.portal_base_url, portal.uri());
+    assert_eq!(state.inference_base_url, local_inference);
+    assert_eq!(state.scope.as_deref(), Some("fixture-scope"));
+    assert_eq!(state.token_type, "Bearer");
+    assert_eq!(state.refresh_token.as_deref(), Some("fixture-refresh"));
+    assert_eq!(state.runtime_api_key().as_deref(), Some(jwt.as_str()));
+    assert_eq!(state.expires_at, state.agent_key_expires_at);
+    assert!(state.expires_at.is_some());
+    assert_eq!(portal.received_requests().await.unwrap().len(), 4);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn anthropic_oauth_exchanges_the_pasted_code_using_the_isolated_endpoint() {
+    if !crate::isolated_test_profile::enter_with_input(
+        "auth::tests::anthropic_oauth_exchanges_the_pasted_code_using_the_isolated_endpoint",
+        b"fixture-code#fixture-state\n",
+    ) {
+        return;
+    }
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let service = MockServer::start().await;
+    std::env::set_var(
+        "HERMES_ANTHROPIC_OAUTH_AUTHORIZE_URL",
+        format!("{}/authorize", service.uri()),
+    );
+    std::env::set_var(
+        "HERMES_ANTHROPIC_OAUTH_TOKEN_URL",
+        format!("{}/token", service.uri()),
+    );
+    std::env::set_var("HERMES_ANTHROPIC_OAUTH_CLIENT_ID", "fixture-client");
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": " fixture-anthropic-access ",
+            "refresh_token": " fixture-anthropic-refresh ",
+            "expires_in": 600
+        })))
+        .expect(1)
+        .mount(&service)
+        .await;
+
+    let before = jiff::Timestamp::now().as_millisecond();
+    let state = login_anthropic_oauth(AnthropicOAuthLoginOptions {
+        open_browser: false,
+        ..Default::default()
+    })
+    .await
+    .expect("local OAuth exchange");
+    assert_eq!(state.access_token, "fixture-anthropic-access");
+    assert_eq!(
+        state.refresh_token.as_deref(),
+        Some("fixture-anthropic-refresh")
+    );
+    let after = jiff::Timestamp::now().as_millisecond();
+    assert!((before + 600_000..=after + 600_000).contains(&state.expires_at_ms.unwrap()));
+
+    let requests = service.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let request: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(request["grant_type"], "authorization_code");
+    assert_eq!(request["client_id"], "fixture-client");
+    assert_eq!(request["code"], "fixture-code");
+    assert_eq!(request["state"], "fixture-state");
+    assert_eq!(request["redirect_uri"], ANTHROPIC_OAUTH_REDIRECT_URI);
+    assert!(request["code_verifier"]
+        .as_str()
+        .is_some_and(|value| value.len() >= 43));
+}
+
 #[tokio::test]
 async fn resolve_nous_runtime_credentials_selects_invoke_jwt_without_mint() {
     let _guard = test_env_lock::lock_async().await;
@@ -224,6 +371,156 @@ fn clear_provider_auth_state_is_noop_when_missing() {
     let provider = format!("missing-{}", uuid::Uuid::new_v4().simple());
     let removed = clear_provider_auth_state(&provider).expect("clear");
     assert!(!removed);
+}
+
+#[tokio::test]
+async fn codex_device_login_retries_pending_approval_and_exchanges_the_code() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    if !crate::isolated_test_profile::enter(
+        "auth::tests::codex_device_login_retries_pending_approval_and_exchanges_the_code",
+    ) {
+        return;
+    }
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let origin = server.uri();
+    let issued = "synthetic-device-access";
+    let poll = json!({"device_auth_id": "fixture-device", "user_code": "FIXTURE"});
+    Mock::given(method("POST"))
+        .and(path("/api/accounts/deviceauth/usercode"))
+        .and(body_json(json!({"client_id": CODEX_OAUTH_CLIENT_ID})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "device_auth_id": "fixture-device", "user_code": "FIXTURE", "interval": "1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/accounts/deviceauth/token"))
+        .and(body_json(&poll))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/accounts/deviceauth/token"))
+        .and(body_json(poll))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authorization_code": "fixture-authorization",
+            "code_verifier": "fixture-verifier"
+        })))
+        .with_priority(2)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": issued, "expires_in": "3600"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resolved = tokio::time::timeout(
+        Duration::from_secs(10),
+        login_codex_device_code_with_client(
+            &client,
+            &origin,
+            &format!("{origin}/oauth/token"),
+            false,
+        ),
+    )
+    .await
+    .expect("device sign-in fixture timed out")
+    .unwrap();
+    assert_eq!(resolved.tokens.access_token, issued);
+    assert!(resolved.tokens.refresh_token.is_none());
+    assert_eq!(resolved.tokens.expires_in, Some(3600));
+    assert_eq!(resolved.base_url, DEFAULT_CODEX_BASE_URL);
+    assert_eq!(resolved.auth_mode.as_deref(), Some("chatgpt"));
+    assert_eq!(resolved.source.as_deref(), Some("device_code"));
+    let requests = server.received_requests().await.unwrap();
+    let exchange = requests
+        .iter()
+        .find(|request| request.url.path() == "/oauth/token")
+        .expect("token exchange request");
+    let mut form_url = exchange.url.clone();
+    form_url.set_query(Some(std::str::from_utf8(&exchange.body).unwrap()));
+    let form = form_url.query_pairs().collect::<Vec<_>>();
+    assert_eq!(form.len(), 5);
+    for (name, value) in [
+        ("grant_type", "authorization_code"),
+        ("code", "fixture-authorization"),
+        (
+            "redirect_uri",
+            "https://auth.openai.com/deviceauth/callback",
+        ),
+        ("client_id", CODEX_OAUTH_CLIENT_ID),
+        ("code_verifier", "fixture-verifier"),
+    ] {
+        assert!(form
+            .iter()
+            .any(|(key, actual)| key == name && actual == value));
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn codex_device_login_reports_service_and_incomplete_code_responses() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let origin = server.uri();
+    for (case, response, expected) in [
+        (
+            "unavailable",
+            ResponseTemplate::new(503).set_body_json(json!({"error": "try later"})),
+            "device code request failed (503 Service Unavailable): try later",
+        ),
+        (
+            "incomplete",
+            ResponseTemplate::new(200).set_body_string("{"),
+            "invalid codex device code response",
+        ),
+        (
+            "missing-user",
+            ResponseTemplate::new(200).set_body_json(json!({"device_auth_id": "fixture-device"})),
+            "device code response missing user_code",
+        ),
+        (
+            "missing-device",
+            ResponseTemplate::new(200).set_body_json(json!({"user_code": "FIXTURE"})),
+            "device code response missing device_auth_id",
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(format!("/{case}/api/accounts/deviceauth/usercode")))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            login_codex_device_code_with_client(
+                &client,
+                &format!("{origin}/{case}"),
+                &format!("{origin}/oauth/token"),
+                false,
+            ),
+        )
+        .await
+        .expect("device sign-in fixture timed out")
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
 }
 
 #[test]

@@ -194,9 +194,10 @@ fn render_highlighted_code_line(
             spans.push(Span::styled(ch.to_string(), punctuation_style));
         }
     }
-    flush_token(&mut spans, &mut token, keyword_style, keywords);
-    if in_string && !token.is_empty() {
+    if in_string {
         spans.push(Span::styled(token, string_style));
+    } else {
+        flush_token(&mut spans, &mut token, keyword_style, keywords);
     }
     Line::from(spans)
 }
@@ -388,3 +389,6 @@ fn sanitize_line_to_default_language_ascii(line: &str, compact_ws: bool) -> Opti
     Some(format!("{leading}{body}"))
 }
 
+#[cfg(test)]
+#[path = "inline_markdown_coverage_gen.rs"]
+mod coverage_gen_tui_rendering_inline_markdown;

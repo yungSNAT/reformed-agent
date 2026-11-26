@@ -628,7 +628,6 @@ mod tests {
     use super::*;
     use hermes_core::git::is_git_2_39_1_or_later;
     use std::process::Command;
-    use std::time::Duration;
 
     /// Whether git takes `--no-lazy-fetch`. The tests ask git, not
     /// `lazy_fetch_guard`, so that a guard which wrongly refuses a supported
@@ -1331,6 +1330,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn workspace_snapshot_gives_up_on_a_git_call_that_hangs() {
+        use std::time::Duration;
+
         // A FIFO include stops the config listing, so there is no snapshot; a
         // FIFO mailmap stops only `git log`, so the status stays.
         for (key, keeps_status) in [("include.path", false), ("mailmap.file", true)] {

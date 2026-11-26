@@ -30,6 +30,181 @@
 
     include!("tests/runtime_smart_routing.rs");
 
+    use std::sync::atomic::AtomicU64;
+
+    struct ReviewProvider {
+        review_prompt: &'static str,
+        tool: &'static str,
+        messages: Mutex<Vec<Vec<Message>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for ReviewProvider {
+        async fn chat_completion(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            let in_review = messages
+                .iter()
+                .any(|msg| msg.content.as_deref() == Some(self.review_prompt));
+            let saved = messages
+                .iter()
+                .any(|msg| msg.tool_call_id.as_deref() == Some("fixture-review"));
+            self.messages.lock().unwrap().push(messages.to_vec());
+            let arguments = if self.tool == "memory" {
+                r#"{"action":"add","target":"memory","content":"Keep a copy of shift notes."}"#
+            } else {
+                r#"{"action":"create","name":"shift-notes","content":"Keep a copy of shift notes."}"#
+            };
+            let (message, finish_reason) = match (in_review, saved) {
+                (false, _) => (Message::assistant("The shift notes are ready."), "stop"),
+                (true, true) => (
+                    Message::assistant("Saved the shift notes during the review."),
+                    "stop",
+                ),
+                (true, false) => (
+                    Message::assistant_with_tool_calls(
+                        None,
+                        vec![ToolCall {
+                            id: "fixture-review".into(),
+                            function: hermes_core::FunctionCall {
+                                name: self.tool.into(),
+                                arguments: arguments.into(),
+                            },
+                            extra_content: None,
+                        }],
+                    ),
+                    "tool_calls",
+                ),
+            };
+            Ok(hermes_core::LlmResponse {
+                message,
+                usage: None,
+                model: "fixture-model".into(),
+                finish_reason: Some(finish_reason.into()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            futures::stream::empty().boxed()
+        }
+    }
+
+    fn register_review_fixture_tools(executions: Arc<AtomicU64>) -> ToolRegistry {
+        let mut registry = ToolRegistry::new();
+        for name in ["memory", "skill_manage"] {
+            let executions = executions.clone();
+            registry.register(
+                name,
+                ToolSchema::new(name, "Fixture review tool", JsonSchema::new("object")),
+                Arc::new(move |args| {
+                    assert_eq!(args["content"], "Keep a copy of shift notes.");
+                    executions.fetch_add(1, Ordering::AcqRel);
+                    let response = if name == "memory" {
+                        assert_eq!(args["action"], "add");
+                        assert_eq!(args["target"], "memory");
+                        r#"{"success":true,"target":"memory","message":"Entry added"}"#
+                    } else {
+                        assert_eq!(args["action"], "create");
+                        assert_eq!(args["name"], "shift-notes");
+                        r#"{"success":true,"message":"Shift notes skill created."}"#
+                    };
+                    Ok(response.into())
+                }),
+            );
+        }
+        registry
+    }
+
+    #[tokio::test]
+    async fn background_review_uses_due_prompts_and_reports_saved_changes() {
+        for (memory, skills, prompt, tool, expected) in [
+            (1, 0, MEMORY_REVIEW_PROMPT, "memory", "💾 Memory updated"),
+            (
+                0,
+                1,
+                SKILL_REVIEW_PROMPT,
+                "skill_manage",
+                "💾 Shift notes skill created.",
+            ),
+            (1, 1, COMBINED_REVIEW_PROMPT, "memory", "💾 Memory updated"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let provider = Arc::new(ReviewProvider {
+                review_prompt: prompt,
+                tool,
+                messages: Mutex::new(Vec::new()),
+            });
+            let executions = Arc::new(AtomicU64::new(0));
+            let (notify, mut reports) = tokio::sync::mpsc::unbounded_channel();
+            let config = AgentConfig {
+                hermes_home: Some(directory.path().to_string_lossy().into_owned()),
+                max_turns: 4,
+                skip_memory: true,
+                memory_nudge_interval: memory,
+                skill_creation_nudge_interval: skills,
+                background_review_enabled: true,
+                background_review_metrics_enabled: true,
+                ..AgentConfig::default()
+            };
+            let agent = AgentLoop::new(
+                config,
+                Arc::new(register_review_fixture_tools(executions.clone())),
+                provider.clone(),
+            )
+            .with_callbacks(AgentCallbacks {
+                background_review_callback: Some(Arc::new(move |summary| {
+                    let _ = notify.send(summary.to_string());
+                })),
+                ..AgentCallbacks::default()
+            });
+            let result = agent
+                .run(vec![Message::user("Summarise the shift notes.")], None)
+                .await
+                .unwrap();
+            assert!(result.finished_naturally);
+            let summary = tokio::time::timeout(Duration::from_secs(5), reports.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(summary, expected);
+            assert_eq!(executions.load(Ordering::Acquire), 1);
+            let seen = provider.messages.lock().unwrap();
+            assert!(!seen[0]
+                .iter()
+                .any(|msg| msg.content.as_deref() == Some(prompt)));
+            let in_review = seen
+                .iter()
+                .find(|messages| {
+                    messages
+                        .iter()
+                        .any(|msg| msg.content.as_deref() == Some(prompt))
+                })
+                .expect("background review received its prompt");
+            assert!(in_review
+                .iter()
+                .any(|msg| msg.content.as_deref() == Some("The shift notes are ready.")));
+            assert!(seen
+                .last()
+                .unwrap()
+                .iter()
+                .any(|msg| msg.tool_call_id.as_deref() == Some("fixture-review")));
+        }
+    }
+
     #[test]
     fn test_self_evolution_skill_counter_ticks_each_iteration() {
         use futures::stream::BoxStream;
@@ -491,41 +666,6 @@
 
     #[test]
     fn test_smart_model_routing_copilot_acp_missing_cli_falls_back() {
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         let mut runtime_providers = HashMap::new();
         runtime_providers.insert(
             "copilot-acp".to_string(),
@@ -573,41 +713,6 @@
 
     #[test]
     fn test_smart_model_routing_copilot_acp_tcp_mode_skips_cli_check() {
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         let mut runtime_providers = HashMap::new();
         runtime_providers.insert(
             "copilot-acp".to_string(),
@@ -655,41 +760,6 @@
 
     #[test]
     fn test_smart_model_routing_skips_complex_turn() {
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         let mut config = AgentConfig {
             model: "openai:gpt-4o".to_string(),
             smart_model_routing: SmartModelRoutingConfig {
@@ -801,6 +871,116 @@
                 "{content} should not be mirrored"
             );
         }
+    }
+
+    #[test]
+    fn memory_callbacks_only_receive_committed_writes_and_successful_delegations() {
+        #[derive(Default)]
+        struct EventRecorder(Mutex<Vec<Value>>);
+
+        impl crate::memory_manager::MemoryProviderPlugin for EventRecorder {
+            fn name(&self) -> &str {
+                "fixture-recorder"
+            }
+
+            fn on_memory_write(&self, action: &str, target: &str, content: &str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::json!([action, target, content]));
+            }
+
+            fn on_delegation(&self, task: &str, child_id: &str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::json!([task, child_id]));
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let recorder = Arc::new(EventRecorder::default());
+        let mut manager = MemoryManager::new();
+        manager.add_provider(recorder.clone());
+        let model = Arc::new(RecordingProvider::default());
+        let mut agent = AgentLoop::new(
+            AgentConfig {
+                hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                code_index_enabled: false,
+                ..AgentConfig::default()
+            },
+            Default::default(),
+            model.clone(),
+        )
+        .with_memory(Arc::new(Mutex::new(manager)));
+        let calls = [
+            (
+                "write",
+                "memory",
+                r#"{"action":" Replace ","target":" ","content":" local fixture "}"#,
+            ),
+            (
+                "staged",
+                "memory",
+                r#"{"action":"add","content":"staged fixture"}"#,
+            ),
+            (
+                "failed-write",
+                "memory",
+                r#"{"action":"add","content":"failed fixture"}"#,
+            ),
+            ("list", "memory", r#"{"action":"list"}"#),
+            (
+                "delegate",
+                "delegate_task",
+                r#"{"task":" Summarise fixture notes "}"#,
+            ),
+            (
+                "no-child-id",
+                "delegate_task",
+                r#"{"task":"Index fixture notes"}"#,
+            ),
+            (
+                "failed-delegate",
+                "delegate_task",
+                r#"{"task":"Copy fixture notes"}"#,
+            ),
+            ("blank-task", "delegate_task", r#"{"task":" "}"#),
+        ]
+        .map(|(id, name, arguments)| ToolCall {
+            id: id.into(),
+            function: hermes_core::FunctionCall {
+                name: name.into(),
+                arguments: arguments.into(),
+            },
+            extra_content: None,
+        });
+        let committed = r#"{"success":true}"#;
+        let results = [
+            ToolResult::ok("write", committed),
+            ToolResult::ok("staged", r#"{"success":true,"staged":true}"#),
+            ToolResult::err("failed-write", committed),
+            ToolResult::ok("list", committed),
+            ToolResult::ok("delegate", r#"{"sub_agent_id":" fixture-child "}"#),
+            ToolResult::ok("no-child-id", "no structured child identifier"),
+            ToolResult::err("failed-delegate", r#"{"sub_agent_id":"failed-child"}"#),
+            ToolResult::ok("blank-task", r#"{"sub_agent_id":"blank-task-child"}"#),
+            ToolResult::ok("unmatched", committed),
+        ];
+        agent.notify_memory_writes(&calls, &results);
+        agent.notify_delegations(&calls, &results);
+        let expected = [
+            serde_json::json!(["replace", "memory", "local fixture"]),
+            serde_json::json!(["Summarise fixture notes", "fixture-child"]),
+            serde_json::json!(["Index fixture notes", ""]),
+        ];
+        assert_eq!(recorder.0.lock().unwrap().as_slice(), expected);
+
+        agent.config.skip_memory = true;
+        agent.notify_memory_writes(&calls, &results);
+        agent.notify_delegations(&calls, &results);
+        assert_eq!(recorder.0.lock().unwrap().as_slice(), expected);
+        assert!(model.seen.lock().unwrap().is_empty());
     }
 
     #[test]
