@@ -15,10 +15,14 @@ async fn assert_startup_error(address: &str, expected: &str) {
         .env("HERMES_HTTP_ADDR", address)
         .current_dir(sandbox.path())
         .kill_on_drop(true);
-    for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
-        if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
-        }
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env(
+            "LLVM_PROFILE_FILE",
+            std::env::current_dir().unwrap().join(profile),
+        );
+    }
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", system_root);
     }
 
     let output = tokio::time::timeout(Duration::from_secs(15), command.output())
