@@ -3,55 +3,55 @@
 //! `methods_tools.py` for `reload.env`; `methods_config_set.py` and `model_switch.py` for
 //! `config.set model`).
 //!
-//! Each acts on this gateway's own home: its `config.yaml`, its `.env` and this process's
-//! environment, which serves only that home (another profile is served by its own process).
-//! The picker lists what the configuration names and which keys are set; it fetches no live
-//! model catalogue, prices or usage.
+//! Each acts on this gateway's own home: its `config.yaml` and its `.env`, read and written
+//! through `hermes_config`'s `.env` code (another profile is served by its own process). A key
+//! changed after start-up is kept in [`Keys`], never set in the process environment, which other
+//! threads and C libraries read whilst turns run. The key methods serve only clients on this
+//! machine. The picker lists what the configuration names and which keys are set; it fetches
+//! no live model catalogue, prices or usage.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
 
+use hermes_config::loader::{dotenv_values_in, env_value_round_trips, set_env_file_value};
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use hermes_core::providers::{canonical_provider_id, provider_api_key_env_vars, KNOWN_PROVIDERS};
 use serde_json::{json, Map, Value};
 
-use super::{ready, Chat, Handler, Reply, RpcError, SESSION_NOT_FOUND};
+use super::{ready, Chat, Handler, Origin, Reply, Request, RpcError, SESSION_NOT_FOUND};
 
 /// Upstream's codes.
 const REQUIRED: i64 = 4001;
 const UNKNOWN: i64 = 4002;
-const NOT_AN_API_KEY: i64 = 4003;
 const NO_KEY_VARIABLE: i64 = 4004;
 const NOTHING_SAVED: i64 = 4005;
 const OPTIONS_FAILED: i64 = 5033;
 const SAVE_FAILED: i64 = 5034;
 const DISCONNECT_FAILED: i64 = 5035;
 const RELOAD_FAILED: i64 = 5015;
-
-/// Variables `reload.env` never takes from `.env`: they name this process's own launch.
-const LAUNCH_ONLY: [&str; 2] = ["HERMES_HOME", crate::TOKEN_ENV];
+/// A key method asked by a client that is not on this machine.
+const LOCAL_ONLY: i64 = 4031;
 
 /// This area's methods.
 pub(super) const METHODS: &[(&str, Handler)] = &[
     ("model.options", |r| {
         let include_unconfigured = flag(&r.params, "include_unconfigured");
-        blocking(r.chat, OPTIONS_FAILED, move |chat| {
+        local(r, OPTIONS_FAILED, move |chat| {
             Ok(chat.model_options(include_unconfigured))
         })
     }),
     ("model.save_key", |r| {
         let (slug, key) = (text(&r.params, "slug"), text(&r.params, "api_key"));
-        blocking(r.chat, SAVE_FAILED, move |chat| chat.save_key(&slug, &key))
+        local(r, SAVE_FAILED, move |chat| chat.save_key(&slug, &key))
     }),
     ("model.disconnect", |r| {
         let slug = text(&r.params, "slug");
-        blocking(r.chat, DISCONNECT_FAILED, move |chat| {
-            chat.disconnect_provider(&slug)
-        })
+        local(r, DISCONNECT_FAILED, move |chat| chat.disconnect_provider(&slug))
     }),
     ("reload.env", |r| {
-        blocking(r.chat, RELOAD_FAILED, |chat| {
-            reload_env(&chat.home).map(|updated| json!({ "updated": updated }))
+        local(r, RELOAD_FAILED, |chat| {
+            Ok(json!({ "updated": chat.reload_env() }))
         })
     }),
     ("config.set", |r| ready(r.chat.config_set(&r.params))),
@@ -70,12 +70,20 @@ fn flag(params: &Map<String, Value>, key: &str) -> bool {
     params.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
-/// Runs `work` on the blocking pool (it reads and writes files); a panic answers `code`.
-fn blocking(
-    chat: Arc<Chat>,
+/// Runs `work` on the blocking pool (it reads and writes files) for a client on this machine;
+/// any other is refused. A panic answers `code`.
+fn local(
+    r: Request,
     code: i64,
     work: impl FnOnce(&Chat) -> Result<Value, RpcError> + Send + 'static,
 ) -> Reply {
+    if r.conn.origin != Origin::Local {
+        return ready(Err((
+            LOCAL_ONLY,
+            "model keys are managed only from this machine".into(),
+        )));
+    }
+    let chat = r.chat;
     Box::pin(async move {
         tokio::task::spawn_blocking(move || work(&chat))
             .await
@@ -83,9 +91,39 @@ fn blocking(
     })
 }
 
-/// A set, non-empty environment variable.
-fn env_set(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|v| !v.trim().is_empty())
+/// Key variables changed since start-up by `model.save_key`, `model.disconnect` or
+/// `reload.env`; `None` for a removed one. A turn and the picker read these before the process
+/// environment, which only start-up sets.
+#[derive(Default)]
+pub(super) struct Keys(Mutex<HashMap<String, Option<String>>>);
+
+impl Keys {
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, Option<String>>> {
+        // A map updated one entry at a time: a poisoned lock is still safe to use.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// `var`'s value now, if set and not blank: a change since start-up, else the environment's.
+    fn value(&self, var: &str) -> Option<String> {
+        let value = match self.lock().get(var) {
+            Some(changed) => changed.clone(),
+            None => std::env::var(var).ok(),
+        };
+        value.filter(|v| !v.trim().is_empty())
+    }
+
+    /// Whether `var` was changed since start-up.
+    fn changed(&self, var: &str) -> bool {
+        self.lock().contains_key(var)
+    }
+
+    /// Sets `var` to `value` (`None` removes it); whether its value changed.
+    fn set(&self, var: &str, value: Option<String>) -> bool {
+        let value = value.filter(|v| !v.trim().is_empty());
+        let changed = self.value(var) != value;
+        self.lock().insert(var.to_string(), value);
+        changed
+    }
 }
 
 /// The variables a known provider's key is read from, first to last; `None` for a provider
@@ -99,7 +137,7 @@ fn key_vars(slug: &str) -> Option<&'static [&'static str]> {
 }
 
 /// A configured provider's key variable and whether its key is set.
-fn configured_key(provider: &LlmProviderConfig) -> (Option<String>, bool) {
+fn configured_key(provider: &LlmProviderConfig, keys: &Keys) -> (Option<String>, bool) {
     let env = provider
         .api_key_env
         .as_deref()
@@ -107,12 +145,12 @@ fn configured_key(provider: &LlmProviderConfig) -> (Option<String>, bool) {
         .filter(|v| !v.is_empty());
     let literal = provider.api_key.as_deref().map(str::trim).unwrap_or("");
     let from_literal = match literal.strip_prefix("${").and_then(|v| v.strip_suffix('}')) {
-        Some(var) => env_set(var.trim()),
+        Some(var) => keys.value(var.trim()).is_some(),
         None => !literal.is_empty(),
     };
     (
         env.map(str::to_string),
-        from_literal || env.is_some_and(env_set),
+        from_literal || env.is_some_and(|var| keys.value(var).is_some()),
     )
 }
 
@@ -131,7 +169,12 @@ fn row(slug: &str, is_current: bool, models: Vec<String>, source: &str) -> Map<S
 /// The picker rows for `config`: each configured provider, then each known provider with a key
 /// set, then (when asked) every other known provider with no models. The current provider is
 /// listed even without a key, marked as not authenticated.
-fn option_rows(config: &GatewayConfig, current: &str, include_unconfigured: bool) -> Vec<Value> {
+fn option_rows(
+    config: &GatewayConfig,
+    keys: &Keys,
+    current: &str,
+    include_unconfigured: bool,
+) -> Vec<Value> {
     let current_canonical = canonical_provider_id(current);
     let is_current = |slug: &str| {
         slug.eq_ignore_ascii_case(current) || canonical_provider_id(slug) == current_canonical
@@ -147,7 +190,7 @@ fn option_rows(config: &GatewayConfig, current: &str, include_unconfigured: bool
                 models.insert(0, model.to_string());
             }
         }
-        let (key_env, authenticated) = configured_key(provider);
+        let (key_env, authenticated) = configured_key(provider, keys);
         let mut row = row(slug, is_current(slug), models, "configured");
         row.insert("is_user_defined".into(), true.into());
         row.insert("auth_type".into(), "api_key".into());
@@ -166,7 +209,7 @@ fn option_rows(config: &GatewayConfig, current: &str, include_unconfigured: bool
             continue;
         }
         let vars = provider_api_key_env_vars(slug, slug);
-        let authenticated = vars.iter().any(|v| env_set(v));
+        let authenticated = vars.iter().any(|v| keys.value(v).is_some());
         let current = is_current(slug);
         if !(authenticated || current || include_unconfigured) {
             continue;
@@ -188,91 +231,6 @@ fn option_rows(config: &GatewayConfig, current: &str, include_unconfigured: bool
     rows
 }
 
-/// Writes `key=value` into the `.env` at `path`, replacing the variable's lines, owner-only.
-fn save_env(path: &Path, key: &str, value: &str) -> std::io::Result<()> {
-    edit_env(path, key, Some(value)).map(|_| ())
-}
-
-/// Rewrites the `.env` at `path` without `key`, or with `key=value` once in place of its first
-/// line; true when `key` was there. The file is created owner-only and kept so.
-fn edit_env(path: &Path, key: &str, value: Option<&str>) -> std::io::Result<bool> {
-    let original = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(err),
-    };
-    let mut lines = Vec::new();
-    let mut found = false;
-    for line in original.lines() {
-        if hermes_config::dotenv_assignment(line).is_some_and(|(k, _)| k == key) {
-            if !found {
-                if let Some(value) = value {
-                    lines.push(format!("{key}={value}"));
-                }
-            }
-            found = true;
-        } else {
-            lines.push(line.to_string());
-        }
-    }
-    if value.is_none() && !found {
-        return Ok(false);
-    }
-    if let (Some(value), false) = (value, found) {
-        lines.push(format!("{key}={value}"));
-    }
-    let mut out = lines.join("\n");
-    out.push('\n');
-    if !path.exists() {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options.open(path)?;
-    }
-    #[cfg(unix)]
-    std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    hermes_config::atomic_write_bytes(path, out.as_bytes())
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-    Ok(found)
-}
-
-/// Re-reads `home`'s `.env` into this process's environment, as upstream's `reload_env`; the
-/// number of variables changed.
-fn reload_env(home: &Path) -> Result<usize, RpcError> {
-    let path = home.join(".env");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err((RELOAD_FAILED, err.to_string())),
-    };
-    let mut updated = 0;
-    for (key, value) in text.lines().filter_map(hermes_config::dotenv_assignment) {
-        let value = unquote(value.trim());
-        if LAUNCH_ONLY.contains(&key) || std::env::var(key).ok().as_deref() == Some(value) {
-            continue;
-        }
-        // SAFETY: as `hermes_config::load_config`, which sets this process's variables from
-        // the same file; this process serves only this home.
-        unsafe { std::env::set_var(key, value) };
-        updated += 1;
-    }
-    Ok(updated)
-}
-
-/// A `.env` value without its surrounding quotes, as the config loader reads it.
-fn unquote(value: &str) -> &str {
-    for quote in ['"', '\''] {
-        if let Some(inner) = value
-            .strip_prefix(quote)
-            .and_then(|v| v.strip_suffix(quote))
-        {
-            return inner;
-        }
-    }
-    value
-}
-
 /// A `config.set model` value: the model and the provider it names with `--provider`; `None`
 /// for a switch flag this gateway does not honour (`--global`, `--once` and others).
 fn parse_switch(value: &str) -> Option<(String, Option<String>)> {
@@ -292,6 +250,66 @@ fn parse_switch(value: &str) -> Option<(String, Option<String>)> {
 }
 
 impl Chat {
+    /// The variables a key is read from: each known provider's and each configured `key_env`.
+    fn key_variables(&self) -> Vec<String> {
+        let mut vars: Vec<String> = KNOWN_PROVIDERS
+            .iter()
+            .flat_map(|slug| provider_api_key_env_vars(slug, &canonical_provider_id(slug)))
+            .map(|var| (*var).to_string())
+            .chain(
+                self.config
+                    .llm_providers
+                    .values()
+                    .filter_map(|provider| provider.api_key_env.as_deref())
+                    .map(|var| var.trim().to_string())
+                    .filter(|var| !var.is_empty()),
+            )
+            .collect();
+        vars.sort();
+        vars.dedup();
+        vars
+    }
+
+    /// The configuration a turn on `model` runs with: the gateway's, with the provider's key
+    /// from a change since start-up; an error when that change removed the key it had.
+    pub(super) fn turn_config(&self, model: &str) -> Result<Cow<'_, GatewayConfig>, String> {
+        let (provider, _) = hermes_provider_runtime::resolve_provider_and_model(&self.config, model);
+        let entry = self
+            .config
+            .llm_providers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&provider));
+        // A key written in `config.yaml` comes first, as the provider build reads it.
+        if entry.is_some_and(|(_, c)| c.api_key.as_deref().is_some_and(|k| !k.trim().is_empty())) {
+            return Ok(Cow::Borrowed(&self.config));
+        }
+        let vars: Vec<&str> = entry
+            .and_then(|(_, c)| c.api_key_env.as_deref())
+            .map(str::trim)
+            .filter(|var| !var.is_empty())
+            .into_iter()
+            .chain(key_vars(&provider).unwrap_or_default().iter().copied())
+            .collect();
+        if !vars.iter().any(|var| self.keys.changed(var)) {
+            return Ok(Cow::Borrowed(&self.config));
+        }
+        let Some(key) = vars.iter().find_map(|var| self.keys.value(var)) else {
+            if vars.iter().any(|var| std::env::var_os(var).is_some()) {
+                return Err(format!(
+                    "No API key for provider '{provider}': it was disconnected."
+                ));
+            }
+            return Ok(Cow::Borrowed(&self.config));
+        };
+        let mut config = self.config.clone();
+        let name = entry.map_or_else(|| provider.clone(), |(name, _)| name.clone());
+        let slot = config.llm_providers.entry(name).or_insert_with(|| {
+            serde_json::from_value(json!({})).expect("every provider field has a default")
+        });
+        slot.api_key = Some(key);
+        Ok(Cow::Owned(config))
+    }
+
     /// `model.options`: `{providers, model, provider}`.
     fn model_options(&self, include_unconfigured: bool) -> Value {
         // The configured model may carry its provider (`provider:model`); the picker shows them
@@ -300,32 +318,34 @@ impl Chat {
             Some(model) => hermes_provider_runtime::resolve_provider_and_model(&self.config, model),
             None => (String::new(), String::new()),
         };
-        let providers = option_rows(&self.config, &current, include_unconfigured);
+        let providers = option_rows(&self.config, &self.keys, &current, include_unconfigured);
         json!({"providers": providers, "model": model, "provider": current})
     }
 
-    /// `model.save_key {slug, api_key}`: the key goes into this home's `.env` and this
-    /// process's environment; answers the provider's refreshed row.
+    /// `model.save_key {slug, api_key}`: the key goes into this home's `.env` and the next
+    /// turns; answers the provider's refreshed row. A key that a `.env` file would not read
+    /// back as itself is refused before anything is written.
     fn save_key(&self, slug: &str, key: &str) -> Result<Value, RpcError> {
         if slug.is_empty() || key.is_empty() {
             return Err((REQUIRED, "slug and api_key are required".into()));
         }
         let vars = key_vars(slug).ok_or((UNKNOWN, format!("unknown provider: {slug}")))?;
         let Some(var) = vars.first() else {
-            let capability = hermes_core::providers::provider_capability_for(slug);
-            if capability.is_some_and(|c| c.oauth_supported) {
-                return Err((
-                    NOT_AN_API_KEY,
-                    format!("{slug} signs in another way: run `hermes model` to configure"),
-                ));
-            }
             return Err((NO_KEY_VARIABLE, format!("no env var defined for {slug}")));
         };
-        save_env(&self.home.join(".env"), var, key).map_err(|e| (SAVE_FAILED, e.to_string()))?;
-        // SAFETY: as `reload_env`.
-        unsafe { std::env::set_var(var, key) };
+        if !env_value_round_trips(var, key) {
+            return Err((
+                UNKNOWN,
+                "api_key cannot be stored: it holds a control character, surrounding quotes \
+                 or another assignment"
+                    .into(),
+            ));
+        }
+        set_env_file_value(&self.home.join(".env"), var, Some(key))
+            .map_err(|_| (SAVE_FAILED, "could not write this profile's .env".to_string()))?;
+        self.keys.set(var, Some(key.to_string()));
         let canonical = canonical_provider_id(slug);
-        let mut row = option_rows(&self.config, "", false)
+        let mut row = option_rows(&self.config, &self.keys, "", false)
             .into_iter()
             .find(|row| row["slug"] == canonical.as_str())
             .unwrap_or_else(|| Value::Object(row(&canonical, false, Vec::new(), "env")));
@@ -334,7 +354,7 @@ impl Chat {
     }
 
     /// `model.disconnect {slug}`: removes every key variable of the provider from this home's
-    /// `.env` and this process's environment.
+    /// `.env` and from the next turns.
     fn disconnect_provider(&self, slug: &str) -> Result<Value, RpcError> {
         if slug.is_empty() {
             return Err((REQUIRED, "slug is required".into()));
@@ -342,17 +362,34 @@ impl Chat {
         let path = self.home.join(".env");
         let mut cleared = false;
         for var in key_vars(slug).unwrap_or_default() {
-            let in_file =
-                edit_env(&path, var, None).map_err(|e| (DISCONNECT_FAILED, e.to_string()))?;
-            let in_env = std::env::var_os(var).is_some();
-            // SAFETY: as `reload_env`.
-            unsafe { std::env::remove_var(var) };
-            cleared |= in_file || in_env;
+            let in_file = set_env_file_value(&path, var, None).map_err(|_| {
+                (
+                    DISCONNECT_FAILED,
+                    "could not write this profile's .env".to_string(),
+                )
+            })?;
+            let was_set = self.keys.set(var, None);
+            cleared |= in_file || was_set;
         }
         if !cleared {
             return Err((NOTHING_SAVED, format!("no credentials found for {slug}")));
         }
         Ok(json!({"slug": slug, "name": slug, "disconnected": true}))
+    }
+
+    /// `reload.env`: re-reads the key variables as start-up does (`hermes_config`'s order, the
+    /// managed `.env` last); the number changed. Other variables, and a value that would not
+    /// read back as itself, take effect at the next start.
+    fn reload_env(&self) -> usize {
+        let values = dotenv_values_in(&self.home);
+        self.key_variables()
+            .iter()
+            .filter(|var| {
+                values.get(var.as_str()).is_some_and(|value| {
+                    env_value_round_trips(var, value) && self.keys.set(var, Some(value.clone()))
+                })
+            })
+            .count()
     }
 
     /// `config.set {session_id, key, value}`: only `model`, for one live session, as upstream
@@ -394,7 +431,10 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::chat::Conn;
 
     #[test]
     fn a_switch_value_names_a_model_and_maybe_its_provider() {
@@ -415,20 +455,62 @@ mod tests {
     }
 
     #[test]
-    fn env_edits_replace_remove_and_keep_other_lines() {
+    fn a_key_changed_after_start_up_stays_out_of_the_process_environment() {
+        let keys = Keys::default();
+        let var = "DESKTOP_MODEL_KEYS_UNIT_TEST_KEY";
+        assert_eq!(keys.value(var), None);
+        assert!(!keys.changed(var));
+        assert!(keys.set(var, Some("k".into())));
+        assert_eq!(keys.value(var).as_deref(), Some("k"));
+        assert!(std::env::var_os(var).is_none());
+        assert!(!keys.set(var, Some("k".into())), "the same value again");
+        assert!(keys.set(var, None));
+        assert_eq!(keys.value(var), None);
+        assert!(keys.changed(var));
+    }
+
+    #[tokio::test]
+    async fn the_key_methods_serve_only_clients_on_this_machine() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".env");
-        std::fs::write(&path, "# note\nA=1\nB=2\nA=3\n").unwrap();
-        save_env(&path, "A", "new").unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "# note\nA=new\nB=2\n"
-        );
-        assert!(edit_env(&path, "B", None).unwrap());
-        assert!(!edit_env(&path, "B", None).unwrap());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# note\nA=new\n");
-        assert_eq!(unquote("'x'"), "x");
-        assert_eq!(unquote("\"x\""), "x");
-        assert_eq!(unquote("x'"), "x'");
+        let config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
+            ..GatewayConfig::default()
+        };
+        let chat = Arc::new(Chat::new(config));
+        let call = |origin: Origin, method: &str, params: Value| {
+            let handler = METHODS.iter().find(|(m, _)| *m == method).unwrap().1;
+            let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+            let mut conn = Conn::new(1, outbox, false);
+            conn.origin = origin;
+            let params = params.as_object().unwrap().clone();
+            handler(Request {
+                chat: Arc::clone(&chat),
+                conn,
+                params,
+            })
+        };
+        let requests = [
+            ("model.options", json!({})),
+            (
+                "model.save_key",
+                json!({"slug": "xiaomi", "api_key": "remote-key"}),
+            ),
+            ("model.disconnect", json!({"slug": "xiaomi"})),
+            ("reload.env", json!({})),
+        ];
+        for origin in [Origin::Remote, Origin::Webapp] {
+            for (method, params) in &requests {
+                let reply = call(origin, method, params.clone()).await;
+                assert_eq!(
+                    reply.unwrap_err().0,
+                    LOCAL_ONLY,
+                    "{method} from {origin:?}"
+                );
+            }
+        }
+        assert!(!dir.path().join(".env").exists());
+        assert!(!chat.keys.changed("XIAOMI_API_KEY"));
+        // The same request from this machine is served.
+        assert!(call(Origin::Local, "model.options", json!({})).await.is_ok());
     }
 }
