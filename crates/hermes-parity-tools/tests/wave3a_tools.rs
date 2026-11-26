@@ -344,3 +344,149 @@ fn test_is_ctrl_c_detection() {}
     assert_eq!(rpt["extra_commands"], serde_json::json!(["/objective"]));
     assert_eq!(rpt["missing_tui_tests"], serde_json::json!([]));
 }
+
+#[cfg(unix)]
+#[test]
+fn golden_parity_drift_reports_use_existing_issue_or_retry_without_label() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let local = root.join("local");
+    let cli = local.join("crates/hermes-cli/src");
+    let upstream = root.join("upstream/hermes_cli");
+    let mock_bin = root.join("bin");
+    for directory in [cli.join("commands"), upstream.clone(), mock_bin.clone()] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    fs::write(
+        cli.join("commands/mod.rs"),
+        r#"pub const COMMANDS: &[(&str, &str)] = &[("/model", "Select a model")];"#,
+    )
+    .unwrap();
+    fs::write(cli.join("tui.rs"), "").unwrap();
+    fs::write(
+        upstream.join("commands.py"),
+        r#"COMMAND_REGISTRY = [CommandDef("missing", "Absent here", "Info")]"#,
+    )
+    .unwrap();
+    let baseline = root.join("baseline.json");
+    fs::write(&baseline, r#"{"max_missing_commands": 2}"#).unwrap();
+
+    let gh = mock_bin.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+set -eu
+case "$1 ${2:-}" in
+    '--version ')
+        printf '%s\n' version >> "$FIXTURE_CALLS"
+        [ "$FIXTURE_MODE" != unavailable ];;
+    'issue list')
+        [ "$#" = 10 ] && [ "$3" = --state ] && [ "$4" = open ] &&
+            [ "$5" = --search ] && [ "$6" = '[Parity] Golden Harness Drift in:title' ] &&
+            [ "$7" = --json ] && [ "$8" = number,title ] &&
+            [ "$9" = --limit ] && [ "${10}" = 1 ] || exit 9
+        printf '%s\n' list >> "$FIXTURE_CALLS"
+        case "$FIXTURE_MODE" in
+            existing) printf '%s\n' '[{"number":42}]';;
+            fresh) printf '%s\n' '[]';;
+            retry) printf '%s\n' '{}';;
+            list-failed) exit 1;;
+        esac;;
+    'issue comment')
+        [ "$3" = 42 ] && [ "$4" = --body ] || exit 9
+        printf '%s\n' 'comment 42' >> "$FIXTURE_CALLS"
+        printf '%s\n' "$5" > "$FIXTURE_BODY";;
+    'issue create')
+        [ "$3" = --title ] && [ "$5" = --body ] || exit 9
+        case "$4" in
+            '[Parity] Golden Harness Drift ('????-??-??')') ;;
+            *) exit 9;;
+        esac
+        printf '%s\n' "$6" > "$FIXTURE_BODY"
+        if [ "$#" = 8 ]; then
+            [ "$7" = --label ] && [ "$8" = parity ] || exit 9
+            printf '%s\n' 'create labelled' >> "$FIXTURE_CALLS"
+            [ "$FIXTURE_MODE" != retry ]
+        else
+            [ "$#" = 6 ] || exit 9
+            printf '%s\n' 'create unlabelled' >> "$FIXTURE_CALLS"
+        fi;;
+    *) exit 9;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    for (mode, expected_calls) in [
+        ("existing", "version\nlist\ncomment 42\n"),
+        ("fresh", "version\nlist\ncreate labelled\n"),
+        ("list-failed", "version\nlist\ncreate labelled\n"),
+        (
+            "retry",
+            "version\nlist\ncreate labelled\ncreate unlabelled\n",
+        ),
+        ("unavailable", "version\n"),
+    ] {
+        let calls = root.join(format!("{mode}.calls"));
+        let body = root.join(format!("{mode}.md"));
+        let mut command = Command::new(bin());
+        command
+            .args(["run-golden-parity-harness", "--repo-root"])
+            .arg(&local)
+            .args(["--upstream-root", "../upstream", "--baseline"])
+            .arg(&baseline)
+            .arg("--auto-issue")
+            .env_clear()
+            .env("PATH", &mock_bin)
+            .env("HOME", root)
+            .env("FIXTURE_MODE", mode)
+            .env("FIXTURE_CALLS", &calls)
+            .env("FIXTURE_BODY", &body)
+            .current_dir(root);
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env(
+                "LLVM_PROFILE_FILE",
+                std::env::current_dir().unwrap().join(profile),
+            );
+        }
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read_to_string(calls).unwrap(), expected_calls, "{mode}");
+        if mode == "unavailable" {
+            assert!(!body.exists());
+        } else {
+            let body = fs::read_to_string(body).unwrap();
+            assert!(body.contains("Missing commands:\n- `/missing`"));
+            assert!(body.contains(
+                "Missing TUI tests:\n- `test_completion_popup_hidden_when_slash_deleted`"
+            ));
+            assert!(body.contains(
+                "Command contract failures:\n- /model: description missing required terms"
+            ));
+        }
+    }
+    let reports = local.join(".sync-reports");
+    let report_path = fs::read_dir(reports)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(report_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("golden-parity-harness-"));
+    let report: Value = serde_json::from_slice(&fs::read(report_path).unwrap()).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["allow_missing_commands"], 2);
+    assert_eq!(report["missing_commands"], serde_json::json!(["/missing"]));
+}
