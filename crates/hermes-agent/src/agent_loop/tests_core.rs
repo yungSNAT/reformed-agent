@@ -78,6 +78,43 @@
     }
 
     #[test]
+    fn tool_name_repair_preserves_call_identity_and_arguments() {
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "fixture_count",
+            ToolSchema::new(
+                "fixture_count",
+                "Count fixture items",
+                JsonSchema::new("object"),
+            ),
+            Arc::new(|_| panic!("resolving a name must not run the tool")),
+        );
+        let mut config = AgentConfig::default();
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(config, Arc::new(registry), Arc::new(DummyProvider));
+
+        for (name, expected, repaired) in [
+            ("fixture_count", "fixture_count", false),
+            ("FIXTURE_COUNT", "fixture_count", true),
+            ("fixture_count_items", "fixture_count", true),
+            ("other_tool", "other_tool", false),
+        ] {
+            let mut call = ToolCall {
+                id: "fixture-call".into(),
+                function: hermes_core::FunctionCall {
+                    name: name.into(),
+                    arguments: r#"{"limit":5}"#.into(),
+                },
+                extra_content: None,
+            };
+            assert_eq!(agent.repair_tool_call(&mut call), repaired);
+            assert_eq!(call.function.name, expected);
+            assert_eq!(call.id, "fixture-call");
+            assert_eq!(call.function.arguments, r#"{"limit":5}"#);
+        }
+    }
+
+    #[test]
     fn test_agent_config_default() {
         let config = AgentConfig::default();
         assert_eq!(config.max_turns, 250);
