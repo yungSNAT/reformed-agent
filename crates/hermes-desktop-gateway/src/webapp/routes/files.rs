@@ -7,7 +7,8 @@
 //! - a path must resolve inside the user's home folder or the served profile's working folder
 //!   (upstream: the whole host on a loopback Webapp), and the Hermes home is refused wherever it
 //!   is (it holds the browser credential and saved gateway tokens, which upstream's list lacks);
-//!   a working folder that is `/`, holds a system folder or sits in `/proc`, `/sys` or `/dev` is
+//!   a working folder that is `/`, holds a system folder, or sits in `/proc`, `/sys`, `/dev`,
+//!   `/run`, `/etc`, `/root` or `/var` (bar a home under `/var`) is
 //!   not a root;
 //! - credential files and folders are refused anywhere, browser profiles, cookie and password
 //!   stores and keyrings included;
@@ -820,11 +821,26 @@ const SYSTEM_DIRS: [&str; 24] = [
 /// Kernel file systems: a root in one would expose `/proc/<pid>/environ` and the like.
 const KERNEL_DIRS: [&str; 3] = ["/proc", "/sys", "/dev"];
 
-/// Whether the canonical working folder `dir` may be a root beside the home folder: never `/` or
-/// a folder in a kernel file system, and outside `home` never a folder that is or holds a system
-/// folder.
+/// System state (runtime secrets, configuration, root's home, service data), macOS's spellings
+/// included: never a root, except a user's home that lies beneath `/var` (`/var/home/<user>`).
+const STATE_DIRS: [&str; 6] = [
+    "/run",
+    "/etc",
+    "/root",
+    "/var",
+    "/private/etc",
+    "/private/var",
+];
+
+/// Whether the canonical working folder `dir` may be a root beside the home folder: never `/`, a
+/// folder in a kernel file system or one at or beneath a system state folder (bar a home under
+/// `/var`), and outside `home` never a folder that is or holds a system folder.
 pub(crate) fn extra_root_allowed(dir: &Path, home: Option<&Path>) -> bool {
     if dir.parent().is_none() || KERNEL_DIRS.iter().any(|k| dir.starts_with(k)) {
+        return false;
+    }
+    let in_var_home = home.is_some_and(|h| h.starts_with("/var") && dir.starts_with(h));
+    if STATE_DIRS.iter().any(|s| dir.starts_with(s)) && !in_var_home {
         return false;
     }
     if home.is_some_and(|h| dir.starts_with(h)) {
