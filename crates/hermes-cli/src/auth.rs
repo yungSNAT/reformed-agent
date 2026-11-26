@@ -36,8 +36,19 @@ fn load_auth_store(path: &Path) -> Result<AuthStore, AgentError> {
 }
 
 fn write_owner_only_atomic(path: &Path, raw: &str) -> Result<(), AgentError> {
-    hermes_config::atomic_write_owner_only(path, raw.as_bytes())
-        .map_err(|e| AgentError::Io(e.to_string()))
+    if path.parent().is_none() {
+        return Err(AgentError::Io(format!(
+            "credential path {} has no parent directory",
+            path.display()
+        )));
+    }
+    // The writer reports I/O failures as `ParseError`; keep only the message.
+    hermes_config::atomic_write_owner_only(path, raw.as_bytes()).map_err(|e| {
+        AgentError::Io(match e {
+            hermes_core::ConfigError::ParseError(message) => message,
+            other => other.to_string(),
+        })
+    })
 }
 
 fn save_auth_store(path: &Path, store: &AuthStore) -> Result<(), AgentError> {
