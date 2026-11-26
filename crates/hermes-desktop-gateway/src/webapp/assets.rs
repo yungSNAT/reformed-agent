@@ -145,23 +145,26 @@ pub struct Bootstrap<'a> {
     pub profile: &'a str,
 }
 
-fn not_found(detail: String) -> Result<Page, Response> {
-    Err((StatusCode::NOT_FOUND, Json(json!({"detail": detail}))).into_response())
+/// A refusal: its status and the `detail` it answers with.
+type Refused = (StatusCode, String);
+
+fn not_found(detail: String) -> Result<Page, Refused> {
+    Err((StatusCode::NOT_FOUND, detail))
 }
 
-fn unavailable(status: StatusCode, detail: String) -> Response {
-    (status, Json(json!({"detail": detail}))).into_response()
+fn unavailable(status: StatusCode, detail: String) -> Refused {
+    (status, detail)
 }
 
 /// Serves `path` from the bundle at `dist` (blocking file reads; call it off the async threads).
 pub fn serve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Response {
     match resolve(dist, path, boot) {
         Ok(page) => respond(page),
-        Err(response) => response,
+        Err((status, detail)) => (status, Json(json!({"detail": detail}))).into_response(),
     }
 }
 
-fn resolve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Result<Page, Response> {
+fn resolve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Result<Page, Refused> {
     if path == "/api" || path.starts_with("/api/") {
         return not_found(format!("No such API endpoint: {path}"));
     }
@@ -216,7 +219,7 @@ fn resolve(dist: Option<&Path>, path: &str, boot: &Bootstrap) -> Result<Page, Re
     }
 }
 
-fn entry(root: &File, boot: &Bootstrap) -> Result<Page, Response> {
+fn entry(root: &File, boot: &Bootstrap) -> Result<Page, Refused> {
     let mut html = String::new();
     open_beneath(root, &["index.html"])
         .and_then(|f| f.take(MAX_FILE).read_to_string(&mut html))
@@ -280,7 +283,7 @@ pub fn script_hashes(html: &str) -> Vec<String> {
             .split(|c: char| c.is_ascii_whitespace() || c == '/')
             .any(|attr| attr == "src" || attr.starts_with("src="));
         if !has_src {
-            let digest = Sha256::digest(html[close + 1..end].as_bytes());
+            let digest = Sha256::digest(&html.as_bytes()[close + 1..end]);
             hashes.push(format!(
                 "'sha256-{}'",
                 base64::engine::general_purpose::STANDARD.encode(digest)

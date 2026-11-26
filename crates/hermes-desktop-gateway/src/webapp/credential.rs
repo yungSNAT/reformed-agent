@@ -156,7 +156,7 @@ fn private_folder(folder: &Path) -> std::io::Result<()> {
 }
 
 fn read_private(path: &Path) -> Option<String> {
-    let mut file = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)

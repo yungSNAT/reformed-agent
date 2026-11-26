@@ -182,15 +182,16 @@ async fn without_webapp_enabled_nothing_is_served_and_the_verbs_say_why() {
         .as_str()
         .unwrap()
         .starts_with("The Webapp is off"));
-    // The listener stays a free loopback port for native clients and serves no Webapp route.
+    // The listener stays a free loopback port for native clients and serves no Webapp route: an
+    // unknown path meets the native token guard, as before the Webapp existed.
     let origin = runtime.api_origin().to_string();
     assert!(origin.starts_with("http://127.0.0.1:"));
     let page = reqwest::get(format!("{origin}/")).await.unwrap();
-    assert_eq!(page.status(), 404);
+    assert_eq!(page.status(), 401);
     let launch_page = reqwest::get(format!("{origin}/webapp/launch"))
         .await
         .unwrap();
-    assert_eq!(launch_page.status(), 404);
+    assert_eq!(launch_page.status(), 401);
     // Sign-out with no Webapp served still replaces the stored credential.
     let out = control(&home, "webapp-sign-out", json!({}));
     assert_eq!(out["result"]["serving"], false, "{out}");
@@ -255,7 +256,7 @@ async fn a_taken_port_leaves_native_clients_served_and_names_both_addresses() {
             .await
             .unwrap()
             .status(),
-        404
+        401
     );
 }
 
