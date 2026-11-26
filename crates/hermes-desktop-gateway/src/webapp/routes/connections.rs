@@ -223,13 +223,14 @@ fn public_connection(entry: &Map<String, Value>) -> Value {
         }
     }
     // Native Desktop keeps a user name and password in a saved URL; the browser never sees them.
+    // Only an `http` or `https` URL is shown: `user:pw@host` parses with `user` as its scheme.
     match str_field(entry, "url").map(url::Url::parse) {
-        Some(Ok(mut url)) => {
+        Some(Ok(mut url)) if matches!(url.scheme(), "http" | "https") => {
             let _ = url.set_username("");
             let _ = url.set_password(None);
             out.insert("url".into(), json!(stored_url(&url)));
         }
-        Some(Err(_)) | None => {
+        _ => {
             out.remove("url");
         }
     }
@@ -701,7 +702,8 @@ pub(crate) fn save(path: &Path, payload: &Map<String, Value>) -> Result<DocAndEn
                 .unwrap_or(false),
             Some(_) => return Err(refused("allowPrivateNetwork must be true or false.")),
         };
-        let mut entry = existing.clone().unwrap_or_default();
+        // A move starts a fresh entry: no field kept for the old address follows it.
+        let mut entry = kept.cloned().unwrap_or_default();
         let id = own_id.unwrap_or_else(|| new_id(&label, list));
         entry.insert("id".into(), json!(id));
         entry.insert("kind".into(), json!("remote"));
