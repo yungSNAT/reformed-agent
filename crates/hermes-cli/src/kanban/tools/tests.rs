@@ -129,10 +129,9 @@ fn binding_comes_only_from_the_dispatch_variables() {
 
 #[test]
 fn a_partial_binding_stays_a_worker() {
-    let run_only = KanbanWorkerBinding::from_lookup(|key| {
-        (key == ENV_RUN_ID).then(|| "run-a".to_string())
-    })
-    .expect("any variable makes a worker");
+    let run_only =
+        KanbanWorkerBinding::from_lookup(|key| (key == ENV_RUN_ID).then(|| "run-a".to_string()))
+            .expect("any variable makes a worker");
     assert_eq!(run_only.task, "");
     let fx = fixture();
     assert_refused(
@@ -179,7 +178,14 @@ fn workers_never_see_the_orchestrator_tools() {
 
 #[test]
 fn a_worker_is_offered_its_tools_whatever_the_platform_list_says() {
-    let mut schemas = vec![Tool::List.schema(), ToolSchema::new("terminal", "t", serde_json::from_value(json!({"type": "object"})).unwrap())];
+    let mut schemas = vec![
+        Tool::List.schema(),
+        ToolSchema::new(
+            "terminal",
+            "t",
+            serde_json::from_value(json!({"type": "object"})).unwrap(),
+        ),
+    ];
     offer_kanban_worker_tools(&mut schemas, None);
     assert_eq!(schemas.len(), 2);
 
@@ -206,6 +212,28 @@ fn an_orchestrator_gets_the_tools_only_by_naming_the_kanban_toolset() {
     let fx = fixture();
     let registry = Arc::new(ToolRegistry::new());
     register_kanban_tools_at(&registry, fx.path.clone(), None, false);
+    // A built-in from the default `hermes-cli` toolset, so the default plan
+    // resolves to named tools rather than falling back to every tool.
+    let terminal = Tool::Show.schema();
+    registry.register(
+        "terminal",
+        "terminal",
+        ToolSchema::new("terminal", "t", terminal.parameters),
+        Arc::new(KanbanTool {
+            tool: Tool::Show,
+            ctx: Arc::new(KanbanToolContext {
+                store_path: fx.path.clone(),
+                binding: None,
+                checkpoint: false,
+            }),
+        }),
+        Arc::new(|| true),
+        Vec::new(),
+        true,
+        "t",
+        "t",
+        None,
+    );
     let mut config = hermes_config::GatewayConfig::default();
     let names = |config: &hermes_config::GatewayConfig| -> Vec<String> {
         hermes_tool_planning::resolve_platform_tool_schemas(config, "cli", &registry)
@@ -255,11 +283,23 @@ fn delegated_sub_agents_are_refused_in_every_mode() {
     let before = std::fs::read(&fx.path).unwrap();
     for binding in [worker("run-a"), None] {
         assert_refused(
-            call(&fx, binding.clone(), Some(1), Tool::Show, json!({"task_id": "K-0001"})),
+            call(
+                &fx,
+                binding.clone(),
+                Some(1),
+                Tool::Show,
+                json!({"task_id": "K-0001"}),
+            ),
             "delegated sub-agents",
         );
         assert_refused(
-            call(&fx, binding, Some(2), Tool::Complete, json!({"task_id": "K-0001", "summary": "x"})),
+            call(
+                &fx,
+                binding,
+                Some(2),
+                Tool::Complete,
+                json!({"task_id": "K-0001", "summary": "x"}),
+            ),
             "delegated sub-agents",
         );
     }
@@ -270,7 +310,13 @@ fn delegated_sub_agents_are_refused_in_every_mode() {
 fn a_worker_refuses_calls_from_outside_its_agent_loop() {
     let fx = fixture();
     assert_refused(
-        call(&fx, worker("run-a"), None, Tool::Complete, json!({"summary": "x"})),
+        call(
+            &fx,
+            worker("run-a"),
+            None,
+            Tool::Complete,
+            json!({"summary": "x"}),
+        ),
         "did not come from the dispatched worker",
     );
     assert_eq!(task(&fx, "main", "K-0001").lane, KanbanLane::Doing);
@@ -291,7 +337,11 @@ async fn the_depth_mark_reaches_a_handler_through_the_registry_bridge() {
         }
     };
     assert!(show(Some(0)).contains("\"K-0001\""), "{}", show(Some(0)));
-    assert!(show(Some(1)).contains("delegated sub-agents"), "{}", show(Some(1)));
+    assert!(
+        show(Some(1)).contains("delegated sub-agents"),
+        "{}",
+        show(Some(1))
+    );
     assert!(show(None).contains("did not come from"), "{}", show(None));
 }
 
@@ -300,10 +350,17 @@ async fn the_depth_mark_reaches_a_handler_through_the_registry_bridge() {
 #[test]
 fn unknown_arguments_are_refused_with_the_valid_ones() {
     let fx = fixture();
-    let result = as_worker(&fx, Tool::Complete, json!({"summary": "x", "artifacts": ["/tmp/a"]}));
+    let result = as_worker(
+        &fx,
+        Tool::Complete,
+        json!({"summary": "x", "artifacts": ["/tmp/a"]}),
+    );
     let error = result.expect_err("refused");
     assert!(error.contains("unknown parameter(s): artifacts"), "{error}");
-    assert!(error.contains("Valid parameters: board, result, summary, task_id"), "{error}");
+    assert!(
+        error.contains("Valid parameters: board, result, summary, task_id"),
+        "{error}"
+    );
     assert_eq!(task(&fx, "main", "K-0001").lane, KanbanLane::Doing);
 }
 
@@ -311,10 +368,19 @@ fn unknown_arguments_are_refused_with_the_valid_ones() {
 fn every_schema_names_exactly_the_arguments_its_handler_accepts() {
     for tool in TOOLS {
         let schema = serde_json::to_value(tool.schema().parameters).unwrap();
-        assert_eq!(schema["additionalProperties"], json!(false), "{}", tool.name());
+        assert_eq!(
+            schema["additionalProperties"],
+            json!(false),
+            "{}",
+            tool.name()
+        );
         assert!(schema["properties"]["board"].is_object(), "{}", tool.name());
         for required in tool.required() {
-            assert!(schema["properties"][*required].is_object(), "{}", tool.name());
+            assert!(
+                schema["properties"][*required].is_object(),
+                "{}",
+                tool.name()
+            );
         }
     }
 }
@@ -324,7 +390,10 @@ fn task_ids_are_trimmed_matched_without_case_and_numbers_coerced() {
     let fx = fixture();
     let shown = as_orchestrator(&fx, Tool::Show, json!({"task_id": "  k-0002 "})).unwrap();
     assert_eq!(shown["task"]["id"], "K-0002");
-    assert_refused(as_orchestrator(&fx, Tool::Show, json!({"task_id": 2})), "task 2 not found");
+    assert_refused(
+        as_orchestrator(&fx, Tool::Show, json!({"task_id": 2})),
+        "task 2 not found",
+    );
     // A blank id means the worker's own task.
     let own = as_worker(&fx, Tool::Show, json!({"task_id": "   "})).unwrap();
     assert_eq!(own["task"]["id"], "K-0001");
@@ -389,18 +458,32 @@ fn list_filters_and_bounds_rows() {
     let side = as_orchestrator(&fx, Tool::List, json!({"board": "Side"})).unwrap();
     assert_eq!(side["board"], "side");
     assert_eq!(side["tasks"][0]["title"], "side work");
-    assert_refused(as_orchestrator(&fx, Tool::List, json!({"limit": 0})), "limit");
-    assert_refused(as_orchestrator(&fx, Tool::List, json!({"lane": "review"})), "lane");
+    assert_refused(
+        as_orchestrator(&fx, Tool::List, json!({"limit": 0})),
+        "limit",
+    );
+    assert_refused(
+        as_orchestrator(&fx, Tool::List, json!({"lane": "review"})),
+        "lane",
+    );
 }
 
 #[test]
 fn list_includes_archived_tasks_only_when_asked() {
     let fx = fixture();
-    as_orchestrator(&fx, Tool::Complete, json!({"task_id": "K-0002", "summary": "done"})).unwrap();
+    as_orchestrator(
+        &fx,
+        Tool::Complete,
+        json!({"task_id": "K-0002", "summary": "done"}),
+    )
+    .unwrap();
     let mut store = store(&fx);
     crate::kanban::archive_done(&mut store.boards[0]);
     save_store_to_path(&store, &fx.path).unwrap();
-    assert_eq!(as_orchestrator(&fx, Tool::List, json!({})).unwrap()["total"], 2);
+    assert_eq!(
+        as_orchestrator(&fx, Tool::List, json!({})).unwrap()["total"],
+        2
+    );
     let with = as_orchestrator(&fx, Tool::List, json!({"include_archived": "true"})).unwrap();
     assert_eq!(with["total"], 3);
     assert_eq!(with["tasks"][2]["archived"], true);
@@ -412,27 +495,42 @@ fn list_includes_archived_tasks_only_when_asked() {
 fn a_worker_completes_its_own_running_task() {
     let fx = fixture();
     let reply = as_worker(&fx, Tool::Complete, json!({"summary": "shipped it"})).unwrap();
-    assert_eq!(reply, json!({"ok": true, "task_id": "K-0001", "lane": "done"}));
+    assert_eq!(
+        reply,
+        json!({"ok": true, "task_id": "K-0001", "lane": "done"})
+    );
     let done = task(&fx, "main", "K-0001");
     assert_eq!(done.lane, KanbanLane::Done);
     assert_eq!(done.run_summary.as_deref(), Some("shipped it"));
     assert_eq!(done.background_job_id.as_deref(), Some("run-a"));
-    assert_refused(as_worker(&fx, Tool::Complete, json!({"summary": "again"})), "not doing");
+    assert_refused(
+        as_worker(&fx, Tool::Complete, json!({"summary": "again"})),
+        "not doing",
+    );
 }
 
 #[test]
 fn complete_needs_a_summary_or_result() {
     let fx = fixture();
-    assert_refused(as_worker(&fx, Tool::Complete, json!({})), "summary or result");
+    assert_refused(
+        as_worker(&fx, Tool::Complete, json!({})),
+        "summary or result",
+    );
     let reply = as_worker(&fx, Tool::Complete, json!({"result": "ok"})).unwrap();
     assert_eq!(reply["lane"], "done");
-    assert_eq!(task(&fx, "main", "K-0001").run_summary.as_deref(), Some("ok"));
+    assert_eq!(
+        task(&fx, "main", "K-0001").run_summary.as_deref(),
+        Some("ok")
+    );
 }
 
 #[test]
 fn a_worker_blocks_its_own_task_with_a_reason() {
     let fx = fixture();
-    assert_refused(as_worker(&fx, Tool::Block, json!({"reason": "  "})), "reason is required");
+    assert_refused(
+        as_worker(&fx, Tool::Block, json!({"reason": "  "})),
+        "reason is required",
+    );
     let reply = as_worker(&fx, Tool::Block, json!({"reason": "needs a key"})).unwrap();
     assert_eq!(reply["lane"], "blocked");
     let blocked = task(&fx, "main", "K-0001");
@@ -456,10 +554,24 @@ fn a_worker_cannot_finish_or_block_another_task() {
 #[test]
 fn a_worker_without_a_run_id_cannot_finish_but_can_read() {
     let fx = fixture();
-    let unbound = || call(&fx, worker(""), Some(0), Tool::Complete, json!({"summary": "x"}));
+    let unbound = || {
+        call(
+            &fx,
+            worker(""),
+            Some(0),
+            Tool::Complete,
+            json!({"summary": "x"}),
+        )
+    };
     assert_refused(unbound(), "no HERMES_KANBAN_RUN_ID");
     assert_refused(
-        call(&fx, worker(""), Some(0), Tool::Block, json!({"reason": "x"})),
+        call(
+            &fx,
+            worker(""),
+            Some(0),
+            Tool::Block,
+            json!({"reason": "x"}),
+        ),
         "no HERMES_KANBAN_RUN_ID",
     );
     assert!(call(&fx, worker(""), Some(0), Tool::Show, json!({})).is_ok());
@@ -476,14 +588,25 @@ fn a_stale_worker_cannot_finish_a_re_dispatched_task() {
         as_worker(&fx, Tool::Complete, json!({"summary": "late"})),
         "no longer owned by run run-a",
     );
-    let fresh = call(&fx, worker("run-b"), Some(0), Tool::Complete, json!({"summary": "x"}));
+    let fresh = call(
+        &fx,
+        worker("run-b"),
+        Some(0),
+        Tool::Complete,
+        json!({"summary": "x"}),
+    );
     assert_eq!(fresh.unwrap()["lane"], "done");
 }
 
 #[test]
 fn a_manual_move_back_to_doing_does_not_return_the_task_to_its_old_run() {
     let fx = fixture();
-    as_orchestrator(&fx, Tool::Block, json!({"task_id": "K-0001", "reason": "wait"})).unwrap();
+    as_orchestrator(
+        &fx,
+        Tool::Block,
+        json!({"task_id": "K-0001", "reason": "wait"}),
+    )
+    .unwrap();
     as_orchestrator(&fx, Tool::Unblock, json!({"task_id": "K-0001"})).unwrap();
     let mut store = store(&fx);
     crate::kanban::move_task(&mut store.boards[0].tasks[0], KanbanLane::Doing, None);
@@ -502,16 +625,27 @@ fn a_worker_cannot_finish_its_task_once_it_has_left_doing() {
     // A task whose run id survived into another lane, as an older store may hold.
     store.boards[0].tasks[0].lane = KanbanLane::Todo;
     save_store_to_path(&store, &fx.path).unwrap();
-    assert_refused(as_worker(&fx, Tool::Complete, json!({"summary": "x"})), "not doing");
+    assert_refused(
+        as_worker(&fx, Tool::Complete, json!({"summary": "x"})),
+        "not doing",
+    );
 }
 
 #[test]
 fn an_orchestrator_may_finish_any_task_but_not_twice() {
     let fx = fixture();
-    let reply = as_orchestrator(&fx, Tool::Complete, json!({"task_id": "K-0003", "summary": "x"}));
+    let reply = as_orchestrator(
+        &fx,
+        Tool::Complete,
+        json!({"task_id": "K-0003", "summary": "x"}),
+    );
     assert_eq!(reply.unwrap()["lane"], "done");
     assert_refused(
-        as_orchestrator(&fx, Tool::Block, json!({"task_id": "K-0003", "reason": "x"})),
+        as_orchestrator(
+            &fx,
+            Tool::Block,
+            json!({"task_id": "K-0003", "reason": "x"}),
+        ),
         "already done",
     );
 }
@@ -523,7 +657,12 @@ fn unblock_is_for_orchestrators_and_only_for_blocked_tasks() {
         as_orchestrator(&fx, Tool::Unblock, json!({"task_id": "K-0002"})),
         "not blocked",
     );
-    as_orchestrator(&fx, Tool::Block, json!({"task_id": "K-0002", "reason": "x"})).unwrap();
+    as_orchestrator(
+        &fx,
+        Tool::Block,
+        json!({"task_id": "K-0002", "reason": "x"}),
+    )
+    .unwrap();
     assert_refused(
         as_worker(&fx, Tool::Unblock, json!({"task_id": "K-0002"})),
         "for orchestrators",
@@ -540,7 +679,11 @@ fn a_worker_cannot_reach_another_board() {
     let fx = fixture();
     let before = std::fs::read(&fx.path).unwrap();
     assert_refused(
-        as_worker(&fx, Tool::Show, json!({"task_id": "K-0001", "board": "side"})),
+        as_worker(
+            &fx,
+            Tool::Show,
+            json!({"task_id": "K-0001", "board": "side"}),
+        ),
         "bound to board `main`; refusing board `side`",
     );
     assert_refused(
@@ -571,10 +714,19 @@ fn a_worker_whose_board_is_gone_is_refused() {
 fn an_unknown_board_is_an_error_and_tools_leave_the_current_board_alone() {
     let fx = fixture();
     assert_refused(
-        as_orchestrator(&fx, Tool::Show, json!({"task_id": "K-0001", "board": "nowhere"})),
+        as_orchestrator(
+            &fx,
+            Tool::Show,
+            json!({"task_id": "K-0001", "board": "nowhere"}),
+        ),
         "board `nowhere` not found",
     );
-    as_orchestrator(&fx, Tool::Create, json!({"title": "on side", "board": "side"})).unwrap();
+    as_orchestrator(
+        &fx,
+        Tool::Create,
+        json!({"title": "on side", "board": "side"}),
+    )
+    .unwrap();
     assert_eq!(store(&fx).current_board_id, "main");
     assert_eq!(task(&fx, "side", "K-0002").title, "on side");
 }
@@ -590,12 +742,20 @@ fn create_adds_a_task_to_the_workers_board() {
         json!({"title": "follow up", "priority": 2, "depends_on": ["k-0001"], "description": "tests"}),
     )
     .unwrap();
-    assert_eq!(reply, json!({"ok": true, "task_id": "K-0004", "lane": "todo", "board": "main"}));
+    assert_eq!(
+        reply,
+        json!({"ok": true, "task_id": "K-0004", "lane": "todo", "board": "main"})
+    );
     let created = task(&fx, "main", "K-0004");
     assert_eq!(created.priority, 2);
     assert_eq!(created.depends_on, ["K-0001"]);
     assert_eq!(created.description.as_deref(), Some("tests"));
-    let triage = as_worker(&fx, Tool::Create, json!({"title": "idea", "lane": "triage"})).unwrap();
+    let triage = as_worker(
+        &fx,
+        Tool::Create,
+        json!({"title": "idea", "lane": "triage"}),
+    )
+    .unwrap();
     assert_eq!(triage["lane"], "triage");
 }
 
@@ -606,8 +766,14 @@ fn create_refuses_bad_input_without_a_trace() {
     for (args, needle) in [
         (json!({"title": " "}), "title is required"),
         (json!({"title": "x", "lane": "doing"}), "triage or todo"),
-        (json!({"title": "x", "priority": 9}), "priority must be 1 to 5"),
-        (json!({"title": "x", "depends_on": ["K-0099"]}), "task K-0099 not found"),
+        (
+            json!({"title": "x", "priority": 9}),
+            "priority must be 1 to 5",
+        ),
+        (
+            json!({"title": "x", "depends_on": ["K-0099"]}),
+            "task K-0099 not found",
+        ),
         (json!({"title": "x", "depends_on": 3}), "list of task ids"),
         (json!({"title": "x", "goal_max_turns": 0}), "goal_max_turns"),
     ] {
@@ -619,7 +785,13 @@ fn create_refuses_bad_input_without_a_trace() {
 #[test]
 fn link_adds_a_dependency_once() {
     let fx = fixture();
-    let link = || as_orchestrator(&fx, Tool::Link, json!({"parent_id": "K-0001", "child_id": "K-0002"}));
+    let link = || {
+        as_orchestrator(
+            &fx,
+            Tool::Link,
+            json!({"parent_id": "K-0001", "child_id": "K-0002"}),
+        )
+    };
     assert_eq!(link().unwrap()["child_id"], "K-0002");
     link().unwrap();
     assert_eq!(task(&fx, "main", "K-0002").depends_on, ["K-0001"]);
@@ -629,13 +801,31 @@ fn link_adds_a_dependency_once() {
 fn link_refuses_self_links_and_cycles() {
     let fx = fixture();
     assert_refused(
-        as_orchestrator(&fx, Tool::Link, json!({"parent_id": "K-0002", "child_id": "k-0002"})),
+        as_orchestrator(
+            &fx,
+            Tool::Link,
+            json!({"parent_id": "K-0002", "child_id": "k-0002"}),
+        ),
         "cannot depend on itself",
     );
-    as_orchestrator(&fx, Tool::Link, json!({"parent_id": "K-0001", "child_id": "K-0002"})).unwrap();
-    as_orchestrator(&fx, Tool::Link, json!({"parent_id": "K-0002", "child_id": "K-0003"})).unwrap();
+    as_orchestrator(
+        &fx,
+        Tool::Link,
+        json!({"parent_id": "K-0001", "child_id": "K-0002"}),
+    )
+    .unwrap();
+    as_orchestrator(
+        &fx,
+        Tool::Link,
+        json!({"parent_id": "K-0002", "child_id": "K-0003"}),
+    )
+    .unwrap();
     assert_refused(
-        as_orchestrator(&fx, Tool::Link, json!({"parent_id": "K-0003", "child_id": "K-0001"})),
+        as_orchestrator(
+            &fx,
+            Tool::Link,
+            json!({"parent_id": "K-0003", "child_id": "K-0001"}),
+        ),
         "would form a cycle",
     );
     assert!(task(&fx, "main", "K-0001").depends_on.is_empty());
@@ -645,19 +835,38 @@ fn link_refuses_self_links_and_cycles() {
 fn a_worker_may_link_its_own_running_task_but_not_anothers() {
     let fx = fixture();
     assert_refused(
-        as_worker(&fx, Tool::Link, json!({"parent_id": "K-0002", "child_id": "K-0003"})),
+        as_worker(
+            &fx,
+            Tool::Link,
+            json!({"parent_id": "K-0002", "child_id": "K-0003"}),
+        ),
         "running under another run",
     );
-    as_worker(&fx, Tool::Link, json!({"parent_id": "K-0002", "child_id": "K-0001"})).unwrap();
+    as_worker(
+        &fx,
+        Tool::Link,
+        json!({"parent_id": "K-0002", "child_id": "K-0001"}),
+    )
+    .unwrap();
     assert_eq!(task(&fx, "main", "K-0001").depends_on, ["K-0002"]);
-    as_worker(&fx, Tool::Link, json!({"parent_id": "K-0001", "child_id": "K-0003"}))
-        .expect_err("K-0003 still runs elsewhere");
+    as_worker(
+        &fx,
+        Tool::Link,
+        json!({"parent_id": "K-0001", "child_id": "K-0003"}),
+    )
+    .expect_err("K-0003 still runs elsewhere");
 }
 
 #[test]
 fn attachments_lists_the_tasks_files() {
     let fx = fixture();
     let reply = as_worker(&fx, Tool::Attachments, json!({})).unwrap();
-    assert_eq!(reply, json!({"ok": true, "task_id": "K-0001", "attachments": []}));
-    assert_refused(as_orchestrator(&fx, Tool::Attachments, json!({})), "kanban_list");
+    assert_eq!(
+        reply,
+        json!({"ok": true, "task_id": "K-0001", "attachments": []})
+    );
+    assert_refused(
+        as_orchestrator(&fx, Tool::Attachments, json!({})),
+        "kanban_list",
+    );
 }

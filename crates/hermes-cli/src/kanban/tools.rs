@@ -271,7 +271,10 @@ fn register_kanban_tools_at(
 
 /// A dispatched worker is offered its tools whatever the platform's toolset
 /// list says; the orchestrator tools stay out.
-pub fn offer_kanban_worker_tools(schemas: &mut Vec<ToolSchema>, binding: Option<&KanbanWorkerBinding>) {
+pub fn offer_kanban_worker_tools(
+    schemas: &mut Vec<ToolSchema>,
+    binding: Option<&KanbanWorkerBinding>,
+) {
     if binding.is_none() {
         return;
     }
@@ -576,7 +579,10 @@ fn task_json(board: &KanbanBoard, task: &KanbanTask) -> Value {
     let mut value = serde_json::to_value(task).unwrap_or(Value::Null);
     if let Some(map) = value.as_object_mut() {
         map.insert("board".to_string(), json!(board.id));
-        map.insert("worker_context".to_string(), json!(build_worker_context(task)));
+        map.insert(
+            "worker_context".to_string(),
+            json!(build_worker_context(task)),
+        );
     }
     value
 }
@@ -594,7 +600,9 @@ fn show(
         })));
     };
     let task = &board.tasks[task_index(board, &id)?];
-    Ok(Outcome::read(json!({"ok": true, "task": task_json(board, task)})))
+    Ok(Outcome::read(
+        json!({"ok": true, "task": task_json(board, task)}),
+    ))
 }
 
 fn list(board: &KanbanBoard, args: &Map<String, Value>) -> Result<Outcome, ToolError> {
@@ -622,7 +630,11 @@ fn list(board: &KanbanBoard, args: &Map<String, Value>) -> Result<Outcome, ToolE
                 .as_deref()
                 .is_none_or(|want| task.tenant.as_deref() == Some(want))
     };
-    let archived: &[KanbanTask] = if include_archived { &board.archived } else { &[] };
+    let archived: &[KanbanTask] = if include_archived {
+        &board.archived
+    } else {
+        &[]
+    };
     let rows: Vec<Value> = board
         .tasks
         .iter()
@@ -709,7 +721,11 @@ fn create(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome,
         None => KanbanLane::Todo,
         Some(raw) => match KanbanLane::parse(&raw) {
             Some(lane @ (KanbanLane::Triage | KanbanLane::Todo)) => lane,
-            _ => return Err(refused(format!("lane must be triage or todo, not `{raw}`."))),
+            _ => {
+                return Err(refused(format!(
+                    "lane must be triage or todo, not `{raw}`."
+                )))
+            }
         },
     };
     let priority = match opt_u64(args, "priority")? {
@@ -738,7 +754,11 @@ fn create(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome,
     let goal_max_turns = match opt_u64(args, "goal_max_turns")? {
         None => None,
         Some(n @ 1..=10_000) => Some(n as u32),
-        Some(n) => return Err(refused(format!("goal_max_turns must be 1 to 10000, not {n}."))),
+        Some(n) => {
+            return Err(refused(format!(
+                "goal_max_turns must be 1 to 10000, not {n}."
+            )))
+        }
     };
     let task = add_task(
         board,
@@ -754,7 +774,8 @@ fn create(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome,
             goal_max_turns,
         },
     );
-    let reply = json!({"ok": true, "task_id": task.id, "lane": task.lane.as_str(), "board": board.id});
+    let reply =
+        json!({"ok": true, "task_id": task.id, "lane": task.lane.as_str(), "board": board.id});
     let summary = task.title.clone();
     Ok(Outcome::changed(reply, &task, summary))
 }
@@ -807,12 +828,20 @@ fn link(
     }
     let task = &mut board.tasks[child_idx];
     let reply = json!({"ok": true, "parent_id": parent, "child_id": child});
-    if task.depends_on.iter().any(|id| id.eq_ignore_ascii_case(&parent)) {
+    if task
+        .depends_on
+        .iter()
+        .any(|id| id.eq_ignore_ascii_case(&parent))
+    {
         return Ok(Outcome::read(reply));
     }
     task.depends_on.push(parent.clone());
     task.updated_at = hermes_core::time::now_rfc3339();
-    Ok(Outcome::changed(reply, task, format!("depends_on {parent}")))
+    Ok(Outcome::changed(
+        reply,
+        task,
+        format!("depends_on {parent}"),
+    ))
 }
 
 fn unblock(board: &mut KanbanBoard, args: &Map<String, Value>) -> Result<Outcome, ToolError> {
