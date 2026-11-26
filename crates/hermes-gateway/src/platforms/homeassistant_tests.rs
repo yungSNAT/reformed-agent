@@ -410,3 +410,101 @@ async fn replies_to_the_event_channel_become_persistent_notifications() {
         .await
         .expect("notify service");
 }
+
+#[tokio::test]
+async fn admit_evicts_expired_entries_and_bounds_capacity() {
+    let adapter = HomeAssistantAdapter::new(config(
+        serde_json::json!({"watch_all": true, "cooldown_seconds": 30}),
+    ))
+    .expect("adapter");
+    let t0 = Instant::now();
+    for i in 0..MAX_TRACKED_ENTITIES {
+        assert!(adapter.inner.admit(&format!("sensor.stale_{i}"), t0));
+    }
+    assert_eq!(
+        adapter.inner.last_event.lock().unwrap().len(),
+        MAX_TRACKED_ENTITIES
+    );
+
+    // Once cooldown expires, inserting a new entity evicts stale entries rather than growing unboundedly.
+    let t_expired = t0 + Duration::from_secs(31);
+    assert!(adapter.inner.admit("sensor.fresh", t_expired));
+    assert_eq!(adapter.inner.last_event.lock().unwrap().len(), 1);
+
+    // Within cooldown, distinct active entities stay capped at MAX_TRACKED_ENTITIES.
+    for i in 0..(MAX_TRACKED_ENTITIES + 64) {
+        assert!(adapter.inner.admit(
+            &format!("sensor.active_{i}"),
+            t_expired + Duration::from_millis(i as u64 + 1)
+        ));
+    }
+    assert_eq!(
+        adapter.inner.last_event.lock().unwrap().len(),
+        MAX_TRACKED_ENTITIES
+    );
+
+    // Zero cooldown skips tracking completely.
+    let zero_cd = HomeAssistantAdapter::new(config(
+        serde_json::json!({"watch_all": true, "cooldown_seconds": 0}),
+    ))
+    .expect("adapter");
+    assert!(zero_cd.inner.admit("sensor.one", t0));
+    assert_eq!(zero_cd.inner.last_event.lock().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn service_and_notify_reject_path_and_query_smuggling() {
+    let server = MockServer::start().await;
+    let mut cfg = config(serde_json::json!({}));
+    cfg.base_url = server.uri();
+    let adapter = HomeAssistantAdapter::new(cfg).expect("adapter");
+
+    for bad in [
+        "",
+        ".",
+        "..",
+        "../reboot",
+        "foo/bar",
+        "foo\\bar",
+        "phone?x=1",
+        "phone#frag",
+        "phone%2fbar",
+        "phone\nheader",
+        "phone\0nul",
+        "bad slug",
+        ".leading",
+        "trailing.",
+    ] {
+        assert!(
+            adapter.send_notification(bad, "hi").await.is_err(),
+            "{bad:?}"
+        );
+        assert!(
+            adapter.send_message(bad, "hi", None).await.is_err(),
+            "{bad:?}"
+        );
+        assert!(
+            adapter
+                .send_file(bad, "https://example.com/a.png", None)
+                .await
+                .is_err(),
+            "{bad:?}"
+        );
+        assert!(
+            adapter
+                .call_service(bad, "turn_on", &serde_json::json!({}))
+                .await
+                .is_err(),
+            "domain {bad:?}"
+        );
+        assert!(
+            adapter
+                .call_service("light", bad, &serde_json::json!({}))
+                .await
+                .is_err(),
+            "service {bad:?}"
+        );
+    }
+
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

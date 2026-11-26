@@ -4,6 +4,9 @@ impl AgentLoop {
     /// Earlier messages stay as the history holds them: text an earlier expansion attached
     /// can itself name a file. In an ACP prompt's parts, only the text parts are expanded.
     async fn expand_context_references(&self, messages: &mut [Message]) {
+        if self.config.isolated {
+            return;
+        }
         let Some(msg) = messages.iter_mut().rfind(|m| m.role == MessageRole::User) else {
             return;
         };
@@ -59,12 +62,33 @@ impl AgentLoop {
     ) -> Result<AgentResult, AgentError> {
         let _cache_use = tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
         self.cancel_cache_keep_alive();
+        if let Some(refused) = self.session_cap_refusal(&messages) {
+            return Ok(refused);
+        }
         let result = Self::complete_memory_flush(self.run_inner(messages, tools)).await;
         self.note_sub_agent_results_delivered(&result);
         if result.is_ok() {
             self.arm_cache_keep_alive();
         }
         result
+    }
+
+    /// The result of a run refused before any request because earlier runs
+    /// of this session already spent `max_cost_usd`; `None` when it may start.
+    fn session_cap_refusal(&self, messages: &[Message]) -> Option<AgentResult> {
+        let limit = self.config.max_cost_usd?;
+        let spent = self.session_spent_usd();
+        (spent >= limit).then(|| {
+            let mut messages = messages.to_vec();
+            messages.push(Message::system(format!(
+                "Cost guard tripped: session spend ${spent:.4} reached max_cost_usd ${limit:.4} before this run. Not starting."
+            )));
+            AgentResult {
+                messages,
+                session_cost_usd: Some(0.0),
+                ..AgentResult::default()
+            }
+        })
     }
 
     async fn run_inner(
@@ -202,7 +226,7 @@ impl AgentLoop {
             self.preflight_context_compress_with_status(&mut ctx);
         }
         let replay = ReplayRecorder::for_session(&self.config, session_id);
-        let max_turns_limit = effective_max_turns(self.config.max_turns);
+        let max_turns_limit = effective_max_turns(self.config.max_turns, self.config.isolated);
         replay.record(
             "session_start",
             serde_json::json!({
@@ -220,6 +244,7 @@ impl AgentLoop {
         let mut _total_tool_time_ms: u64 = 0;
         let mut accumulated_usage: Option<UsageStats> = None;
         let mut session_cost_usd: f64 = 0.0;
+        let spent_before_run_usd = self.session_spent_usd();
         let mut cost_warned = false;
         let mut forced_runtime_route: Option<TurnRuntimeRoute> = None;
         let mut last_checkpoint_messages: Option<Vec<Message>> = None;
@@ -590,6 +615,8 @@ impl AgentLoop {
             }
 
             if let Some(limit) = self.config.max_cost_usd {
+                // The whole session's spend; the result still reports this run's.
+                let session_cost_usd = spent_before_run_usd + session_cost_usd;
                 if !cost_warned
                     && session_cost_usd >= limit * self.config.cost_guard_degrade_at_ratio
                 {
@@ -626,7 +653,7 @@ impl AgentLoop {
                         tool_errors,
                         usage: accumulated_usage,
                         interrupted: false,
-                        session_cost_usd: Some(session_cost_usd),
+                        session_cost_usd: Some(session_cost_usd - spent_before_run_usd),
                         session_started_hooks_fired,
                         compressed_transcripts: ctx.take_compressed_transcripts(),
                     });
@@ -743,11 +770,14 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizers_apply && finalizer_repo_research_plan_requires_retry(
-                    ctx.get_messages(),
-                    assistant_msg.content.as_deref().unwrap_or_default(),
-                    finalizer_repo_research_plan_retries,
-                ) {
+                if !self.config.isolated
+                    && finalizers_apply
+                    && finalizer_repo_research_plan_requires_retry(
+                        ctx.get_messages(),
+                        assistant_msg.content.as_deref().unwrap_or_default(),
+                        finalizer_repo_research_plan_retries,
+                    )
+                {
                     finalizer_repo_research_plan_retries =
                         finalizer_repo_research_plan_retries.saturating_add(1);
                     self.emit_status(
@@ -760,11 +790,13 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_claim_requires_evidence_retry(
-                    ctx.get_messages(),
-                    assistant_msg.content.as_deref().unwrap_or_default(),
-                    finalizer_evidence_retries,
-                ) {
+                if !self.config.isolated
+                    && finalizer_claim_requires_evidence_retry(
+                        ctx.get_messages(),
+                        assistant_msg.content.as_deref().unwrap_or_default(),
+                        finalizer_evidence_retries,
+                    )
+                {
                     finalizer_evidence_retries = finalizer_evidence_retries.saturating_add(1);
                     ctx.add_message(Message::system(
                         "[SYSTEM] Finalizer evidence contract: include explicit evidence lines and confidence calibration.\n\
@@ -1139,7 +1171,7 @@ impl AgentLoop {
                     contextlattice_connect_intent,
                     self.config
                         .max_cost_usd
-                        .map(|limit| (limit - session_cost_usd).max(0.0)),
+                        .map(|limit| (limit - spent_before_run_usd - session_cost_usd).max(0.0)),
                     &mut tool_errors,
                 )
                 .await;

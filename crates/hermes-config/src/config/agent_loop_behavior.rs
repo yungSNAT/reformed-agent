@@ -64,6 +64,10 @@ pub struct AgentLoopBehaviorConfig {
     /// Total lifetime of each streaming response attempt in seconds. Zero disables it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_max_lifetime: Option<f64>,
+    /// Most a session may spend, in US dollars, across all its runs. Unset
+    /// means no cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_session_cost_usd: Option<f64>,
     /// How images reach the model: `auto` (the default) or `native`, as upstream's
     /// `agent.image_input_mode`. `native` sends image parts whatever the model's
     /// vision support. Upstream's `text` (describe images first) is not ported and
@@ -140,6 +144,7 @@ impl Default for AgentLoopBehaviorConfig {
             service_tier: None,
             api_max_retries: None,
             stream_max_lifetime: None,
+            max_session_cost_usd: None,
             image_input_mode: None,
             prefill_messages_file: None,
         }

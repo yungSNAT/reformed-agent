@@ -442,14 +442,67 @@ def _embedded_profile_env_path(config: dict[str, Any]):
     return Path.home() / ".hindsight" / "profiles" / f"{_embedded_profile_name(config)}.env"
 
 
+def _write_owner_only_atomic(path, content: str) -> None:
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = content.encode("utf-8")
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        written = 0
+        while written < len(payload):
+            written += os.write(fd, payload[written:])
+        os.fsync(fd)
+    except Exception:
+        os.close(fd)
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    os.close(fd)
+    if not hasattr(os, "fchmod"):
+        os.chmod(tmp_name, 0o600)
+    os.replace(tmp_name, path)
+
+
+def _persist_env_writes(hermes_home, env_writes: dict[str, Any]) -> None:
+    from pathlib import Path
+
+    try:
+        from hermes_cli.config import save_env_value
+    except ImportError as exc:
+        names = ", ".join(sorted(env_writes))
+        raise RuntimeError(
+            f"hindsight: could not save {names} to {Path(hermes_home) / '.env'}: "
+            "hermes_cli.config is unavailable; set them there by hand"
+        ) from exc
+    target_home = str(Path(hermes_home).resolve())
+    default_home = str(Path(get_hermes_home()).resolve())
+    override = target_home != default_home
+    prev_home = os.environ.get("HERMES_HOME")
+    try:
+        if override:
+            os.environ["HERMES_HOME"] = target_home
+        for key, value in env_writes.items():
+            save_env_value(key, value)
+    finally:
+        if override:
+            if prev_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = prev_home
+
+
 def _materialize_embedded_profile_env(config: dict[str, Any], *, llm_api_key: str | None = None):
     """Write the profile-scoped env file that standalone hindsight-embed uses."""
     profile_env = _embedded_profile_env_path(config)
-    profile_env.parent.mkdir(parents=True, exist_ok=True)
     env_values = _build_embedded_profile_env(config, llm_api_key=llm_api_key)
-    profile_env.write_text(
+    _write_owner_only_atomic(
+        profile_env,
         "".join(f"{key}={value}\n" for key, value in env_values.items()),
-        encoding="utf-8",
     )
     return profile_env
 
@@ -749,15 +802,6 @@ class HindsightMemoryProvider(MemoryProvider):
             llm_key = getpass.getpass(prompt="") if sys.stdin.isatty() else sys.stdin.readline().strip()
             if llm_key:
                 env_writes["HINDSIGHT_LLM_API_KEY"] = llm_key
-            else:
-                env_path = Path(hermes_home) / ".env"
-                existing_llm_key = ""
-                if env_path.exists():
-                    for line in env_path.read_text().splitlines():
-                        if line.startswith("HINDSIGHT_LLM_API_KEY="):
-                            existing_llm_key = line.split("=", 1)[1]
-                            break
-                env_writes["HINDSIGHT_LLM_API_KEY"] = existing_llm_key
 
         # Step 4: Save everything
         provider_config.setdefault("bank_id", "hermes")
@@ -779,24 +823,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self.save_config(provider_config, hermes_home)
 
         if env_writes:
-            env_path = Path(hermes_home) / ".env"
-            env_path.parent.mkdir(parents=True, exist_ok=True)
-            existing_lines = []
-            if env_path.exists():
-                existing_lines = env_path.read_text().splitlines()
-            updated_keys = set()
-            new_lines = []
-            for line in existing_lines:
-                key_match = line.split("=", 1)[0].strip() if "=" in line and not line.startswith("#") else None
-                if key_match and key_match in env_writes:
-                    new_lines.append(f"{key_match}={env_writes[key_match]}")
-                    updated_keys.add(key_match)
-                else:
-                    new_lines.append(line)
-            for k, v in env_writes.items():
-                if k not in updated_keys:
-                    new_lines.append(f"{k}={v}")
-            env_path.write_text("\n".join(new_lines) + "\n")
+            _persist_env_writes(hermes_home, env_writes)
 
         if mode == "local_embedded":
             materialized_config = dict(provider_config)

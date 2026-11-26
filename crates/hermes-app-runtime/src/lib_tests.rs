@@ -135,6 +135,28 @@ mod tests {
     }
 
     #[test]
+    fn test_build_agent_config_maps_the_session_spend_cap() {
+        let mut cfg = GatewayConfig::default();
+        cfg.agent.max_session_cost_usd = Some(2.5);
+        assert_eq!(
+            build_agent_config(&cfg, "openai:gpt-4o").max_cost_usd,
+            Some(2.5)
+        );
+        assert_eq!(
+            build_agent_config(&GatewayConfig::default(), "openai:gpt-4o").max_cost_usd,
+            None
+        );
+        for unusable in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            cfg.agent.max_session_cost_usd = Some(unusable);
+            assert_eq!(
+                build_agent_config(&cfg, "openai:gpt-4o").max_cost_usd,
+                None,
+                "{unusable} is not a cap"
+            );
+        }
+    }
+
+    #[test]
     fn test_build_agent_config_maps_delegation_max_spawn_depth_without_legacy_ceiling() {
         let mut cfg = GatewayConfig::default();
         cfg.delegation.max_spawn_depth = Some(99);
