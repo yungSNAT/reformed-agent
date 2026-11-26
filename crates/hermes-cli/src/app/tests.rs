@@ -466,6 +466,98 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn contextlattice_preflight_reports_the_loopback_service_state() {
+        const TEST: &str =
+            "app::tests::contextlattice_preflight_reports_the_loopback_service_state";
+        if !crate::isolated_test_profile::enter(TEST) {
+            return;
+        }
+        let server = MockServer::start().await;
+        let mut app = build_minimal_test_app_with_state_root(hermes_home_dir());
+        let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        app.set_stream_handle(Some(StreamHandle::from(tx)));
+        let mut next_event = || {
+            let crate::tui::Event::StreamChunk(chunk) = events.try_recv().expect("preflight event")
+            else {
+                panic!("expected a preflight stream chunk");
+            };
+            chunk.delta.unwrap().extra.unwrap()
+        };
+
+        std::env::set_var("CONTEXTLATTICE_TOPIC_PATH", "  tests/red-queen  ");
+        std::env::set_var("HERMES_CONTEXTLATTICE_PING_TIMEOUT_SECONDS", "5");
+        for (prefix, response, result, phase) in [
+            (
+                "healthy",
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "service": "fixture", "ok": true
+                })),
+                "contextlattice connected (service=fixture status=200 OK",
+                Some("contextlattice connected"),
+            ),
+            (
+                "degraded",
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "service": "fixture", "ok": false
+                })),
+                "contextlattice degraded (service=fixture status=200 OK",
+                Some("contextlattice degraded"),
+            ),
+            (
+                "invalid",
+                ResponseTemplate::new(200).set_body_string("status unavailable"),
+                "contextlattice connected (service=unknown status=200 OK",
+                Some("contextlattice connected"),
+            ),
+            (
+                "unavailable",
+                ResponseTemplate::new(503),
+                "contextlattice status endpoint returned 503 Service Unavailable",
+                None,
+            ),
+        ] {
+            let base = format!("{}/{prefix}", server.uri());
+            let resource = format!("/{prefix}/status");
+            Mock::given(method("GET"))
+                .and(path(resource.as_str()))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            std::env::set_var("CONTEXTLATTICE_ORCHESTRATOR_URL", format!(" {base}/ "));
+            app.emit_contextlattice_connectivity_status().await;
+
+            assert_eq!(
+                next_event(),
+                serde_json::json!({
+                    "ui_event": "lifecycle",
+                    "message": format!("contextlattice preflight ping {base} (topic=tests/red-queen)"),
+                })
+            );
+            let outcome = next_event();
+            assert_eq!(outcome["ui_event"], "lifecycle");
+            let message = outcome["message"].as_str().unwrap();
+            assert!(message.starts_with(result), "{message}");
+            assert!(message.contains(&base), "{message}");
+            if let Some(label) = phase {
+                assert_eq!(
+                    next_event(),
+                    serde_json::json!({
+                        "ui_event": "phase", "phase": "context", "label": label, "progress_pct": 12,
+                    })
+                );
+            }
+        }
+        assert!(events.try_recv().is_err());
+
+        std::env::set_var("HERMES_CONTEXTLATTICE_UI_STATUS", "off");
+        app.emit_contextlattice_connectivity_status().await;
+        assert!(events.try_recv().is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 4);
+    }
+
     #[test]
     fn model_switch_preflight_warning_is_ui_only_and_keeps_messages_clean() {
         let mut app = build_minimal_test_app();
