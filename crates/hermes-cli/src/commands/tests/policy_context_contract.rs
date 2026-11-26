@@ -572,3 +572,61 @@ async fn operator_reports_and_autopilot_controls_use_the_isolated_checkout() {
         assert!(output.contains(expected), "{args:?}: {output}");
     }
 }
+
+#[tokio::test]
+async fn runtime_skin_commands_list_and_validate_changes_before_queuing_them() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::policy_context_contract::runtime_skin_commands_list_and_validate_changes_before_queuing_them",
+    ) {
+        return;
+    }
+    let mut app = build_test_app_with_stream(&hermes_config::hermes_home()).await;
+    let original = crate::skin_engine::active_skin_name();
+    let summary = command_output(&mut app, "/skin", &[]).await;
+    assert!(
+        summary.contains(&format!("Current skin: {original}")),
+        "{summary}"
+    );
+
+    for (command, args, expected) in [
+        ("/skin", &["set"][..], "Usage: `/skin list`"),
+        (
+            "/skin",
+            &["set", "unknown-fixture-skin"],
+            "Unknown skin `unknown-fixture-skin`",
+        ),
+        ("/fast", &[], "Fast mode compatibility command received"),
+        (
+            "/timestamps",
+            &[],
+            "Transcript timestamps are controlled by the interactive TUI",
+        ),
+        (
+            "/voice",
+            &[],
+            "Voice mode uses provider/platform capabilities",
+        ),
+    ] {
+        let output = command_output(&mut app, command, args).await;
+        assert!(output.contains(expected), "{command} {args:?}: {output}");
+    }
+    assert_eq!(crate::skin_engine::active_skin_name(), original);
+    assert_eq!(app.take_pending_theme_change(), None);
+
+    let switched = command_output(&mut app, "/skin", &["set", "cyber"]).await;
+    assert!(
+        switched.contains("Skin switched to `ultra-cyberpunk`"),
+        "{switched}"
+    );
+    assert_eq!(
+        app.take_pending_theme_change().as_deref(),
+        Some("ultra-cyberpunk")
+    );
+    assert_eq!(app.take_pending_theme_change(), None);
+    let listed = command_output(&mut app, "/skin", &["list"]).await;
+    assert!(
+        listed.contains("Built-in skins (active: ultra-cyberpunk)"),
+        "{listed}"
+    );
+    assert!(listed.contains("✓ ultra-cyberpunk"), "{listed}");
+}
