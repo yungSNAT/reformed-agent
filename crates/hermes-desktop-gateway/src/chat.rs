@@ -165,6 +165,8 @@ pub struct Chat {
     /// Canonical `session.create` request ids and the sessions they made, oldest first.
     created: Mutex<VecDeque<(String, String)>>,
     budget: Arc<Budget>,
+    /// Held for each write to the sessions database (see [`Chat::write_store`]).
+    writes: Arc<Mutex<()>>,
     turns: Arc<Semaphore>,
     write_timeout: Duration,
     replay_epoch: Arc<str>,
@@ -209,6 +211,7 @@ impl Chat {
             sessions: Mutex::default(),
             created: Mutex::default(),
             budget: Arc::default(),
+            writes: Arc::default(),
             turns: Arc::new(Semaphore::new(MAX_TURNS)),
             write_timeout: WRITE_TIMEOUT,
             replay_epoch: uuid::Uuid::new_v4().simple().to_string().into(),
@@ -563,6 +566,22 @@ impl Chat {
             .map_err(|e| e.to_string())
     }
 
+    /// As [`Chat::with_store`], one write at a time. The gateway's turns share one sessions
+    /// database, and SQLite fails a writer that waits past its busy timeout (5 seconds), which
+    /// would lose a reply when several long turns end together.
+    async fn write_store<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(SessionPersistence) -> T + Send + 'static,
+    ) -> Result<T, String> {
+        let writes = Arc::clone(&self.writes);
+        self.with_store(move |store| {
+            // Held only around a write, which leaves nothing half-done on a panic.
+            let _one = writes.lock().unwrap_or_else(|e| e.into_inner());
+            work(store)
+        })
+        .await
+    }
+
     fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<LiveSession>>> {
         // A panic while the map is held cannot leave it half-updated (single inserts and
         // reads), so a poisoned lock is still safe to use.
@@ -832,7 +851,7 @@ impl Turn {
                 let (id, model) = (self.id.clone(), model.clone());
                 let saved = self
                     .chat
-                    .with_store(move |store| {
+                    .write_store(move |store| {
                         store.persist_session(
                             &id,
                             &transcript,
@@ -860,7 +879,7 @@ impl Turn {
         let id = self.id.clone();
         let warning = self
             .chat
-            .with_store(move |store| {
+            .write_store(move |store| {
                 store
                     .persist_agent_result(&id, &result, Some(&model), Some("desktop"))
                     .map_err(|e| e.to_string())
