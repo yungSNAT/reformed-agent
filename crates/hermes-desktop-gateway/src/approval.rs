@@ -77,13 +77,16 @@ pub struct ApprovalRequest {
 
 impl ApprovalRequest {
     /// The request's JSON params. A folder request without a folder, or a site request without
-    /// a site, is refused: the desktop would show a card the user cannot read. The check reads
-    /// the params as sent, so a key in `extra` cannot stand in for a field.
+    /// a site, is refused: the desktop would show a card the user cannot read. So is a key in
+    /// `extra` that names a field, which would replace that field on the wire.
     pub fn params(&self) -> Result<Value, &'static str> {
         let params =
             serde_json::to_value(self).map_err(|_| "approval request does not serialise")?;
         let sent =
             Self::deserialize(&params).map_err(|_| "approval request has an invalid field")?;
+        if sent != *self {
+            return Err("an extra key names an approval field");
+        }
         let blank = |field: &Option<String>| field.as_deref().is_none_or(|s| s.trim().is_empty());
         match sent.kind {
             Some(ApprovalKind::Access) if blank(&sent.path) => {

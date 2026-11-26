@@ -96,6 +96,33 @@ fn extra_keys_cannot_stand_in_for_the_checked_fields() {
         approval.extra.insert(key.into(), value.clone());
         assert!(approval.params().is_err(), "{key}={value} was accepted");
     }
+
+    // Nor replace a field that is set: the folder card would go out as a command card.
+    for (fields, key, value) in [
+        (
+            json!({"kind": "access", "access": "read"}),
+            "kind",
+            json!("command"),
+        ),
+        (json!({"kind": "network"}), "kind", json!("command")),
+        (
+            json!({"kind": "access", "path": "/srv"}),
+            "path",
+            json!("/"),
+        ),
+        (
+            json!({"kind": "network", "host": "a.example"}),
+            "host",
+            json!("b.example"),
+        ),
+    ] {
+        let mut approval = request(fields.clone()).unwrap();
+        approval.extra.insert(key.into(), value.clone());
+        assert!(
+            approval.params().is_err(),
+            "{fields} with {key}={value} was accepted"
+        );
+    }
 }
 
 #[test]
