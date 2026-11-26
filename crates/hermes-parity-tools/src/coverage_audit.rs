@@ -241,7 +241,7 @@ impl Domain {
     }
 
     /// The committed report keeps what changes only when coverage does. Evidence counts and
-    /// samples move whenever a matching file is added; the intent mapping reports them.
+    /// samples move whenever a matching file is added, so neither committed report keeps them.
     fn json(&self) -> String {
         let summary = Py::dict([
             ("id", self.id.as_str().into()),

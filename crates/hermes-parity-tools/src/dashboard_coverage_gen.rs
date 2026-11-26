@@ -246,7 +246,7 @@ fn run_writes_full_dashboard() {
         COVERAGE,
         r#"{"audit_gate": {"pass": true, "critical_gaps": 0},
             "summary": {"tracked_behavior_rows": 10, "covered_behavior_rows": 9,
-                        "tracked_behavior_coverage_ratio": 0.9, "rust_test_functions": 100,
+                        "tracked_behavior_coverage_ratio": 0.9,
                         "missing_rust_test_refs": 0}}"#,
     );
     write(

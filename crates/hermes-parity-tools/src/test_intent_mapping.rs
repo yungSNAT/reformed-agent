@@ -13,7 +13,6 @@ use crate::py::{self, Py};
 use crate::report_io::{resolve_argument, write_reports};
 
 const DOMAINS: &str = include_str!("../../../docs/parity/test-intent-domains.json");
-const SAMPLE_LIMIT: usize = 25;
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct EvidencePath(Vec<u32>);
@@ -30,6 +29,8 @@ impl EvidencePath {
         Self(code_points)
     }
 
+    /// The path as Python's `json.dumps` would quote it; the tests use it to show the order.
+    #[cfg(test)]
     pub(crate) fn json(&self) -> String {
         let mut units = Vec::new();
         for &point in &self.0 {
@@ -163,25 +164,13 @@ pub(crate) fn evidence(
     Ok(paths)
 }
 
-fn report_row(id: &str, scope: &Py, paths: &BTreeMap<EvidencePath, PathBuf>) -> String {
-    let sample: Vec<_> = paths
-        .keys()
-        .take(SAMPLE_LIMIT)
-        .map(EvidencePath::json)
-        .collect();
-    let sample = if sample.is_empty() {
-        "[]".to_string()
-    } else {
-        format!("[\n        {}\n      ]", sample.join(",\n        "))
-    };
-    let count = paths.len();
+/// One intent row. The evidence count and sample are left out of the committed report: they
+/// change whenever a file matching a domain glob is added, so PRs that regenerate it conflicted.
+fn report_row(id: &str, scope: &Py, mapped: bool) -> String {
     let id = py::dumps(&id.into(), None, false);
     let scope = py::dumps(scope, Some(2), true).replace('\n', "\n      ");
-    let mapped = count != 0;
     format!(
         r#"    {{
-      "evidence_count": {count},
-      "evidence_sample": {sample},
       "id": {id},
       "mapped": {mapped},
       "upstream_scope": {scope}
@@ -189,15 +178,14 @@ fn report_row(id: &str, scope: &Py, paths: &BTreeMap<EvidencePath, PathBuf>) -> 
     )
 }
 
-fn generate(root: &Path, generated: &str) -> Result<(String, String), String> {
+fn generate(root: &Path) -> Result<(String, String), String> {
     let Py::List(domains) = py::loads(DOMAINS)? else {
         return Err("expected test-intent domains to be a list".into());
     };
     let mut rows = Vec::with_capacity(domains.len());
     let mut mapped = 0;
-    let mut markdown = format!(
-        "# Test Intent Mapping\n\nGenerated: `{generated}`\n\n| Intent | Mapped | Evidence Count |\n| --- | --- | ---: |\n"
-    );
+    let mut markdown =
+        String::from("# Test Intent Mapping\n\n| Intent | Mapped |\n| --- | --- |\n");
     for domain in &domains {
         let (Some(Py::Str(id)), Some(scope @ Py::List(_)), Some(Py::List(patterns))) = (
             domain.get("id"),
@@ -206,13 +194,11 @@ fn generate(root: &Path, generated: &str) -> Result<(String, String), String> {
         ) else {
             return Err("invalid entry in test-intent-domains.json".into());
         };
-        let paths = evidence(root, patterns)?;
-        let count = paths.len();
-        let is_mapped = count != 0;
+        let is_mapped = !evidence(root, patterns)?.is_empty();
         mapped += usize::from(is_mapped);
-        rows.push(report_row(id, scope, &paths));
+        rows.push(report_row(id, scope, is_mapped));
         let label = if is_mapped { "yes" } else { "no" };
-        writeln!(markdown, "| `{id}` | {label} | {count} |").expect("writing to String");
+        writeln!(markdown, "| `{id}` | {label} |").expect("writing to String");
     }
     let total = domains.len();
     let raw_ratio = if total == 0 {
@@ -234,7 +220,6 @@ fn generate(root: &Path, generated: &str) -> Result<(String, String), String> {
         ("mapping_ratio", ratio),
     ]);
     let summary = py::dumps(&summary, Some(2), true).replace('\n', "\n  ");
-    let stamp = py::dumps(&generated.into(), None, false);
     let intents = if rows.is_empty() {
         "[]".to_string()
     } else {
@@ -242,7 +227,6 @@ fn generate(root: &Path, generated: &str) -> Result<(String, String), String> {
     };
     let json = format!(
         r#"{{
-  "generated_at_utc": {stamp},
   "intent_unit": "domain_intent",
   "intents": {intents},
   "summary": {summary}
@@ -254,7 +238,7 @@ fn generate(root: &Path, generated: &str) -> Result<(String, String), String> {
 
 pub fn run(args: TestIntentMappingArgs) -> Result<i32, String> {
     let root = resolve_argument(Path::new(&args.repo_root))?;
-    let (report, markdown) = generate(&root, &py::utc_isoformat())?;
+    let (report, markdown) = generate(&root)?;
     write_reports(&root, &args.out_json, &args.out_md, report, markdown)?;
     Ok(0)
 }
