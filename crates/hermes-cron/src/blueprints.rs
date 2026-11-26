@@ -708,4 +708,54 @@ mod tests {
         };
         assert!(text.contains("/blueprint morning-brief"));
     }
+
+    #[test]
+    fn weekly_blueprint_matches_titles_and_maps_allowed_days() {
+        for (day, schedule) in [
+            ("sunday", "45 7 * * 0"),
+            ("monday", "45 7 * * 1"),
+            ("friday", "45 7 * * 5"),
+            ("saturday", "45 7 * * 6"),
+        ] {
+            let command = format!("'Weekly review' day={day} time=07:45");
+            let BlueprintCommandAction::Filled(spec) = resolve_blueprint_command(&command).unwrap()
+            else {
+                panic!("expected weekly review for {day}");
+            };
+            assert_eq!(spec.key, "weekly-review");
+            assert_eq!(spec.schedule, schedule);
+            assert_eq!(spec.deliver, "origin");
+        }
+        assert_eq!(match_blueprint("  REVIEW  ").unwrap().key, "weekly-review");
+        assert!(match_blueprint("--").is_none());
+    }
+
+    #[test]
+    fn blueprint_commands_report_invalid_values_and_syntax() {
+        for (command, expected) in [
+            ("missing", "no automation blueprint named `missing`"),
+            ("weekly-review day", "expected slot=value, got `day`"),
+            ("weekly-review =sunday", "slot name cannot be empty"),
+            ("weekly-review day='sunday", "unterminated quoted value"),
+            (
+                "weekly-review day=tuesday",
+                "`weekly-review` slot `day` is invalid: expected one of sunday, monday, friday, saturday",
+            ),
+            ("weekly-review time=", "`weekly-review` needs a value for `time`"),
+            (
+                "weekly-review deliver=",
+                "`weekly-review` needs a value for `deliver`",
+            ),
+            ("morning-brief time=8", "expected HH:MM"),
+            ("morning-brief time=24:00", "hour must be 0-23"),
+            ("morning-brief time=08:60", "minute must be 0-59"),
+            (
+                "custom-reminder recurrence=monthly",
+                "expected everyday, weekdays, or weekends; got monthly",
+            ),
+        ] {
+            let error = resolve_blueprint_command(command).unwrap_err().to_string();
+            assert!(error.contains(expected), "{command}: {error}");
+        }
+    }
 }

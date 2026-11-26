@@ -287,3 +287,7 @@ pub fn run(args: SlashGateArgs) -> Result<i32, String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "slash_gate_coverage_gen.rs"]
+mod coverage_gen;

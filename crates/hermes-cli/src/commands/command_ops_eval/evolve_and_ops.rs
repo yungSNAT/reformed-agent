@@ -1218,3 +1218,7 @@ async fn handle_ops_command(app: &mut App, args: &[&str]) -> Result<CommandResul
         }
     }
 }
+
+#[cfg(test)]
+#[path = "evolve_and_ops_coverage_gen.rs"]
+mod coverage_gen_commands_command_ops_eval_evolve_and_ops;

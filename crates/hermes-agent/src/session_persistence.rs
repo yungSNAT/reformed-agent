@@ -1221,4 +1221,8 @@ impl SessionPersistence {
 include!("session_persistence/session_io.rs");
 
 #[cfg(test)]
+#[path = "session_persistence/empty_snapshot_tests.rs"]
+mod empty_snapshot_tests;
+
+#[cfg(test)]
 mod tests;

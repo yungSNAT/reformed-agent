@@ -879,6 +879,53 @@ mod tests {
         async fn file_exists(&self, _path: &str) -> Result<bool, AgentError> {
             Ok(true)
         }
+
+        async fn list_processes(&self) -> Result<Value, AgentError> {
+            Ok(json!({"status":"ok","count":1}))
+        }
+
+        async fn poll_process(&self, session_id: &str) -> Result<Value, AgentError> {
+            Ok(json!({"status":"running","session_id":session_id,"preview":"\x1b[31mpoll\x1b[0m"}))
+        }
+
+        async fn read_process_log(
+            &self,
+            session_id: &str,
+            offset: Option<u64>,
+            limit: Option<u64>,
+        ) -> Result<Value, AgentError> {
+            Ok(json!({
+                "status":"running", "session_id":session_id, "offset":offset, "limit":limit,
+                "lines":["\x1b[31mlog\x1b[0m"]
+            }))
+        }
+
+        async fn wait_process(
+            &self,
+            session_id: &str,
+            timeout: Option<u64>,
+        ) -> Result<Value, AgentError> {
+            Ok(json!({
+                "status":"exited","session_id":session_id,
+                "timeout":timeout,"preview":"\x1b[31mwait\x1b[0m"
+            }))
+        }
+
+        async fn kill_process(&self, session_id: &str) -> Result<Value, AgentError> {
+            Ok(json!({"status":"killed","session_id":session_id}))
+        }
+
+        async fn write_process_stdin(
+            &self,
+            session_id: &str,
+            data: &str,
+        ) -> Result<Value, AgentError> {
+            Ok(json!({"status":"ok","session_id":session_id,"data":data}))
+        }
+
+        async fn close_process_stdin(&self, session_id: &str) -> Result<Value, AgentError> {
+            Ok(json!({"status":"ok","session_id":session_id,"closed":true}))
+        }
     }
 
     struct NonzeroExitBackend;
@@ -985,58 +1032,6 @@ mod tests {
 
         async fn file_exists(&self, _path: &str) -> Result<bool, AgentError> {
             Ok(true)
-        }
-    }
-
-    struct MockProcessBackend;
-
-    #[async_trait]
-    impl ProcessBackend for MockProcessBackend {
-        async fn list_processes(&self) -> Result<String, ToolError> {
-            Ok(json!({"status":"ok","count":1}).to_string())
-        }
-
-        async fn poll_process(&self, session_id: &str) -> Result<String, ToolError> {
-            Ok(json!({"status":"running","session_id":session_id}).to_string())
-        }
-
-        async fn read_process_log(
-            &self,
-            session_id: &str,
-            offset: Option<u64>,
-            limit: Option<u64>,
-        ) -> Result<String, ToolError> {
-            Ok(json!({
-                "status":"running",
-                "session_id": session_id,
-                "offset": offset,
-                "limit": limit
-            })
-            .to_string())
-        }
-
-        async fn wait_process(
-            &self,
-            session_id: &str,
-            timeout: Option<u64>,
-        ) -> Result<String, ToolError> {
-            Ok(json!({"status":"exited","session_id":session_id,"timeout":timeout}).to_string())
-        }
-
-        async fn kill_process(&self, session_id: &str) -> Result<String, ToolError> {
-            Ok(json!({"status":"killed","session_id":session_id}).to_string())
-        }
-
-        async fn write_stdin(&self, session_id: &str, data: &str) -> Result<String, ToolError> {
-            Ok(json!({"status":"ok","session_id":session_id,"data":data}).to_string())
-        }
-
-        async fn submit_process(&self, session_id: &str, input: &str) -> Result<String, ToolError> {
-            Ok(json!({"status":"ok","session_id":session_id,"input":input}).to_string())
-        }
-
-        async fn close_process(&self, session_id: &str) -> Result<String, ToolError> {
-            Ok(json!({"status":"ok","session_id":session_id,"closed":true}).to_string())
         }
     }
 
@@ -1418,31 +1413,84 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_handler_uses_session_id_and_log_action() {
-        let handler = ProcessHandler::new(std::sync::Arc::new(MockProcessBackend));
-        let poll_result = handler
-            .execute(json!({"action":"poll","session_id":"proc_123"}))
-            .await
-            .unwrap();
-        assert!(poll_result.contains("\"session_id\":\"proc_123\""));
-
-        let log_result = handler
-            .execute(json!({"action":"log","session_id":"proc_123","offset":10,"limit":50}))
-            .await
-            .unwrap();
-        assert!(log_result.contains("\"offset\":10"));
-        assert!(log_result.contains("\"limit\":50"));
+    async fn process_handler_forwards_actions_and_strips_ansi_from_output() {
+        let handler = ProcessHandler::new(std::sync::Arc::new(TerminalProcessBackendAdapter::new(
+            std::sync::Arc::new(MockBackend),
+        )));
+        assert_eq!(handler.schema().name, "process");
+        for (request, expected) in [
+            (json!({"action":"list"}), json!({"status":"ok","count":1})),
+            (
+                json!({"action":"poll","session_id":"fixture"}),
+                json!({"status":"running","session_id":"fixture","preview":"poll"}),
+            ),
+            (
+                json!({"action":"log","session_id":"fixture","offset":10,"limit":50}),
+                json!({"status":"running","session_id":"fixture","offset":10,"limit":50,"lines":["log"]}),
+            ),
+            (
+                json!({"action":"wait","pid":"fixture","timeout":3}),
+                json!({"status":"exited","session_id":"fixture","timeout":3,"preview":"wait"}),
+            ),
+            (
+                json!({"action":"kill","session_id":"fixture"}),
+                json!({"status":"killed","session_id":"fixture"}),
+            ),
+            (
+                json!({"action":"submit","session_id":"fixture","input":"line"}),
+                json!({"status":"ok","session_id":"fixture","data":"line\n"}),
+            ),
+            (
+                json!({"action":"close","session_id":"fixture"}),
+                json!({"status":"ok","session_id":"fixture","closed":true}),
+            ),
+        ] {
+            let output = handler.execute(request).await.unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), expected);
+        }
     }
 
     #[tokio::test]
     async fn test_process_handler_coerces_non_string_args() {
-        let handler = ProcessHandler::new(std::sync::Arc::new(MockProcessBackend));
+        let handler = ProcessHandler::new(std::sync::Arc::new(TerminalProcessBackendAdapter::new(
+            std::sync::Arc::new(MockBackend),
+        )));
         let write_result = handler
             .execute(json!({"action":"write","session_id":123,"data":456}))
             .await
             .unwrap();
         assert!(write_result.contains("\"session_id\":\"123\""));
         assert!(write_result.contains("\"data\":\"456\""));
+    }
+
+    #[tokio::test]
+    async fn process_handler_distinguishes_invalid_params_from_backend_errors() {
+        let handler = ProcessHandler::new(std::sync::Arc::new(TerminalProcessBackendAdapter::new(
+            std::sync::Arc::new(NonzeroExitBackend),
+        )));
+        for request in [
+            json!({}),
+            json!({"action":"unknown"}),
+            json!({"action":"log"}),
+            json!({"action":"write","session_id":"fixture"}),
+            json!({"action":"submit","session_id":"fixture"}),
+        ] {
+            assert!(matches!(
+                handler.execute(request).await,
+                Err(ToolError::InvalidParams(_))
+            ));
+        }
+        for action in [
+            "list", "poll", "log", "wait", "kill", "write", "submit", "close",
+        ] {
+            let result = handler
+                .execute(json!({"action":action,"session_id":"fixture","data":"fixture input"}))
+                .await;
+            assert!(
+                matches!(result, Err(ToolError::ExecutionFailed(message)) if message.contains("not supported")),
+                "{action}"
+            );
+        }
     }
 
     #[test]

@@ -461,3 +461,6 @@ pub fn set_objective_contract_behavior_mode(mode: &str) -> Result<ObjectiveContr
     Ok(contract)
 }
 
+#[cfg(test)]
+#[path = "objective_contract_coverage_gen.rs"]
+mod coverage_gen_alpha_runtime_objective_contract;

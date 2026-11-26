@@ -305,6 +305,8 @@ fn looks_like_identifier(name: &str) -> bool {
 mod tests {
     use super::*;
     use crate::code_index::{CodeIndex, CodeIndexConfig};
+    use hermes_core::FunctionCall;
+    use serde_json::json;
 
     #[test]
     fn rename_reference_section_uses_identifier_filters() {
@@ -321,5 +323,124 @@ mod tests {
         let cfg = LspContextConfig::default();
         let section = build_reference_section(&index, &args, &cfg);
         assert!(section.unwrap_or_default().contains("old_name"));
+    }
+
+    #[test]
+    fn file_tool_notes_show_hover_diagnostics_and_rename_references() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("sample.rs");
+        let added = tmp.path().join("added.rs");
+        let broken = tmp.path().join("broken.rs");
+        let missing = tmp.path().join("missing.rs");
+        let python = tmp.path().join("sample.py");
+        std::fs::write(&source, "fn initial() {}\n\nfn target() {}\n").unwrap();
+        let mut index = CodeIndex::new(tmp.path(), CodeIndexConfig::default());
+        index.refresh_full();
+        std::fs::write(&added, "fn new_symbol() {}\n").unwrap();
+        std::fs::write(&broken, "fn incomplete(\n").unwrap();
+        std::fs::write(&python, "def fixture(): pass\n").unwrap();
+        assert!(index.list_file_symbols(&added, 5).is_empty());
+
+        let call = |id: &str, name: &str, arguments: Value| ToolCall {
+            id: id.into(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments: arguments.to_string(),
+            },
+            extra_content: None,
+        };
+        let calls = [
+            call("read", "read_file", json!({"path": source, "offset": "3"})),
+            call("write", "write_file", json!({"path": added})),
+            call("invalid", "edit_file", json!({"path": broken})),
+            call("unreadable", "write_file", json!({"path": missing})),
+            call("python", "edit_file", json!({"path": python})),
+            call(
+                "rename",
+                "patch_file",
+                json!({"path": source, "old_string": "target", "new_string": "replacement"}),
+            ),
+        ];
+        let results = calls
+            .iter()
+            .map(|tc| ToolResult::ok(&tc.id, "fixture"))
+            .collect::<Vec<_>>();
+        let cfg = LspContextConfig::default();
+        let note = build_lsp_context_note(&calls, &results, &mut index, &cfg).unwrap();
+        for line in [
+            "## LSP Context Injection",
+            "focus: function target (line 3)",
+            "rust syntax: ok",
+            "rust syntax: error:",
+            "rust: failed to read file:",
+            "python syntax: skipped",
+        ] {
+            assert!(note.contains(line), "{line} missing from {note}");
+        }
+        let (_, references) = note
+            .split_once("References before rename `target` -> `replacement`")
+            .expect("rename references section");
+        let expected_hit = format!("{}:3: fn target() {{}}", source.display());
+        assert!(references.contains(&expected_hit), "{references}");
+        assert_eq!(index.list_file_symbols(&added, 1)[0].name, "new_symbol");
+        assert!(build_lsp_context_note(
+            &calls,
+            &results,
+            &mut index,
+            &LspContextConfig {
+                enabled: false,
+                ..cfg.clone()
+            }
+        )
+        .is_none());
+        let truncated = build_lsp_context_note(
+            &calls,
+            &results,
+            &mut index,
+            &LspContextConfig {
+                max_chars: 30,
+                ..cfg
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            truncated,
+            format!("{}...", note.chars().take(30).collect::<String>())
+        );
+    }
+
+    #[test]
+    fn file_tool_notes_skip_failed_unmatched_and_unusable_calls() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut index = CodeIndex::new(tmp.path(), CodeIndexConfig::default());
+        let failed = json!({"path": tmp.path().join("failed.rs")}).to_string();
+        let unindexed = json!({"path": tmp.path().join("unindexed.rs")}).to_string();
+        let non_source = json!({"path": tmp.path().join("fixture.txt")}).to_string();
+        let calls = [
+            ("failed", "write_file", failed.as_str()),
+            ("malformed", "read_file", "{"),
+            ("no-path", "read_file", r#"{"path":null}"#),
+            ("unindexed", "read_file", unindexed.as_str()),
+            ("non-source", "write_file", non_source.as_str()),
+            ("other-tool", "search", "{}"),
+        ]
+        .map(|(id, name, arguments)| ToolCall {
+            id: id.into(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments: arguments.into(),
+            },
+            extra_content: None,
+        });
+        let mut results = calls[1..]
+            .iter()
+            .map(|tc| ToolResult::ok(&tc.id, "fixture"))
+            .collect::<Vec<_>>();
+        results.push(ToolResult::err("failed", "fixture write failure"));
+        results.push(ToolResult::ok("unmatched", "fixture"));
+        assert!(
+            build_lsp_context_note(&calls, &results, &mut index, &LspContextConfig::default())
+                .is_none()
+        );
     }
 }

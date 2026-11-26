@@ -869,6 +869,93 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn configured_home_keeps_the_channel_cache_and_provider_discovery_local() {
+        const CHILD: &str = "HERMES_TEST_CHANNEL_CACHE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let home = PathBuf::from(std::env::var_os("HERMES_HOME").unwrap());
+            let directory = ChannelDirectory::new();
+            assert!(directory.get("fixture-chat").is_none());
+            directory.upsert(ChannelEntry::new("discord", "fixture-chat", "Old survey"));
+            let renamed =
+                ChannelEntry::new("discord", "fixture-chat", "Park survey").with_kind("dm");
+            directory.upsert(renamed.clone());
+            assert_eq!(directory.get("fixture-chat"), Some(renamed.clone()));
+            let entries = directory.list();
+            assert_eq!(entries, vec![renamed]);
+
+            assert_eq!(directory_path(), home.join("channel_directory.json"));
+            let saved = build_channel_directory(BTreeMap::from([(" DISCORD ".into(), entries)]));
+            assert_eq!(load_directory().platforms, saved.platforms);
+            assert_eq!(
+                resolve_channel_name("discord", " park survey ").as_deref(),
+                Some("fixture-chat")
+            );
+            assert_eq!(
+                lookup_channel_type("discord", "fixture-chat").as_deref(),
+                Some("dm")
+            );
+            let display = format_directory_for_display();
+            assert!(display.contains("Discord (DMs):"));
+            assert!(display.contains("discord:Park survey"));
+
+            let sessions = home.join("sessions");
+            std::fs::create_dir(&sessions).unwrap();
+            let history = serde_json::json!({
+                "without-origin": {"last_result": "unknown"},
+                "without-chat": {"origin": {"platform": "telegram"}},
+                "with-topic": {"origin": {
+                    "platform": "telegram", "chat_id": 917, "thread_id": 12, "user_name": "Park team"
+                }}
+            });
+            std::fs::write(sessions.join("sessions.json"), history.to_string()).unwrap();
+            let entries = build_from_sessions("telegram");
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].id, "917:12");
+            assert_eq!(entries[0].name, "Park team / topic 12");
+            let rebuilt = build_channel_directory_from_providers(&[]).await;
+            assert_eq!(rebuilt.platforms["telegram"], entries);
+            assert_eq!(load_directory().platforms, rebuilt.platforms);
+            return;
+        }
+
+        let home = tempdir().unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        let executable = cwd.join(std::env::args_os().next().expect("test executable"));
+        let mut child = tokio::process::Command::new(executable);
+        child
+            .env_clear()
+            .env(CHILD, "1")
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env("HERMES_HOME", home.path())
+            .current_dir(home.path())
+            .kill_on_drop(true)
+            .args(["--exact", "channel_directory::tests::configured_home_keeps_the_channel_cache_and_provider_discovery_local", "--nocapture"]);
+        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                child.env(
+                    key,
+                    if key == "LLVM_PROFILE_FILE" {
+                        cwd.join(value).into_os_string()
+                    } else {
+                        value
+                    },
+                );
+            }
+        }
+        let output = tokio::time::timeout(std::time::Duration::from_secs(10), child.output())
+            .await
+            .expect("channel cache child timed out")
+            .expect("start channel cache child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[test]
     fn empty_directory_display_mentions_no_platforms() {
         let tmp = tempdir().expect("tmp");

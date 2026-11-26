@@ -1,0 +1,275 @@
+use super::*;
+use hermes_core::{FunctionCall, FunctionCallDelta, JsonSchema, StreamDelta, ToolCallDelta};
+
+const TOOL: &str = "fixture_failure";
+const SUMMARY: &str = "Fixture failed twice; inspect the test result.";
+
+#[derive(Default)]
+struct GuardProvider {
+    complete_turns: std::sync::atomic::AtomicUsize,
+    stream_turns: std::sync::atomic::AtomicUsize,
+    summaries: std::sync::atomic::AtomicUsize,
+}
+
+impl GuardProvider {
+    fn call(index: usize) -> ToolCall {
+        ToolCall {
+            id: format!("fixture-{index}"),
+            function: FunctionCall {
+                name: TOOL.into(),
+                arguments: "{}".into(),
+            },
+            extra_content: None,
+        }
+    }
+}
+
+#[tokio::test]
+async fn streamed_interrupt_preserves_only_answered_tool_calls() {
+    for interrupt_before_tool in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = Arc::new(GuardProvider::default());
+        let interrupt = InterruptController::new();
+        let stop = interrupt.clone();
+        let tool_runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let recorded_runs = tool_runs.clone();
+        let schema = ToolSchema::new(TOOL, "Fixture tool", JsonSchema::new("object"));
+        let mut tools = ToolRegistry::new();
+        tools.register(
+            TOOL,
+            schema.clone(),
+            Arc::new(move |_| {
+                recorded_runs.fetch_add(1, Ordering::Relaxed);
+                Ok("fixture completed".into())
+            }),
+        );
+
+        let mut callbacks = AgentCallbacks::default();
+        if interrupt_before_tool {
+            callbacks.on_tool_start = Some(Box::new(move |name, args| {
+                assert_eq!(name, TOOL);
+                assert_eq!(args, &serde_json::json!({}));
+                stop.interrupt(None);
+            }));
+        } else {
+            callbacks.on_tool_complete = Some(Box::new(move |name, result| {
+                assert_eq!(name, TOOL);
+                assert_eq!(result, "fixture completed");
+                stop.interrupt(None);
+            }));
+        }
+        let agent = AgentLoop::with_interrupt(
+            AgentConfig {
+                model: "openai:fixture-model".into(),
+                hermes_home: Some(directory.path().display().to_string()),
+                max_turns: 3,
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..Default::default()
+            },
+            Arc::new(tools),
+            provider.clone(),
+            interrupt,
+        )
+        .with_callbacks(callbacks);
+
+        let result = agent
+            .run_stream(
+                vec![Message::user("Try the fixture tool.")],
+                Some(vec![schema]),
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.interrupted);
+        assert!(!result.finished_naturally);
+        assert_eq!(provider.stream_turns.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            tool_runs.load(Ordering::Relaxed),
+            usize::from(!interrupt_before_tool)
+        );
+
+        let calls: Vec<_> = result
+            .messages
+            .iter()
+            .flat_map(|message| message.tool_calls.iter().flatten())
+            .map(|call| call.id.as_str())
+            .collect();
+        let answers: Vec<_> = result
+            .messages
+            .iter()
+            .filter(|message| message.role == MessageRole::Tool)
+            .filter_map(|message| message.tool_call_id.as_deref())
+            .collect();
+        let expected: &[&str] = if interrupt_before_tool {
+            &[]
+        } else {
+            &["fixture-0"]
+        };
+        assert_eq!(calls, expected);
+        assert_eq!(answers, expected);
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for GuardProvider {
+    async fn chat_completion(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&Value>,
+    ) -> Result<LlmResponse, AgentError> {
+        let (message, reason) = if tools.is_empty() {
+            assert!(messages.iter().any(|message| {
+                message.role == MessageRole::System
+                    && message.content.as_deref().is_some_and(|text| {
+                        text.contains("Tool-loop guard triggered after 2 consecutive error turn(s)")
+                    })
+            }));
+            self.summaries.fetch_add(1, Ordering::Relaxed);
+            (Message::assistant(SUMMARY), "stop")
+        } else {
+            let index = self.complete_turns.fetch_add(1, Ordering::Relaxed);
+            (
+                Message::assistant_with_tool_calls(None, vec![Self::call(index)]),
+                "tool_calls",
+            )
+        };
+        Ok(LlmResponse {
+            message,
+            usage: None,
+            model: "fixture-model".into(),
+            finish_reason: Some(reason.into()),
+        })
+    }
+
+    fn chat_completion_stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&Value>,
+    ) -> futures::stream::BoxStream<'static, Result<StreamChunk, AgentError>> {
+        let index = self.stream_turns.fetch_add(1, Ordering::Relaxed);
+        let call = Self::call(index);
+        Box::pin(futures::stream::iter([Ok(StreamChunk {
+            delta: Some(StreamDelta {
+                tool_calls: Some(vec![ToolCallDelta {
+                    index: 0,
+                    id: Some(call.id),
+                    function: Some(FunctionCallDelta {
+                        name: Some(call.function.name),
+                        arguments: Some(call.function.arguments),
+                    }),
+                }]),
+                content: None,
+                extra: None,
+            }),
+            finish_reason: Some("tool_calls".into()),
+            usage: None,
+        })]))
+    }
+}
+
+#[tokio::test]
+async fn tool_loop_guard_reports_repeated_failures_in_complete_and_streamed_turns() {
+    const CHILD: &str = "REFORMED_TEST_TOOL_GUARD";
+    if std::env::var_os(CHILD).is_none() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .env_clear()
+            .env(CHILD, "1")
+            .env("HOME", directory.path())
+            .env("USERPROFILE", directory.path())
+            .env("HERMES_HOME", directory.path())
+            .env("HERMES_TOOL_LOOP_GUARD_MAX_CONSEC_ERROR_TURNS", "2")
+            .current_dir(directory.path())
+            .kill_on_drop(true)
+            .args([
+                "--exact",
+                "agent_loop::guard_contract_tests::tool_loop_guard_reports_repeated_failures_in_complete_and_streamed_turns",
+            ]);
+        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let output = tokio::time::timeout(Duration::from_secs(20), command.output())
+            .await
+            .expect("tool guard child timed out")
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    for streaming in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = Arc::new(GuardProvider::default());
+        let schema = ToolSchema::new(
+            TOOL,
+            "Fail the synthetic tool call",
+            JsonSchema::new("object"),
+        );
+        let mut tools = ToolRegistry::new();
+        tools.register(
+            TOOL,
+            schema.clone(),
+            Arc::new(|_| Err(ToolError::ExecutionFailed("fixture tool failure".into()))),
+        );
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: "openai:fixture-model".into(),
+                hermes_home: Some(directory.path().display().to_string()),
+                max_turns: 6,
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..Default::default()
+            },
+            Arc::new(tools),
+            provider.clone(),
+        );
+        let messages = vec![Message::user("Try the fixture tool.")];
+        let schemas = Some(vec![schema]);
+        let result = if streaming {
+            agent
+                .run_stream(messages, schemas, Some(Box::new(|_| {})))
+                .await
+        } else {
+            agent.run(messages, schemas).await
+        }
+        .unwrap();
+        assert!(!result.finished_naturally);
+        assert!(!result.interrupted);
+        assert_eq!(result.total_turns, 2);
+        assert_eq!(result.tool_errors.len(), 2);
+        assert!(result.tool_errors.iter().all(|error| {
+            error.tool_name == TOOL && error.error.contains("fixture tool failure")
+        }));
+        assert_eq!(
+            result.messages.last().unwrap().content.as_deref(),
+            Some(SUMMARY)
+        );
+        assert_eq!(
+            provider.complete_turns.load(Ordering::Relaxed),
+            if streaming { 0 } else { 2 },
+        );
+        assert_eq!(
+            provider.stream_turns.load(Ordering::Relaxed),
+            if streaming { 2 } else { 0 },
+        );
+        assert_eq!(provider.summaries.load(Ordering::Relaxed), 1);
+    }
+}

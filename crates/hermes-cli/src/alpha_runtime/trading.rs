@@ -1396,3 +1396,7 @@ pub fn render_trading_alpha_board(report: &TradingAlphaReport) -> String {
     out.push_str(&report.postmortem);
     out
 }
+
+#[cfg(test)]
+#[path = "trading_coverage_gen.rs"]
+mod coverage_gen_alpha_runtime_trading;

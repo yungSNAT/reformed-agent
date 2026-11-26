@@ -985,3 +985,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "supermemory_coverage_gen.rs"]
+mod coverage_gen;

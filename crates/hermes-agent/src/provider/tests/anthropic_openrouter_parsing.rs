@@ -223,6 +223,122 @@ fn test_openrouter_merge_extra_body_strips_local_cache_fields() {
     assert!(merged.get("provider").is_some());
 }
 
+#[tokio::test]
+async fn openrouter_sends_cache_controls_and_reuses_successful_replies() {
+    use wiremock::matchers::{body_partial_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    let mut provider = OpenRouterProvider::new("synthetic-openrouter-fixture")
+        .with_http_referer("https://fixture.example.invalid")
+        .with_x_title("Survey fixture");
+    provider.inner = provider
+        .inner
+        .with_base_url(format!("{}/api/v1", server.uri()));
+    provider.inner.client = Arc::new(Mutex::new(
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap(),
+    ));
+
+    let model = "openai/gpt-4o";
+    let messages = [Message::user(format!("Survey {}", uuid::Uuid::new_v4()))];
+    let cache = serde_json::json!({
+        "route": "fallback",
+        "response_cache": {"enabled": true, "ttl_secs": 120}
+    });
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(header(
+            "authorization",
+            "Bearer synthetic-openrouter-fixture",
+        ))
+        .and(header("http-referer", "https://fixture.example.invalid"))
+        .and(header("x-title", "Survey fixture"))
+        .and(header("x-openrouter-cache", "true"))
+        .and(body_partial_json(
+            serde_json::json!({"model":model,"route":"fallback"}),
+        ))
+        .and(|request: &wiremock::Request| {
+            request
+                .body_json::<Value>()
+                .is_ok_and(|body| body.get("response_cache").is_none())
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "model": model,
+            "choices": [{
+                "message": {"role":"assistant","content":"Survey complete"},
+                "finish_reason":"stop"
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for _ in 0..2 {
+        let completion = provider
+            .chat_completion(&messages, &[], None, None, Some(model), Some(&cache))
+            .await
+            .unwrap();
+        assert_eq!(
+            completion.message.content.as_deref(),
+            Some("Survey complete")
+        );
+        assert_eq!(completion.finish_reason.as_deref(), Some("stop"));
+    }
+
+    server.verify().await;
+    server.reset().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(header("x-openrouter-cache", "true"))
+        .and(header("x-openrouter-cache-clear", "true"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("invalid fixture request"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let clear = serde_json::json!({
+        "route": "fallback",
+        "response_cache": {"enabled": true, "clear": true}
+    });
+    let error = provider
+        .chat_completion(&messages, &[], None, None, Some(model), Some(&clear))
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("400 Bad Request: invalid fixture request"));
+
+    server.verify().await;
+    server.reset().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(header("x-title", "Survey fixture"))
+        .and(body_partial_json(
+            serde_json::json!({"model":model,"stream":true}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            concat!(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Weather clear\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut stream = provider.chat_completion_stream(&messages, &[], None, None, Some(model), None);
+    let mut text = String::new();
+    while let Some(chunk) = stream.next().await {
+        if let Some(content) = chunk.unwrap().delta.and_then(|delta| delta.content) {
+            text.push_str(&content);
+        }
+    }
+    assert_eq!(text, "Weather clear");
+}
+
 #[test]
 fn test_anthropic_convert_tools() {
     let tools = vec![ToolSchema::new(

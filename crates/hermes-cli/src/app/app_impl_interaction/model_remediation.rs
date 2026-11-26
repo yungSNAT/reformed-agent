@@ -295,3 +295,7 @@ impl App {
         Some((next_model, notice))
     }
 }
+
+#[cfg(test)]
+#[path = "model_remediation_coverage_gen.rs"]
+mod coverage_gen_app_app_impl_interaction_model_remediation;

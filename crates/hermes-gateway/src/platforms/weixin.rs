@@ -1444,3 +1444,7 @@ impl PlatformAdapter for WeChatAdapter {
 }
 
 include!("weixin/tests.rs");
+
+#[cfg(test)]
+#[path = "weixin_coverage_gen.rs"]
+mod coverage_gen_platforms_weixin;

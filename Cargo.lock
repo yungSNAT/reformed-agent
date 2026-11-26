@@ -1906,6 +1906,7 @@ dependencies = [
  "hermes-tools",
  "hmac 0.12.1",
  "jiff",
+ "libc",
  "matrix-sdk-crypto",
  "md5",
  "rand 0.10.4",

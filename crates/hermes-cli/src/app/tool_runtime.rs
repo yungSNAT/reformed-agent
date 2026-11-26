@@ -357,3 +357,7 @@ pub fn build_provider(config: &GatewayConfig, model: &str) -> Arc<dyn LlmProvide
         Some(&provider_oauth_token_from_auth_state),
     )
 }
+
+#[cfg(test)]
+#[path = "tool_runtime_coverage_gen.rs"]
+mod coverage_gen_app_tool_runtime;

@@ -822,3 +822,7 @@ mod tests {
         assert!(!home.path().join("logs").exists());
     }
 }
+
+#[cfg(test)]
+#[path = "integrations_snapshot_coverage_gen.rs"]
+mod coverage_gen;

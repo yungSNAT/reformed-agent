@@ -1480,3 +1480,6 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "setup_flow_coverage_gen.rs"]
+mod coverage_gen_main_setup_flow;

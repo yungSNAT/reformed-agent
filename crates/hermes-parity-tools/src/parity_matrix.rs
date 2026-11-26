@@ -532,3 +532,7 @@ pub fn run(args: ParityMatrixArgs) -> Result<i32, String> {
     println!("Commits behind/ahead: {behind}/{ahead}");
     Ok(0)
 }
+
+#[cfg(test)]
+#[path = "parity_matrix_coverage_gen.rs"]
+mod coverage_gen;

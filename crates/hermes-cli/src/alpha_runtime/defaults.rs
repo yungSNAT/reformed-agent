@@ -332,3 +332,6 @@ fn default_subagent_registry() -> SubagentRegistry {
     }
 }
 
+#[cfg(test)]
+#[path = "defaults_coverage_gen.rs"]
+mod coverage_gen_alpha_runtime_defaults;

@@ -560,3 +560,7 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
         input_hint: None,
     },
 ];
+
+#[cfg(test)]
+#[path = "prompt_parts_coverage_gen.rs"]
+mod coverage_gen;

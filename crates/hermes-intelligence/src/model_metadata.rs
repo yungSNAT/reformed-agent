@@ -748,6 +748,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn context_limits_accept_provider_formats_and_reject_impossible_values() {
+        for (error, expected) in [
+            ("Maximum context length is 128000 tokens", Some(128_000)),
+            ("CONTEXT WINDOW: 65536", Some(65_536)),
+            ("exceeded the 32768 token context", Some(32_768)),
+            ("limit: 1024", Some(1_024)),
+            ("limit: 10000000", Some(10_000_000)),
+            ("limit: 1023", None),
+            ("limit: 10000001", None),
+            ("context window 18446744073709551616", None),
+            ("unexpected response", None),
+        ] {
+            assert_eq!(parse_context_limit_from_error(error), expected, "{error:?}");
+        }
+    }
+
+    #[test]
+    fn available_output_tokens_require_the_max_tokens_error_and_a_positive_count() {
+        for (error, expected) in [
+            ("MAX_TOKENS too large: AVAILABLE_TOKENS: 812", Some(812)),
+            ("max_tokens too large: available tokens 439", Some(439)),
+            ("max_tokens exceeds available amount = 17", Some(17)),
+            ("max_tokens exceeds available_tokens: 0", None),
+            (
+                "max_tokens exceeds available_tokens: 18446744073709551616",
+                None,
+            ),
+            ("max_tokens unavailable", None),
+            ("max_tokens too large", None),
+            ("available_tokens: 439", None),
+        ] {
+            assert_eq!(
+                parse_available_output_tokens_from_error(error),
+                expected,
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_get_model_context_length() {
         assert_eq!(get_model_context_length("gpt-4o"), 128_000);
         assert_eq!(get_model_context_length("claude-opus-4-6"), 1_000_000);
@@ -842,6 +882,45 @@ mod tests {
         assert_eq!(mimo.provider, "xiaomi");
         assert_eq!(mimo.context_window, 1_000_000);
         assert!(mimo.supports_vision);
+    }
+
+    #[test]
+    fn metadata_falls_back_for_unlisted_models() {
+        assert!(supports_tools("gpt-4o-mini"));
+        assert_eq!(max_output_tokens("openai/gpt-4o-mini"), Some(16_384));
+        assert!(supports_tools("custom/fixture-engine"));
+        assert_eq!(max_output_tokens("custom/fixture-engine"), None);
+    }
+
+    #[test]
+    fn estimates_include_message_envelopes_and_optional_tool_definitions() {
+        let role_only = serde_json::json!({"role": "user"});
+        let messages = [
+            role_only.clone(),
+            serde_json::json!({"role": "user", "content": "abcd"}),
+            serde_json::json!({"role": "user", "content": ["éééé", {"count": 2}]}),
+        ];
+        // The envelope estimates are 4, 8 and 7. The array contributes 1 + 3.
+        assert_eq!(estimate_messages_tokens_rough(&messages), 23);
+
+        let tools = [serde_json::json!({"name": "search"})];
+        let messages = [role_only];
+        // The system prompt and message take 4 + 15 bytes. The tool adds 17.
+        assert_eq!(estimate_request_tokens_rough(&messages, "note", None), 5);
+        assert_eq!(
+            estimate_request_tokens_rough(&messages, "note", Some(&tools)),
+            9,
+        );
+    }
+
+    #[test]
+    fn model_switch_preflight_requires_a_target_and_an_estimate() {
+        assert!(build_model_switch_preflight_warning(None, "gpt-4o-mini", 0).is_none());
+        assert!(build_model_switch_preflight_warning(None, "  ", 300_000).is_none());
+        let warning = build_model_switch_preflight_warning(Some("  "), " gpt-4o-mini ", 64_000)
+            .expect("the threshold is inclusive");
+        assert!(warning.contains("gpt-4o-mini auto-compresses"));
+        assert!(!warning.contains("Context window shrinks"));
     }
 
     #[test]

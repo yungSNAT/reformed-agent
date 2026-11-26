@@ -795,3 +795,7 @@ mod tests {
         assert!(root.join("reports/audit.md").is_file());
     }
 }
+
+#[cfg(test)]
+#[path = "coverage_audit_coverage_gen.rs"]
+mod coverage_gen;

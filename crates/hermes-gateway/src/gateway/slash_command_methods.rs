@@ -1080,3 +1080,7 @@ impl Gateway {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "slash_command_methods_coverage_gen.rs"]
+mod coverage_gen;
