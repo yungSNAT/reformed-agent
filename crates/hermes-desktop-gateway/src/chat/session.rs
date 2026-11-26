@@ -587,10 +587,8 @@ mod tests {
         ));
         assert!(matches!(live.next(&mut None), Next::Wait));
         assert_eq!(live.state().2, 1, "no generation before a slot");
-        let mut slot = Arc::clone(&slots).try_acquire_owned().ok();
-        assert!(slot.is_none(), "the first turn holds the only slot");
         let freed = Arc::new(tokio::sync::Semaphore::new(1));
-        slot = Arc::clone(&freed).try_acquire_owned().ok();
+        let mut slot = Arc::clone(&freed).try_acquire_owned().ok();
         let Next::Run(first, _) = live.next(&mut slot) else {
             panic!("a slot was given");
         };

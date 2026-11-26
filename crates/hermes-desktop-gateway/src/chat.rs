@@ -619,8 +619,10 @@ impl Chat {
         let chat = Arc::clone(self);
         let id = id.to_string();
         // Made before the task, so a task dropped before it first runs leaves the session idle.
-        let mut guard = DrainGuard(Some(Arc::clone(&session)));
+        let guard = DrainGuard(Some(Arc::clone(&session)));
         tokio::spawn(async move {
+            // Moves the whole guard in; a closure would capture only the field it assigns.
+            let mut guard = guard;
             let mut next = Some((prompt, slot));
             while let Some((prompt, slot)) = next {
                 let turn = Turn {
