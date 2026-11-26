@@ -363,6 +363,15 @@ async fn gateway() -> (SocketAddr, Seen) {
                 )
                     .into_response(),
                 "/in" => (StatusCode::FOUND, [(header::LOCATION, "/../api/next")]).into_response(),
+                // Headers and a first chunk, then nothing, ever.
+                "/stall" => Body::from_stream(
+                    futures::stream::once(async {
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"first"))
+                    })
+                    .chain(futures::stream::pending()),
+                )
+                .into_response(),
+                "/big" => vec![b'x'; MAX_RESPONSE + 1].into_response(),
                 _ => "ok".into_response(),
             };
             let h = response.headers_mut();
@@ -576,4 +585,242 @@ async fn a_private_target_needs_consent() {
     .unwrap();
     let response = relay(&path, "lan", None, browser_request("/api/relay/lan/x")).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+// ---- Review round 1 -------------------------------------------------------------------------
+
+#[test]
+fn an_edit_that_moves_a_gateway_must_send_its_token_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    save(&path, &obj(json!({"kind": "remote", "label": "Work", "url": "https://gw.example", "token": "first", "headers": {"X-Key": "k1"}, "allowPrivateNetwork": true}))).unwrap();
+    for moved in [
+        json!({"id": "work", "url": "https://collector.example"}),
+        json!({"id": "work", "url": "https://collector.example", "token": "  ", "headers": {"X-Key": null}}),
+        json!({"id": "work", "url": "https://gw.example:8443"}),
+        json!({"id": "work", "url": "http://gw.example"}),
+        json!({"id": "work", "url": "https://gw.example/other"}),
+    ] {
+        assert!(
+            matches!(
+                save(&path, &obj(moved.clone())),
+                Err(StoreError::Refused(_))
+            ),
+            "{moved}"
+        );
+    }
+    let (_, moved) = save(&path, &obj(json!({"id": "work", "url": "https://collector.example", "token": "second", "headers": {"X-Key": null}}))).unwrap();
+    assert_eq!(moved["token"], envelope("second"));
+    assert!(
+        moved.get("headers").is_none(),
+        "a saved header moved: {moved:?}"
+    );
+    assert_eq!(moved["allowPrivateNetwork"], false);
+    // The same address in another spelling is not a move.
+    let (_, same) = save(
+        &path,
+        &obj(json!({"id": "work", "url": "https://collector.example:443/", "label": "Work 2"})),
+    )
+    .unwrap();
+    assert_eq!(same["token"], envelope("second"));
+}
+
+#[tokio::test]
+async fn a_token_saved_for_one_gateway_never_reaches_another() {
+    let (first, first_seen) = gateway().await;
+    let (second, second_seen) = gateway().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = saved(&dir, first).await;
+    let move_without_token = obj(json!({"id": "work", "url": format!("http://{second}")}));
+    assert!(save(&path, &move_without_token).is_err());
+    let ok = relay(&path, "work", None, browser_request("/api/relay/work/x")).await;
+    assert_eq!(ok.status(), StatusCode::OK);
+    assert!(second_seen.lock().unwrap().is_empty());
+    save(
+        &path,
+        &obj(json!({"id": "work", "url": format!("http://{second}"), "token": "new-token"})),
+    )
+    .unwrap();
+    let moved = relay(&path, "work", None, browser_request("/api/relay/work/x")).await;
+    assert_eq!(moved.status(), StatusCode::OK);
+    assert_eq!(first_seen.lock().unwrap().len(), 1);
+    let (_, headers) = second_seen.lock().unwrap()[0].clone();
+    assert_eq!(headers["x-hermes-session-token"], "new-token");
+    assert!(
+        !headers.contains_key("x-access"),
+        "the first gateway's header moved"
+    );
+    assert!(
+        !format!("{headers:?}").contains("saved-"),
+        "a secret saved for the first gateway reached the second"
+    );
+}
+
+#[test]
+fn the_public_view_never_shows_a_name_or_password_in_a_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    // As native Desktop writes it: userinfo kept in the URL, the token sealed by the keychain.
+    let sealed = json!({"encoding": "safeStorage", "value": "djEwAAAA"});
+    let doc = json!({"version": 2, "connections": [
+        {"id": "gw", "kind": "remote", "label": "Gw", "url": "https://user:pw-secret@gw.example:8443/base", "authMode": "token", "token": sealed},
+        {"id": "nameonly", "kind": "remote", "label": "N", "url": "https://only-name@n.example", "authMode": "token", "token": sealed},
+        {"id": "broken", "kind": "remote", "label": "B", "url": "https://user:pw-secret@[bad", "authMode": "token", "token": sealed}
+    ]});
+    std::fs::write(&path, doc.to_string()).unwrap();
+    let (doc, _) = read_doc(&path).unwrap();
+    let view = public_registry(doc.as_ref());
+    let shown = view.to_string();
+    assert!(
+        !shown.contains("pw-secret") && !shown.contains("only-name") && !shown.contains('@'),
+        "{shown}"
+    );
+    let list = view["connections"].as_array().unwrap();
+    let url_of = |id: &str| {
+        list.iter()
+            .find(|c| c["id"] == id)
+            .unwrap()
+            .get("url")
+            .cloned()
+    };
+    assert_eq!(url_of("gw"), Some(json!("https://gw.example:8443/base")));
+    assert_eq!(url_of("nameonly"), Some(json!("https://n.example")));
+    assert_eq!(url_of("broken"), None);
+}
+
+#[test]
+fn a_percent_encoded_plain_character_is_refused_in_a_relayed_path() {
+    for path in [
+        "/api/relay/gw/%61pi/relay/other/x",
+        "/api/relay/gw/%2E%2E/x",
+        "/api/relay/gw/a%7Eb",
+        "/api/relay/gw/a%5fb",
+    ] {
+        assert_eq!(relay_target(path, None, "gw"), None, "{path}");
+    }
+    assert_eq!(
+        relay_target("/api/relay/gw/a%20b%3F", None, "gw").as_deref(),
+        Some("/a%20b%3F")
+    );
+}
+
+#[tokio::test]
+async fn only_upstreams_methods_are_relayed() {
+    let (addr, seen) = gateway().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = saved(&dir, addr).await;
+    for method in ["TRACE", "CONNECT", "PROPFIND"] {
+        let mut request = browser_request("/api/relay/work/x");
+        *request.method_mut() = Method::from_bytes(method.as_bytes()).unwrap();
+        assert_eq!(
+            relay(&path, "work", None, request).await.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+    for method in [
+        Method::GET,
+        Method::HEAD,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+        Method::OPTIONS,
+    ] {
+        let mut request = browser_request("/api/relay/work/x");
+        *request.method_mut() = method.clone();
+        assert_eq!(
+            relay(&path, "work", None, request).await.status(),
+            StatusCode::OK,
+            "{method}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn only_fetch_and_xhr_reach_the_relay() {
+    let (addr, seen) = gateway().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = saved(&dir, addr).await;
+    for dest in ["script", "document", "iframe", "worker", "style"] {
+        let mut request = browser_request("/api/relay/work/x.js");
+        request
+            .headers_mut()
+            .insert("sec-fetch-dest", HeaderValue::from_static(dest));
+        assert_eq!(
+            relay(&path, "work", None, request).await.status(),
+            StatusCode::FORBIDDEN,
+            "{dest}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+    let mut fetch = browser_request("/api/relay/work/x");
+    fetch
+        .headers_mut()
+        .insert("sec-fetch-dest", HeaderValue::from_static("empty"));
+    assert_eq!(
+        relay(&path, "work", None, fetch).await.status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_stalled_or_oversized_body_ends_the_relay() {
+    let (addr, _seen) = gateway().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = saved(&dir, addr).await;
+    for (route, what) in [
+        ("/api/relay/work/stall", "stalled"),
+        ("/api/relay/work/big", "oversized"),
+    ] {
+        let response = relay(&path, "work", None, browser_request(route)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = tokio::time::timeout(
+            BODY_IDLE_TIMEOUT * 5,
+            axum::body::to_bytes(response.into_body(), usize::MAX),
+        )
+        .await;
+        assert!(
+            matches!(body, Ok(Err(_))),
+            "a {what} body was not ended by the relay"
+        );
+    }
+}
+
+#[test]
+fn deprecated_wrapped_and_platform_addresses_are_refused() {
+    for ip in [
+        "fec0::1",
+        "::7f00:1",
+        "::a9fe:a9fe",
+        "64:ff9b::a9fe:a9fe",
+        "64:ff9b::a00:1",
+        "168.63.129.16",
+    ] {
+        let ip: IpAddr = ip.parse().unwrap();
+        assert!(judge_address(ip, false).is_err(), "{ip} was allowed");
+    }
+    assert!(judge_address("64:ff9b::5db8:d70e".parse().unwrap(), false).is_ok());
+}
+
+#[test]
+fn a_header_value_with_a_control_byte_is_refused_at_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    for value in ["a\u{1}b", "a\u{7f}b", "a\u{1b}[0m"] {
+        assert!(
+            matches!(
+                save(
+                    &path,
+                    &obj(
+                        json!({"kind": "remote", "label": "W", "url": "https://gw.example", "token": "t", "headers": {"X-Key": value}})
+                    )
+                ),
+                Err(StoreError::Refused(_))
+            ),
+            "{value:?}"
+        );
+    }
+    save(&path, &obj(json!({"kind": "remote", "label": "W", "url": "https://gw.example", "token": "t", "headers": {"X-Key": "a\tb"}}))).unwrap();
 }
