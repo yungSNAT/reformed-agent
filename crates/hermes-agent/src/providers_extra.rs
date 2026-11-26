@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use hermes_core::{AgentError, LlmProvider, LlmResponse, Message, StreamChunk, ToolSchema};
 
+use crate::api_bridge::CodexProvider;
 use crate::provider::{is_openai_dynamic_model_alias, GenericProvider};
 use crate::provider_profiles;
 
@@ -378,31 +379,42 @@ mod copilot_catalog;
 use copilot_catalog::{reconcile_effort, CopilotCatalog, EffortSupport};
 
 /// GitHub Copilot HTTP provider with a configurable inference base URL.
+/// GPT-5 and later models go to its Responses API, the rest to Chat
+/// Completions.
 ///
 /// Default model: `gpt-4o`
 #[derive(Debug, Clone)]
 pub struct CopilotProvider {
     inner: GenericProvider,
+    responses: CodexProvider,
     catalog: Option<Arc<CopilotCatalog>>,
 }
 
 impl CopilotProvider {
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+        let inner = GenericProvider::new(base_url, api_key, "gpt-4o");
+        let responses = CodexProvider::new(inner.api_key.clone())
+            .with_base_url(inner.base_url.clone())
+            .with_model(inner.model.clone());
         Self {
-            inner: GenericProvider::new(base_url, api_key, "gpt-4o"),
+            inner,
+            responses,
             catalog: None,
         }
     }
 
     pub fn with_model(self, model: impl Into<String>) -> Self {
+        let model = model.into();
         Self {
-            inner: self.inner.with_model(model),
+            inner: self.inner.with_model(model.clone()),
+            responses: self.responses.with_model(model),
             ..self
         }
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.inner = self.inner.with_base_url(url);
+        self.responses = self.responses.with_base_url(self.inner.base_url.clone());
         if self.catalog.is_some() {
             self.catalog = CopilotCatalog::for_base_url(&self.inner.base_url);
         }
@@ -422,8 +434,20 @@ impl CopilotProvider {
     pub fn with_optional_request_timeout_seconds(self, seconds: Option<f64>) -> Self {
         Self {
             inner: self.inner.with_optional_request_timeout_seconds(seconds),
+            responses: self
+                .responses
+                .with_optional_request_timeout_seconds(seconds),
             ..self
         }
+    }
+
+    /// Whether the request's wire model answers only on the Responses API.
+    fn uses_responses_api(&self, model: Option<&str>, extra_body: Option<&Value>) -> bool {
+        let wire_model = match extra_body.and_then(|body| body.get("model")) {
+            Some(Value::String(model)) => model,
+            _ => model.unwrap_or(&self.inner.model),
+        };
+        requires_responses_api(wire_model)
     }
 
     async fn reconcile_reasoning<'a>(
@@ -487,6 +511,46 @@ fn requested_catalog_effort(body: &Value) -> Option<&str> {
         .filter(|effort| !effort.is_empty() && !effort.eq_ignore_ascii_case("none"))
 }
 
+/// GPT-5 and later answer only on Copilot's Responses API, except the
+/// `gpt-5-mini` family; other models use Chat Completions.
+fn requires_responses_api(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    let name = model.strip_prefix("openai/").unwrap_or(&model);
+    let Some(version) = name.strip_prefix("gpt-") else {
+        return false;
+    };
+    let major = &version[..version
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(version.len())];
+    major.parse::<u32>().is_ok_and(|major| major >= 5) && !name.starts_with("gpt-5-mini")
+}
+
+/// The Chat Completions extra body as the Responses API takes it: the
+/// effort, when one is asked for, goes in `reasoning` with a summary, as
+/// the reasoning text comes back only with one.
+fn responses_extra_body(body: Option<&Value>) -> Option<Value> {
+    let Some(Value::Object(map)) = body else {
+        return body.cloned();
+    };
+    let effort = body.and_then(requested_catalog_effort).map(str::to_owned);
+    let mut map = map.clone();
+    for key in [
+        "reasoning_effort",
+        "reasoning",
+        "reasoning_config",
+        "supports_reasoning",
+    ] {
+        map.remove(key);
+    }
+    if let Some(effort) = effort {
+        map.insert(
+            "reasoning".into(),
+            serde_json::json!({"effort": effort, "summary": "auto"}),
+        );
+    }
+    Some(Value::Object(map))
+}
+
 #[async_trait]
 impl LlmProvider for CopilotProvider {
     async fn chat_completion(
@@ -499,6 +563,20 @@ impl LlmProvider for CopilotProvider {
         extra_body: Option<&Value>,
     ) -> Result<LlmResponse, AgentError> {
         let adjusted = self.reconcile_reasoning(model, extra_body).await;
+        if self.uses_responses_api(model, extra_body) {
+            let body = responses_extra_body(adjusted.as_deref());
+            return self
+                .responses
+                .chat_completion(
+                    messages,
+                    tools,
+                    max_tokens,
+                    temperature,
+                    model,
+                    body.as_ref(),
+                )
+                .await;
+        }
         self.inner
             .chat_completion(
                 messages,
@@ -520,7 +598,10 @@ impl LlmProvider for CopilotProvider {
         model: Option<&str>,
         extra_body: Option<&Value>,
     ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-        if self.catalog.is_none() || extra_body.and_then(requested_catalog_effort).is_none() {
+        let responses = self.uses_responses_api(model, extra_body);
+        if !responses
+            && (self.catalog.is_none() || extra_body.and_then(requested_catalog_effort).is_none())
+        {
             return self.inner.chat_completion_stream(
                 messages,
                 tools,
@@ -540,14 +621,26 @@ impl LlmProvider for CopilotProvider {
             let adjusted = provider
                 .reconcile_reasoning(model.as_deref(), extra_body.as_ref())
                 .await;
-            let mut stream = provider.inner.chat_completion_stream(
-                &messages,
-                &tools,
-                max_tokens,
-                temperature,
-                model.as_deref(),
-                adjusted.as_deref(),
-            );
+            let mut stream = if responses {
+                let body = responses_extra_body(adjusted.as_deref());
+                provider.responses.chat_completion_stream(
+                    &messages,
+                    &tools,
+                    max_tokens,
+                    temperature,
+                    model.as_deref(),
+                    body.as_ref(),
+                )
+            } else {
+                provider.inner.chat_completion_stream(
+                    &messages,
+                    &tools,
+                    max_tokens,
+                    temperature,
+                    model.as_deref(),
+                    adjusted.as_deref(),
+                )
+            };
             while let Some(chunk) = stream.next().await {
                 yield chunk;
             }
