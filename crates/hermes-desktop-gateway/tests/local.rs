@@ -670,11 +670,18 @@ fn ensure_names_a_lock_no_runtime_can_claim_at_once() {
             std::fs::write(home.join("elsewhere"), "").unwrap();
             std::os::unix::fs::symlink(home.join("elsewhere"), &lock).unwrap();
         } else {
-            assert!(Command::new("mkfifo").arg(&lock).status().unwrap().success());
+            assert!(Command::new("mkfifo")
+                .arg(&lock)
+                .status()
+                .unwrap()
+                .success());
         }
         let started = std::time::Instant::now();
         let (verdict, text, code) = ensure(&home, Duration::from_secs(20), never_spawned());
-        assert!(started.elapsed() < Duration::from_secs(10), "{plant}: {text}");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{plant}: {text}"
+        );
         assert_eq!(code, 7, "{plant}: {text}");
         assert_eq!(verdict["state"], "inaccessible", "{plant}: {text}");
         assert!(verdict["reason_code"].is_null(), "{plant}: {text}");
@@ -704,7 +711,10 @@ async fn staging_folders_a_killed_bind_left_are_removed_at_start() {
     std::fs::create_dir(&unrelated).unwrap();
     let _runtime = start(&home);
     assert!(!stale.exists(), "the stale staging folder stayed");
-    assert!(unrelated.exists(), "a folder outside the staging pattern went");
+    assert!(
+        unrelated.exists(),
+        "a folder outside the staging pattern went"
+    );
 }
 
 /// A FIFO in the log's place is refused, not opened for the runtime's output.
