@@ -2151,6 +2151,7 @@ dependencies = [
  "bytes",
  "dirs",
  "futures",
+ "hermes-agent",
  "hermes-config",
  "hermes-core",
  "hermes-environments",

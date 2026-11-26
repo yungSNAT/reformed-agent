@@ -226,6 +226,7 @@ pub async fn note_read(
     limit: Option<u64>,
     content: &str,
 ) {
+    // Installed here, lazily: a read can be pending only once this has run.
     hermes_core::file_edit::set_view_settler(settle_view);
     let Some(call) = call(params) else {
         return;
@@ -286,6 +287,10 @@ pub fn delivered(tool: &str, params: &Value, intact: bool, returned: &str, defer
     let Some(mut read) = state.pending.remove(call) else {
         return;
     };
+    // Another session's read under a reused call id: dropped, so it never counts.
+    if read.session != session(params) {
+        return;
+    }
     let file = read.file.clone();
     state.seen(&read.session, file).last_read = Some(read.version);
     if !intact {
@@ -399,4 +404,36 @@ pub async fn note_patch(params: &Value, file: &Path) {
     let seen = state.seen(session(params), file.to_path_buf());
     seen.full = None;
     seen.last_read = now;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(session: &str, call: &str) -> Value {
+        let mut params = serde_json::json!({});
+        params[SESSION_PARAM] = Value::from(session);
+        params[CALL_PARAM] = Value::from(call);
+        params
+    }
+
+    #[tokio::test]
+    async fn a_reused_call_id_does_not_credit_another_sessions_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "x's file\n").unwrap();
+        std::fs::write(&b, "y's file\n").unwrap();
+        let (x, y) = (
+            params("reused-id-x", "reused-call"),
+            params("reused-id-y", "reused-call"),
+        );
+
+        note_read(&x, &a, None, None, "x's file\n").await;
+        note_read(&y, &b, None, None, "y's file\n").await;
+        delivered("read_file", &x, true, "x's view", true);
+        settle_view("reused-call", "x's view");
+
+        assert!(state().peek("reused-id-y", &b).0.is_none());
+        assert!(state().peek("reused-id-x", &a).0.is_none());
+    }
 }

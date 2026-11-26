@@ -355,7 +355,7 @@ async fn a_read_the_agent_cuts_does_not_bless_a_write() {
 }
 
 #[tokio::test]
-async fn concurrent_reads_are_settled_each_by_its_own_call() {
+async fn concurrent_reads_of_one_file_do_not_settle_each_other() {
     let tools = registry();
     let long: String = (0..3000)
         .map(|n| format!("line {n:05} padding\n"))
