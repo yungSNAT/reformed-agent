@@ -533,3 +533,35 @@ async fn image_detach_reaches_only_its_own_session() {
     );
     assert!(Path::new(&path).exists());
 }
+
+/// An image attached by path just before a pipelined prompt goes with that prompt.
+#[tokio::test]
+async fn a_pipelined_prompt_takes_the_image_attached_before_it() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let shot = folder.path().join("shot.png");
+    std::fs::write(&shot, png("first")).unwrap();
+    let frames = [
+        json!({"jsonrpc": "2.0", "id": 2, "method": "image.attach",
+               "params": {"session_id": session, "path": shot.display().to_string()}}),
+        json!({"jsonrpc": "2.0", "id": 3, "method": "prompt.submit",
+               "params": {"session_id": session, "text": "look"}}),
+    ];
+    for frame in frames {
+        client
+            .socket
+            .send(Message::text(frame.to_string()))
+            .await
+            .unwrap();
+    }
+    loop {
+        let frame = client.next_json().await;
+        assert!(frame["error"].is_null(), "{frame}");
+        if frame["params"]["type"] == "message.complete" {
+            break;
+        }
+    }
+    assert_eq!(sent_images(&started.requests, 0), [data_url(&png("first"))]);
+}

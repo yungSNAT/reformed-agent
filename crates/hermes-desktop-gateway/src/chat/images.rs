@@ -12,11 +12,12 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
+use super::session::{MAX_STAGED_BYTES, MAX_STAGED_IMAGES};
 use super::{
-    Chat, Handler, Reply, Request, RpcError, ATTACHMENT_REQUIRED, IMAGE_INVALID, IMAGE_TOO_LARGE,
-    IMAGE_UNSUPPORTED, IMAGE_WRITE_FAILED, INVALID_PARAMS, SESSION_NOT_FOUND,
+    ready, Chat, Handler, Origin, Reply, Request, RpcError, ATTACHMENT_REQUIRED, IMAGE_INVALID,
+    IMAGE_TOO_LARGE, IMAGE_UNSUPPORTED, IMAGE_WRITE_FAILED, INVALID_PARAMS, SESSION_NOT_FOUND,
 };
-use crate::attach::{stage_image_bytes, ImageError, StagedImage, MAX_IMAGE_BYTES};
+use crate::attach::{stage_image_bytes, ImageError, MAX_IMAGE_BYTES};
 
 pub(super) const METHODS: &[(&str, Handler)] =
     &[("image.attach", attach), ("image.detach", detach)];
@@ -27,29 +28,40 @@ const IMAGE_EXTENSIONS: [&str; 10] = [
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "svg", "ico",
 ];
 
-/// Most images one session holds staged at once, and their total size. Upstream keeps the
-/// named paths uncopied and sets no limit; here each is a copy on the gateway's disk.
-const MAX_STAGED_IMAGES: usize = 16;
-const MAX_STAGED_BYTES: usize = 64 << 20;
-
-/// JSON-RPC's internal error, for a handler task that panicked.
-const INTERNAL_ERROR: i64 = -32603;
-
 fn attach(req: Request) -> Reply {
-    blocking(req, attach_now)
+    ready(in_place(|| {
+        local_only(req.conn.origin)?;
+        attach_now(&req.chat, &req.params)
+    }))
 }
 
 fn detach(req: Request) -> Reply {
-    blocking(req, detach_now)
+    ready(in_place(|| detach_now(&req.chat, &req.params)))
 }
 
-/// Runs `f` on the blocking pool: both methods touch the disk.
-fn blocking(req: Request, f: fn(&Chat, &Map<String, Value>) -> Result<Value, RpcError>) -> Reply {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || f(&req.chat, &req.params))
-            .await
-            .unwrap_or_else(|_| Err((INTERNAL_ERROR, "internal error".into())))
-    })
+/// Runs `f`, which touches the disk, before the method returns, as `image.attach_bytes` does:
+/// the connection takes its next request only after a method that answers at once, so an
+/// image attached before a pipelined `prompt.submit` goes with that prompt.
+fn in_place<T>(f: impl FnOnce() -> T) -> T {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current().map(|handle| handle.runtime_flavor()) {
+        Ok(RuntimeFlavor::MultiThread) => tokio::task::block_in_place(f),
+        _ => f(),
+    }
+}
+
+/// `image.attach` reads a host path only for a client on this machine. Upstream has no such
+/// check; its gateway serves only local clients.
+fn local_only(origin: Origin) -> Result<(), RpcError> {
+    if origin == Origin::Local {
+        return Ok(());
+    }
+    Err((
+        IMAGE_UNSUPPORTED,
+        "image.attach reads a path only for a client on this machine; send the image with \
+         image.attach_bytes"
+            .into(),
+    ))
 }
 
 /// The `session_id` and non-empty `path` strings of `params`.
@@ -97,10 +109,12 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     let full = || {
         (
             IMAGE_TOO_LARGE,
-            format!("a session holds at most {MAX_STAGED_IMAGES} images ({MAX_STAGED_BYTES} bytes)"),
+            format!(
+                "a session holds at most {MAX_STAGED_IMAGES} images ({MAX_STAGED_BYTES} bytes)"
+            ),
         )
     };
-    if !room(&session.images(), 0) {
+    if !session.has_room_for_image(0) {
         return Err(full());
     }
     let data = match read_image(&source) {
@@ -127,21 +141,14 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
             remainder.clone()
         },
     });
-    let mut queued = session.images();
-    if !room(&queued, staged.bytes) {
-        drop(queued);
-        let _ = std::fs::remove_file(&staged.path);
-        return Err(full());
+    match session.stage_image(staged) {
+        Ok(count) => reply["count"] = count.into(),
+        Err(refused) => {
+            let _ = std::fs::remove_file(&refused.path);
+            return Err(full());
+        }
     }
-    queued.push(staged);
-    reply["count"] = queued.len().into();
     Ok(reply)
-}
-
-/// Whether a session holding `queued` can take one more image of `bytes`.
-fn room(queued: &[StagedImage], bytes: usize) -> bool {
-    let held: usize = queued.iter().map(|image| image.bytes).sum();
-    queued.len() < MAX_STAGED_IMAGES && held + bytes <= MAX_STAGED_BYTES
 }
 
 /// The bytes of the regular file at `path`, read through one handle and at most one byte past
@@ -306,4 +313,25 @@ fn home() -> Option<PathBuf> {
         .find_map(std::env::var_os)
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A browser session of the Webapp, and a connection whose listener set no origin, are
+    /// refused before anything is read; only a client on this machine is served.
+    #[test]
+    fn only_a_local_client_attaches_by_path() {
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let unset = super::super::Conn::new(1, outbox, false).origin;
+        for origin in [Origin::Webapp, unset] {
+            assert_eq!(
+                local_only(origin).unwrap_err().0,
+                IMAGE_UNSUPPORTED,
+                "{origin:?}"
+            );
+        }
+        assert!(local_only(Origin::Local).is_ok());
+    }
 }
