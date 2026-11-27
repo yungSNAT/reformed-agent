@@ -187,3 +187,44 @@ async fn api_run_reports_a_closed_response_channel_and_clears_pending_state() {
     assert!(state.mailbox.read().await.pending.is_empty());
     assert!(state.run_cancels.read().await.pending.is_empty());
 }
+
+#[tokio::test]
+async fn api_run_routes_distinguish_missing_runs_and_invalid_input() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+
+    for (method, path) in [
+        ("GET", "/v1/runs/missing"),
+        ("GET", "/v1/runs/missing/events"),
+        ("POST", "/v1/runs/missing/stop"),
+        ("POST", "/v1/runs/missing/approval"),
+    ] {
+        let response = state.roundtrip(empty_request(method, path), None).await;
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"), "{response}");
+        let error = &json_body(&response)["error"];
+        assert_eq!(error["type"], "not_found", "{method} {path}");
+        assert_eq!(error["message"], "Run not found", "{method} {path}");
+    }
+
+    for (body, message) in [
+        (serde_json::json!({"input": 42}), "Invalid request:"),
+        (
+            serde_json::json!({"input": "   "}),
+            "Request must include non-empty input",
+        ),
+    ] {
+        let response = state
+            .roundtrip(json_request("POST", "/v1/runs", body), None)
+            .await;
+        assert!(
+            response.starts_with("HTTP/1.1 400 Bad Request"),
+            "{response}"
+        );
+        let error = &json_body(&response)["error"];
+        assert_eq!(error["type"], "invalid_request_error");
+        assert!(error["message"].as_str().unwrap().starts_with(message));
+    }
+    assert!(state.run_store.read().await.records.is_empty());
+    assert!(state.mailbox.read().await.pending.is_empty());
+    assert_eq!(rx.try_recv().unwrap_err(), mpsc::error::TryRecvError::Empty);
+}

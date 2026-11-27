@@ -774,6 +774,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn polling_decodes_group_and_direct_messages_and_ignores_receipts() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/receive/%2B12025550123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"envelope": {
+                    "source": "+12025550124",
+                    "timestamp": 1234,
+                    "dataMessage": {
+                        "message": "Meet at the library",
+                        "groupInfo": {"groupId": "group-123"},
+                        "attachments": [{"id": "map"}, {}, {"id": "note"}]
+                    }
+                }},
+                {"envelope": {"source": "+12025550125", "dataMessage": {}}},
+                {"envelope": {"source": "+12025550124", "receiptMessage": {}}}
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let adapter = SignalAdapter::new(SignalConfig {
+            phone_number: "+12025550123".into(),
+            api_url: server.uri(),
+            proxy: AdapterProxyConfig::default(),
+        })
+        .expect("adapter");
+
+        let envelopes = adapter.receive_messages().await.expect("receive messages");
+        let [group, direct, receipt] = envelopes.as_slice() else {
+            panic!("expected group, direct and receipt envelopes, got {envelopes:?}");
+        };
+        let group = SignalAdapter::parse_received_message(group).expect("group message");
+        assert_eq!(group.source, "+12025550124");
+        assert_eq!(group.timestamp, 1234);
+        assert_eq!(group.text, "Meet at the library");
+        assert_eq!(group.group_id.as_deref(), Some("group-123"));
+        assert_eq!(group.attachments, ["map", "note"]);
+
+        let direct = SignalAdapter::parse_received_message(direct).expect("direct message");
+        assert_eq!(direct.source, "+12025550125");
+        assert_eq!(direct.timestamp, 0);
+        assert!(direct.text.is_empty());
+        assert_eq!(direct.group_id, None);
+        assert!(direct.attachments.is_empty());
+        assert!(SignalAdapter::parse_received_message(receipt).is_none());
+        assert!(SignalAdapter::parse_received_message(&json!({})).is_none());
+        assert!(SignalAdapter::parse_received_message(
+            &json!({"envelope": {"dataMessage": {"message": "Missing sender"}}})
+        )
+        .is_none());
+    }
+
+    #[tokio::test]
+    async fn adapter_lifecycle_and_api_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/receive/%2B12025550123"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("invalid response"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v2/send"))
+            .and(body_partial_json(json!({
+                "message": "hello",
+                "number": "+12025550123",
+                "recipients": ["+12025550124"]
+            })))
+            .respond_with(ResponseTemplate::new(503).set_body_string("temporarily unavailable"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut config: SignalConfig =
+            serde_json::from_value(json!({"phone_number": "+12025550123"})).expect("config");
+        assert_eq!(config.api_url, "http://localhost:8080");
+        config.api_url = server.uri();
+        let adapter = SignalAdapter::new(config).expect("adapter");
+        assert_eq!(adapter.config().phone_number, "+12025550123");
+        assert_eq!(adapter.platform_name(), "signal");
+        assert!(!adapter.is_running());
+        adapter.start().await.expect("start signal");
+        assert!(adapter.is_running());
+        assert!(matches!(
+            adapter.receive_messages().await,
+            Err(GatewayError::ConnectionFailed(message)) if message.starts_with("Signal parse failed:")
+        ));
+        assert!(matches!(
+            adapter.send_message("+12025550124", "hello", None).await,
+            Err(GatewayError::SendFailed(message)) if message == "Signal API error: temporarily unavailable"
+        ));
+        adapter.stop().await.expect("stop signal");
+        assert!(!adapter.is_running());
+    }
+
+    #[tokio::test]
     async fn send_text_posts_signal_style_metadata() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

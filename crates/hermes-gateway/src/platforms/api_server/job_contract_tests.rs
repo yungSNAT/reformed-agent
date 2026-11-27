@@ -1,5 +1,47 @@
 use hermes_cron::{FileJobPersistence, JobPersistence};
 
+#[test]
+fn api_job_delivery_targets_roundtrip_with_canonical_names() {
+    for (wire_name, target, alias) in [
+        ("origin", DeliverTarget::Origin, None),
+        ("local", DeliverTarget::Local, None),
+        ("telegram", DeliverTarget::Telegram, None),
+        ("discord", DeliverTarget::Discord, None),
+        ("slack", DeliverTarget::Slack, None),
+        ("email", DeliverTarget::Email, None),
+        ("whatsapp", DeliverTarget::WhatsApp, None),
+        ("signal", DeliverTarget::Signal, None),
+        ("matrix", DeliverTarget::Matrix, None),
+        ("mattermost", DeliverTarget::Mattermost, None),
+        ("dingtalk", DeliverTarget::DingTalk, None),
+        ("feishu", DeliverTarget::Feishu, None),
+        ("wecom", DeliverTarget::WeCom, None),
+        ("weixin", DeliverTarget::Weixin, Some("wechat")),
+        (
+            "bluebubbles",
+            DeliverTarget::BlueBubbles,
+            Some("blue_bubbles"),
+        ),
+        ("sms", DeliverTarget::Sms, None),
+        (
+            "homeassistant",
+            DeliverTarget::HomeAssistant,
+            Some("home_assistant"),
+        ),
+        ("ntfy", DeliverTarget::Ntfy, None),
+    ] {
+        assert_eq!(deliver_target_name(&target), wire_name);
+        for name in std::iter::once(wire_name).chain(alias) {
+            let input = serde_json::json!(format!(" {} ", name.to_ascii_uppercase()));
+            let deliver = parse_api_deliver_config(Some(&input))
+                .unwrap_or_else(|error| panic!("{name}: {error}"))
+                .expect("delivery target");
+            assert_eq!(deliver.target, target, "{name}");
+            assert!(deliver.platform.is_none());
+        }
+    }
+}
+
 #[tokio::test]
 async fn api_job_routes_report_invalid_bodies_and_missing_jobs() {
     let (tx, _rx) = mpsc::channel(1);
@@ -262,4 +304,72 @@ async fn api_job_rejected_updates_leave_the_saved_configuration_intact() {
     for field in ["skills", "repeat", "script"] {
         assert!(patched["job"][field].is_null());
     }
+}
+
+#[tokio::test]
+async fn api_job_patch_enables_a_paused_job_and_persists_delivery() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    let created = state
+        .roundtrip(
+            json_request(
+                "POST",
+                "/api/jobs",
+                serde_json::json!({
+                    "name": "Paused fixture",
+                    "schedule": "0 * * * *",
+                    "prompt": "Summarise the fixture",
+                    "enabled": false,
+                }),
+            ),
+            None,
+        )
+        .await;
+    assert!(created.starts_with("HTTP/1.1 200 OK"), "{created}");
+    let created = json_body(&created);
+    let job = &created["job"];
+    assert_eq!(job["enabled"], false);
+    assert!(job["next_run"].is_null());
+    let id = job["id"].as_str().expect("job id");
+    let path = format!("/api/jobs/{id}");
+
+    let updated = state
+        .roundtrip(
+            json_request(
+                "PATCH",
+                &path,
+                serde_json::json!({
+                    "enabled": true,
+                    "schedule": "15 * * * *",
+                    "deliver": {"type": " Matrix ", "chat_id": " fixture-room "},
+                    "repeat": 4,
+                    "skills": [" daily-summary ", " "],
+                }),
+            ),
+            None,
+        )
+        .await;
+    assert!(updated.starts_with("HTTP/1.1 200 OK"), "{updated}");
+    let updated = json_body(&updated);
+    let job = &updated["job"];
+    assert_eq!(job["id"], id);
+    assert_eq!(job["enabled"], true);
+    assert_eq!(job["schedule"], "15 * * * *");
+    assert!(job["next_run"].is_string());
+    assert_eq!(job["repeat"], 4);
+    assert_eq!(job["skills"], serde_json::json!(["daily-summary"]));
+    assert_eq!(
+        job["deliver"],
+        serde_json::json!({"target": "matrix", "platform": "fixture-room"})
+    );
+    let saved = state.roundtrip(empty_request("GET", &path), None).await;
+    assert!(saved.starts_with("HTTP/1.1 200 OK"), "{saved}");
+    assert_eq!(json_body(&saved)["job"], *job);
+    let store = FileJobPersistence::with_dir(state._cron_dir.path().join("cron"));
+    let persisted = store.load_jobs().await.expect("persisted job");
+    let [saved_job] = persisted.as_slice() else {
+        panic!("expected one persisted job");
+    };
+    assert_eq!(api_cron_job_body(saved_job), *job);
+    assert_eq!(rx.try_recv().unwrap_err(), mpsc::error::TryRecvError::Empty);
 }

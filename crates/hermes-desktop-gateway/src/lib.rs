@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
@@ -47,15 +47,18 @@ use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
+pub mod approval;
 mod attach;
 pub mod chat;
 #[cfg(unix)]
 pub mod local;
 mod tickets;
+pub mod webapp;
 
 pub use chat::Chat;
 use chat::{Conn, Origin, Outgoing, Reply};
 use tickets::{Purpose, Tickets};
+use webapp::api::Caller;
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
 pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
@@ -120,6 +123,18 @@ struct Gateway {
     auth: Auth,
     port: u16,
     chat: Arc<Chat>,
+    api: Arc<webapp::api::Api>,
+    /// Local mode's Webapp, when this listener was bound for it.
+    #[cfg(unix)]
+    webapp: Option<Arc<webapp::Webapp>>,
+}
+
+/// What a local runtime adds to the router: its home and Webapp.
+#[derive(Default)]
+pub(crate) struct Extras {
+    pub(crate) home: Option<std::path::PathBuf>,
+    #[cfg(unix)]
+    pub(crate) webapp: Option<Arc<webapp::Webapp>>,
 }
 
 /// Numbers each connection, so a session knows which ones it streams to.
@@ -141,23 +156,52 @@ pub async fn serve(
     chat: Chat,
 ) -> std::io::Result<()> {
     let port = listener.local_addr()?.port();
-    axum::serve(listener, router(Auth::Token(token), port, chat)).await
+    axum::serve(
+        listener,
+        router(Auth::Token(token), port, chat, Extras::default()),
+    )
+    .await
 }
 
-fn router(auth: Auth, port: u16, chat: Chat) -> Router {
+fn router(auth: Auth, port: u16, chat: Chat, extras: Extras) -> Router {
+    let chat = Arc::new(chat);
+    #[cfg(unix)]
+    let profile = extras
+        .webapp
+        .as_ref()
+        .map_or_else(|| "default".to_string(), |w| w.profile().to_string());
+    #[cfg(not(unix))]
+    let profile = "default".to_string();
+    let api = Arc::new(webapp::api::Api {
+        chat: Arc::clone(&chat),
+        home: extras.home,
+        profile,
+    });
     let gateway = Arc::new(Gateway {
         auth,
         port,
-        chat: Arc::new(chat),
+        chat,
+        api,
+        #[cfg(unix)]
+        webapp: extras.webapp.filter(|w| w.serves_routes()),
     });
-    let private = Router::new()
+    #[allow(unused_mut)]
+    let mut private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
         .route("/api/hermes/update/check", get(update_check))
-        .layer(middleware::from_fn_with_state(gateway.clone(), token_guard));
-    Router::new()
+        .merge(webapp::api::groups());
+    #[allow(unused_mut)]
+    let mut public = Router::new()
         .route("/api/health", get(health))
         .route("/api/status", get(status))
-        .route("/api/ws", get(upgrade))
+        .route("/api/ws", get(upgrade));
+    #[cfg(unix)]
+    if let Some(webapp) = &gateway.webapp {
+        private = private.merge(webapp::guarded_routes(Arc::clone(webapp)));
+        public = public.merge(webapp::public_routes(Arc::clone(webapp)));
+    }
+    let private = private.layer(middleware::from_fn_with_state(gateway.clone(), token_guard));
+    public
         .merge(private)
         .layer(middleware::from_fn_with_state(gateway.clone(), host_guard))
         .with_state(gateway)
@@ -165,7 +209,7 @@ fn router(auth: Auth, port: u16, chat: Chat) -> Router {
 
 /// True when `authority` (a `Host` value or an origin's host and port) names a loopback
 /// address and `port`. A missing port means 80.
-fn is_loopback_authority(authority: &str, port: u16) -> bool {
+pub(crate) fn is_loopback_authority(authority: &str, port: u16) -> bool {
     let (name, given_port) = match authority.rsplit_once(':') {
         Some((name, p)) if !p.contains(']') => (name, p.parse::<u16>().ok()),
         _ => (authority, Some(80)),
@@ -251,20 +295,64 @@ fn token_matches(given: Option<&str>, token: &str) -> bool {
     bool::from(given.unwrap_or_default().as_bytes().ct_eq(token.as_bytes()))
 }
 
-/// The credential check, then the Origin check, as for the WebSocket upgrade.
-async fn token_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next) -> Response {
+/// The credential check, then the Origin check, as for the WebSocket upgrade. The admitted
+/// [`Caller`] and the shared [`webapp::api::Api`] go in the request's extensions.
+async fn token_guard(State(gw): State<Arc<Gateway>>, mut request: Request, next: Next) -> Response {
     let headers = request.headers();
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    match admit(
-        &gw,
-        header(TOKEN_HEADER),
-        header(TICKET_HEADER),
-        Purpose::NativeHttp,
-        headers,
-    ) {
-        Ok(()) => next.run(request).await,
+    let caller = match browser_admit(&gw, headers) {
+        Some(caller) => caller,
+        None => admit(
+            &gw,
+            header(TOKEN_HEADER),
+            header(TICKET_HEADER),
+            Purpose::NativeHttp,
+            headers,
+        ),
+    };
+    match caller {
+        Ok(caller) => {
+            request.extensions_mut().insert(caller);
+            request.extensions_mut().insert(Arc::clone(&gw.api));
+            next.run(request).await
+        }
         Err(status) => status.into_response(),
     }
+}
+
+/// Local mode's browser branch, for a request carrying the browser credential in
+/// `X-Hermes-Session-Token` (None for any other request, which the native branch decides). It
+/// never falls through to the ticket branch: both credentials at once are refused, so neither is
+/// spent; then an `Origin` other than none or this listener's own is refused (403) before the
+/// credential is compared (401).
+#[cfg(unix)]
+fn browser_admit(gw: &Gateway, headers: &HeaderMap) -> Option<Result<Caller, StatusCode>> {
+    if !matches!(gw.auth, Auth::Native(_)) {
+        return None;
+    }
+    let token = headers.get(TOKEN_HEADER)?;
+    if headers.contains_key(TICKET_HEADER) {
+        return Some(Err(StatusCode::UNAUTHORIZED));
+    }
+    let Some(webapp) = gw.webapp.as_ref() else {
+        return Some(Err(StatusCode::UNAUTHORIZED));
+    };
+    if !webapp::origin_absent_or_own(headers, gw.port) {
+        return Some(Err(StatusCode::FORBIDDEN));
+    }
+    Some(
+        token
+            .to_str()
+            .ok()
+            .and_then(|token| webapp.admit_browser(token))
+            .map(|generation| Caller::Browser { generation })
+            .ok_or(StatusCode::UNAUTHORIZED),
+    )
+}
+
+#[cfg(not(unix))]
+fn browser_admit(_gw: &Gateway, _headers: &HeaderMap) -> Option<Result<Caller, StatusCode>> {
+    None
 }
 
 /// 401 without the mode's credential, then 403 for an Origin the mode refuses. A local-mode
@@ -275,23 +363,23 @@ fn admit(
     ticket: Option<&str>,
     purpose: Purpose,
     headers: &HeaderMap,
-) -> Result<(), StatusCode> {
-    let origin_ok = match &gw.auth {
+) -> Result<Caller, StatusCode> {
+    let (caller, origin_ok) = match &gw.auth {
         Auth::Token(expected) => {
             if !token_matches(token, expected) {
                 return Err(StatusCode::UNAUTHORIZED);
             }
-            origin_allowed(headers, gw.port)
+            (Caller::Token, origin_allowed(headers, gw.port))
         }
         Auth::Native(tickets) => {
             if !ticket.is_some_and(|t| tickets.consume(t, purpose)) {
                 return Err(StatusCode::UNAUTHORIZED);
             }
-            !headers.contains_key(header::ORIGIN)
+            (Caller::Native, !headers.contains_key(header::ORIGIN))
         }
     };
     if origin_ok {
-        Ok(())
+        Ok(caller)
     } else {
         Err(StatusCode::FORBIDDEN)
     }
@@ -345,26 +433,36 @@ async fn upgrade(
     let Ok(offered) = offered else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if let Err(status) = admit(
-        &gw,
-        credential("token"),
-        offered.or(credential("ticket")),
-        Purpose::Interactive,
-        &headers,
-    ) {
-        return status.into_response();
-    }
+    let revoke = match browser_socket(&gw, &headers, offered, credential("ticket")) {
+        Some(Ok(revoke)) => Some(revoke),
+        Some(Err(status)) => return status.into_response(),
+        None => {
+            if let Err(status) = admit(
+                &gw,
+                credential("token"),
+                offered.or(credential("ticket")),
+                Purpose::Interactive,
+                &headers,
+            ) {
+                return status.into_response();
+            }
+            None
+        }
+    };
     let chat = Arc::clone(&gw.chat);
     let canonical = offered.is_some();
     // Both listeners take loopback connections only: the token one checks `Host` and `Origin`,
-    // and the ticket one is local mode's. A new kind of listener must choose here.
-    let origin = match gw.auth {
-        Auth::Token(_) | Auth::Native(_) => Origin::Local,
+    // and the ticket one is local mode's, where a browser socket is the Webapp's. A new kind of
+    // listener must choose here.
+    let origin = match (&revoke, &gw.auth) {
+        (Some(_), _) => Origin::Webapp,
+        (None, Auth::Token(_) | Auth::Native(_)) => Origin::Local,
     };
     // The host-input capability (`Conn::host_input`): only local mode's tickets come through a
     // native channel. A token can be presented through a tunnel from another machine, and a
-    // child gateway's parent dials it with a token, so neither gets it.
-    let host_input = matches!(gw.auth, Auth::Native(_));
+    // child gateway's parent dials it with a token, so neither gets it; nor does the Webapp's
+    // browser socket, which local mode also admits.
+    let host_input = revoke.is_none() && matches!(gw.auth, Auth::Native(_));
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
     let ws = if canonical {
         ws.protocols([CANONICAL_PROTOCOL])
@@ -373,7 +471,77 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, chat, canonical, origin, host_input))
+        .on_upgrade(move |socket| session(socket, chat, canonical, origin, revoke, host_input))
+}
+
+/// What closes a browser socket: the credential generation it opened under, and the watch that
+/// says when that generation ends. Holding it counts the socket as open.
+struct Revoke {
+    generation: u64,
+    changes: tokio::sync::watch::Receiver<u64>,
+    _open: Box<dyn Send + Sync>,
+}
+
+impl Revoke {
+    /// Resolves once the credential's generation is no longer the one this socket opened under.
+    async fn ended(revoke: &mut Option<Revoke>) {
+        let Some(revoke) = revoke else {
+            return std::future::pending().await;
+        };
+        loop {
+            if *revoke.changes.borrow_and_update() != revoke.generation {
+                return;
+            }
+            if revoke.changes.changed().await.is_err() {
+                return std::future::pending().await;
+            }
+        }
+    }
+}
+
+/// Local mode's browser socket, for an upgrade that carries an `Origin` while this listener
+/// serves the Webapp (None otherwise: the native branch decides, and refuses any `Origin`). It
+/// needs exactly one `Origin`, this listener's own, and one browser socket ticket, from the
+/// subprotocol or the `ticket` query but not both; a native ticket never opens it.
+#[cfg(unix)]
+fn browser_socket(
+    gw: &Gateway,
+    headers: &HeaderMap,
+    offered: Option<&str>,
+    query_ticket: Option<&str>,
+) -> Option<Result<Revoke, StatusCode>> {
+    let webapp = gw.webapp.as_ref()?;
+    if !matches!(gw.auth, Auth::Native(_)) || !headers.contains_key(header::ORIGIN) {
+        return None;
+    }
+    if !webapp::own_origin(headers, gw.port) {
+        return Some(Err(StatusCode::FORBIDDEN));
+    }
+    let ticket = match (offered, query_ticket) {
+        (Some(ticket), None) | (None, Some(ticket)) => ticket,
+        _ => return Some(Err(StatusCode::UNAUTHORIZED)),
+    };
+    let Some(generation) = webapp.take_socket_ticket(ticket) else {
+        return Some(Err(StatusCode::UNAUTHORIZED));
+    };
+    let Some((changes, open)) = webapp.open_socket() else {
+        return Some(Err(StatusCode::UNAUTHORIZED));
+    };
+    Some(Ok(Revoke {
+        generation,
+        changes,
+        _open: Box::new(open),
+    }))
+}
+
+#[cfg(not(unix))]
+fn browser_socket(
+    _gw: &Gateway,
+    _headers: &HeaderMap,
+    _offered: Option<&str>,
+    _query_ticket: Option<&str>,
+) -> Option<Result<Revoke, StatusCode>> {
+    None
 }
 
 /// The ticket a native dial offers as its `hermes-gateway-ticket.` subprotocol: `None` when it
@@ -404,6 +572,7 @@ async fn session(
     chat: Arc<Chat>,
     canonical: bool,
     origin: Origin,
+    mut revoke: Option<Revoke>,
     host_input: bool,
 ) {
     let mut ready = json!({
@@ -433,7 +602,14 @@ async fn session(
     conn.origin = origin;
     conn.host_input = host_input;
     let call = |method: &str, params: Value| chat.call(&conn, method, params);
-    serve_socket(&mut socket, &mut events, &call, chat.write_timeout()).await;
+    serve_socket(
+        &mut socket,
+        &mut events,
+        &call,
+        chat.write_timeout(),
+        &mut revoke,
+    )
+    .await;
     chat.disconnect(conn.id);
 }
 
@@ -467,6 +643,7 @@ async fn serve_socket(
     events: &mut mpsc::UnboundedReceiver<Outgoing>,
     call: &Call<'_>,
     write_timeout: std::time::Duration,
+    revoke: &mut Option<Revoke>,
 ) {
     // A handler that would wait is dropped before its first wait, which the handler contract
     // makes safe (`chat::Handler`).
@@ -487,6 +664,12 @@ async fn serve_socket(
     loop {
         let frame = tokio::select! {
             biased;
+            () = Revoke::ended(revoke) => {
+                // Signed out: the credential this browser socket opened under was replaced.
+                let close = CloseFrame { code: 4401, reason: "signed out".into() };
+                let _ = socket.send(Message::Close(Some(close))).await;
+                break;
+            }
             Some(reply) = in_flight.next(), if !in_flight.is_empty() => reply.map(Outgoing::from),
             Some(event) = events.recv() => Some(event),
             inbound = socket.recv() => {
@@ -933,7 +1116,8 @@ mod tests {
                                 chat::ready(Ok(json!("pong")))
                             }
                         };
-                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30))
+                        let write_timeout = Duration::from_secs(30);
+                        serve_socket(&mut socket, &mut events, &call, write_timeout, &mut None)
                             .await;
                     })
                 }
@@ -995,7 +1179,8 @@ mod tests {
                                 chat::ready(Ok(json!("answered")))
                             }
                         };
-                        serve_socket(&mut socket, &mut events, &call, Duration::from_secs(30))
+                        let write_timeout = Duration::from_secs(30);
+                        serve_socket(&mut socket, &mut events, &call, write_timeout, &mut None)
                             .await;
                     })
                 }

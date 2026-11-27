@@ -1676,6 +1676,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
  "wiremock",
@@ -1829,6 +1830,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "futures",
+ "getrandom 0.4.3",
  "hermes-agent",
  "hermes-app-runtime",
  "hermes-config",
@@ -1837,11 +1839,13 @@ dependencies = [
  "hermes-provider-runtime",
  "hermes-tools",
  "libc",
+ "percent-encoding",
  "reqwest",
  "rusqlite",
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subtle",
  "tempfile",
  "tokio",
@@ -1849,7 +1853,12 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.61.2",
+ "yaml_serde",
 ]
+
+[[package]]
+name = "hermes-entrypoint"
+version = "0.22.0"
 
 [[package]]
 name = "hermes-environments"

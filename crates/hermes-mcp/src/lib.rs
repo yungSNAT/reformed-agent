@@ -64,9 +64,6 @@ fn coerce_string_for_schema(raw: &str, schema: &Value) -> Option<Value> {
     }
 
     for expected in schema_types(schema) {
-        if expected == "null" && trimmed.eq_ignore_ascii_case("null") {
-            return Some(Value::Null);
-        }
         if let Some(coerced) = coerce_string_for_type(trimmed, expected) {
             return Some(coerced);
         }
@@ -256,3 +253,73 @@ pub use server::McpServer;
 pub use transport::{
     HttpSseTransport, HttpTransport, McpTransport, ServerStdioTransport, StdioTransport,
 };
+
+#[cfg(test)]
+mod schema_tests {
+    use super::coerce_mcp_tool_arguments_for_schema;
+    use serde_json::json;
+
+    #[test]
+    fn mcp_arguments_follow_union_types_and_preserve_unrecognised_values() {
+        let schema = json!({
+            "properties": {
+                "tolerance": {"oneOf": [{"type": "array"}, {"type": "number"}]},
+                "enabled": {"type": ["string", "boolean"]},
+                "unset": {"type": ["integer", "null"]},
+                "omitted": {"type": "null"},
+                "setting": {"anyOf": [{"type": "object"}, {"type": "integer"}]},
+                "limit": {"type": "integer"},
+                "maximum": {"type": "integer"},
+                "count": {"type": "integer"},
+                "note": {"type": "boolean"},
+                "labels": {"type": "array"},
+                "existing": {"type": "integer"}
+            }
+        });
+        let arguments = json!({
+            "tolerance": " 0.125 ",
+            "enabled": " TrUe ",
+            "unset": " NuLl ",
+            "omitted": "NULL",
+            "setting": " 2 ",
+            "limit": "1.5",
+            "maximum": "1e99",
+            "count": "inf",
+            "note": "yes",
+            "labels": "{}",
+            "existing": 3,
+            "extra": "false"
+        });
+
+        assert_eq!(
+            coerce_mcp_tool_arguments_for_schema(arguments, Some(&schema)),
+            json!({
+                "tolerance": 0.125,
+                "enabled": true,
+                "unset": null,
+                "omitted": null,
+                "setting": 2,
+                "limit": "1.5",
+                "maximum": "1e99",
+                "count": "inf",
+                "note": "yes",
+                "labels": "{}",
+                "existing": 3,
+                "extra": "false"
+            })
+        );
+    }
+
+    #[test]
+    fn mcp_property_coercion_preserves_non_object_arguments() {
+        let schema = json!({"properties": {"enabled": {"type": "boolean"}}});
+        assert_eq!(
+            coerce_mcp_tool_arguments_for_schema(json!(r#"[{"enabled":"true"}]"#), Some(&schema)),
+            json!([{"enabled": "true"}])
+        );
+        assert_eq!(
+            coerce_mcp_tool_arguments_for_schema(json!(false), Some(&schema)),
+            json!(false)
+        );
+    }
+}

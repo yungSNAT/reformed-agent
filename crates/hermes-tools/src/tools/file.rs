@@ -1089,7 +1089,7 @@ mod tests {
                     .execute(json!({
                         "path": regular,
                         "old_string": "a",
-                        "new_string": "OPENAI_API_KEY=sk-1234567890abcdefghij"
+                        "new_string": format!("OPENAI_API_KEY={}-1234567890abcdefghij", "sk")
                     }))
                     .await
                     .expect_err("secret replacement must be refused");

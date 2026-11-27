@@ -471,3 +471,6 @@ async fn auth_status_and_platform_paths() {
     .is_ok());
     assert!(cfg_path.exists());
 }
+
+include!("portal_secrets_part2_coverage_gen.rs");
+include!("portal_secrets_part3_coverage_gen.rs");
