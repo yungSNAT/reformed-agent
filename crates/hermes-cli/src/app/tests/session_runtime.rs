@@ -132,6 +132,256 @@
         );
     }
 
+    #[tokio::test]
+    async fn retry_regenerates_the_last_turn_and_persists_the_replacement() {
+        use hermes_core::MessageRole::{self, Assistant, User};
+
+        const TEST: &str = "app::tests::retry_regenerates_the_last_turn_and_persists_the_replacement";
+        const ROUTE: &str = "Which direction is the route?";
+        const DIRECTION: &str = "The route is northbound.";
+        const QUESTION: &str = "When is the first departure?";
+        const ORIGINAL: &str = "First northbound departure is at 9:00.";
+        const REPLACEMENT: &str = "First northbound departure is at 9:15.";
+        if !crate::isolated_test_profile::enter(TEST) {
+            return;
+        }
+        std::env::set_var("HERMES_CONTEXTLATTICE_UI_STATUS", "off");
+        std::env::set_var("HERMES_OBJECTIVE_EXECUTION_ENFORCER", "off");
+
+        fn conversation(messages: &[hermes_core::Message]) -> Vec<(MessageRole, String)> {
+            messages
+                .iter()
+                .filter(|msg| matches!(msg.role, User | Assistant))
+                .filter_map(|msg| msg.content.clone().map(|text| (msg.role, text)))
+                .collect()
+        }
+
+        struct ReplyProvider {
+            requests: StdMutex<Vec<Vec<(MessageRole, String)>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl LlmProvider for ReplyProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                panic!("the interactive fixture must stream");
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> futures::stream::BoxStream<'static, Result<hermes_core::StreamChunk, AgentError>>
+            {
+                use futures::StreamExt;
+                let mut requests = self.requests.lock().unwrap();
+                requests.push(conversation(messages));
+                let reply = match requests.len() {
+                    1 => DIRECTION,
+                    2 => ORIGINAL,
+                    3 => REPLACEMENT,
+                    _ => panic!("unexpected inference request"),
+                };
+                futures::stream::iter([
+                    Ok(hermes_core::StreamChunk {
+                        delta: Some(hermes_core::StreamDelta {
+                            content: Some(reply.into()),
+                            tool_calls: None,
+                            extra: None,
+                        }),
+                        finish_reason: None,
+                        usage: None,
+                    }),
+                    Ok(hermes_core::StreamChunk {
+                        delta: None,
+                        finish_reason: Some("stop".into()),
+                        usage: None,
+                    }),
+                ])
+                .boxed()
+            }
+        }
+
+        let provider = Arc::new(ReplyProvider {
+            requests: StdMutex::new(Vec::new()),
+        });
+        let mut app = build_minimal_test_app_with_state_root(hermes_home_dir());
+        Arc::make_mut(&mut app.config).streaming.enabled = true;
+        app.agent = Arc::new(AgentLoop::new(
+            hermes_agent::AgentConfig {
+                skip_memory: true,
+                skip_context_files: true,
+                ..Default::default()
+            },
+            Arc::new(AgentToolRegistry::new()),
+            provider.clone(),
+        ));
+        let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        app.set_stream_handle(Some(StreamHandle::from(tx)));
+        app.retry_last().await.unwrap();
+        assert!(provider.requests.lock().unwrap().is_empty());
+
+        app.handle_input(ROUTE).await.unwrap();
+        app.handle_input(QUESTION).await.unwrap();
+        let persistence = SessionPersistence::new(&app.state_root);
+        let session_id = app.session_id.clone();
+        let load_session = || persistence.load_session(&session_id).unwrap();
+        let request = [(User, ROUTE), (Assistant, DIRECTION), (User, QUESTION)];
+        let expected_turns = |reply| {
+            [request[0], request[1], request[2], (Assistant, reply)]
+                .map(|(role, text)| (role, text.to_owned()))
+        };
+        assert_eq!(
+            conversation(&load_session()),
+            expected_turns(ORIGINAL)
+        );
+        app.handle_input("/retry").await.unwrap();
+        assert_eq!(app.input_history, [ROUTE, QUESTION, "/retry"]);
+
+        let with_question = request.map(|(role, text)| (role, text.to_owned()));
+        assert_eq!(
+            *provider.requests.lock().unwrap(),
+            [vec![with_question[0].clone()], with_question.to_vec(), with_question.to_vec()]
+        );
+        let persisted = load_session();
+        let regenerated = expected_turns(REPLACEMENT);
+        for messages in [&app.messages, &persisted] {
+            assert_eq!(conversation(messages), regenerated);
+        }
+        let mut text_and_completion = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            match event {
+                crate::tui::Event::StreamChunk(chunk) => {
+                    text_and_completion.extend(chunk.delta.and_then(|delta| delta.content).map(Some));
+                }
+                crate::tui::Event::AgentDone => text_and_completion.push(None),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            text_and_completion,
+            [
+                Some(DIRECTION.into()),
+                None,
+                Some(ORIGINAL.into()),
+                None,
+                Some(REPLACEMENT.into()),
+                None,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn transient_stream_error_exhausts_app_retry_budget() {
+        use futures::StreamExt;
+        use hermes_core::MessageRole::User;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        const TEST: &str = "app::tests::transient_stream_error_exhausts_app_retry_budget";
+        const PROMPT: &str = "When does the observatory open?";
+        if !crate::isolated_test_profile::enter(TEST) {
+            return;
+        }
+        std::env::set_var("HERMES_CONTEXTLATTICE_UI_STATUS", "off");
+        std::env::set_var("HERMES_TRANSIENT_MAX_RETRIES", "1");
+
+        #[derive(Default)]
+        struct Timeouts(AtomicUsize);
+
+        #[async_trait::async_trait]
+        impl LlmProvider for Timeouts {
+            async fn chat_completion(
+                &self,
+                _messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                panic!("the interactive fixture must stream");
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> futures::stream::BoxStream<'static, Result<hermes_core::StreamChunk, AgentError>>
+            {
+                let user_turns: Vec<_> = messages
+                    .iter()
+                    .filter(|message| message.role == User)
+                    .map(|message| message.content.as_deref())
+                    .collect();
+                assert_eq!(user_turns, [Some(PROMPT)]);
+                let attempt = self.0.fetch_add(1, Ordering::Relaxed) + 1;
+                futures::stream::iter([Err(AgentError::LlmApi(format!(
+                    "fixture request {attempt} timed out"
+                )))])
+                .boxed()
+            }
+        }
+
+        let provider = Arc::new(Timeouts::default());
+        let mut app = build_minimal_test_app();
+        Arc::make_mut(&mut app.config).streaming.enabled = true;
+        app.agent = Arc::new(AgentLoop::new(
+            hermes_agent::AgentConfig {
+                stream_read_max_retries: 0,
+                skip_memory: true,
+                skip_context_files: true,
+                ..Default::default()
+            },
+            Arc::new(AgentToolRegistry::new()),
+            provider.clone(),
+        ));
+        let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        app.set_stream_handle(Some(StreamHandle::from(tx)));
+
+        let error = tokio::time::timeout(std::time::Duration::from_secs(10), app.handle_input(PROMPT))
+            .await
+            .expect("app retry deadline")
+            .expect_err("both requests should time out");
+        assert!(matches!(error, AgentError::LlmApi(message) if message == "fixture request 2 timed out"));
+        assert_eq!(provider.0.load(Ordering::Relaxed), 2);
+        assert_eq!(app.input_history, [PROMPT]);
+
+        let mut recovery = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            match event {
+                crate::tui::Event::StreamChunk(chunk) => {
+                    if let Some(extra) = chunk.delta.and_then(|delta| delta.extra) {
+                        if extra["phase"] == "recovery" {
+                            recovery.push("recovery");
+                        } else if extra["message"].as_str().is_some_and(|message| {
+                            message.starts_with("transient runtime error retry 1/1 ")
+                        }) {
+                            recovery.push("retry");
+                        }
+                    }
+                }
+                crate::tui::Event::AgentDone => recovery.push("done"),
+                _ => {}
+            }
+        }
+        assert_eq!(recovery, ["recovery", "retry", "recovery", "done"]);
+    }
+
     #[test]
     fn test_apply_agent_result_and_persist_writes_updated_messages() {
         let _guard = env_test_lock();

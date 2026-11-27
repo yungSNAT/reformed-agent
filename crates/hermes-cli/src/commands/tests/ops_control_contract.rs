@@ -57,6 +57,59 @@ async fn policy_simulation_reports_decisions_without_dispatch() {
     assert_eq!(registry.policy_counters(), counters);
 }
 
+#[tokio::test]
+async fn slash_plugins_reports_profile_metadata_and_respects_project_opt_in() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::ops_control_contract::slash_plugins_reports_profile_metadata_and_respects_project_opt_in",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    let empty = command_output(&mut app, "/plugins", &[]).await;
+    assert!(
+        empty.starts_with("No plugin bundles discovered."),
+        "{empty}"
+    );
+    assert!(empty.contains(&format!(
+        "User plugin dir: {}",
+        home.join("plugins").display()
+    )));
+
+    let user = home.join("plugins/local-fixture");
+    let project = home.join(".hermes/plugins/project-fixture");
+    for (dir, name) in [(&user, "local-fixture"), (&project, "project-fixture")] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.yaml"),
+            format!("name: {name}\nversion: '1.2'\ndescription: Plugin fixture for {name}\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(user.join(".disabled"), "").unwrap();
+
+    let profile_only = command_output(&mut app, "/plugins", &[]).await;
+    assert!(
+        profile_only.starts_with("Plugin surface (1 entries):"),
+        "{profile_only}"
+    );
+    assert!(profile_only.contains("local-fixture v1.2 [disabled; source=user;"));
+    assert!(profile_only.contains("Plugin fixture for local-fixture"));
+    assert!(!profile_only.contains("project-fixture"));
+
+    std::env::set_var("HERMES_ENABLE_PROJECT_PLUGINS", "1");
+    let opted_in = command_output(&mut app, "/plugins", &[]).await;
+    assert!(
+        opted_in.starts_with("Plugin surface (2 entries):"),
+        "{opted_in}"
+    );
+    assert!(opted_in.contains("local-fixture v1.2 [disabled; source=user;"));
+    assert!(opted_in.contains("project-fixture v1.2 [enabled; source=project;"));
+    assert!(opted_in.contains("Plugin fixture for project-fixture"));
+    assert!(user.join(".disabled").is_file());
+    assert!(!project.join(".disabled").exists());
+}
+
 struct DashboardFixture {
     exchanges: Mutex<VecDeque<(Value, Value)>>,
 }
@@ -229,6 +282,67 @@ async fn ops_eval_runs_against_saved_sessions_and_displays_the_saved_report() {
     );
     let status = command_output(&mut app, "/ops", &["eval", "status"]).await;
     assert!(status.contains(&format!("({filename})")), "{status}");
+}
+
+#[tokio::test]
+async fn ops_eval_gate_persists_the_missing_input_and_regression_reports() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::ops_control_contract::ops_eval_gate_persists_the_missing_input_and_regression_reports",
+    ) {
+        return;
+    }
+
+    let home = hermes_config::hermes_home();
+    std::env::set_var("HERMES_REPO_ROOT", &home);
+    let mut app = build_test_app_with_stream(&home).await;
+    let read_report = |output: &str| {
+        let (payload, path) = output.split_once("\nreport_path=").unwrap();
+        let path = Path::new(path);
+        assert_eq!(path.parent(), Some(home.join(".sync-reports").as_path()));
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("eval-trend-gate-"));
+        let report: Value = serde_json::from_str(payload).unwrap();
+        let persisted: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(report, persisted);
+        report
+    };
+
+    let output = command_output(&mut app, "/ops", &["gate", "eval"]).await;
+    let report = read_report(&output);
+    assert_eq!(report["reason"], "missing_eval_inputs");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["allow_missing_baseline"], true);
+
+    let evals = home.join("evals");
+    std::fs::create_dir(&evals).unwrap();
+    let current = evals.join("a-current.json");
+    let baseline = evals.join("z-baseline.json");
+    for (path, pass_at_1, stamp) in [(&current, 0.5, 2), (&baseline, 0.9, 1)] {
+        let mut file = std::fs::File::create(path).unwrap();
+        serde_json::to_writer(
+            &mut file,
+            &json!({"metrics":{"total":10,"pass_at_1":pass_at_1}}),
+        )
+        .unwrap();
+        let modified =
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000 + stamp);
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+    }
+
+    let output = command_output(&mut app, "/ops", &["gate", "eval"]).await;
+    let report = read_report(&output);
+    assert_eq!(report["baseline_path"], json!(baseline));
+    assert_eq!(report["current_path"], json!(current));
+    assert_eq!(report["ok"], false);
+    let checks = report["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 3);
+    assert_eq!(checks[0]["name"], "pass_at_1_drop");
+    assert_eq!(checks[0]["ok"], false);
+    assert!(checks[1..].iter().all(|check| check["ok"] == true));
 }
 
 #[tokio::test]

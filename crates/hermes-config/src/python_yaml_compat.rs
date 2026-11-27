@@ -513,7 +513,8 @@ fn normalize_session_reset(map: &mut Mapping) {
 }
 
 /// Normalize `platform_toolsets` entries so mixed scalar YAML values (e.g.
-/// bare numbers like `12306`) deserialize into `Vec<String>` safely.
+/// bare numbers like `12306`) deserialize into `Vec<String>` safely. A `null`
+/// entry is no entry.
 fn normalize_platform_toolsets(map: &mut Mapping) {
     let ptk = key("platform_toolsets");
     let Some(Value::Mapping(existing)) = map.remove(&ptk) else {
@@ -525,6 +526,9 @@ fn normalize_platform_toolsets(map: &mut Mapping) {
         let Some(platform_name) = platform.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
             continue;
         };
+        if raw_values.is_null() {
+            continue;
+        }
 
         let mut out = Vec::new();
         match raw_values {
@@ -552,6 +556,28 @@ fn normalize_platform_toolsets(map: &mut Mapping) {
     }
 
     map.insert(ptk, Value::Mapping(normalized));
+}
+
+/// Earlier releases wrote every default entry into the user's file, so a
+/// user map holding the entries each of them wrote is read as theirs: its
+/// entries equal to the default were never chosen and are dropped. The
+/// managed scope's map is never read this way: its pins bind as written.
+pub(crate) fn drop_written_default_platform_toolsets(
+    toolsets: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    // Every release that wrote the defaults wrote at least these.
+    let written_by_every_release = ["cli", "telegram", "discord", "whatsapp", "slack"];
+    if !written_by_every_release
+        .iter()
+        .all(|platform| toolsets.contains_key(*platform))
+    {
+        return;
+    }
+    for (platform, defaults) in crate::config::default_platform_toolsets() {
+        if toolsets.get(&platform) == Some(&defaults) {
+            toolsets.remove(&platform);
+        }
+    }
 }
 
 /// Python often declares `telegram:` / `discord:` at the **root** instead of under `platforms:`.
@@ -1168,6 +1194,71 @@ platform_toolsets:
 
         let cron = cfg.platform_toolsets.get("cron").expect("cron");
         assert_eq!(cron, &vec!["42".to_string()]);
+    }
+
+    fn load(raw: &str) -> crate::config::GatewayConfig {
+        let mut root: Value = serde_yaml::from_str(raw).unwrap();
+        let Value::Mapping(ref mut m) = root else {
+            panic!();
+        };
+        normalize_config_yaml_root(m);
+        let mut cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        drop_written_default_platform_toolsets(&mut cfg.platform_toolsets);
+        cfg
+    }
+
+    #[test]
+    fn platform_toolsets_hold_only_the_entries_the_config_sets() {
+        assert!(load("model: x\n").platform_toolsets.is_empty());
+        assert!(crate::config::GatewayConfig::default()
+            .platform_toolsets
+            .is_empty());
+        let saved = serde_yaml::to_string(&crate::config::GatewayConfig::default()).unwrap();
+        assert!(!saved.contains("platform_toolsets"), "{saved}");
+
+        let cfg = load("platform_toolsets:\n  cli: []\n  cron: null\n  acp:\n    - hermes-acp\n");
+        assert_eq!(cfg.platform_toolsets.get("cli"), Some(&Vec::new()));
+        assert_eq!(cfg.platform_toolsets.get("cron"), None);
+        assert_eq!(
+            cfg.platform_toolsets.get("acp"),
+            Some(&vec!["hermes-acp".to_string()])
+        );
+        assert_eq!(cfg.platform_toolsets.len(), 2);
+    }
+
+    #[test]
+    fn a_map_carrying_every_default_entry_keeps_only_the_changed_ones() {
+        // Earlier releases wrote every default entry into config.yaml.
+        let mut raw = String::from("platform_toolsets:\n");
+        for (platform, toolsets) in crate::config::default_platform_toolsets() {
+            let toolsets = match platform.as_str() {
+                "telegram" => vec!["web".to_string()],
+                _ => toolsets,
+            };
+            raw.push_str(&format!("  {platform}: [{}]\n", toolsets.join(", ")));
+        }
+        raw.push_str("  matrix: [hermes-cli]\n");
+        let cfg = load(&raw);
+
+        let mut kept: Vec<_> = cfg.platform_toolsets.into_iter().collect();
+        kept.sort();
+        assert_eq!(
+            kept,
+            [
+                ("matrix".to_string(), vec!["hermes-cli".to_string()]),
+                ("telegram".to_string(), vec!["web".to_string()]),
+            ]
+        );
+
+        // The first release to write them wrote 5.
+        let april = "platform_toolsets:\n  cli: [hermes-cli]\n  telegram: [hermes-telegram]\n  \
+                     discord: [hermes-discord]\n  whatsapp: [hermes-whatsapp]\n  slack: [hermes-slack]\n";
+        assert!(load(april).platform_toolsets.is_empty());
+
+        // Without all 5, an entry equal to its default was the user's.
+        let chosen =
+            load("platform_toolsets:\n  cli: [hermes-cli]\n  telegram: [hermes-telegram]\n");
+        assert_eq!(chosen.platform_toolsets.len(), 2);
     }
 
     #[test]

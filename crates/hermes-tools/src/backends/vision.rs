@@ -289,6 +289,82 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn vision_sends_a_local_image_as_a_data_url_and_decodes_the_response() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let fixture = tempfile::tempdir().unwrap();
+        let image = fixture.path().join("pixel.gif");
+        let encoded = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+        let pixels = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        std::fs::write(&image, pixels).unwrap();
+
+        let api = MockServer::start().await;
+        let image_url = format!("data:image/gif;base64,{encoded}");
+        for (question, response) in [
+            (
+                "Describe the pixel",
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"choices": [{"message": {"content": "One pixel."}}]})),
+            ),
+            (
+                "Read the pixel",
+                ResponseTemplate::new(200).set_body_string("invalid response"),
+            ),
+        ] {
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .and(header("Authorization", "Bearer fixture"))
+                .and(body_json(json!({
+                    "model": "fixture-model",
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": question},
+                            {"type": "image_url", "image_url": {"url": image_url}},
+                        ],
+                    }],
+                    "max_tokens": 1024,
+                })))
+                .respond_with(response)
+                .expect(1)
+                .mount(&api)
+                .await;
+        }
+        let backend = OpenAiVisionBackend {
+            client: Client::builder()
+                .no_proxy()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+                .unwrap(),
+            api_key: "fixture".into(),
+            base_url: api.uri(),
+            model: "fixture-model".into(),
+        };
+        let image_path = image.to_str().expect("UTF-8 fixture path");
+        assert_eq!(
+            backend
+                .analyze(image_path, "Describe the pixel")
+                .await
+                .unwrap(),
+            "One pixel."
+        );
+        assert!(matches!(
+            backend.analyze(image_path, "Read the pixel").await,
+            Err(ToolError::ExecutionFailed(message))
+                if message.starts_with("Failed to parse vision response:")
+        ));
+        let missing = fixture.path().join("missing.gif");
+        assert!(matches!(
+            backend.analyze(missing.to_str().unwrap(), "Describe the pixel").await,
+            Err(ToolError::ExecutionFailed(message))
+                if message.starts_with("Failed to read image") && message.contains("missing.gif")
+        ));
+    }
+
+    #[tokio::test]
     async fn vision_api_error_does_not_echo_provider_body() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};

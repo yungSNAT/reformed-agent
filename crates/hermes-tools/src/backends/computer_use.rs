@@ -311,6 +311,49 @@ mod tests {
         assert!(command_available(&current.to_string_lossy()));
     }
 
+    #[test]
+    fn stderr_tail_reports_empty_output_and_omits_older_lines() {
+        assert_eq!(stderr_tail(""), "(empty stderr)");
+        assert_eq!(
+            stderr_tail("starting\nready\nretrying\nfinished\n"),
+            "ready\nretrying\nfinished"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn mcp_response_reports_malformed_output_and_missing_ids() {
+        for (output, expected) in [
+            ("starting fixture", "emitted non-JSON MCP line"),
+            (
+                "\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}",
+                "closed stdout before MCP response id 2",
+            ),
+        ] {
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", "printf '%s\\n' \"$1\"", "fixture", output])
+                .env_clear()
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+            let error =
+                tokio::time::timeout(Duration::from_secs(5), read_json_response(&mut lines, 2))
+                    .await
+                    .unwrap()
+                    .unwrap_err();
+            assert!(
+                matches!(error, ToolError::ExecutionFailed(message) if message.contains(expected))
+            );
+            let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(status.success());
+        }
+    }
+
     /// Writes an executable script through a child `sh`, so this process never
     /// holds a write handle to it. A handle held here is copied into any child
     /// another test thread forks meanwhile, and running the script whilst that

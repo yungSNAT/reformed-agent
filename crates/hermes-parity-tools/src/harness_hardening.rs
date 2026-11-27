@@ -7,6 +7,7 @@ use std::path::Path;
 
 use clap::Args;
 
+use crate::coverage_tests;
 use crate::decimal_limit;
 use crate::git::git;
 use crate::py::{self, Py};
@@ -100,7 +101,16 @@ fn optional_git(root: &Path, arguments: &[&str]) -> Result<String, String> {
     })
 }
 
-fn snapshot(root: &Path, coverage: &Py, proof: &Py, queue: &Py, sota: &Py) -> Result<Py, String> {
+/// `rust_test_functions` is counted from the checkout: the committed coverage audit leaves
+/// it out because it changes with every added test.
+fn snapshot(
+    root: &Path,
+    coverage: &Py,
+    proof: &Py,
+    queue: &Py,
+    sota: &Py,
+    rust_test_functions: usize,
+) -> Result<Py, String> {
     let mut head = optional_git(root, &["rev-parse", "HEAD"])?;
     if !optional_git(root, &["status", "--short"])?.is_empty() {
         head.push_str("+worktree");
@@ -143,12 +153,12 @@ fn snapshot(root: &Path, coverage: &Py, proof: &Py, queue: &Py, sota: &Py) -> Re
     for name in [
         "tracked_behavior_rows",
         "covered_behavior_rows",
-        "rust_test_functions",
         "coverage_manifest_entries",
         "missing_rust_test_refs",
     ] {
         snapshot.set(name, integer(field(coverage, &["summary", name]))?);
     }
+    snapshot.set("rust_test_functions", rust_test_functions.into());
     for (name, section, key) in [
         ("sota_direct_rust_tests", "summary", "direct_rust_tests"),
         (
@@ -349,7 +359,9 @@ pub fn run(args: HarnessHardeningArgs) -> Result<i32, String> {
     let queue = load(&root, QUEUE)?;
     let sota = load(&root, SOTA)?;
     let thresholds = load(&root, THRESHOLDS)?;
-    let snapshot = snapshot(&root, &coverage, &proof, &queue, &sota)?;
+    let tests = coverage_tests::scan(&root)?;
+    let functions = tests.values().map(|names| names.len()).sum();
+    let snapshot = snapshot(&root, &coverage, &proof, &queue, &sota, functions)?;
     let existing = load(&root, &format!("{TREND}.json"))?;
     if !existing.is_dict() || !sota.is_dict() || !thresholds.is_dict() {
         return Err("harness sources must contain JSON objects".into());

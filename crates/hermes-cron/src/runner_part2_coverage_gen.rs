@@ -93,6 +93,64 @@ fn find_skill_file_matches_frontmatter_name() {
 }
 
 #[test]
+fn job_messages_expand_unique_skills_and_report_missing_or_unreadable_files() {
+    if run_isolated("job_messages_expand_unique_skills_and_report_missing_or_unreadable_files") {
+        return;
+    }
+
+    let home = tempfile::tempdir().unwrap();
+    let _home = TempEnv::set("HERMES_HOME", home.path().to_str().unwrap());
+    let skill_dir = home
+        .path()
+        .join("skills")
+        .join("reports")
+        .join("weekly-notes");
+    fs::create_dir_all(&skill_dir).unwrap();
+    let skill_path = skill_dir.join("SKILL.md");
+    fs::write(&skill_path, "Summarise the week's notes.").unwrap();
+    let totals_dir = home.path().join("skills").join("daily-totals");
+    fs::create_dir(&totals_dir).unwrap();
+    fs::write(
+        totals_dir.join("SKILL.md"),
+        "---\nname: Daily totals\n---\nReport the daily totals.",
+    )
+    .unwrap();
+
+    let mut job = CronJob::new("0 9 * * *", "Prepare the weekly summary");
+    job.skills = Some(
+        [
+            " Weekly Notes ",
+            "weekly_notes",
+            "daily-totals",
+            "missing-notes",
+            " ",
+        ]
+        .map(String::from)
+        .to_vec(),
+    );
+    let runner = runner();
+    let messages = runner.build_messages(&job).unwrap();
+    assert_eq!(messages.len(), 2);
+    let context = messages[0].content.as_deref().unwrap();
+    assert!(context.contains("preloaded the \"Weekly Notes\" skill"));
+    assert_eq!(context.matches("Summarise the week's notes.").count(), 1);
+    assert_eq!(context.matches("Report the daily totals.").count(), 1);
+    assert!(context.ends_with("[Skill 'missing-notes' could not be found.]"));
+    assert_eq!(
+        messages[1].content.as_deref(),
+        Some("Prepare the weekly summary")
+    );
+
+    fs::write(&skill_path, b"\xff").unwrap();
+    let result = runner.build_messages(&job);
+    assert!(
+        matches!(result, Err(CronError::InvalidJob(ref message))
+            if message.contains("failed to load cron skill") && message.contains("weekly-notes")),
+        "{result:?}"
+    );
+}
+
+#[test]
 fn build_cron_skill_prompt_with_only_blank_identifiers_is_none() {
     if run_isolated("build_cron_skill_prompt_with_only_blank_identifiers_is_none") {
         return;
