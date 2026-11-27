@@ -33,6 +33,14 @@ fn start_in_pty(
     args: &[&str],
     allow_loopback: bool,
 ) -> (Child, File, libc::tcflag_t) {
+    start_command_in_pty(isolated_pty_command(sandbox, args, allow_loopback))
+}
+
+fn isolated_pty_command(
+    sandbox: &Path,
+    args: &[&str],
+    allow_loopback: bool,
+) -> tokio::process::Command {
     let mut command = support::isolated_hermes(sandbox);
     command
         .env("HTTP_PROXY", "http://127.0.0.1:1")
@@ -41,7 +49,7 @@ fn start_in_pty(
     if allow_loopback {
         command.env("NO_PROXY", "127.0.0.1");
     }
-    start_command_in_pty(command)
+    command
 }
 
 fn start_command_in_pty(mut command: tokio::process::Command) -> (Child, File, libc::tcflag_t) {
@@ -412,9 +420,11 @@ streaming:
     )
     .unwrap();
 
-    let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["--ignore-rules"], true);
-    read_until(&mut terminal, b"\x1b[?1049h").await;
+    let mut command = isolated_pty_command(sandbox.path(), &["--ignore-rules"], true);
+    command.env("HERMES_TUI_MOUSE", "1");
+    let (mut child, mut terminal, initial_flags) = start_command_in_pty(command);
+    let startup = read_until(&mut terminal, b"\x1b[?1006h").await;
+    assert!(startup.windows(8).any(|bytes| bytes == b"\x1b[?1049h"));
     write!(terminal, "\x1b[200~{prompt}\x1b[201~\r").unwrap();
     // Separate frames can insert cursor escapes between the two deltas.
     let rendered = read_until(&mut terminal, b"from the loopback fixture.").await;
