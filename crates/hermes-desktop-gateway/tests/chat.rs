@@ -1081,6 +1081,25 @@ async fn a_large_image_is_attached() {
     assert_eq!(reply["result"]["bytes"], image.len(), "{}", reply["error"]);
 }
 
+/// A request over the message limit keeps the profile it names: one this gateway does not serve
+/// is refused, and nothing is staged here.
+#[tokio::test]
+async fn a_large_image_for_another_profile_is_refused_and_not_staged() {
+    let started = start(vec!["x"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let mut image = png("large");
+    image.resize(13 << 20, 7);
+    let params = json!({"session_id": session, "content_base64": b64(&image), "profile": "inbox"});
+    assert!(params.to_string().len() > hermes_desktop_gateway::MAX_MESSAGE_BYTES);
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    assert_eq!(
+        reply["error"]["message"], "profile_mismatch: no such profile",
+        "{reply}"
+    );
+    assert!(staged_images(started.home.path()).is_empty());
+}
+
 /// As upstream, an empty or null `content_base64` gives way to the `data` alias, in a small
 /// request and in one over the message limit.
 #[tokio::test]
