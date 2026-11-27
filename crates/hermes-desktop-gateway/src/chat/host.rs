@@ -404,8 +404,8 @@ mod unix {
     const DRAIN: Duration = Duration::from_secs(2);
 
     /// Starts `command` as the leader of its own session and process group, with stdin closed,
-    /// a cleared environment and `folder` as its working folder, under a supervisor task that
-    /// owns it. The supervisor ends the run when the child exits, `limit` passes or this future
+    /// an environment of the kept names and those `command` sets, and `folder` as its working
+    /// folder, under a supervisor task that owns it. The supervisor ends the run when the child exits, `limit` passes or this future
     /// is dropped. It then kills the group and, on Linux, every process left in the session
     /// before reaping the child, so neither id can be reused under the kill; reads output for at
     /// most [`DRAIN`] more; and gives the slot back. A descendant that starts its own session
@@ -423,9 +423,16 @@ mod unix {
         let env = kept_env(std::env::vars_os().filter_map(|(name, value)| {
             Some((name.into_string().ok()?, value.into_string().ok()?))
         }));
+        // Clearing drops the names the caller set as well, so they are put back after.
+        let set: Vec<_> = command
+            .as_std()
+            .get_envs()
+            .filter_map(|(name, value)| Some((name.to_owned(), value?.to_owned())))
+            .collect();
         command
             .env_clear()
             .envs(env)
+            .envs(set)
             .current_dir(folder)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
