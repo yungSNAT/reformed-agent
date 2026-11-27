@@ -10,6 +10,11 @@
 //! nothing is refused as missing rather than clearing the title, no `session.info` event
 //! follows a title change, as this gateway's legacy wire sends none, and a title can be set
 //! whilst a turn runs, as upstream allows (a turn's save keeps the title).
+//!
+//! A resume during a turn streams that turn's events from its subscription on. The events
+//! sent before it are not replayed in the reply: each event carries its `seq`, so the client
+//! asks `session.events.since` for them, and the turn's `message.complete` carries its whole
+//! reply.
 
 use std::sync::Arc;
 
