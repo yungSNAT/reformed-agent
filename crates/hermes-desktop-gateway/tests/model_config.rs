@@ -463,6 +463,11 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     assert_eq!(gone["result"]["updated"], 1, "{gone}");
     assert_eq!(unusable["result"]["updated"], 1, "{unusable}");
     // The turn after the save sent the saved key; the one after the reload, the project's.
-    let keys: Vec<String> = seen.lock().unwrap().iter().map(|(_, auth)| auth.clone()).collect();
+    let keys: Vec<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, auth)| auth.clone())
+        .collect();
     assert_eq!(keys, ["Bearer saved-key", "Bearer project-key"]);
 }

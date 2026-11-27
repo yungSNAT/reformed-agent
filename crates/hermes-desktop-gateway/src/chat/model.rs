@@ -1010,7 +1010,10 @@ mod tests {
                 vars.extend(registry.iter().copied().filter(|var| *var != first));
                 vars
             };
-            assert_eq!(chat.slug_key_vars("mimo").unwrap(), expected("CANONICAL_KEY"));
+            assert_eq!(
+                chat.slug_key_vars("mimo").unwrap(),
+                expected("CANONICAL_KEY")
+            );
             let mut sibling = vec![upper];
             sibling.extend(expected("CANONICAL_KEY"));
             assert_eq!(chat.slug_key_vars("MIMO").unwrap(), sibling);
@@ -1018,6 +1021,34 @@ mod tests {
                 chat.slug_key_vars("XIAOMI").unwrap(),
                 expected("UPPER_CANONICAL_KEY")
             );
+        }
+    }
+
+    #[test]
+    fn a_turn_takes_the_key_of_the_entry_named_as_its_provider() {
+        let (lower, upper) = (
+            "DESKTOP_MODEL_UNIT_TEST_TURN_LOWER_KEY",
+            "DESKTOP_MODEL_UNIT_TEST_TURN_UPPER_KEY",
+        );
+        // `llm_providers` is a `HashMap`: each new map iterates in its own order.
+        for _ in 0..32 {
+            let mut config = GatewayConfig::default();
+            for (name, var) in [("mimo", lower), ("MIMO", upper)] {
+                let provider: LlmProviderConfig =
+                    serde_json::from_value(json!({ "api_key_env": var })).unwrap();
+                config.llm_providers.insert(name.into(), provider);
+            }
+            let chat = Chat::new(config);
+            chat.keys.set(lower, Some("lower-key".into()));
+            chat.keys.set(upper, Some("upper-key".into()));
+            for (provider, key) in [("mimo", "lower-key"), ("MIMO", "upper-key")] {
+                let config = chat.turn_config(&format!("{provider}:m")).unwrap();
+                assert_eq!(
+                    config.llm_providers[provider].api_key.as_deref(),
+                    Some(key),
+                    "{provider}"
+                );
+            }
         }
     }
 
