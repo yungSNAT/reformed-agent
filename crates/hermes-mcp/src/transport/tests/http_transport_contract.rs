@@ -65,6 +65,74 @@ async fn legacy_http_start_send_receive_and_close_manage_the_response_slot() {
 }
 
 #[tokio::test]
+async fn legacy_sse_uses_the_default_post_endpoint_and_recovers_after_a_bad_event() {
+    use serde_json::json;
+
+    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", server.local_addr().unwrap());
+    let mut transport = HttpSseTransport::new(&url, None);
+    transport.client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let request = json!({"jsonrpc": "2.0", "id": 7, "method": "ping"});
+    let ready = json!({"jsonrpc": "2.0", "method": "notifications/ready"});
+    let response = json!({"jsonrpc": "2.0", "id": 7, "result": {}});
+    let later = json!({"jsonrpc": "2.0", "method": "notifications/resources/list_changed"});
+    let batch = json!([ready, response]);
+    let events = format!(
+        "event: message\ndata: {batch}\n\nevent: message\ndata: not-json\n\nevent: message\ndata: {later}\n\n"
+    );
+
+    let serve = async {
+        let head = answer_once(&server, json_reply("{}")).await;
+        assert!(head.starts_with("get /mcp "), "{head}");
+        let (head, body) = answer_once_with_body(
+            &server,
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".into(),
+        )
+        .await;
+        assert!(head.starts_with("post /mcp "), "{head}");
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), request);
+        let head = answer_once(
+            &server,
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{events}",
+                events.len()
+            ),
+        )
+        .await;
+        assert!(head.starts_with("get /mcp/sse "), "{head}");
+        let (head, body) = answer_once_with_body(
+            &server,
+            "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n".into(),
+        )
+        .await;
+        assert!(head.starts_with("post /mcp/message "), "{head}");
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), request);
+    };
+    let exchange = async {
+        transport.start().await.unwrap();
+        transport.send(request.clone()).await.unwrap();
+        assert_eq!(transport.receive().await.unwrap(), ready);
+        assert_eq!(transport.receive().await.unwrap(), response);
+        assert!(matches!(
+            transport.receive().await,
+            Err(McpError::Protocol { code: -32700, message })
+                if message.contains("Invalid JSON in event stream")
+        ));
+        assert_eq!(transport.receive().await.unwrap(), later);
+        assert!(matches!(
+            transport.receive().await,
+            Err(McpError::ConnectionError(reason)) if reason.contains("No pending response")
+        ));
+        transport.close().await.unwrap();
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(serve, exchange)
+    })
+    .await
+    .expect("loopback legacy SSE exchange timed out");
+}
+
+#[tokio::test]
 async fn legacy_http_rejects_an_invalid_server_url() {
     let mut transport = HttpTransport::new("http://[", None);
     assert!(matches!(
@@ -74,6 +142,11 @@ async fn legacy_http_rejects_an_invalid_server_url() {
     assert!(matches!(
         transport.send(serde_json::json!({})).await,
         Err(McpError::ConnectionError(reason)) if reason.contains("HTTP send failed")
+    ));
+    let mut stream = HttpSseTransport::new("http://[", None);
+    assert!(matches!(
+        stream.start().await,
+        Err(McpError::ConnectionError(reason)) if reason.contains("Failed to connect")
     ));
 }
 

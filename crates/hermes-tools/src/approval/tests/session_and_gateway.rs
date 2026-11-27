@@ -212,6 +212,49 @@ fn test_clear_session_removes_pattern_approval_state() {
 }
 
 #[test]
+fn approval_labels_match_the_gateway_and_hook_contract() {
+    for (choice, label) in [
+        (ApprovalChoice::Deny, "deny"),
+        (ApprovalChoice::Once, "once"),
+        (ApprovalChoice::Session, "session"),
+        (ApprovalChoice::Always, "always"),
+    ] {
+        assert_eq!(choice.as_str(), label);
+    }
+    assert_eq!(ApprovalSurface::Cli.as_str(), "cli");
+    assert_eq!(ApprovalSurface::Gateway.as_str(), "gateway");
+    assert_eq!(
+        ApprovalHookKind::PreApprovalRequest.as_str(),
+        "pre_approval_request"
+    );
+    assert_eq!(
+        ApprovalHookKind::PostApprovalResponse.as_str(),
+        "post_approval_response"
+    );
+}
+
+#[test]
+fn resolved_gateway_approval_keeps_its_first_decision() {
+    let entry = GatewayApprovalEntry::new(GatewayApprovalRequest {
+        request_id: "field-review".into(),
+        session_key: "field-session".into(),
+        command: "printf 'field notes'".into(),
+        description: "Review fixture".into(),
+        pattern_key: "field-fixture".into(),
+        pattern_keys: vec!["field-fixture".into()],
+        allow_permanent: false,
+    });
+    assert!(!entry.is_resolved());
+    assert_eq!(entry.wait(Duration::ZERO), None);
+    entry.resolve(ApprovalChoice::Deny);
+    assert!(entry.is_resolved());
+    assert_eq!(entry.wait(Duration::ZERO), Some(ApprovalChoice::Deny));
+    entry.resolve(ApprovalChoice::Once);
+    assert_eq!(entry.result(), Some(ApprovalChoice::Deny));
+    assert_eq!(entry.request().request_id, "field-review");
+}
+
+#[test]
 fn test_gateway_approval_resolve_single_is_fifo() {
     let _guard = lock_test_state();
     reset_approval_state_unlocked();

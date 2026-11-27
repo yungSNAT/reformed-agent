@@ -458,18 +458,13 @@ impl SessionPersistence {
         }
     }
 
-    fn ensure_integer_column(
+    fn ensure_numeric_column(
         conn: &rusqlite::Connection,
         table: &str,
         column: &str,
-        default_value: i64,
-        not_null: bool,
+        definition: &str,
     ) -> Result<(), AgentError> {
-        let mut sql = format!("ALTER TABLE {table} ADD COLUMN {column} INTEGER");
-        if not_null {
-            sql.push_str(" NOT NULL");
-        }
-        sql.push_str(&format!(" DEFAULT {default_value}"));
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
         match conn.execute(&sql, []) {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -880,8 +875,20 @@ impl SessionPersistence {
         }
         Self::ensure_text_column(&conn, "messages", "reasoning_content")?;
         Self::ensure_text_column(&conn, "messages", "name")?;
-        Self::ensure_integer_column(&conn, "sessions", "rewind_count", 0, true)?;
-        Self::ensure_integer_column(&conn, "messages", "active", 1, true)?;
+        Self::ensure_numeric_column(
+            &conn,
+            "sessions",
+            "rewind_count",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        Self::ensure_numeric_column(&conn, "messages", "active", "INTEGER NOT NULL DEFAULT 1")?;
+        Self::ensure_numeric_column(&conn, "sessions", "spent_usd", "REAL NOT NULL DEFAULT 0")?;
+        Self::ensure_numeric_column(
+            &conn,
+            "sessions",
+            "budget_pending",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_session_active
                 ON messages(session_id, active, id)",
@@ -890,6 +897,106 @@ impl SessionPersistence {
         .map_err(|e| AgentError::Io(format!("Failed to create active message index: {e}")))?;
         Self::ensure_fts_schema(&conn, &self.db_path)?;
 
+        Ok(())
+    }
+
+    /// Read this session's priced spend. Older sessions start at zero.
+    pub fn session_spend_usd(&self, id: &str) -> Result<f64, AgentError> {
+        self.ensure_db_inner()?;
+        let conn = self.budget_connection()?;
+        let spent: f64 = conn
+            .query_row(
+                "SELECT COALESCE((SELECT spent_usd FROM sessions WHERE id = ?1), 0.0)",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|e| AgentError::Io(format!("Failed to read session spend: {e}")))?;
+        if !spent.is_finite() || spent < 0.0 {
+            return Err(AgentError::Io("Invalid saved session spend".into()));
+        }
+        Ok(spent)
+    }
+
+    /// Serialise capped runs and explicit resets for this session. The OS
+    /// releases the lock when a process exits; keep the lock file's inode stable.
+    pub(crate) fn lock_session_budget(&self, id: &str) -> Result<std::fs::File, AgentError> {
+        use sha2::{Digest, Sha256};
+        let dir = self.db_path.with_file_name("session-budget-locks");
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| AgentError::Io(format!("Cannot open budget lock directory: {e}")))?;
+        let path = dir.join(format!("{:x}", Sha256::digest(id.as_bytes())));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|e| AgentError::Io(format!("Cannot open session budget lock: {e}")))?;
+        file.try_lock().map_err(|e| {
+            AgentError::Io(format!(
+                "Cannot lock session budget for this run or reset: {e}"
+            ))
+        })?;
+        Ok(file)
+    }
+
+    fn budget_connection(&self) -> Result<rusqlite::Connection, AgentError> {
+        rusqlite::Connection::open(&self.db_path)
+            .map_err(|e| AgentError::Io(format!("Failed to open session budget: {e}")))
+    }
+
+    /// Record the outstanding request before dispatch. An interrupted request
+    /// with unconfirmed spend must be reconciled before another one starts.
+    pub(crate) fn begin_budget_request(&self, id: &str) -> Result<(), AgentError> {
+        let now = hermes_core::time::now_rfc3339();
+        let changed = self.budget_connection()?.execute(
+            "INSERT INTO sessions (id, created_at, updated_at, budget_pending) VALUES (?1, ?2, ?2, 1)
+             ON CONFLICT(id) DO UPDATE SET budget_pending = 1 WHERE sessions.budget_pending = 0",
+            rusqlite::params![id, now],
+        ).map_err(|e| AgentError::Io(format!("Cannot reserve session budget: {e}")))?;
+        if changed == 0 {
+            return Err(AgentError::Io("Previous provider request has unconfirmed spend. Check the provider's usage and /reset to start a new budget.".into()));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn charge_session(&self, id: &str, usd: f64) -> Result<(), AgentError> {
+        if !usd.is_finite() || usd < 0.0 {
+            return Err(AgentError::Io(
+                "Invalid provider charge; session spend is unconfirmed".into(),
+            ));
+        }
+        let changed = self
+            .budget_connection()?
+            .execute(
+                "UPDATE sessions SET spent_usd = spent_usd + ?2, budget_pending = 0
+             WHERE id = ?1 AND budget_pending = 1",
+                rusqlite::params![id, usd],
+            )
+            .map_err(|e| AgentError::Io(format!("Failed to record session spend: {e}")))?;
+        if changed != 1 {
+            return Err(AgentError::Io("Missing pending session charge".into()));
+        }
+        Ok(())
+    }
+
+    /// Clear a session's budget when the interactive user resets that session.
+    pub fn reset_session_spend(&self, id: &str) -> Result<(), AgentError> {
+        let _lock = self.lock_session_budget(id)?;
+        if !self
+            .db_path
+            .try_exists()
+            .map_err(|e| AgentError::Io(e.to_string()))?
+        {
+            return Ok(());
+        }
+        self.ensure_db_inner()?;
+        self.budget_connection()?
+            .execute(
+                "UPDATE sessions SET spent_usd = 0, budget_pending = 0 WHERE id = ?1",
+                [id],
+            )
+            .map_err(|e| AgentError::Io(format!("Failed to reset session spend: {e}")))?;
         Ok(())
     }
 
@@ -1220,6 +1327,10 @@ include!("session_persistence/session_io.rs");
 #[cfg(test)]
 #[path = "session_persistence/empty_snapshot_tests.rs"]
 mod empty_snapshot_tests;
+
+#[cfg(test)]
+#[path = "session_persistence/metadata_tests.rs"]
+mod metadata_tests;
 
 #[cfg(test)]
 mod tests;

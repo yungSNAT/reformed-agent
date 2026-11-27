@@ -85,6 +85,58 @@ fn tripped(result: &AgentResult) -> bool {
 }
 
 #[tokio::test]
+async fn a_named_budget_survives_two_runs_and_a_process_restart() {
+    const CHILD: &str = "HERMES_SYNTHETIC_BUDGET_TEST_STEP";
+    const ROOT: &str = "HERMES_SYNTHETIC_BUDGET_TEST_ROOT";
+    if let Ok(step) = std::env::var(CHILD) {
+        let home = std::path::PathBuf::from(std::env::var_os(ROOT).unwrap());
+        let (mut agent, provider, _isolated) = capped_haiku_agent(0.01);
+        agent.config.session_id = Some("fixture".into());
+        let agent = agent.with_session_budget_root(home.clone());
+        let prompt = vec![Message::user("fabricated turn")];
+        let result = if step == "second" {
+            agent.run_stream(prompt, None, Some(Box::new(|_| {}))).await
+        } else {
+            agent.run(prompt, None).await
+        }
+        .unwrap();
+        assert_eq!(tripped(&result), step != "first");
+        let delta = result.session_cost_usd.unwrap();
+        assert!((delta - if step == "third" { 0.0 } else { 0.006 }).abs() < 1e-9);
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(step != "third")
+        );
+        let store = crate::SessionPersistence::new(home);
+        let total = store.session_spend_usd("fixture").unwrap();
+        assert!((total - if step == "first" { 0.006 } else { 0.012 }).abs() < 1e-9);
+        assert_eq!(store.session_spend_usd("different-session").unwrap(), 0.0);
+        if step == "third" {
+            store.reset_session_spend("fixture").unwrap();
+            assert_eq!(store.session_spend_usd("fixture").unwrap(), 0.0);
+        }
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let thread = std::thread::current();
+    for step in ["first", "second", "third"] {
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", thread.name().unwrap(), "--nocapture"])
+            .env(CHILD, step)
+            .env(ROOT, root.path())
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{step}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+}
+
+#[tokio::test]
 async fn the_cost_cap_counts_what_earlier_runs_of_the_session_spent() {
     let (agent, _provider, _home) = capped_haiku_agent(0.01);
     let first = agent
@@ -109,6 +161,64 @@ async fn the_cost_cap_counts_what_earlier_runs_of_the_session_spent() {
         (second_cost - 0.006).abs() < 1e-9,
         "a run reports its own spend, not the session's: {second_cost}"
     );
+}
+
+#[tokio::test]
+async fn a_rejected_attempt_preserves_confirmed_spend_and_unblocks_the_next_request() {
+    let home = tempfile::tempdir().unwrap();
+    let (mut agent, _, _config_home) = capped_haiku_agent(0.03);
+    agent.config.session_id = Some("fixture".into());
+    let agent = agent.with_session_budget_root(home.path().into());
+    let store = crate::SessionPersistence::new(home.path());
+    let held = store.lock_session_budget("fixture").unwrap();
+    assert!(store.reset_session_spend("fixture").is_err());
+    drop(held);
+    agent.run(vec![Message::user("one")], None).await.unwrap();
+    assert!(agent
+        .metered_completion(async { Err(AgentError::AuthFailed("fixture rejection".into())) })
+        .await
+        .is_err());
+    assert!((store.session_spend_usd("fixture").unwrap() - 0.006).abs() < 1e-9);
+    agent.run(vec![Message::user("two")], None).await.unwrap();
+    assert!((store.session_spend_usd("fixture").unwrap() - 0.012).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn a_failed_charge_blocks_another_request_until_explicit_reset() {
+    use std::sync::atomic::Ordering;
+    let home = tempfile::tempdir().unwrap();
+    let store = crate::SessionPersistence::new(home.path());
+    assert_eq!(store.session_spend_usd("fixture").unwrap(), 0.0);
+    let conn = rusqlite::Connection::open(store.db_path()).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER reject_charge BEFORE UPDATE OF spent_usd ON sessions
+        BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;",
+    )
+    .unwrap();
+    let (mut agent, provider, _isolated) = capped_haiku_agent(0.01);
+    agent.config.session_id = Some("fixture".into());
+    let agent = agent.with_session_budget_root(home.path().into());
+    assert!(agent.run(vec![Message::user("one")], None).await.is_err());
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    conn.execute_batch("DROP TRIGGER reject_charge").unwrap();
+    let err = agent
+        .run(vec![Message::user("two")], None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("unconfirmed spend"));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    let running = store.lock_session_budget("fixture").unwrap();
+    assert!(store.reset_session_spend("fixture").is_err());
+    drop(running);
+    store.reset_session_spend("fixture").unwrap();
+    assert!(
+        agent
+            .run(vec![Message::user("new budget")], None)
+            .await
+            .unwrap()
+            .finished_naturally
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

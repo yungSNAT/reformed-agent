@@ -82,6 +82,11 @@ fn isolated_env(dir: &Path) -> HashMap<String, String> {
 
 fn auth_for(vars: HashMap<String, String>, server: &MockServer) -> Arc<VertexAuth> {
     let mut auth = VertexAuth::with_env(Arc::new(move |key: &str| vars.get(key).cloned()));
+    auth.http = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build loopback OAuth client");
     auth.google_token_endpoint = format!("{}/token", server.uri());
     auth.api_origin_override = Some(server.uri());
     Arc::new(auth)
@@ -206,10 +211,30 @@ async fn invalid_routing_is_rejected_before_an_oauth_exchange() {
 }
 
 #[tokio::test]
-async fn explicit_authorized_user_adc_uses_the_configured_google_exchange() {
+async fn explicit_authorized_user_adc_rotates_the_refresh_token() {
     let dir = tempfile::tempdir().expect("tempdir");
     let server = MockServer::start().await;
-    mount_token(&server, "ya29.explicit-adc", 3600).await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .and(body_string_contains("refresh_token=fixture-refresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "fixture-first-access",
+            "expires_in": "3600",
+            "refresh_token": "fixture-rotated",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .and(body_string_contains("refresh_token=fixture-rotated"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "fixture-next-access",
+            "expires_in": 3600.5,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
     let file = write_json(
         &dir.path().join("adc.json"),
         &json!({
@@ -229,12 +254,23 @@ async fn explicit_authorized_user_adc_uses_the_configured_google_exchange() {
     assert!(auth.has_credentials());
     assert_eq!(
         auth.access().await.expect("ADC access").token,
-        "ya29.explicit-adc"
+        "fixture-first-access"
     );
-    assert_eq!(
-        token_requests(&server).await[0]["grant_type"],
-        "refresh_token"
-    );
+    auth.invalidate_tokens().await;
+    for _ in 0..2 {
+        assert_eq!(
+            auth.access()
+                .await
+                .expect("ADC access after rotation")
+                .token,
+            "fixture-next-access"
+        );
+    }
+    let requests = token_requests(&server).await;
+    assert_eq!(requests.len(), 2, "the second grant should remain cached");
+    assert_eq!(requests[0]["grant_type"], "refresh_token");
+    assert_eq!(requests[1]["grant_type"], "refresh_token");
+    assert_eq!(requests[1]["refresh_token"], "fixture-rotated");
 }
 
 #[tokio::test]
@@ -511,11 +547,21 @@ async fn metadata_server_supplies_token_and_project() {
     Mock::given(method("GET"))
         .and(path("/computeMetadata/v1/project/project-id"))
         .and(header("metadata-flavor", "Google"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/computeMetadata/v1/project/project-id"))
+        .and(header("metadata-flavor", "Google"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("metadata-flavor", "Google")
                 .set_body_string("gce-project"),
         )
+        .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -552,6 +598,72 @@ async fn metadata_server_supplies_token_and_project() {
         "{}",
         access.base_url
     );
+}
+
+#[tokio::test]
+async fn metadata_access_rejects_unverified_or_invalid_token_responses() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (response, expected) in [
+        (
+            ResponseTemplate::new(200).set_body_string("fixture-response-body"),
+            "omitted Metadata-Flavor: Google",
+        ),
+        (
+            ResponseTemplate::new(200)
+                .insert_header("metadata-flavor", "Google")
+                .set_body_string("fixture-response-body"),
+            "returned invalid JSON for the access token",
+        ),
+        (
+            ResponseTemplate::new(403).set_body_string("fixture-response-body"),
+            "returned HTTP 403 for the access token",
+        ),
+        (
+            ResponseTemplate::new(200)
+                .insert_header("metadata-flavor", "Google")
+                .set_body_json(json!({
+                    "access_token": "fixture-response-body",
+                    "expires_in": "not-a-duration",
+                })),
+            "the token response has an invalid expires_in",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .and(header("metadata-flavor", "Google"))
+            .respond_with(ResponseTemplate::new(200).insert_header("metadata-flavor", "Google"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/computeMetadata/v1/project/project-id"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/computeMetadata/v1/instance/service-accounts/default/token",
+            ))
+            .and(header("metadata-flavor", "Google"))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let address = server.address().to_string();
+        let mut vars = isolated_env(dir.path());
+        vars.remove("NO_GCE_CHECK");
+        vars.insert("GCE_METADATA_IP".into(), address.clone());
+        vars.insert("GCE_METADATA_ROOT".into(), address);
+        vars.insert("GCLOUD_PROJECT".into(), "fixture-project".into());
+        let auth = auth_for(vars, &server);
+        let text = auth_error_text(auth.access().await);
+        assert!(text.contains(expected), "expected {expected:?}, got {text}");
+        assert!(!text.contains("fixture-response-body"), "{text}");
+        assert!(!text.contains("not-a-duration"), "{text}");
+    }
 }
 
 #[tokio::test]

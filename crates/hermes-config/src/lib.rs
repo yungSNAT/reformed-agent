@@ -9,6 +9,7 @@
 pub mod config;
 pub mod file_identity;
 pub mod loader;
+pub mod managed_config;
 pub mod managed_gateway;
 pub mod managed_node;
 pub mod merge;
