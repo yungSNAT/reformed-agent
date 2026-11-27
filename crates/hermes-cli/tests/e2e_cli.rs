@@ -790,3 +790,74 @@ async fn e2e_cli_oneshot_save_warning_on_unwritable_stderr_keeps_exit_code() {
 "
     );
 }
+
+#[tokio::test]
+async fn e2e_cli_memory_setup_previews_and_saves_self_hosted_configuration() {
+    use std::time::Duration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let profile = tempfile::tempdir().expect("fixture profile");
+    let home = profile.path();
+    let server = MockServer::start().await;
+    let host = server.uri();
+    let setup = |args: &[&str]| {
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_hermes-agent-ultra"));
+        child
+            .env_clear()
+            .env("HOME", home)
+            .env("USERPROFILE", home)
+            .env("HERMES_HOME", home)
+            .env("HERMES_MANAGED_DIR", home.join("managed"))
+            .envs(Some("SystemRoot").zip(std::env::var_os("SystemRoot")))
+            .envs(Some("LLVM_PROFILE_FILE").zip(std::env::var_os("LLVM_PROFILE_FILE")))
+            .kill_on_drop(true)
+            .args(["memory", "setup"])
+            .args(args)
+            .args([
+                "--yes",
+                "--mode",
+                "selfhosted",
+                "--host",
+                &format!("{host}/"),
+            ]);
+        child
+    };
+    let config = home.join("mem0.json");
+    let dry_run = tokio::time::timeout(Duration::from_secs(10), setup(&["--dry-run"]).output())
+        .await
+        .expect("dry-run timeout")
+        .expect("run memory setup preview");
+    assert!(dry_run.status.success(), "{dry_run:?}");
+    let preview = String::from_utf8_lossy(&dry_run.stdout);
+    assert!(preview.contains("Dry run complete; memory provider 'mem0' was not written."));
+    assert!(preview.contains(&format!("mode=selfhosted host={host} ")));
+    assert!(!config.exists());
+    assert!(server
+        .received_requests()
+        .await
+        .expect("recorded requests")
+        .is_empty());
+
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let saved = tokio::time::timeout(Duration::from_secs(10), setup(&["mem0"]).output())
+        .await
+        .expect("setup timeout")
+        .expect("run memory setup");
+    assert!(saved.status.success(), "{saved:?}");
+    let stdout = String::from_utf8_lossy(&saved.stdout);
+    assert!(stdout.contains("Configured memory provider 'mem0'."));
+    assert!(stdout.contains("Mem0 self-hosted reachability check warning:"));
+    let config: serde_json::Value =
+        serde_json::from_slice(&fs::read(config).expect("read saved fixture config"))
+            .expect("parse saved fixture config");
+    assert_eq!(config["mode"], "oss");
+    assert_eq!(config["host"], host);
+    assert_eq!(config["base_url"], host);
+    server.verify().await;
+}
