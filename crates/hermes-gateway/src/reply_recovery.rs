@@ -544,11 +544,12 @@ fn writer_pid(record: &PendingReply) -> Option<u32> {
 
 /// Whether the live process `pid` started at another time than the record's
 /// writer, so it is not the writer. Unknown starts (older records, Windows,
-/// an unreadable process) and starts read in another time namespace count as
-/// the writer.
+/// an unreadable process) and starts read in another time or PID namespace
+/// count as the writer.
 fn pid_reused(record: &PendingReply, pid: u32) -> bool {
     record.process_started.is_some_and(|writer| {
         writer.time_namespace == time_namespace()
+            && writer.pid_namespace == pid_namespace()
             && process_started(pid).is_some_and(|live| live != writer.at)
     })
 }
