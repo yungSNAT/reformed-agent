@@ -132,20 +132,17 @@ pub fn run_cron(_args: CronArgs) -> Result<i32, String> {
         .truncate(true)
         .open(&lock_path)
         .map_err(|e| format!("{lock_path}: {e}"))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(fs::TryLockError::WouldBlock) => {
-            println!("{LOG_TAG} lock busy; skipping overlapping run");
-            return Ok(0);
-        }
-        Err(fs::TryLockError::Error(e)) => return Err(format!("{lock_path}: {e}")),
+    // `flock -n 9 || exit 0`: any failure to take the lock skips the run.
+    if lock.try_lock().is_err() {
+        println!("{LOG_TAG} lock busy; skipping overlapping run");
+        return Ok(0);
     }
-    if !Path::new(&settings.repo_root).join(".git").is_dir() {
+    // A root `cd` cannot enter has no `.git` the script's `-d` test could see,
+    // so a failed `cd` reports the missing repository, as the script did.
+    if std::env::set_current_dir(&settings.repo_root).is_err() || !Path::new(".git").is_dir() {
         println!("{LOG_TAG} repository not found at {}", settings.repo_root);
         return Ok(1);
     }
-    std::env::set_current_dir(&settings.repo_root)
-        .map_err(|e| format!("cd {}: {e}", settings.repo_root))?;
     // The lock stays held until the sync returns, as the script's fd 9 did.
     let code = sync(settings.sync_args());
     drop(lock);
@@ -178,16 +175,14 @@ fn kept_lines(current: &str) -> String {
 }
 
 #[cfg(unix)]
-fn make_executable(path: &str) {
+fn make_executable(path: &str, meta: &fs::Metadata) {
     use std::os::unix::fs::PermissionsExt as _;
-    if let Ok(meta) = fs::metadata(path) {
-        let mode = meta.permissions().mode() | 0o111;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
-    }
+    let mode = meta.permissions().mode() | 0o111;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &str) {}
+fn make_executable(_path: &str, _meta: &fs::Metadata) {}
 
 pub fn run_install(args: InstallArgs) -> Result<i32, String> {
     let schedule = match args.args.first() {
@@ -200,17 +195,17 @@ pub fn run_install(args: InstallArgs) -> Result<i32, String> {
         _ => format!("{}/.hermes/logs/upstream-sync.log", home()?),
     };
     let cron_script = format!("{}/scripts/cron-upstream-sync.sh", settings.repo_root);
-    if !Path::new(&cron_script).is_file() {
+    let Some(meta) = fs::metadata(&cron_script).ok().filter(|m| m.is_file()) else {
         eprintln!("Missing script: {cron_script}");
         return Ok(1);
-    }
+    };
     if !on_path("crontab") {
         eprintln!("crontab command not found");
         return Ok(1);
     }
     fs::create_dir_all(parent_dir(&log_file))
         .map_err(|e| format!("mkdir {}: {e}", parent_dir(&log_file).display()))?;
-    make_executable(&cron_script);
+    make_executable(&cron_script, &meta);
     let entry = cron_entry(&schedule, &settings, &cron_script, &log_file);
     let current = Command::new("crontab")
         .arg("-l")

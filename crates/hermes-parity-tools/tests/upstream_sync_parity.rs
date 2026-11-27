@@ -960,3 +960,446 @@ fn install_missing_cron_script() {
         fs::remove_file(s.root.join("repo/scripts/cron-upstream-sync.sh")).expect("rm")
     }));
 }
+
+// Behaviour cases the scripts' records do not hold: each runs the Rust
+// command alone and checks what a user sees (exit code, output and report).
+
+/// Real git that exits 5 when its first 2 arguments are `GIT_FAIL_ON`, or
+/// removes itself after running when they are `GIT_VANISH_ON`, so the next
+/// git call cannot start, as when git is uninstalled during a run. `/bin/sh`,
+/// so it runs without `bash` on `PATH`.
+const FAULTY_GIT: &str = r#"#!/bin/sh
+if [ "$1 $2" = "${GIT_FAIL_ON:-}" ]; then exit 5; fi
+if [ "$1 $2" = "${GIT_VANISH_ON:-}" ]; then rm -f "$0"; fi
+exec "<REAL_GIT>" "$@"
+"#;
+
+struct Outcome {
+    sandbox: Sandbox,
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    /// The run report in `<ROOT>/reports`, or empty when none was written.
+    report: String,
+}
+
+fn put_tool(s: &Sandbox, rel: &str, text: &str) {
+    s.write(rel, text);
+    fs::set_permissions(s.root.join(rel), fs::Permissions::from_mode(0o755)).expect("chmod");
+}
+
+fn real_git(s: &Sandbox) -> String {
+    let real = fs::read_link(s.root.join("sysbin/git")).expect("git link");
+    real.to_string_lossy().into_owned()
+}
+
+/// Put `FAULTY_GIT` first on `PATH` and drop the linked host git behind it.
+fn faulty_git(s: &Sandbox) {
+    let text = FAULTY_GIT.replace("<REAL_GIT>", &real_git(s));
+    fs::remove_file(s.root.join("sysbin/git")).expect("unlink git");
+    put_tool(s, "bin/git", &text);
+}
+
+fn outcome_of(sandbox: Sandbox, mut cmd: Command) -> Outcome {
+    let out = cmd.output().expect("run");
+    let root = sandbox.root.to_string_lossy().into_owned();
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace(&root, "<ROOT>");
+    let report = fs::read_dir(sandbox.root.join("reports"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| !p.to_string_lossy().ends_with("-conflict.txt"))
+        .map(|p| text(&fs::read(p).expect("report")))
+        .unwrap_or_default();
+    Outcome {
+        sandbox,
+        code: out.status.code(),
+        stdout: text(&out.stdout),
+        stderr: text(&out.stderr),
+        report,
+    }
+}
+
+fn outcome(case: Case) -> Outcome {
+    let sandbox = Sandbox::new(case.scenario);
+    if case.tool == Tool::Install {
+        sandbox.write("repo/scripts/cron-upstream-sync.sh", "#!/bin/sh\n");
+    }
+    (case.setup)(&sandbox);
+    let root = sandbox.root.to_string_lossy().into_owned();
+    let mut cmd = sandbox.command(bin());
+    cmd.arg(case.tool.subcommand());
+    cmd.args(case.args.iter().map(|a| a.replace("<ROOT>", &root)));
+    for (k, v) in &case.env {
+        cmd.env(k, v.replace("<ROOT>", &root));
+    }
+    outcome_of(sandbox, cmd)
+}
+
+/// Run a subcommand from a directory removed under it, where the current
+/// directory cannot be read.
+fn outcome_in_removed_dir(subcommand: &str) -> Outcome {
+    let sandbox = Sandbox::new(Scenario::NoUpdates);
+    let mut cmd = sandbox.command(&sandbox.path("sysbin/sh"));
+    cmd.current_dir(&sandbox.root)
+        .env("LOCK_FILE", sandbox.path("home/cron.lock"))
+        .args([
+            "-c",
+            r#"mkdir "$1" && cd "$1" && rmdir "$1" && exec "$2" "$3""#,
+            "sh",
+            &sandbox.path("gone"),
+            bin(),
+            subcommand,
+        ]);
+    outcome_of(sandbox, cmd)
+}
+
+#[test]
+fn sync_names_the_missing_upstream_remote() {
+    let out = outcome(sync("upstream", Scenario::NoUpdates, &["--upstream", "mirror"]));
+    assert_eq!(out.code, Some(1));
+    assert_eq!(
+        out.stderr,
+        "[sync-upstream] ERROR: Upstream remote 'mirror' is not configured\n"
+    );
+}
+
+#[test]
+fn sync_fetches_the_named_base_branch() {
+    let out = outcome(sync("base", Scenario::Clean, &["--base-branch", "trunk"]));
+    assert_eq!(out.code, Some(128), "{}", out.stderr);
+    assert!(out
+        .stdout
+        .contains("[sync-upstream] Fetching origin/trunk and upstream/trunk...\n"));
+    assert_eq!(out.report, "");
+}
+
+#[test]
+fn sync_needs_git_on_path() {
+    let out = outcome(sync("no-git", Scenario::NoUpdates, &[]).env("PATH", "<ROOT>/home"));
+    assert_eq!(out.code, Some(1));
+    assert_eq!(out.stderr, "[sync-upstream] ERROR: git is required\n");
+}
+
+#[test]
+fn sync_reads_an_empty_path_entry_as_the_current_directory() {
+    let out = outcome(
+        sync("empty-entry", Scenario::NoUpdates, &[])
+            .env("PATH", ":")
+            .setup(|s| {
+                let text = FAULTY_GIT.replace("<REAL_GIT>", &real_git(s));
+                put_tool(s, "repo/git", &text);
+            }),
+    );
+    // git ran from the current directory, so the untracked `git` file makes
+    // the tree dirty.
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr.contains("Working tree is not clean") && !out.stderr.contains("git is required"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn sync_reports_a_report_dir_it_cannot_create() {
+    let out = outcome(sync(
+        "report-dir",
+        Scenario::NoUpdates,
+        &["--report-dir", "<ROOT>/repo/README.md/reports"],
+    ));
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr
+            .starts_with("mkdir: cannot create directory '<ROOT>/repo/README.md/reports': "),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn sync_reports_a_repo_root_it_cannot_enter() {
+    let out = outcome(sync(
+        "repo-root",
+        Scenario::NoUpdates,
+        &["--repo-root", "<ROOT>/absent"],
+    ));
+    assert_eq!(out.code, Some(1));
+    assert!(out.stderr.starts_with("cd: <ROOT>/absent: "), "{}", out.stderr);
+}
+
+#[test]
+fn sync_in_a_removed_directory_uses_dot() {
+    let out = outcome_in_removed_dir("sync-upstream");
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr
+            .starts_with("mkdir: cannot create directory './.sync-reports': "),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn cron_in_a_removed_directory_uses_dot() {
+    let out = outcome_in_removed_dir("run-upstream-sync-cron");
+    assert_eq!(out.code, Some(1));
+    assert_eq!(
+        out.stdout,
+        "[cron-upstream-sync] repository not found at .\n"
+    );
+}
+
+#[test]
+fn sync_reports_divergence_when_git_log_prints_nothing() {
+    let out = outcome(
+        sync("vanish-log", Scenario::Clean, &["--dry-run"])
+            .env("GIT_VANISH_ON", "merge-base --is-ancestor")
+            .setup(faulty_git),
+    );
+    assert_eq!(out.code, Some(0), "{}", out.stderr);
+    assert!(out.stderr.contains("git: "), "{}", out.stderr);
+    assert!(
+        out.report.contains(
+            "## Pending Upstream Commits\n```\n(origin and upstream diverged; merge strategy required)\n```\n"
+        ),
+        "{}",
+        out.report
+    );
+    assert!(out.report.ends_with("status: dry-run\n"), "{}", out.report);
+}
+
+#[test]
+fn sync_exits_127_when_git_cannot_start_for_a_fetch() {
+    let out = outcome(
+        sync("vanish-fetch", Scenario::Clean, &[])
+            .env("GIT_VANISH_ON", "status --porcelain")
+            .setup(faulty_git),
+    );
+    assert_eq!(out.code, Some(127));
+    assert_eq!(out.stderr, "git: No such file or directory (os error 2)\n");
+    assert_eq!(out.report, "");
+}
+
+#[test]
+fn sync_exits_127_when_git_cannot_start_for_a_ref() {
+    let out = outcome(
+        sync("vanish-ref", Scenario::Clean, &[])
+            .env("GIT_VANISH_ON", "fetch upstream")
+            .setup(faulty_git),
+    );
+    assert_eq!(out.code, Some(127));
+    assert!(out.stderr.ends_with("git: No such file or directory (os error 2)\n"), "{}", out.stderr);
+    assert_eq!(out.report, "");
+}
+
+#[test]
+fn sync_exits_with_git_code_when_a_ref_lookup_fails() {
+    let out = outcome(
+        sync("fail-ref", Scenario::Clean, &[])
+            .env("GIT_FAIL_ON", "rev-parse refs/remotes/origin/main")
+            .setup(faulty_git),
+    );
+    assert_eq!(out.code, Some(5));
+    assert_eq!(out.report, "");
+}
+
+#[test]
+fn sync_cherry_pick_needs_linear_commits() {
+    let out = outcome(
+        sync("fail-rev-list", Scenario::Clean, &["--strategy", "cherry-pick", "--no-pr"])
+            .env("GIT_FAIL_ON", "rev-list --reverse")
+            .setup(faulty_git),
+    );
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr.ends_with(
+            "[sync-upstream] ERROR: No linear commits to cherry-pick; rerun with --strategy merge.\n"
+        ),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn sync_records_a_gate_that_bash_cannot_run() {
+    let out = outcome(
+        sync("no-bash", Scenario::Clean, &["--no-tests", "--no-pr"]).setup(|s| {
+            faulty_git(s);
+            fs::remove_file(s.root.join("sysbin/bash")).expect("unlink bash");
+        }),
+    );
+    assert_eq!(out.code, Some(1));
+    assert!(out.stderr.ends_with("[sync-upstream] ERROR: Red-team gate failed\n"), "{}", out.stderr);
+    assert!(
+        out.report.ends_with(
+            "status: redteam-gate-failed\nredteam_output: bash: No such file or directory (os error 2)\n"
+        ),
+        "{}",
+        out.report
+    );
+}
+
+#[test]
+fn sync_records_no_gate_report_when_a_gate_prints_none() {
+    let out = outcome(sync(
+        "no-report-lines",
+        Scenario::Clean,
+        &[
+            "--no-tests",
+            "--redteam-cmd",
+            "true",
+            "--elite-gate",
+            "--elite-cmd",
+            "true",
+            "--no-doc-refresh",
+            "--no-pr",
+        ],
+    ));
+    assert_eq!(out.code, Some(0), "{}", out.stderr);
+    assert!(out.report.contains("status: synced-branch-pr\n"), "{}", out.report);
+    assert!(
+        !out.report.contains("redteam_report") && !out.report.contains("elite_report"),
+        "{}",
+        out.report
+    );
+}
+
+#[test]
+fn sync_stops_when_the_report_cannot_be_written() {
+    let out = outcome(sync("read-only-reports", Scenario::NoUpdates, &[]).setup(|s| {
+        fs::set_permissions(s.root.join("reports"), fs::Permissions::from_mode(0o555))
+            .expect("chmod");
+    }));
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr.starts_with("<ROOT>/reports/upstream-sync-")
+            && out.stderr.ends_with(".txt: Permission denied (os error 13)\n"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn sync_strict_gate_passes_an_update_that_changes_no_files() {
+    let out = outcome(
+        sync("empty-update", Scenario::NoUpdates, &["--strict-risk-gate", "--dry-run"]).setup(|s| {
+            // Upstream gains origin's tree plus an empty commit: one pending
+            // commit and no changed file.
+            s.git_in("seed", &["checkout", "-q", "fork"]);
+            s.git_in("seed", &["commit", "-q", "--allow-empty", "-m", "upstream: empty"]);
+            s.git_in(
+                "seed",
+                &["push", "-q", &s.path("remotes/NousResearch/hermes-agent.git"), "fork:main"],
+            );
+        }),
+    );
+    assert_eq!(out.code, Some(0), "{}", out.stderr);
+    assert!(out.report.contains("upstream: empty"), "{}", out.report);
+    assert!(out.report.ends_with("status: dry-run\n"), "{}", out.report);
+    assert!(!out.report.contains("risk_gate_status"), "{}", out.report);
+}
+
+#[test]
+fn sync_strict_gate_stops_on_an_unreadable_risk_file() {
+    let out = outcome(
+        sync("unreadable-risk", Scenario::Risk, &["--strict-risk-gate", "--dry-run"]).setup(|s| {
+            let file = s.root.join("repo/scripts/upstream-risk-paths.txt");
+            fs::set_permissions(file, fs::Permissions::from_mode(0o000)).expect("chmod");
+        }),
+    );
+    assert_eq!(out.code, Some(1));
+    assert_eq!(
+        out.stderr,
+        "<ROOT>/repo/scripts/upstream-risk-paths.txt: Permission denied (os error 13)\n"
+    );
+    assert!(!out.report.contains("risk_gate_status"), "{}", out.report);
+}
+
+#[test]
+fn cron_takes_a_relative_lock_file_in_the_current_directory() {
+    let out = outcome(
+        cron("relative-lock", Scenario::NoUpdates)
+            .env("REPO_ROOT", "<ROOT>/absent")
+            .env("LOCK_FILE", "cron.lock"),
+    );
+    assert!(out.sandbox.root.join("repo/cron.lock").is_file());
+    assert_eq!(out.code, Some(1));
+    assert_eq!(
+        out.stdout,
+        "[cron-upstream-sync] repository not found at <ROOT>/absent\n"
+    );
+}
+
+#[test]
+fn cron_reports_a_lock_dir_it_cannot_create() {
+    let out = outcome(
+        cron("lock-dir", Scenario::NoUpdates)
+            .env("LOCK_FILE", "<ROOT>/repo/README.md/locks/sync.lock"),
+    );
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr.starts_with("mkdir <ROOT>/repo/README.md/locks: "),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn cron_reports_a_lock_file_it_cannot_open() {
+    let out = outcome(cron("lock-open", Scenario::NoUpdates).env("LOCK_FILE", "<ROOT>/home"));
+    assert_eq!(out.code, Some(1));
+    assert!(out.stderr.starts_with("<ROOT>/home: "), "{}", out.stderr);
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
+fn install_reports_a_log_dir_it_cannot_create() {
+    let out = outcome(
+        install("log-dir", &[]).env("LOG_FILE", "<ROOT>/repo/README.md/logs/sync.log"),
+    );
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr.starts_with("mkdir <ROOT>/repo/README.md/logs: "),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
+fn install_stops_when_the_new_crontab_cannot_be_written() {
+    let out = outcome(install("no-tmp", &[]).env("TMPDIR", "<ROOT>/absent"));
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr.starts_with("mktemp: ")
+            && out.stderr.ends_with("could not write the new crontab\n"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
+fn install_exits_as_the_shell_reports_a_crontab_killed_by_a_signal() {
+    let out = outcome(install("crontab-signal", &[]).setup(|s| {
+        put_tool(
+            s,
+            "bin/crontab",
+            "#!/bin/sh\n[ \"$1\" = -l ] && exit 1\nkill -TERM $$\n",
+        );
+    }));
+    assert_eq!(out.code, Some(128 + 15));
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
+fn install_reports_a_crontab_that_cannot_start() {
+    let out = outcome(install("crontab-gone", &[]).setup(|s| {
+        put_tool(s, "bin/crontab", "#!/bin/sh\nrm -f \"$0\"\nexit 1\n");
+    }));
+    assert_eq!(out.code, Some(1));
+    assert_eq!(out.stderr, "crontab: No such file or directory (os error 2)\n");
+    assert_eq!(out.stdout, "");
+}

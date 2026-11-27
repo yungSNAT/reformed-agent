@@ -85,17 +85,13 @@ pub(crate) fn env_or(name: &str, default: &str) -> String {
     }
 }
 
-/// `command -v <name>` for a program on `PATH`.
+/// `command -v <name>` for a program on `PATH`. An empty entry joins to the
+/// bare name, which resolves against the current directory, as the shell
+/// reads an empty entry.
 pub(crate) fn on_path(name: &str) -> bool {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path).any(|dir| {
-        let dir = if dir.as_os_str().is_empty() {
-            PathBuf::from(".")
-        } else {
-            dir
-        };
-        fs::metadata(dir.join(name)).is_ok_and(|m| m.is_file() && executable(&m))
-    })
+    std::env::split_paths(&path)
+        .any(|dir| fs::metadata(dir.join(name)).is_ok_and(|m| m.is_file() && executable(&m)))
 }
 
 #[cfg(unix)]
@@ -685,23 +681,20 @@ impl TempFile {
             options.write(true).create_new(true);
             #[cfg(unix)]
             std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-            match options.open(&path) {
-                Ok(mut f) => {
-                    return match f.write_all(text.as_bytes()) {
-                        Ok(()) => Ok(Self(path)),
-                        Err(e) => {
-                            let _ = fs::remove_file(&path);
-                            eprintln!("mktemp: {e}");
-                            Err(1)
-                        }
-                    };
-                }
+            let file = match options.open(&path) {
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => {
+                other => other,
+            };
+            // A file whose write fails is removed when its `TempFile` drops.
+            return file
+                .and_then(|mut f| {
+                    let temp = Self(path);
+                    f.write_all(text.as_bytes()).map(|()| temp)
+                })
+                .map_err(|e| {
                     eprintln!("mktemp: {e}");
-                    return Err(1);
-                }
-            }
+                    1
+                });
         }
         eprintln!("mktemp: no free name in {}", dir.display());
         Err(1)
@@ -1395,6 +1388,11 @@ mod tests {
         );
         assert_eq!(shell_quote("#a=~b:~c"), "\\#a=\\~b:\\~c");
         assert_eq!(shell_quote("a\nb'\\\x01"), "$'a\\nb\\'\\\\\\001'");
+        // bash 5: printf '%q' $'\a\b\e\f\r\t\v'
+        assert_eq!(
+            shell_quote("\x07\x08\x1b\x0c\r\t\x0b"),
+            "$'\\a\\b\\E\\f\\r\\t\\v'"
+        );
     }
 
     #[test]
@@ -1428,6 +1426,19 @@ mod tests {
             ("?(ab)c", "c", true),
             ("*(a|b)c", "abbac", true),
             ("a(b", "a(b", true),
+            // Each checked with bash 5's `[[ "$path" == $pattern ]]`.
+            ("@(ab", "@(ab", true),
+            ("a\\", "a\\", true),
+            ("@(a\\)|b)", "a)", true),
+            ("@(a\\)|b)", "b", true),
+            ("@(a\\)|b)", "a", false),
+            ("@(a@(b)c)", "abc", true),
+            ("@(@(a|b)|c)d", "bd", true),
+            ("@(@(a|b)|c)d", "abd", false),
+            ("a[[:b]", "a:", true),
+            ("a[[:b]", "a[", true),
+            ("a[\\]]", "a]", true),
+            ("a[\\]]", "a\\", false),
         ] {
             assert_eq!(pattern_matches(pattern, path), want, "{pattern} vs {path}");
         }
@@ -1459,6 +1470,14 @@ mod tests {
             summary(r#"{"items":"abc"}"#),
             "total=3, queued=0, actionable=0"
         );
+        // A null or false value is falsy, as `or` read it in Python.
+        assert_eq!(
+            summary(
+                r#"{"items":null,"entries":[{"state":false,"status":"open","classification":"required"}]}"#
+            ),
+            "total=1, queued=1, actionable=1"
+        );
+        assert_eq!(summary(r#"{"items":true}"#), "unavailable");
         assert_eq!(summary(r#"{"items":5}"#), "unavailable");
         assert_eq!(summary("7"), "total=0, queued=0, actionable=0");
         assert_eq!(summary("{bad"), "unavailable");
@@ -1489,6 +1508,24 @@ mod tests {
         let path = file.path();
         drop(file);
         assert!(!Path::new(&path).exists());
+    }
+
+    #[test]
+    fn temp_files_fail_in_a_missing_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("missing");
+        assert!(TempFile::new_in(&missing, "t", "x").is_err_and(|code| code == 1));
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn temp_files_fail_when_every_name_is_taken() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for n in 0..1000 {
+            fs::write(dir.path().join(format!("t.{}.{n}", std::process::id())), "").expect("write");
+        }
+        assert!(TempFile::new_in(dir.path(), "t", "x").is_err_and(|code| code == 1));
+        assert_eq!(fs::read_dir(dir.path()).expect("read dir").count(), 1000);
     }
 
     #[test]
