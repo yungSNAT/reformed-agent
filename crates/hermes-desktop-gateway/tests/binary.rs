@@ -228,3 +228,33 @@ fn keeps_serving_after_stdin_closes_without_the_flag() {
         "the gateway stopped although stdin closing was not asked for"
     );
 }
+
+/// A child gateway, as a parent starts it, serves until the parent closes its standard input
+/// (the parent stopped it or died), then exits with status 0.
+#[test]
+fn a_child_gateway_stops_cleanly_when_its_parents_pipe_closes() {
+    let home = tempfile::tempdir().unwrap();
+    let mut child = Command::new(BIN)
+        .args(["--port", "0", "--exit-when-stdin-closes", "--child"])
+        .env("HERMES_HOME", home.path())
+        .env(TOKEN_ENV, "0123456789abcdef0123456789abcdef-given")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let first = lines.next().unwrap().unwrap();
+    let port: u16 = first
+        .strip_prefix("HERMES_BACKEND_READY port=")
+        .unwrap_or_else(|| panic!("first line: {first}"))
+        .parse()
+        .unwrap();
+    assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
+    drop(child.stdin.take());
+    let status = wait_exit(&mut child);
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "child gateway did not exit cleanly when stdin closed: {status:?}"
+    );
+}

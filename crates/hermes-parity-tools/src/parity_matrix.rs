@@ -146,7 +146,11 @@ const PATH_TO_WORKSTREAM: &[(&str, &str)] = &[
     ("scripts/setup-upstream-webhook", "WS7"),
     ("scripts/sync-upstream.sh", "WS7"),
     ("scripts/cron-upstream-sync.sh", "WS7"),
-    ("scripts/install-upstream-sync-cron.sh", "WS7"),
+    ("crates/hermes-parity-tools/src/sync_upstream.rs", "WS7"),
+    (
+        "crates/hermes-parity-tools/src/upstream_sync_cron.rs",
+        "WS7",
+    ),
     ("scripts/upstream-risk-paths.txt", "WS7"),
     ("gateway", "WS2"),
     ("plugins", "WS3"),

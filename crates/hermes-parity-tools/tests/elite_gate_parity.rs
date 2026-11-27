@@ -96,6 +96,13 @@ impl Sandbox {
             .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null");
+        // Keep coverage of the subcommands: the profile path survives `env_clear`.
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            cmd.env(
+                "LLVM_PROFILE_FILE",
+                std::env::current_dir().unwrap().join(profile),
+            );
+        }
         cmd
     }
 
