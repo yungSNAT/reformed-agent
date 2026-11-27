@@ -1196,8 +1196,10 @@ fn recall_fails_when_nothing_usable_comes_back() {
     ];
     for responses in cases {
         let (endpoint, rx) = openviking_server(responses);
-        let result = prefetch_for(endpoint, "anything", OpenVikingRecallConfig::default()).run();
-        assert!(result.is_err());
+        // With a session id the plugin tries search, then find.
+        let mut prefetch = prefetch_for(endpoint, "anything", OpenVikingRecallConfig::default());
+        prefetch.session_id = "s".to_string();
+        assert!(prefetch.run().is_err());
         for _ in 0..2 {
             rx.recv_timeout(StdDuration::from_secs(2)).expect("request");
         }
