@@ -279,11 +279,19 @@ async fn the_routes_answer_a_missing_path_an_unchanged_file_and_a_refused_ref() 
         .unwrap();
     assert_eq!(outside.status(), 403, "status outside the roots");
 
-    let rev = |r: &str| format!("{}&ref={r}", at("/api/git/review/rev-parse", &base.join("proj")));
+    let rev = |r: &str| {
+        format!(
+            "{}&ref={r}",
+            at("/api/git/review/rev-parse", &base.join("proj"))
+        )
+    };
     let named = get(rev("main"), None).await.unwrap();
     assert_eq!(named.status(), 200, "a named ref");
     let body: Value = named.json().await.unwrap();
-    assert!(body["sha"].as_str().is_some_and(|s| s.len() == 40), "{body}");
+    assert!(
+        body["sha"].as_str().is_some_and(|s| s.len() == 40),
+        "{body}"
+    );
     let option = get(rev("-n"), None).await.unwrap();
     assert_eq!(option.status(), 400, "a ref that reads as an option");
 }

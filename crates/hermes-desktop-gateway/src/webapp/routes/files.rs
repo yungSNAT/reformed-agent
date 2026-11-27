@@ -746,13 +746,12 @@ pub(crate) fn repo_status(dir: &RepoDir, refused: &[PathBuf]) -> Option<Value> {
             detached = head == "(detached)";
             branch = (!detached).then(|| head.to_owned());
         } else if let Some(ab) = rec.strip_prefix("# branch.ab ") {
-            for tok in ab.split_whitespace() {
-                if let Some(n) = tok.strip_prefix('+') {
-                    ahead = n.parse().unwrap_or(0);
-                } else if let Some(n) = tok.strip_prefix('-') {
-                    behind = n.parse().unwrap_or(0);
-                }
-            }
+            // `+<ahead> -<behind>`, in that order.
+            let mut counts = ab
+                .split_whitespace()
+                .map(|t| t.get(1..).and_then(|n| n.parse().ok()).unwrap_or(0));
+            ahead = counts.next().unwrap_or(0);
+            behind = counts.next().unwrap_or(0);
         }
     }
     let entries = walk_entries(&raw);

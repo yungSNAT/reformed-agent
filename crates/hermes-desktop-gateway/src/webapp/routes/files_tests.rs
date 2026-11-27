@@ -764,7 +764,11 @@ fn a_listing_answers_missing_unreadable_and_file_paths_in_its_body() {
     let inner = list(&t, &at(&t, "locked/inner")).unwrap();
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!(shut, answer("EACCES"), "a folder it may not read");
-    assert_eq!(inner, answer("EACCES"), "a path under a folder it may not search");
+    assert_eq!(
+        inner,
+        answer("EACCES"),
+        "a path under a folder it may not search"
+    );
     let ApiError(status, _) = list(&t, t.outside.to_str().unwrap()).unwrap_err();
     assert_eq!(status, StatusCode::FORBIDDEN, "outside the roots");
 }
@@ -862,7 +866,11 @@ fn untracked_line_counts_skip_what_is_not_small_readable_text() {
     .unwrap();
     let refused = [private];
     let lines = |rel: &str| untracked_lines(&t.root, &top, rel, &refused);
-    assert_eq!(lines("short.txt"), 2, "a last line without a newline counts");
+    assert_eq!(
+        lines("short.txt"),
+        2,
+        "a last line without a newline counts"
+    );
     for rel in [
         "binary.txt",
         ".env",
@@ -913,6 +921,17 @@ fn status_names_the_remote_default_branch_and_the_distance_from_upstream() {
     assert_eq!(status["defaultBranch"], "trunk");
     assert_eq!(status["ahead"], 1);
     assert_eq!(status["behind"], 0);
+}
+
+#[test]
+fn a_plain_origin_head_falls_back_to_the_local_default_branch() {
+    let t = tree();
+    let repo = t.root.join("proj");
+    run(&repo, &["init", "-q", "-b", "main"]);
+    commit_all(&repo);
+    run(&repo, &["update-ref", "refs/remotes/origin/HEAD", "HEAD"]);
+    let status = status_at(&t, "proj").expect("a status");
+    assert_eq!(status["defaultBranch"], "main");
 }
 
 #[test]
