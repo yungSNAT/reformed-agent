@@ -120,10 +120,29 @@ fn the_hermes_home_and_credential_folders_are_refused_inside_the_root() {
             "{p}"
         );
     }
-    // A link with an innocent name to a secret is judged by where it leads.
+    // A link with an innocent name to a secret is judged by where it leads, whether or not the
+    // leaf exists, so an inside-root link to a sensitive folder is not an existence oracle.
     symlink(t.root.join(".ssh/id_ed25519"), t.root.join("notes.txt")).unwrap();
     assert_eq!(
         resolve(&at(&t, "notes.txt"), &r, Some(&t.root)).unwrap_err(),
+        Refusal::Sensitive
+    );
+    let aws = t.root.join(".aws");
+    std::fs::create_dir(&aws).unwrap();
+    std::fs::write(aws.join("notes.txt"), "secret").unwrap();
+    symlink(&aws, t.root.join("lnk")).unwrap();
+    for p in ["lnk/notes.txt", "lnk/missing"] {
+        assert_eq!(
+            resolve(&at(&t, p), &r, Some(&t.root)).unwrap_err(),
+            Refusal::Sensitive,
+            "{p}"
+        );
+    }
+    let cfg = t.root.join(".config");
+    std::fs::create_dir(&cfg).unwrap();
+    symlink(&cfg, t.root.join("cfg")).unwrap();
+    assert_eq!(
+        resolve(&at(&t, "cfg/gh/missing"), &r, Some(&t.root)).unwrap_err(),
         Refusal::Sensitive
     );
 }
@@ -525,7 +544,17 @@ fn browser_profiles_and_key_stores_are_sensitive() {
 fn a_working_folder_holding_system_folders_is_not_a_root() {
     let home = Path::new("/home/u");
     for bad in [
-        "/", "/usr", "/etc", "/home", "/var", "/private", "/Users", "/Library", "/System", "/root",
+        "/",
+        "/usr",
+        "/etc",
+        "/home",
+        "/var",
+        "/private",
+        "/private/tmp",
+        "/Users",
+        "/Library",
+        "/System",
+        "/root",
     ] {
         assert!(!extra_root_allowed(Path::new(bad), Some(home)), "{bad}");
     }
@@ -535,6 +564,7 @@ fn a_working_folder_holding_system_folders_is_not_a_root() {
         "/srv/work",
         "/opt/src/app",
         "/tmp/x",
+        "/private/tmp/x",
     ] {
         assert!(extra_root_allowed(Path::new(ok), Some(home)), "{ok}");
     }
@@ -1016,9 +1046,68 @@ fn a_repository_whose_worktree_or_git_folder_escapes_is_refused() {
     .unwrap();
     assert_eq!(status_at(&t, "linked"), None, "gitfile outside root");
 
-    // Even a real repository at the root itself omits refused trees from status entries.
+    // A linked worktree inside the root whose commondir points outside the root or into .hermes
+    // must be refused by `inside(&common_dir)`.
+    let hermes_repo = t.hermes.join("secret_repo");
+    std::fs::create_dir(&hermes_repo).unwrap();
+    run(&hermes_repo, &["init", "-q", "-b", "hermes-secret"]);
+    std::fs::write(hermes_repo.join("h.txt"), "h\n").unwrap();
+    commit_all(&hermes_repo);
+    for (name, target_git, branch) in [
+        ("commondir-outside", ext.join(".git"), "secret"),
+        (
+            "commondir-hermes",
+            hermes_repo.join(".git"),
+            "hermes-secret",
+        ),
+    ] {
+        let fake_git = t.root.join(format!("{name}-git"));
+        let wt_dir = t.root.join(name);
+        std::fs::create_dir(&fake_git).unwrap();
+        std::fs::create_dir(&wt_dir).unwrap();
+        std::fs::write(fake_git.join("HEAD"), format!("ref: refs/heads/{branch}\n")).unwrap();
+        std::fs::write(
+            fake_git.join("gitdir"),
+            format!("{}\n", wt_dir.join(".git").display()),
+        )
+        .unwrap();
+        std::fs::write(
+            fake_git.join("commondir"),
+            format!("{}\n", target_git.display()),
+        )
+        .unwrap();
+        std::fs::write(
+            wt_dir.join(".git"),
+            format!("gitdir: {}\n", fake_git.display()),
+        )
+        .unwrap();
+        assert_eq!(status_at(&t, name), None, "{name}");
+    }
+
+    // A directory name containing `\n` must not spoof `repo_top`'s 3 rev-parse output lines.
+    std::fs::create_dir_all(t.root.join("a/.git")).unwrap();
+    let r_no_slash = t.root.to_str().unwrap().trim_start_matches('/');
+    let nl_rel = format!("a/\n/{r_no_slash}/a/.git/\n/{r_no_slash}/a/.git");
+    let nl_dir = t.root.join(&nl_rel);
+    std::fs::create_dir_all(&nl_dir).unwrap();
+    std::fs::write(
+        nl_dir.join(".git"),
+        format!("gitdir: {}\n", ext.join(".git").display()),
+    )
+    .unwrap();
+    assert_eq!(
+        status_at(&t, &nl_rel),
+        None,
+        "newline-in-path repo_top spoof"
+    );
+
+    // Even a real repository at the root itself omits refused trees from status entries and
+    // tracked numstat line counts.
     let t2 = tree();
     run(&t2.root, &["init", "-q", "-b", "main"]);
+    commit_all(&t2.root);
+    std::fs::write(t2.hermes.join("auth.json"), "1\n2\n3\n4\n5\n6\n").unwrap();
+    std::fs::write(t2.root.join("proj/src/main.rs"), "fn main() {}\n// extra\n").unwrap();
     let status = status_at(&t2, "proj").expect("real repo at root");
     let paths: Vec<&str> = status["files"]
         .as_array()
@@ -1029,6 +1118,10 @@ fn a_repository_whose_worktree_or_git_folder_escapes_is_refused() {
     assert!(
         !paths.iter().any(|p| p.starts_with(".hermes")),
         "refused tree listed in status: {paths:?}"
+    );
+    assert_eq!(
+        status["added"], 1,
+        "refused tree tracked lines leaked into added: {status}"
     );
 }
 
@@ -1062,11 +1155,18 @@ fn a_system_or_kernel_home_folder_is_not_a_root() {
         "/home",
         "/Users",
         "/tmp",
+        "/private/tmp",
         "/private/var/db",
     ] {
         assert!(!home_root_allowed(Path::new(bad)), "{bad}");
     }
-    for ok in ["/home/u", "/Users/u", "/var/home/u", "/tmp/x"] {
+    for ok in [
+        "/home/u",
+        "/Users/u",
+        "/var/home/u",
+        "/tmp/x",
+        "/private/tmp/x",
+    ] {
         assert!(home_root_allowed(Path::new(ok)), "{ok}");
     }
     let root_home = roots_for(Some(Path::new("/")), Path::new("/"), &[]);
@@ -1096,5 +1196,25 @@ fn a_renamed_all_digit_file_does_not_inflate_line_counts() {
     run(&repo, &["mv", "7", "8"]);
     let status = status_at(&t, "proj").expect("a status");
     assert_eq!(status["added"], 0, "rename path inflated added: {status}");
+    assert_eq!(status["removed"], 0);
+}
+
+#[test]
+fn a_filename_starting_with_a_tab_does_not_swallow_following_numstat_records() {
+    let t = tree();
+    let repo = t.root.join("proj");
+    run(&repo, &["init", "-q", "-b", "main"]);
+    for name in ["\ta.txt", "b.txt", "c.txt"] {
+        std::fs::write(repo.join(name), "one\n").unwrap();
+    }
+    commit_all(&repo);
+    for name in ["\ta.txt", "b.txt", "c.txt"] {
+        std::fs::write(repo.join(name), "one\ntwo\n").unwrap();
+    }
+    let status = status_at(&t, "proj").expect("a status");
+    assert_eq!(
+        status["added"], 3,
+        "leading-tab filename swallowed numstat records: {status}"
+    );
     assert_eq!(status["removed"], 0);
 }

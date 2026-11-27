@@ -300,15 +300,22 @@ pub(crate) fn resolve(raw: &str, roots: &Roots, home: Option<&Path>) -> Result<R
         // the roots, missing and unreadable answer as an existing path does, so nothing there is
         // revealed.
         Err(err) => {
-            let near = requested
-                .ancestors()
-                .skip(1)
-                .find_map(|a| std::fs::canonicalize(a).ok());
+            let near = requested.ancestors().skip(1).find_map(|a| {
+                let real = std::fs::canonicalize(a).ok()?;
+                let tail = requested.strip_prefix(a).ok()?;
+                Some((real, tail))
+            });
             return Err(match near {
-                Some(near) if roots.refused.iter().any(|r| near.starts_with(r)) => {
+                Some((near, _)) if roots.refused.iter().any(|r| near.starts_with(r)) => {
                     Refusal::Sensitive
                 }
-                Some(near) if roots.allowed.iter().any(|r| near.starts_with(r)) => io_refusal(&err),
+                Some((near, tail)) if roots.allowed.iter().any(|r| near.starts_with(r)) => {
+                    if sensitive(&near.join(tail)) {
+                        Refusal::Sensitive
+                    } else {
+                        io_refusal(&err)
+                    }
+                }
                 _ => Refusal::Outside,
             });
         }
@@ -716,9 +723,14 @@ fn repo_top(run_in: &Path, root: &Path, refused: &[PathBuf]) -> Option<PathBuf> 
     )
     .filter(|(ok, _)| *ok)?;
     let mut lines = out.lines();
-    let top = std::fs::canonicalize(lines.next()?).ok()?;
-    let git_dir = std::fs::canonicalize(lines.next()?).ok()?;
-    let common_dir = std::fs::canonicalize(lines.next()?).ok()?;
+    let (Some(top), Some(git_dir), Some(common_dir), None) =
+        (lines.next(), lines.next(), lines.next(), lines.next())
+    else {
+        return None;
+    };
+    let top = std::fs::canonicalize(top).ok()?;
+    let git_dir = std::fs::canonicalize(git_dir).ok()?;
+    let common_dir = std::fs::canonicalize(common_dir).ok()?;
     let checked = std::fs::canonicalize(run_in).ok()?;
     let inside = |p: &Path| {
         p.starts_with(root) && !refused.iter().any(|r| p.starts_with(r)) && !sensitive(p)
@@ -797,16 +809,23 @@ pub(crate) fn repo_status(dir: &RepoDir, refused: &[PathBuf]) -> Option<Value> {
         // followed by 2 NUL-terminated path records, which must not be parsed as counts.
         let mut records = numstat.split('\0');
         while let Some(record) = records.next() {
-            let mut parts = record.split('\t');
+            let mut parts = record.splitn(3, '\t');
             let (Some(a), Some(r), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
                 continue;
             };
+            let paths = if path.is_empty() {
+                [records.next().unwrap_or(""), records.next().unwrap_or("")]
+            } else {
+                [path, path]
+            };
+            if paths
+                .iter()
+                .any(|p| refused.iter().any(|r| top.join(p).starts_with(r)))
+            {
+                continue;
+            }
             added += a.parse::<u64>().unwrap_or(0);
             removed += r.parse::<u64>().unwrap_or(0);
-            if path.is_empty() {
-                records.next();
-                records.next();
-            }
         }
     }
     added += entries
@@ -859,7 +878,7 @@ pub(crate) fn peer(ext: &Extensions) -> Option<SocketAddr> {
 }
 
 /// System folders a configured working folder may neither be nor hold.
-const SYSTEM_DIRS: [&str; 24] = [
+const SYSTEM_DIRS: [&str; 25] = [
     "/bin",
     "/boot",
     "/dev",
@@ -884,6 +903,7 @@ const SYSTEM_DIRS: [&str; 24] = [
     "/Volumes",
     "/cores",
     "/private",
+    "/private/tmp",
 ];
 
 /// Kernel file systems: a root in one would expose `/proc/<pid>/environ` and the like.
