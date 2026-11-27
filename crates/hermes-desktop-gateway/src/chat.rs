@@ -302,7 +302,6 @@ impl Chat {
             .unwrap_or_else(hermes_config::hermes_home);
         Self {
             config,
-            home,
             sessions: Mutex::default(),
             created: Mutex::default(),
             budget: Arc::default(),
@@ -310,7 +309,8 @@ impl Chat {
             turns: Arc::new(Semaphore::new(MAX_TURNS)),
             write_timeout: WRITE_TIMEOUT,
             replay_epoch: uuid::Uuid::new_v4().simple().to_string().into(),
-            keys: model::Keys::default(),
+            keys: model::Keys::at_start_up(&home),
+            home,
         }
     }
 

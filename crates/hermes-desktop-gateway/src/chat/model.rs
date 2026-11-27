@@ -11,7 +11,8 @@
 //! no live model catalogue, prices or usage.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use hermes_config::loader::{
@@ -100,12 +101,30 @@ fn local(
 /// `reload.env`; `None` for a removed one. A turn and the picker read these before the process
 /// environment, which only start-up sets.
 #[derive(Default)]
-pub(super) struct Keys(Mutex<HashMap<String, Option<String>>>);
+pub(super) struct Keys {
+    changed: Mutex<HashMap<String, Option<String>>>,
+    /// The names start-up read from the `.env` files (`dotenv_values_in`).
+    from_file: BTreeSet<String>,
+}
 
 impl Keys {
+    /// No changes yet; the `.env` files of `home` as start-up read them.
+    pub(super) fn at_start_up(home: &Path) -> Self {
+        Self {
+            changed: Mutex::default(),
+            from_file: dotenv_values_in(home).into_keys().collect(),
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Option<String>>> {
         // A map updated one entry at a time: a poisoned lock is still safe to use.
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        self.changed.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether `var`'s value came from a `.env` file: changed since start-up, or read from one
+    /// at start-up.
+    fn from_env_file(&self, var: &str) -> bool {
+        self.changed(var) || self.from_file.contains(var)
     }
 
     /// `var`'s value now, if set and not blank: a change since start-up, else the environment's.
@@ -498,10 +517,10 @@ impl Chat {
     }
 
     /// `reload.env`: re-reads the key variables as start-up does (`hermes_config`'s order, the
-    /// managed `.env` last); the number changed. A key this process saved or re-read since
-    /// start-up and now gone from a readable `.env` is removed, as upstream removes it. Other
-    /// variables, a value that would not read back as itself and the removal of a key start-up
-    /// loaded take effect at the next start.
+    /// managed `.env` last); the number changed. A key read from a `.env` file (at start-up or
+    /// since) and now gone from a readable `.env` is removed, as upstream removes it; one only
+    /// the shell set stays. Other variables and a value that would not read back as itself take
+    /// effect at the next start.
     fn reload_env(&self) -> usize {
         let _write = env_write();
         let values = dotenv_values_in(&self.home);
@@ -513,7 +532,7 @@ impl Chat {
                 Some(value) => {
                     env_value_round_trips(var, value) && self.keys.set(var, Some(value.clone()))
                 }
-                None => readable && self.keys.changed(var) && self.keys.set(var, None),
+                None => readable && self.keys.from_env_file(var) && self.keys.set(var, None),
             })
             .count()
     }
