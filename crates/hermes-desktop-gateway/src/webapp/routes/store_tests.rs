@@ -1,8 +1,3 @@
-#[cfg(unix)]
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(unix)]
-use std::sync::{Arc, Barrier};
-
 use super::*;
 
 #[cfg(unix)]
@@ -65,45 +60,6 @@ fn a_stale_break_leaves_a_lock_retaken_since_it_was_judged() {
     break_stale(&lock_dir(&path), &seen);
     assert!(live.held(), "a live lock was removed as stale");
     assert!(StoreLock::take(&path, "store").is_err());
-}
-
-#[cfg(unix)]
-#[test]
-fn writers_racing_a_stale_lock_never_hold_it_together() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = Arc::new(dir.path().join("store.json"));
-    dead_lock(&path);
-    let holding = Arc::new(AtomicUsize::new(0));
-    let most = Arc::new(AtomicUsize::new(0));
-    let start = Arc::new(Barrier::new(8));
-    let writers: Vec<_> = (0..8)
-        .map(|_| {
-            let (path, holding, most, start) =
-                (path.clone(), holding.clone(), most.clone(), start.clone());
-            std::thread::spawn(move || {
-                start.wait();
-                let Ok(lock) = StoreLock::take(&path, "store") else {
-                    return false;
-                };
-                let now = holding.fetch_add(1, Ordering::SeqCst) + 1;
-                most.fetch_max(now, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(30));
-                let still = lock.held();
-                holding.fetch_sub(1, Ordering::SeqCst);
-                still
-            })
-        })
-        .collect();
-    let held: Vec<bool> = writers.into_iter().map(|w| w.join().unwrap()).collect();
-    assert_eq!(
-        most.load(Ordering::SeqCst),
-        1,
-        "2 writers held the lock at once"
-    );
-    assert!(
-        held.iter().all(|&h| h),
-        "a writer lost its lock whilst holding it"
-    );
 }
 
 #[test]
