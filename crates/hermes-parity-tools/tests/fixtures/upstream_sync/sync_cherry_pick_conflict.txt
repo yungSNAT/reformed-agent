@@ -1,0 +1,97 @@
+exit=Some(1)
+--- stdout
+[sync-upstream] Fetching origin/main and upstream/main...
+[sync-upstream] Checking out main and updating from origin...
+[sync-upstream] Creating sync branch chore/upstream-sync-<TS>...
+[sync-upstream] Cherry-picking <C:upstream: change readme>...
+[sync-upstream] Conflict issue created with label 'upstream-sync-conflict'.
+--- stderr
+[sync-upstream] ERROR: cherry-pick conflict. See <ROOT>/reports/upstream-sync-<TS>-conflict.txt
+--- calls
+gh [label] [create] [upstream-sync-conflict] [--color] [E11D48] [--description] [Automated upstream sync conflict]
+gh [issue] [create] [--title] [upstream sync conflict (main, <TS>)] [--label] [upstream-sync-conflict] --body-file <BODY>
+  | Automated upstream sync hit a conflict.
+  | 
+  | - mode: `branch-pr`
+  | - strategy: `cherry-pick`
+  | - reason: `cherry-pick conflict`
+  | - failed commit: `<C:upstream: change readme>`
+  | - rollback tag: `rollback/upstream-sync-<TS>`
+  | - report: `<ROOT>/reports/upstream-sync-<TS>-conflict.txt`
+  | 
+  | See local report for conflicted files and recovery commands.
+--- file reports/upstream-sync-<TS>-conflict.txt
+# Upstream Sync Conflict
+
+timestamp_utc: <TS>
+mode: branch-pr
+strategy: cherry-pick
+reason: cherry-pick conflict
+failed_commit: <C:upstream: change readme>
+origin_sha: <C:fork: carry>
+upstream_sha: <C:upstream: change readme>
+rollback_tag: rollback/upstream-sync-<TS>
+rollback_hint: git checkout chore/upstream-sync-<TS> && git reset --hard rollback/upstream-sync-<TS>
+
+## Conflicted files
+```
+README.md
+```
+--- file reports/upstream-sync-<TS>.txt
+# Upstream Sync Report
+
+timestamp_utc: <TS>
+repo_root: <ROOT>/repo
+mode: branch-pr
+strategy: cherry-pick
+strict_risk_gate: 0
+run_redteam_gate: 1
+redteam_cmd: <ROOT>/bin/cargo redteam
+run_elite_gate: 0
+elite_cmd: <ROOT>/bin/cargo elite
+elite_rollback_cmd: 
+draft_pr: 0
+allow_risk_paths: 0
+pr_labels: upstream-sync,parity-sync
+risk_paths_file: <ROOT>/repo/scripts/upstream-risk-paths.txt
+upstream_url: <ROOT>/remotes/NousResearch/hermes-agent.git
+expected_upstream_repo: NousResearch/hermes-agent
+allow_non_official_upstream: 0
+origin_ref: refs/remotes/origin/main
+upstream_ref: refs/remotes/upstream/main
+origin_sha: <C:fork: carry>
+upstream_sha: <C:upstream: change readme>
+
+## Pending Upstream Commits
+```
+<C:upstream: change readme> upstream: change readme
+```
+
+## Diff Stat
+```
+ README.md | 2 +-
+ fork.txt  | 1 -
+ 2 files changed, 1 insertion(+), 2 deletions(-)
+```
+
+## Files
+```
+M	README.md
+D	fork.txt
+```
+
+status: conflict
+conflict_reason: cherry-pick conflict
+conflict_report: <ROOT>/reports/upstream-sync-<TS>-conflict.txt
+rollback_tag: rollback/upstream-sync-<TS>
+--- refs remotes/origin.git
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/chore/upstream-sync-<TS> <C:fork: carry>
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/main <C:fork: carry>
+refs/remotes/upstream/main <C:upstream: change readme>
+refs/tags/rollback/upstream-sync-<TS> <C:fork: carry>
+--- status
+## chore/upstream-sync-<TS>

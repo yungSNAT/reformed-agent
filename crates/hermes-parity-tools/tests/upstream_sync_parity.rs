@@ -2,10 +2,11 @@
 //! `crontab` on `PATH`, an `upstream` and an `origin` bare repository and a
 //! work clone. Each case records stdout, stderr, the exit code, every fake
 //! tool call, the report and home files and the resulting refs, with the
-//! sandbox's own paths, commit ids and times masked, and compares the record
-//! of the shell script (`scripts/sync-upstream.sh`,
-//! `scripts/cron-upstream-sync.sh`, `scripts/install-upstream-sync-cron.sh`)
-//! with the record of the matching `hermes-parity-tools` subcommand.
+//! sandbox's own paths, commit ids and times masked, and compares that record
+//! with `tests/fixtures/upstream_sync/<case>.txt`. Those files are the records
+//! the shell scripts (`scripts/sync-upstream.sh`, `scripts/cron-upstream-sync.sh`
+//! and `scripts/install-upstream-sync-cron.sh`) produced for the same cases
+//! before the port, captured whilst both ran side by side.
 #![cfg(unix)]
 
 use std::collections::BTreeMap;
@@ -18,10 +19,6 @@ use regex::Regex;
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_hermes-parity-tools")
-}
-
-fn source_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 const FAKE_CARGO: &str = r#"#!/usr/bin/env bash
@@ -108,7 +105,7 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn new(scenario: Scenario, with_scripts: bool) -> Self {
+    fn new(scenario: Scenario) -> Self {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path().canonicalize().expect("canonical");
         for dir in ["bin", "sysbin", "home", "tmp", "reports", "seed/scripts"] {
@@ -134,7 +131,7 @@ impl Sandbox {
             }
         }
         let sandbox = Self { _tmp: tmp, root };
-        sandbox.seed(scenario, with_scripts);
+        sandbox.seed(scenario);
         sandbox
     }
 
@@ -189,20 +186,13 @@ impl Sandbox {
         self.git_in("seed", &["commit", "-q", "-m", subject]);
     }
 
-    fn seed(&self, scenario: Scenario, with_scripts: bool) {
+    fn seed(&self, scenario: Scenario) {
         fs::create_dir_all(self.root.join("remotes/NousResearch")).expect("mkdir");
         self.git_in("seed", &["init", "-q", "-b", "main"]);
         self.write("seed/README.md", "base\n");
         self.write("seed/.gitignore", ".sync-reports/\n");
         self.write("seed/docs/parity/PARITY_DASHBOARD.md", "dashboard\n");
         self.write("seed/scripts/upstream-risk-paths.txt", RISK_PATHS);
-        if with_scripts {
-            for name in ["sync-upstream.sh", "cron-upstream-sync.sh"] {
-                let text = fs::read_to_string(source_root().join("scripts").join(name))
-                    .expect("read script");
-                self.write(&format!("seed/scripts/{name}"), &text);
-            }
-        }
         self.commit("base", &[]);
         let upstream = self.path("remotes/NousResearch/hermes-agent.git");
         let origin = self.path("remotes/origin.git");
@@ -366,14 +356,6 @@ enum Tool {
 }
 
 impl Tool {
-    fn script(self) -> &'static str {
-        match self {
-            Tool::Sync => "sync-upstream.sh",
-            Tool::Cron => "cron-upstream-sync.sh",
-            Tool::Install => "install-upstream-sync-cron.sh",
-        }
-    }
-
     fn subcommand(self) -> &'static str {
         match self {
             Tool::Sync => "sync-upstream",
@@ -391,8 +373,8 @@ struct Case {
     args: Vec<String>,
     env: Vec<(&'static str, String)>,
     setup: fn(&Sandbox),
-    /// When set, stderr must contain this text in both records and is not
-    /// compared byte for byte (bash prints its own `${2:?}` message).
+    /// When set, stderr must contain this text and is not compared byte for
+    /// byte (the script's bash printed its own `${2:?}` message).
     stderr_contains: Option<&'static str>,
 }
 
@@ -442,23 +424,15 @@ const SYNC_ARGS: [&str; 12] = [
     "<ROOT>/bin/cargo docs",
 ];
 
-fn run(case: &Case, shell: bool) -> String {
-    let with_scripts = case.tool == Tool::Cron;
-    let sandbox = Sandbox::new(case.scenario, with_scripts);
+fn run(case: &Case) -> String {
+    let sandbox = Sandbox::new(case.scenario);
     if case.tool == Tool::Install {
         sandbox.write("repo/scripts/cron-upstream-sync.sh", "#!/bin/sh\n");
     }
     (case.setup)(&sandbox);
     let root = sandbox.root.to_string_lossy().into_owned();
-    let mut cmd = if shell {
-        let mut c = sandbox.command(&sandbox.path("sysbin/bash"));
-        c.arg(source_root().join("scripts").join(case.tool.script()));
-        c
-    } else {
-        let mut c = sandbox.command(bin());
-        c.arg(case.tool.subcommand());
-        c
-    };
+    let mut cmd = sandbox.command(bin());
+    cmd.arg(case.tool.subcommand());
     cmd.args(case.args.iter().map(|a| a.replace("<ROOT>", &root)));
     for (k, v) in &case.env {
         cmd.env(k, v.replace("<ROOT>", &root));
@@ -485,13 +459,11 @@ fn run(case: &Case, shell: bool) -> String {
 }
 
 fn check(case: Case) {
-    let shell = run(&case, true);
-    if let Ok(dir) = std::env::var("UPSTREAM_SYNC_BLESS") {
-        fs::create_dir_all(&dir).expect("bless dir");
-        fs::write(Path::new(&dir).join(format!("{}.txt", case.name)), &shell).expect("bless");
-    }
-    let rust = run(&case, false);
-    assert_eq!(rust, shell, "case {}", case.name);
+    let expected = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/upstream_sync")
+        .join(format!("{}.txt", case.name));
+    let expected = fs::read_to_string(&expected).expect("fixture");
+    assert_eq!(run(&case), expected, "case {}", case.name);
 }
 
 fn sync(name: &'static str, scenario: Scenario, extra: &[&str]) -> Case {
