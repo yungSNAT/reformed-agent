@@ -79,7 +79,7 @@ pub fn is_git_2_39_1_or_later(version: &str) -> bool {
 /// Git must not fetch an object the repository lacks from a promisor remote
 /// either, which runs `core.sshCommand` or a remote helper: `guard` says how.
 /// A repository whose own config names a user (see [`names_a_user`]) gets
-/// no command. A filter or diff driver that only a submodule's own config
+/// no command. A filter or diff program that only a submodule's own config
 /// names is out of reach of these overrides, so [`ReadOnlyGit::command`] keeps
 /// git out of submodule worktrees.
 pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<ReadOnlyGit> {
@@ -94,7 +94,8 @@ pub struct ReadOnlyGit(Command);
 
 /// The git subcommands a [`ReadOnlyGit`] runs. `Branch` and `Config` take any
 /// arguments, so the caller keeps them to reads (`--show-current`, `--get`):
-/// `branch -D` or `config <key> <value>` would write.
+/// `branch -D` or `config <key> <value>` would write, and `config --edit` or
+/// `branch --edit-description` would start `core.editor`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GitRead {
     Status,
@@ -131,7 +132,7 @@ impl GitRead {
     }
 
     /// The options that follow the subcommand. A submodule's own config can
-    /// name a filter or a diff driver that the overrides do not reach, and
+    /// name a filter or a diff program that the overrides do not reach, and
     /// status and diff run status inside a submodule's worktree to
     /// find changes there, unless `--ignore-submodules` says otherwise. Only
     /// the command line outranks a repository's `submodule.<name>.ignore`, so
@@ -2378,7 +2379,7 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
     /// that the repository's or a submodule's own config names, and starts no
     /// git inside the submodule: first with the submodule's worktree dirty,
     /// then with its gitlink moved and the repository asking for a long
-    /// status's summary and an inline submodule diff. A filter or diff driver
+    /// status's summary and an inline submodule diff. A filter or diff program
     /// the superproject never names is out of reach of the overrides, so only
     /// keeping git out of the submodule stops the submodule's own. None of
     /// these reads honours `submodule.recurse`, so no case here can show that
@@ -2478,12 +2479,19 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
                         Duration::from_secs(20),
                     )
                     .expect("git finished in time");
-                    assert!(output.status.success(), "{stage}: git {read:?} {args:?} failed");
+                    assert!(
+                        output.status.success(),
+                        "{stage}: git {read:?} {args:?} failed"
+                    );
                     let ran = std::fs::read_to_string(&marker).unwrap_or_default();
                     assert!(ran.is_empty(), "{stage}: git {read:?} {args:?} ran: {ran}");
                     // Git traces each process it starts, a filter or driver
                     // included, as `run_command`.
                     let started = std::fs::read_to_string(&trace).unwrap_or_default();
+                    assert!(
+                        started.contains("trace: built-in: git"),
+                        "{stage}: git {read:?} {args:?} wrote no trace: {started}"
+                    );
                     assert!(
                         !started.contains("run_command"),
                         "{stage}: git {read:?} {args:?} started: {started}"
