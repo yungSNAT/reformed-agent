@@ -8,6 +8,7 @@
 //! Run with `cargo run -p hermes-parity-tests --bin record_fixtures`; set `PARITY_PYTHON`
 //! to choose the interpreter (default `python3`).
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -256,6 +257,14 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
     })
 }
 
+/// The bytes to write to a stream: Rust refuses non-UTF-8 bytes on a Windows console,
+/// where Python's console writer replaced them with U+FFFD, so `windows_console` gets
+/// them replaced the same way; pipes and files get the bytes unchanged.
+pub fn for_stream(bytes: &[u8], windows_console: bool) -> Cow<'_, [u8]> {
+    let _ = windows_console;
+    Cow::Borrowed(bytes)
+}
+
 /// Record the cases against the Python checkout at `py_root`, running `python` for the
 /// Anthropic adapter cases when `agent/anthropic_adapter.py` exists there.
 pub fn record(py_root: &Path, python: &str) -> Recorded {
@@ -328,6 +337,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("reached the adapter"), "{stderr}");
+    }
+
+    #[test]
+    fn a_windows_console_gets_invalid_bytes_replaced_as_python_does() {
+        assert_eq!(&*for_stream(b"ok\xff\n", true), "ok\u{fffd}\n".as_bytes());
+        assert_eq!(&*for_stream(b"ok\xff\n", false), b"ok\xff\n");
+        assert_eq!(&*for_stream(b"caf\xc3\xa9\r\n", true), b"caf\xc3\xa9\r\n");
     }
 
     #[test]
