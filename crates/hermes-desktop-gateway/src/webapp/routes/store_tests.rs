@@ -31,6 +31,13 @@ fn the_install_root_climbs_out_of_a_profile_home_only() {
     );
 }
 
+#[test]
+fn the_profiles_folder_is_matched_in_any_case_as_upstream_does() {
+    let root = Path::new("/r");
+    assert_eq!(install_root_of(&root.join("Profiles").join("x")), root);
+    assert_eq!(install_root_of(&root.join("PROFILES").join("x")), root);
+}
+
 #[cfg(unix)]
 #[test]
 fn a_stale_lock_is_broken_and_taken() {
