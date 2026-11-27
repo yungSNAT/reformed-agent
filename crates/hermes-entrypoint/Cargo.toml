@@ -1,0 +1,12 @@
+[package]
+name = "hermes-entrypoint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust container entrypoint helper for Hermes Agent Ultra (home setup and privilege drop)"
+publish = false
+
+[[bin]]
+name = "hermes-entrypoint"
+path = "src/main.rs"

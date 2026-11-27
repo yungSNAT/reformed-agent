@@ -1184,6 +1184,35 @@ mod tests {
     }
 
     #[test]
+    fn install_refusals_explain_when_confirmation_is_required() {
+        for (trust, verdict, force, explanation) in [
+            (
+                SkillTrustLevel::Trusted,
+                SkillScanVerdict::Dangerous,
+                true,
+                "--force does not override a dangerous verdict",
+            ),
+            (
+                SkillTrustLevel::Community,
+                SkillScanVerdict::Caution,
+                false,
+                "Use --force to override",
+            ),
+            (
+                SkillTrustLevel::AgentCreated,
+                SkillScanVerdict::Dangerous,
+                false,
+                "Requires confirmation",
+            ),
+        ] {
+            let (allowed, reason) = should_allow_install(trust, verdict, 3, force);
+            assert!(!allowed, "{trust:?} {verdict:?} force={force}");
+            assert!(reason.contains(explanation), "{reason}");
+            assert!(reason.contains("3 findings"), "{reason}");
+        }
+    }
+
+    #[test]
     fn trust_level_resolution_matches_known_skill_sources() {
         assert_eq!(resolve_trust_level("official"), SkillTrustLevel::Builtin);
         assert_eq!(
@@ -1281,6 +1310,84 @@ mod tests {
         assert_eq!(report.trust_level, SkillTrustLevel::Trusted);
         assert_eq!(report.verdict, SkillScanVerdict::Safe);
         assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn scan_skill_bundle_checks_file_count_and_size_boundaries() {
+        let root = tempdir().unwrap();
+        let skill = root.path().join("fixture-skill");
+        let data = skill.join("data");
+        fs::create_dir_all(&data).unwrap();
+        for index in 1..MAX_SKILL_FILE_COUNT {
+            fs::write(data.join(format!("note-{index}.txt")), "Fixture note").unwrap();
+        }
+        let large = data.join("large.bin");
+        let size = MAX_SINGLE_SKILL_FILE_BYTES as u64;
+        let file = fs::File::create(&large).unwrap();
+        file.set_len(size).unwrap();
+        assert!(check_skill_structure(&skill).is_empty());
+
+        file.set_len(size + 1).unwrap();
+        let oversized = check_skill_structure(&skill);
+        assert_eq!(oversized.len(), 1);
+        assert_eq!(oversized[0].pattern_id, "oversized_file");
+        assert_eq!(oversized[0].file, "data/large.bin");
+
+        file.set_len(size).unwrap();
+        fs::write(data.join("additional.txt"), "Additional fixture note").unwrap();
+        let too_many = check_skill_structure(&skill);
+        assert_eq!(too_many.len(), 1);
+        assert_eq!(too_many[0].pattern_id, "too_many_files");
+
+        file.set_len(size + 1).unwrap();
+        drop(file);
+        let report = scan_skill_dir(&skill, "fixture/skills/archive");
+        assert_eq!(report.skill_name, "fixture-skill");
+        assert_eq!(report.trust_level, SkillTrustLevel::Community);
+        assert_eq!(report.verdict, SkillScanVerdict::Caution);
+        for (pattern, file, matched) in [
+            (
+                "oversized_file",
+                "data/large.bin",
+                format!("{} bytes", size + 1),
+            ),
+            ("too_many_files", "", (MAX_SKILL_FILE_COUNT + 1).to_string()),
+            ("binary_file", "data/large.bin", String::new()),
+        ] {
+            assert!(
+                report.findings.iter().any(|finding| {
+                    finding.pattern_id == pattern
+                        && finding.file == file
+                        && finding.matched == matched
+                }),
+                "Missing {pattern} in {:?}",
+                report.findings
+            );
+        }
+    }
+
+    #[test]
+    fn scan_skill_paths_distinguishes_missing_files_from_invalid_text() {
+        let root = tempdir().unwrap();
+        let missing = root.path().join("missing-skill");
+        let report = scan_skill_dir(&missing, "fixture/skills/archive");
+        assert_eq!(report.verdict, SkillScanVerdict::Caution);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].pattern_id, "missing_skill_dir");
+
+        let absent = root.path().join("absent.txt");
+        let findings = scan_skill_file(&absent, root.path());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].pattern_id, "unreadable_file");
+        assert_eq!(findings[0].file, "absent.txt");
+
+        let invalid = root.path().join("invalid.txt");
+        fs::write(&invalid, [0xff]).unwrap();
+        let findings = scan_skill_file(&invalid, root.path());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].pattern_id, "binary_file");
+        assert_eq!(findings[0].file, "invalid.txt");
+        assert!(findings[0].detail.contains("non-UTF-8"));
     }
 
     #[test]

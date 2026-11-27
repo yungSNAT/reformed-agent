@@ -106,9 +106,17 @@ fn handle_autocompact_command(app: &mut App, args: &[&str]) -> Result<CommandRes
 }
 
 fn usage_token_line(label: &str, usage: &hermes_core::UsageStats) -> String {
-    format!(
+    let line = format!(
         "{label}: {} prompt / {} completion / {} total tokens",
         usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+    );
+    if usage.cache_read_tokens == 0 || usage.prompt_tokens == 0 {
+        return line;
+    }
+    let share = usage.cache_read_tokens as f64 * 100.0 / usage.prompt_tokens as f64;
+    format!(
+        "{line}, {} prompt read from cache ({share:.1}%)",
+        usage.cache_read_tokens
     )
 }
 

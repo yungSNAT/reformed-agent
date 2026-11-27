@@ -84,7 +84,6 @@ pub(crate) enum Origin {
     #[default]
     Remote,
     /// A browser session of the Webapp.
-    #[allow(dead_code, reason = "set by the Webapp's listener")]
     Webapp,
     /// This machine's desktop or terminal UI: the loopback token socket or local mode's ticket
     /// socket (`upgrade` in lib.rs).
@@ -134,10 +133,11 @@ pub(crate) type Reply = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + S
 /// can come out of order, and up to 16 of a connection's frames wait at once (`serve_socket`
 /// in lib.rs). Past that, a handler that would wait is dropped before its first wait and its
 /// request answered busy, so a method that answers a waiting handler (an approval's answer)
-/// must answer at once. A waiting handler is
-/// dropped at its await if the connection closes, so it must leave shared state whole at each
-/// await: change state under a lock rather than across an await, or hold a guard that undoes
-/// the change when dropped.
+/// must answer at once. A handler that changes state does so before it returns, or makes no
+/// change before its first wait, so a request answered busy has changed nothing. A waiting
+/// handler is dropped at its await if the connection closes, so it must leave shared state
+/// whole at each await: change state under a lock rather than across an await, or hold a
+/// guard that undoes the change when dropped.
 ///
 /// Each method name is registered once across [`AREAS`]; `canonical::METHODS` overrides an
 /// area's name only where its test lists it (`each_method_is_registered_once`).

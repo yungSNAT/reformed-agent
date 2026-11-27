@@ -37,9 +37,10 @@ const CREATE_KEYS: [&str; 4] = ["request_id", "source", "profile", "service_tier
 /// so a remembered id opens its session to whoever sends it again: a short one could be
 /// guessed, where the desktop sends a UUID (36 characters).
 const MIN_REMEMBERED_REQUEST_ID: usize = 16;
-/// Longest `submission_id` (`input_id`) taken. The desktop sends a UUID (36 characters); the id
-/// is kept with a queued prompt and repeated in each `pending` row.
-const MAX_INPUT_ID: usize = 128;
+/// Longest `request_id` and `submission_id` (`input_id`) taken. The desktop sends UUIDs (36
+/// characters); a request id is remembered with its session and a submission id kept with its
+/// queued prompt, so neither may be as long as a frame.
+const MAX_CLIENT_ID: usize = 128;
 
 /// The methods a canonical connection answers its own way; the rest are the legacy wire's.
 pub(super) const METHODS: &[(&str, Handler)] = &[
@@ -156,6 +157,12 @@ impl Chat {
             ));
         }
         let request_id: &String = match params.get("request_id") {
+            Some(Value::String(r)) if r.len() > MAX_CLIENT_ID => {
+                return Err((
+                    REFUSED,
+                    format!("invalid_params: request_id is longer than {MAX_CLIENT_ID} bytes"),
+                ))
+            }
             Some(Value::String(r)) if !r.is_empty() => r,
             _ => {
                 return Err((
@@ -255,10 +262,10 @@ impl Chat {
         // The desktop names its input `submission_id`; upstream's wire calls it `input_id`.
         let input_id = match params.get("submission_id").or(params.get("input_id")) {
             None => None,
-            Some(Value::String(input)) if input.len() > MAX_INPUT_ID => {
+            Some(Value::String(input)) if input.len() > MAX_CLIENT_ID => {
                 return Err((
                     REFUSED,
-                    format!("invalid_params: submission_id is longer than {MAX_INPUT_ID} bytes"),
+                    format!("invalid_params: submission_id is longer than {MAX_CLIENT_ID} bytes"),
                 ))
             }
             Some(Value::String(input)) => Some(input.clone()),
@@ -302,7 +309,8 @@ impl Chat {
     /// A session's snapshot, as upstream's `session.create` and `session.resume` answer: its saved
     /// user and assistant `rows`, or only their count when `omit` is set.
     fn snapshot(&self, id: &str, session: &LiveSession, rows: Vec<Value>, omit: bool) -> Value {
-        let (running, last_sequence, generation) = session.state();
+        // One look at the session, so `running`, the generation and `pending` agree.
+        let ((running, last_sequence, generation), pending) = session.status(id);
         let mut info = self.session_info();
         info["desktop_protocol"] = CANONICAL_PROTOCOL.into();
         info["profile_name"] = PROFILE.into();
@@ -318,7 +326,7 @@ impl Chat {
             "last_sequence": last_sequence,
             "revision": 0,
             "execution_generation": generation,
-            "pending": session.pending(id, true),
+            "pending": pending,
             "prompts": [],
             "info": info,
         });

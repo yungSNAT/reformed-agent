@@ -913,7 +913,6 @@ fn configured_cron_toolsets(config: &GatewayConfig) -> Vec<String> {
     config
         .platform_toolsets
         .get(CRON_PLATFORM)
-        .filter(|tokens| !tokens.is_empty())
         .cloned()
         .unwrap_or_else(|| vec![CRON_DEFAULT_TOOLSET.to_string()])
 }
@@ -978,7 +977,12 @@ fn resolve_cron_platform_tool_names(
         }
     }
 
-    for tool_name in &config.tools_config.enabled {
+    // A saved empty cron list offers no tool, whatever the global allow-list says.
+    let enabled: &[String] = match config.platform_toolsets.get(CRON_PLATFORM) {
+        Some(saved) if saved.is_empty() => &[],
+        _ => &config.tools_config.enabled,
+    };
+    for tool_name in enabled {
         let trimmed = tool_name.trim();
         if !trimmed.is_empty() && live_names.contains(trimmed) {
             names.insert(trimmed.to_string());
@@ -1153,6 +1157,19 @@ tools_config:
         assert!(!names.contains("cronjob"));
         assert!(!names.contains("send_message"));
         assert!(!names.contains("clarify"));
+    }
+
+    #[test]
+    fn an_explicit_empty_cron_list_offers_no_tool() {
+        let mut cfg = GatewayConfig::default();
+        cfg.platform_toolsets.insert("cron".to_string(), Vec::new());
+        cfg.tools_config.enabled = vec!["web_search".to_string()];
+        let live_names: HashSet<String> = ["terminal", "web_search"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert!(resolve_cron_platform_tool_names(&cfg, &live_names).is_empty());
     }
 
     #[test]

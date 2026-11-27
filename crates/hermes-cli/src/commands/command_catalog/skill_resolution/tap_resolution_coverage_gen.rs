@@ -33,6 +33,115 @@ fn tree_entries<const N: usize>(entries: [(&str, &str); N]) -> [GitHubTreeEntry;
     })
 }
 
+#[derive(Default)]
+struct FixtureTapSource {
+    requests: std::sync::Mutex<Vec<String>>,
+}
+
+impl SkillTapSource for FixtureTapSource {
+    async fn branch_and_tree(
+        &self,
+        repo: &str,
+    ) -> Result<(String, Vec<GitHubTreeEntry>), AgentError> {
+        self.requests.lock().unwrap().push(repo.to_owned());
+        match repo {
+            "fixture/primary" => Ok((
+                "catalogue".into(),
+                tree_entries([
+                    ("blob", "skills/report-brief/SKILL.md"),
+                    ("blob", "skills/report-a/SKILL.md"),
+                    ("blob", "skills/REPORT/SKILL.md"),
+                    ("blob", "skills/notes/SKILL.md"),
+                    ("blob", "skillset/report-hidden/SKILL.md"),
+                ])
+                .into(),
+            )),
+            "fixture/secondary" => Ok((
+                "secondary".into(),
+                tree_entries([("blob", "reports/Report/SKILL.md")]).into(),
+            )),
+            "fixture/archive" => Ok((
+                "reports".into(),
+                (1..=9)
+                    .rev()
+                    .map(|index| GitHubTreeEntry {
+                        kind: "blob".into(),
+                        path: format!("skills/report-{index}/SKILL.md"),
+                    })
+                    .collect(),
+            )),
+            _ => Err(AgentError::Config("fixture repository unavailable".into())),
+        }
+    }
+}
+
+#[tokio::test]
+async fn tap_lookup_respects_order_and_lists_only_in_scope_suggestions() {
+    let source = FixtureTapSource::default();
+    let taps = [
+        String::new(),
+        "fixture/unavailable".into(),
+        "fixture/primary".into(),
+        "fixture/secondary::".into(),
+    ];
+    let found = resolve_skill_via_taps(&source, &taps, "report")
+        .await
+        .expect("resolve preferred tap");
+    assert_eq!(
+        found,
+        ResolvedSkillSource {
+            repo: "fixture/primary".into(),
+            branch: "catalogue".into(),
+            skill_dir: "skills/REPORT".into(),
+        }
+    );
+    assert_eq!(
+        source.requests.lock().unwrap().as_slice(),
+        ["fixture/unavailable", "fixture/primary"]
+    );
+    let root = resolve_skill_via_taps(&source, &taps[3..], "report")
+        .await
+        .expect("resolve root-scoped tap");
+    assert_eq!(root.skill_dir, "reports/Report");
+    assert_eq!(
+        config_error(resolve_skill_via_taps(&source, &taps, "report-").await),
+        "Skill 'report-' not found in configured taps. Suggestions: report-a, report-brief"
+    );
+    let archive = ["fixture/archive".into()];
+    assert_eq!(
+        config_error(resolve_skill_via_taps(&source, &archive, "report").await),
+        "Skill 'report' not found in configured taps. Suggestions: report-1, report-2, report-3, report-4, report-5, report-6, report-7, report-8"
+    );
+}
+
+#[tokio::test]
+async fn tap_search_keeps_unique_paths_and_honours_the_result_limit() {
+    let taps = [
+        "fixture/primary".into(),
+        "fixture/primary".into(),
+        "fixture/secondary::".into(),
+    ];
+    let expected: [(String, String); 4] = [
+        ("report-brief".into(), "fixture/primary/skills/report-brief".into()),
+        ("report-a".into(), "fixture/primary/skills/report-a".into()),
+        ("REPORT".into(), "fixture/primary/skills/REPORT".into()),
+        ("Report".into(), "fixture/secondary/reports/Report".into()),
+    ];
+    let full = search_skills_via_taps(&FixtureTapSource::default(), &taps, "REPORT", 10)
+        .await
+        .expect("search fixture taps");
+    assert_eq!(full, expected);
+    let source = FixtureTapSource::default();
+    let limited = search_skills_via_taps(&source, &taps, "REPORT", 2)
+        .await
+        .expect("limited search");
+    assert_eq!(limited, expected[..2]);
+    assert_eq!(
+        source.requests.lock().unwrap().as_slice(),
+        ["fixture/primary"]
+    );
+}
+
 #[test]
 fn tap_skill_directories_only_include_manifest_blobs_beneath_the_prefix() {
     let tree = tree_entries([

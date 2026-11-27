@@ -1155,7 +1155,7 @@ async fn gateway_busy_queue_ack_can_be_suppressed() {
 }
 
 #[tokio::test]
-async fn gateway_queue_command_bypasses_busy_guard_and_drains() {
+async fn gateway_queue_and_unattached_steering_bypass_busy_guard_and_drain() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(TestAdapter {
         messages: sent.clone(),
@@ -1204,32 +1204,37 @@ async fn gateway_queue_command_bypasses_busy_guard_and_drains() {
     }))
     .await;
 
-    let gw_first = gw.clone();
-    let first_task =
-        tokio::spawn(async move { gw_first.route_message(&test_incoming("first")).await });
-    entered_rx.await.expect("first route should enter handler");
-    gw.route_message(&test_incoming("/queue second"))
-        .await
-        .expect("/queue should bypass and enqueue");
-    release_tx.send(()).expect("release first route");
-    first_task
-        .await
-        .expect("first task join")
-        .expect("first route result");
+    let first = test_incoming("first");
+    let commands = async {
+        entered_rx.await.expect("first route should enter handler");
+        gw.route_message(&test_incoming("/queue second"))
+            .await
+            .expect("/queue should bypass and enqueue");
+        gw.route_message(&test_incoming("/steer third"))
+            .await
+            .expect("/steer should enqueue without a live control");
+        release_tx.send(()).expect("release first route");
+    };
+    let (first_result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(gw.route_message(&first), commands)
+    })
+    .await
+    .expect("queue and steer should finish whilst the first turn is active");
+    first_result.expect("first route result");
 
     assert_eq!(
         calls.lock().unwrap().as_slice(),
-        ["first".to_string(), "second".to_string()]
+        ["first", "second", "third"]
     );
-    assert!(sent
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|(_, text)| text.contains("Queued follow-up for the active session")));
+    let sent = sent.lock().unwrap();
+    assert!(sent.iter().any(|(chat, text)| chat == "chat1"
+        && text == "🧵 Queued follow-up for the active session: second"));
+    assert!(sent.iter().any(|(chat, text)| chat == "chat1"
+        && text == "🧵 No live steering hook was ready; queued follow-up: third"));
 }
 
 #[tokio::test]
-async fn gateway_steer_command_uses_attached_busy_control() {
+async fn gateway_steer_and_stop_use_attached_busy_control() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(TestAdapter {
         messages: sent.clone(),
@@ -1271,28 +1276,54 @@ async fn gateway_steer_command_uses_attached_busy_control() {
     }))
     .await;
 
-    let gw_first = gw.clone();
-    let first_task =
-        tokio::spawn(async move { gw_first.route_message(&test_incoming("first")).await });
-    entered_rx.await.expect("first route should attach control");
-    gw.route_message(&test_incoming("/steer check tests"))
-        .await
-        .expect("/steer should use attached control");
-    release_tx.send(()).expect("release first route");
-    first_task
-        .await
-        .expect("first task join")
-        .expect("first route result");
+    let running = gw
+        .background_tasks
+        .submit("fetch timetable".into())
+        .unwrap();
+    let completed = gw.background_tasks.submit("read timetable".into()).unwrap();
+    gw.background_tasks.complete(&completed, "9:15".into());
 
+    let first = test_incoming("first");
+    let commands = async {
+        entered_rx.await.expect("first route should attach control");
+        gw.route_message(&test_incoming("/steer check tests"))
+            .await
+            .expect("/steer should use attached control");
+        gw.route_message(&test_incoming("/stop"))
+            .await
+            .expect("/stop should interrupt the active turn");
+        release_tx.send(()).expect("release first route");
+    };
+    let (first_result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(gw.route_message(&first), commands)
+    })
+    .await
+    .expect("steer and stop should finish whilst the first turn is active");
+    first_result.expect("first route result");
+
+    assert_eq!(
+        gw.background_tasks.get_status(&running),
+        Some(TaskStatus::Cancelled)
+    );
+    assert_eq!(
+        gw.background_tasks.get_status(&completed),
+        Some(TaskStatus::Completed)
+    );
     assert_eq!(
         control.steers.lock().unwrap().as_slice(),
         ["check tests".to_string()]
     );
+    assert_eq!(
+        control.interrupts.lock().unwrap().as_slice(),
+        ["User requested /stop for the active gateway task."]
+    );
+    let sent = sent.lock().unwrap();
     assert!(sent
-        .lock()
-        .unwrap()
         .iter()
-        .any(|(_, text)| text.contains("Steered the running task")));
+        .any(|(chat, text)| chat == "chat1" && text == "🧭 Steered the running task: check tests"));
+    assert!(sent
+        .iter()
+        .any(|(chat, text)| chat == "chat1" && text == "⏹ Agent stopped."));
 }
 
 #[tokio::test]

@@ -384,16 +384,14 @@ fn test_intent_report_marks_mapped_and_missing_evidence_in_both_formats() {
     let row = |id: &str| intents.iter().find(|entry| entry["id"] == id).unwrap();
     let mapped = row("gateway-platform-behavior");
     assert_eq!(mapped["mapped"], true);
-    assert_eq!(mapped["evidence_count"], 1);
-    assert_eq!(mapped["evidence_sample"], json!([evidence]));
+    assert!(mapped.get("evidence_count").is_none(), "{mapped}");
     let missing = row("tool-runtime-behavior");
     assert_eq!(missing["mapped"], false);
-    assert_eq!(missing["evidence_sample"], json!([]));
     assert_eq!(report["summary"]["mapped_intents"], 1);
     assert_eq!(report["summary"]["unmapped_intents"], intents.len() - 1);
     let markdown = fs::read_to_string(root.join("report/mapping.md")).unwrap();
-    assert!(markdown.contains("| `gateway-platform-behavior` | yes | 1 |"));
-    assert!(markdown.contains("| `tool-runtime-behavior` | no | 0 |"));
+    assert!(markdown.contains("| `gateway-platform-behavior` | yes |\n"));
+    assert!(markdown.contains("| `tool-runtime-behavior` | no |\n"));
 }
 
 #[test]

@@ -86,6 +86,51 @@
         assert_eq!(offered.last(), Some(&vec!["planned_tool".to_string()]));
     }
 
+    #[test]
+    fn resuming_a_capped_app_reads_spend_and_reset_clears_it_while_the_cap_is_off() {
+        let _guard = env_test_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut first = build_minimal_test_app_with_state_root(tmp.path().into());
+        let id = first.session_id.clone();
+        let provider = Arc::new(OfferedToolsRecorder { cost_usd: Some(0.004), ..Default::default() });
+        let mut config = build_agent_config(first.config.as_ref(), "dynamic");
+        config.skip_memory = true;
+        config.skip_context_files = true;
+        config.background_review_enabled = false;
+        config.max_cost_usd = Some(0.01);
+        config.session_id = Some(id.clone());
+        first.agent = Arc::new(AgentLoop::new(config, Arc::new(bridge_tool_registry(&first.tool_registry)), provider.clone())
+            .with_session_budget_root(tmp.path().into()));
+        let run = block_on_test(first.run_messages_with_current_agent_tools(
+            vec![hermes_core::Message::user("fixture")], false, false)).unwrap();
+        assert!(run.finished_naturally);
+        drop(first);
+
+        let mut resumed = build_minimal_test_app_with_state_root(tmp.path().into());
+        Arc::make_mut(&mut resumed.config).agent.max_session_cost_usd = Some(0.01);
+        resumed.resume_session_id(id.clone());
+        assert!((resumed.session_cost_usd - 0.004).abs() < 1e-9);
+        // Keep the production resume builder's session id and state root, replacing only its provider.
+        let registry = Arc::clone(&resumed.agent.tool_registry);
+        let mut recovered = resumed.agent.clone_with_tool_registry(registry);
+        recovered.llm_provider = provider;
+        recovered.config.skip_memory = true;
+        recovered.config.skip_context_files = true;
+        recovered.config.background_review_enabled = false;
+        resumed.agent = Arc::new(recovered);
+        let second = block_on_test(resumed.run_messages_with_current_agent_tools(
+            vec![hermes_core::Message::user("after restart")], false, false)).unwrap();
+        assert!(second.finished_naturally);
+        let store = SessionPersistence::new(tmp.path());
+        assert!((store.session_spend_usd(&id).unwrap() - 0.008).abs() < 1e-9);
+        Arc::make_mut(&mut resumed.config).agent.max_session_cost_usd = None;
+        resumed.reset_session();
+        assert_eq!(store.session_spend_usd(&id).unwrap(), 0.0);
+        resumed.new_session();
+        assert_ne!(resumed.session_id, id);
+        assert_eq!(store.session_spend_usd(&resumed.session_id).unwrap(), 0.0);
+    }
+
     /// Runs whose results are never applied (objective continuations, quorum
     /// voters) still count towards the session's spend cap.
     #[test]
