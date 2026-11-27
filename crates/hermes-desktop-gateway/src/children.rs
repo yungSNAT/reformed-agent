@@ -327,10 +327,9 @@ impl Children {
                 if Some(running.port) != dead && matches!(running.child.try_wait(), Ok(None)) {
                     return Ok((running.port, running.token.clone()));
                 }
-                if let Some(mut gone) = slot.take() {
-                    let _ = gone.child.start_kill();
-                    let _ = gone.child.wait().await;
-                }
+                let _ = running.child.start_kill();
+                let _ = running.child.wait().await;
+                *slot = None;
             }
             let running = spawn(&program, &home).await?;
             let found = (running.port, running.token.clone());
@@ -764,10 +763,10 @@ mod tests {
 
     /// A link to a scripted child that answers the first 2 requests in reverse order, then
     /// echoes each method name at once.
-    async fn scripted_link() -> (Link, Arc<Mutex<Pending>>) {
+    async fn scripted_link() -> (Link, Arc<Mutex<Pending>>, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
+        let child = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             let mut held: Vec<Value> = Vec::new();
@@ -806,12 +805,12 @@ mod tests {
         let conn = Conn::new(1, outbox, false);
         let link = Link::dial(lease, &conn).await.unwrap();
         let pending = Arc::clone(&link.pending);
-        (link, pending)
+        (link, pending, child)
     }
 
     #[tokio::test]
     async fn concurrent_requests_on_one_link_each_get_their_own_reply() {
-        let (link, pending) = scripted_link().await;
+        let (link, pending, child) = scripted_link().await;
         // Bounded, so a reply lost without dropping its sender fails the test, not hangs it.
         let (first, second) = tokio::time::timeout(Duration::from_secs(10), async {
             tokio::join!(
@@ -824,6 +823,10 @@ mod tests {
         assert_eq!(first.unwrap(), json!({"method": "first.method"}));
         assert_eq!(second.unwrap(), json!({"method": "second.method"}));
         assert!(Pending::lock(&pending).waiting.is_empty());
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
     }
 
     /// A lease on a child at `port` that no [`Children`] started.
@@ -861,7 +864,7 @@ mod tests {
     async fn a_childs_errors_reach_the_caller_past_frames_that_are_not_replies() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
+        let child = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             while let Some(Ok(tungstenite::Message::Text(text))) = socket.next().await {
@@ -895,17 +898,25 @@ mod tests {
             empty,
             Err((CHILD_FAILED, "profile gateway sent no reply".into()))
         );
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
     }
 
     /// The child serves the client's wire: a canonical client's link offers it.
     #[tokio::test]
+    #[expect(
+        clippy::result_large_err,
+        reason = "tungstenite's handshake callback returns its own error response"
+    )]
     async fn a_canonical_clients_link_offers_the_canonical_wire_to_its_child() {
         use tungstenite::handshake::server::{Request, Response};
         use tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let (seen, offered) = oneshot::channel();
-        tokio::spawn(async move {
+        let child = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let choose = move |request: &Request,
                                mut response: Response|
@@ -922,13 +933,13 @@ mod tests {
                 let _ = seen.send(protocol);
                 Ok(response)
             };
-            let _socket = tokio_tungstenite::accept_hdr_async(stream, choose)
+            let mut socket = tokio_tungstenite::accept_hdr_async(stream, choose)
                 .await
                 .unwrap();
-            std::future::pending::<()>().await;
+            while socket.next().await.is_some() {}
         });
         let (outbox, _events) = mpsc::unbounded_channel();
-        let _link = Link::dial(lease_at(port), &Conn::new(1, outbox, true))
+        let link = Link::dial(lease_at(port), &Conn::new(1, outbox, true))
             .await
             .unwrap();
         let offered = within("the dial", offered).await.unwrap();
@@ -936,6 +947,10 @@ mod tests {
             offered.as_ref().and_then(|p| p.to_str().ok()),
             Some(CANONICAL_PROTOCOL)
         );
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
     }
 
     /// A child's event for a client that has gone ends the link: later requests fail at once.
@@ -943,7 +958,7 @@ mod tests {
     async fn an_event_for_a_client_that_has_gone_closes_the_link() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
+        let child = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             let event = json!({"jsonrpc": "2.0", "method": "event",
@@ -952,7 +967,7 @@ mod tests {
                 .send(tungstenite::Message::text(event.to_string()))
                 .await
                 .unwrap();
-            std::future::pending::<()>().await;
+            while socket.next().await.is_some() {}
         });
         let (outbox, events) = mpsc::unbounded_channel();
         drop(events);
@@ -969,6 +984,10 @@ mod tests {
             link.call("session.list", Map::new()).await,
             Err((CHILD_FAILED, "profile gateway connection closed".into()))
         );
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
     }
 
     /// A lease past the limit is refused as busy; a child that cannot start, or that exits
@@ -1000,7 +1019,8 @@ mod tests {
         assert!(message.starts_with(&expected), "{message}");
         #[cfg(unix)]
         {
-            let config = ChildGateways::new(PathBuf::from("/usr/bin/false"))
+            // `echo` prints its arguments, which are not the ready line, and exits.
+            let config = ChildGateways::new(PathBuf::from("/bin/echo"))
                 .with_start_timeout(Duration::from_secs(60));
             let silent = within("a lease on a child that exits", async {
                 install(root.path(), config).lease("inbox").await
@@ -1042,6 +1062,7 @@ mod tests {
             for (name, gate, leases) in [
                 ("idle", Arc::clone(&idle), 0),
                 ("leased", Arc::new(tokio::sync::Mutex::new(None)), 1),
+                ("never-started", Arc::new(tokio::sync::Mutex::new(None)), 0),
             ] {
                 let last_used = Instant::now();
                 let entry = Entry {
@@ -1057,7 +1078,9 @@ mod tests {
             loop {
                 let stopped = {
                     let state = children.lock();
-                    !state.entries.contains_key("idle") && state.reaping == 0
+                    !state.entries.contains_key("idle")
+                        && !state.entries.contains_key("never-started")
+                        && state.reaping == 0
                 };
                 if stopped {
                     break;
@@ -1075,12 +1098,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_whose_caller_leaves_is_forgotten() {
-        let (link, pending) = scripted_link().await;
+        let (link, pending, child) = scripted_link().await;
         // The child holds the first request until a second comes, so this one is still
         // waiting when its caller gives up.
         let gave_up =
             tokio::time::timeout(Duration::from_millis(200), link.call("held", Map::new())).await;
         assert!(gave_up.is_err());
         assert!(Pending::lock(&pending).waiting.is_empty());
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
     }
 }
