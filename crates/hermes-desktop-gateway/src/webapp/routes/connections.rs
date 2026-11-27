@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path as UrlPath, Request};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -58,12 +59,16 @@ pub fn router(served: &Served) -> Router {
         .route(
             "/api/gateway-connections",
             get(move |ctx: Ctx| list_connections(list.clone(), ctx)).post(
-                move |ctx: Ctx, body: axum::body::Bytes| save_connection(save.clone(), ctx, body),
+                move |ctx: Ctx, body: Result<Json<Value>, JsonRejection>| {
+                    save_connection(save.clone(), ctx, body)
+                },
             ),
         )
         .route(
             "/api/gateway-connections/last-used",
-            post(move |ctx: Ctx, body: axum::body::Bytes| set_last_used(last.clone(), ctx, body)),
+            post(move |ctx: Ctx, body: Result<Json<Value>, JsonRejection>| {
+                set_last_used(last.clone(), ctx, body)
+            }),
         )
         .route(
             "/api/gateway-connections/{id}",
@@ -809,9 +814,14 @@ async fn list_connections(served: Served, ctx: Ctx) -> ApiResult {
     Ok(Json(public_registry(doc.as_ref())))
 }
 
-async fn save_connection(served: Served, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+/// The body is parsed by axum's JSON extractor; any rejection is this route's own 400.
+async fn save_connection(
+    served: Served,
+    ctx: Ctx,
+    body: Result<Json<Value>, JsonRejection>,
+) -> ApiResult {
     webapp_only(&ctx)?;
-    let Ok(Value::Object(payload)) = serde_json::from_slice::<Value>(&body) else {
+    let Ok(Json(Value::Object(payload))) = body else {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "A connection save needs a JSON object.".into(),
@@ -832,11 +842,15 @@ async fn remove_connection(served: Served, ctx: Ctx, UrlPath(id): UrlPath<String
     Ok(Json(answer(&doc, None)))
 }
 
-async fn set_last_used(served: Served, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+async fn set_last_used(
+    served: Served,
+    ctx: Ctx,
+    body: Result<Json<Value>, JsonRejection>,
+) -> ApiResult {
     webapp_only(&ctx)?;
-    let id = serde_json::from_slice::<Value>(&body)
+    let id = body
         .ok()
-        .and_then(|b| b.get("id").and_then(Value::as_str).map(str::to_owned))
+        .and_then(|Json(b)| b.get("id").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
     let path = store_path(&served);
     let doc = blocking(move || last_used(&path, &id).map_err(ApiError::from)).await?;
