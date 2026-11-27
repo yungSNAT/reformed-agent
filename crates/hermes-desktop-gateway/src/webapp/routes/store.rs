@@ -144,9 +144,10 @@ impl Drop for StoreLock {
 /// broke and took since the first judgement is fresh by then and is left alone. Upstream's and
 /// native Desktop's writers do not take that OS lock; a break by one of them is the limit
 /// [`break_stale`] states. Only a turn another waiter holds stops a break: when the file cannot
-/// be opened or locked (on Unix a link in its place, which is never followed; a file system
-/// without locks), the waiter breaks as before, so a dead lock never wedges writes. On Windows
-/// the file is opened with default permissions and a link in its place is followed.
+/// be opened or locked (on Unix a link in its place; a file system without locks), the waiter
+/// breaks as before, so a dead lock never wedges writes. A link in its place is never followed:
+/// Unix refuses to open it and Windows opens the link itself. On Windows the file takes default
+/// permissions; on Unix it is owner-only.
 fn break_if_stale(dir: &Path) {
     if !is_stale(dir) {
         return;
@@ -161,6 +162,12 @@ fn break_if_stale(dir: &Path) {
         use std::os::unix::fs::OpenOptionsExt;
         open.mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        open.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
     let turn = open.open(dir.with_file_name(name)).ok();
     // Another waiter is breaking it: poll again.

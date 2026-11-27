@@ -1,21 +1,25 @@
 use super::*;
 
-#[cfg(unix)]
 fn lock_dir(path: &Path) -> PathBuf {
     path.with_file_name("store.json.lock")
 }
 
 /// A lock left by a writer that died: owner `dead`, last touched a minute ago.
-#[cfg(unix)]
 fn dead_lock(path: &Path) {
     let dir = lock_dir(path);
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("owner"), "dead").unwrap();
     let old = SystemTime::now() - Duration::from_secs(60);
-    std::fs::File::open(&dir)
-        .unwrap()
-        .set_modified(old)
-        .unwrap();
+    let mut open = std::fs::OpenOptions::new();
+    open.read(true);
+    // Windows opens a folder only with backup semantics, and sets its time only with write access.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+        open.write(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    open.open(&dir).unwrap().set_modified(old).unwrap();
 }
 
 #[test]
@@ -111,9 +115,8 @@ fn a_waiter_leaves_a_stale_lock_to_the_waiter_already_breaking_it() {
     assert!(!lock_dir(&path).exists(), "the free turn broke nothing");
 }
 
-/// A break turn file that cannot be opened (here a folder, or a link) never wedges writes: the
-/// waiter breaks the dead lock as before, and a link is not followed.
-#[cfg(unix)]
+/// A folder or a link in the break turn file's place never wedges writes: the waiter breaks the
+/// dead lock as before, and the link is not followed (Unix refuses it; Windows opens the link).
 #[test]
 fn a_waiter_that_cannot_open_the_break_turn_still_breaks_a_dead_lock() {
     let dir = tempfile::tempdir().unwrap();
@@ -130,7 +133,11 @@ fn a_waiter_that_cannot_open_the_break_turn_still_breaks_a_dead_lock() {
     let path = linked.path().join("store.json");
     dead_lock(&path);
     let target = linked.path().join("elsewhere");
-    std::os::unix::fs::symlink(&target, path.with_file_name("store.json.lock.break")).unwrap();
+    let link = path.with_file_name("store.json.lock.break");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&target, link).unwrap();
     break_if_stale(&lock_dir(&path));
     assert!(!lock_dir(&path).exists(), "a linked turn wedged the lock");
     assert!(!target.exists(), "the turn file followed a link");
