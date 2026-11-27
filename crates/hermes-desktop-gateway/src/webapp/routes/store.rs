@@ -138,7 +138,44 @@ impl Drop for StoreLock {
 }
 
 /// A writer that died holding the lock must not wedge every later write.
+///
+/// Waiters of this gateway break one at a time: each holds an OS lock on `<store>.lock.break`,
+/// which the OS frees if it dies, and judges the lock again under it. So a lock another waiter
+/// broke and took since the first judgement is fresh by then and is left alone. Upstream's and
+/// native Desktop's writers do not take that OS lock; a break by one of them is the limit
+/// [`break_stale`] states. Only a turn another waiter holds stops a break: when the file cannot
+/// be opened or locked (on Unix a link in its place; on Windows a folder or another process
+/// holding the file unshared; a file system without locks), the waiter breaks as before, so a
+/// dead lock never wedges writes. A link in its place is never followed: Unix refuses to open it
+/// and Windows opens the link itself. A newly created file is owner-only on Unix and takes default
+/// permissions on Windows; an existing one keeps its permissions.
 fn break_if_stale(dir: &Path) {
+    if !is_stale(dir) {
+        return;
+    }
+    seam("judged");
+    let mut name = dir.file_name().unwrap_or_default().to_os_string();
+    name.push(".break");
+    let mut open = std::fs::OpenOptions::new();
+    open.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        open.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let turn = open.open(dir.with_file_name(name)).ok();
+    // Another waiter is breaking it: poll again.
+    let taken = |t: &std::fs::File| matches!(t.try_lock(), Err(std::fs::TryLockError::WouldBlock));
+    if turn.as_ref().is_some_and(taken) {
+        return;
+    }
     if let Some(seen) = stale_owner(dir) {
         break_stale(dir, &seen);
     }
@@ -162,13 +199,12 @@ fn stale_owner(dir: &Path) -> Option<Vec<u8>> {
 /// a lock another writer re-took since the judgement goes back untouched.
 ///
 /// The lock folder, owner file, wait and stale age are shared with upstream and native Desktop.
-/// This break is stricter than upstream's, which removes a folder judged stale outright, but
-/// neither is airtight, and no 10 s stall is needed to hit the gap. With 3 writers of this
-/// gateway racing over a dead lock, a waiter acting on its earlier judgement can move a live lock
-/// aside whilst a third writer takes the free name. With 2 writers, one breaking as upstream does
-/// can remove a live lock this gateway took since that writer judged it. Either way the displaced
-/// holder answers busy at its next `held()` check, but one already past it can overwrite the
-/// newer write.
+/// This break is stricter than upstream's, which removes a folder judged stale outright, and
+/// [`break_if_stale`] runs it for one waiter of this gateway at a time on a fresh judgement. It
+/// is still not airtight against other writers: one breaking as upstream does can remove a live
+/// lock this gateway took since that writer judged it, and a holder stalled past the stale age
+/// can be broken whilst it writes. The displaced holder answers busy at its next `held()` check,
+/// but one already past it can overwrite the newer write.
 fn break_stale(dir: &Path, seen: &[u8]) {
     let mut name = dir.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".stale-{}", uuid::Uuid::new_v4().simple()));
@@ -176,17 +212,47 @@ fn break_stale(dir: &Path, seen: &[u8]) {
     if std::fs::rename(dir, &aside).is_err() {
         return;
     }
+    seam("aside");
     let owner = std::fs::read(aside.join("owner")).unwrap_or_default();
+    // The lock is put back only when a writer outside this protocol broke and re-took it since
+    // the judgement. On Unix that rename also replaces an empty folder, so a taker that made `dir`
+    // but has not yet written `owner` writes into the moved-back folder and displaces the holder,
+    // as a failed rename does.
     if owner == seen {
         let _ = std::fs::remove_file(aside.join("owner"));
         let _ = std::fs::remove_dir(&aside);
     } else if std::fs::rename(&aside, dir).is_err() {
-        // A third writer took the free name meanwhile. The moved holder answers busy at its next
-        // `held()` check; one already past it is the limit stated above. On Unix the rename back
-        // also replaces an empty folder, so a taker that made `dir` but has not yet written
-        // `owner` writes into the moved-back folder and displaces the holder the same way.
+        // Another writer took the free name meanwhile: the moved holder answers busy at its next
+        // `held()` check; one already past it is the limit stated above.
         let _ = std::fs::remove_file(aside.join("owner"));
         let _ = std::fs::remove_dir(&aside);
+    }
+}
+
+/// A step another writer takes at the named point.
+#[cfg(test)]
+type Seam = (&'static str, Box<dyn FnOnce()>);
+
+#[cfg(test)]
+thread_local! {
+    /// Steps another writer takes at a named point of this thread's lock code, each once.
+    pub(super) static SEAMS: std::cell::RefCell<Vec<Seam>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs the step a test armed for `at`; a no-op outside tests.
+#[cfg_attr(not(test), allow(unused_variables))]
+fn seam(at: &str) {
+    #[cfg(test)]
+    {
+        let step = SEAMS.with(|seams| {
+            let mut seams = seams.borrow_mut();
+            let found = seams.iter().position(|(name, _)| *name == at);
+            found.map(|i| seams.remove(i).1)
+        });
+        if let Some(step) = step {
+            step();
+        }
     }
 }
 

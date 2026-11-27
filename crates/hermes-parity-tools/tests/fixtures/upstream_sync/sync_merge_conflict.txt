@@ -1,0 +1,90 @@
+exit=Some(1)
+--- stdout
+[sync-upstream] Fetching origin/main and upstream/main...
+[sync-upstream] Checking out main and updating from origin...
+[sync-upstream] Creating sync branch chore/upstream-sync-<TS>...
+[sync-upstream] Merging refs/remotes/upstream/main into chore/upstream-sync-<TS>...
+[sync-upstream] Conflict issue created with label 'upstream-sync-conflict'.
+--- stderr
+[sync-upstream] ERROR: merge conflict. See <ROOT>/reports/upstream-sync-<TS>-conflict.txt
+--- calls
+gh [label] [create] [upstream-sync-conflict] [--color] [E11D48] [--description] [Automated upstream sync conflict]
+gh [issue] [create] [--title] [upstream sync conflict (main, <TS>)] [--label] [upstream-sync-conflict] --body-file <BODY>
+  | Automated upstream sync hit a conflict.
+  | 
+  | - mode: `branch-pr`
+  | - strategy: `merge`
+  | - reason: `merge conflict`
+  | - report: `<ROOT>/reports/upstream-sync-<TS>-conflict.txt`
+  | 
+  | See local report for conflicted files and recovery commands.
+--- file reports/upstream-sync-<TS>-conflict.txt
+# Upstream Sync Conflict
+
+timestamp_utc: <TS>
+mode: branch-pr
+strategy: merge
+reason: merge conflict
+origin_sha: <C:fork: carry>
+upstream_sha: <C:upstream: change readme>
+
+## Conflicted files
+```
+README.md
+```
+--- file reports/upstream-sync-<TS>.txt
+# Upstream Sync Report
+
+timestamp_utc: <TS>
+repo_root: <ROOT>/repo
+mode: branch-pr
+strategy: merge
+strict_risk_gate: 0
+run_redteam_gate: 1
+redteam_cmd: <ROOT>/bin/cargo redteam
+run_elite_gate: 0
+elite_cmd: <ROOT>/bin/cargo elite
+elite_rollback_cmd: 
+draft_pr: 0
+allow_risk_paths: 0
+pr_labels: upstream-sync,parity-sync
+risk_paths_file: <ROOT>/repo/scripts/upstream-risk-paths.txt
+upstream_url: <ROOT>/remotes/NousResearch/hermes-agent.git
+expected_upstream_repo: NousResearch/hermes-agent
+allow_non_official_upstream: 0
+origin_ref: refs/remotes/origin/main
+upstream_ref: refs/remotes/upstream/main
+origin_sha: <C:fork: carry>
+upstream_sha: <C:upstream: change readme>
+
+## Pending Upstream Commits
+```
+<C:upstream: change readme> upstream: change readme
+```
+
+## Diff Stat
+```
+ README.md | 2 +-
+ fork.txt  | 1 -
+ 2 files changed, 1 insertion(+), 2 deletions(-)
+```
+
+## Files
+```
+M	README.md
+D	fork.txt
+```
+
+status: conflict
+conflict_reason: merge conflict
+conflict_report: <ROOT>/reports/upstream-sync-<TS>-conflict.txt
+--- refs remotes/origin.git
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/chore/upstream-sync-<TS> <C:fork: carry>
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/main <C:fork: carry>
+refs/remotes/upstream/main <C:upstream: change readme>
+--- status
+## chore/upstream-sync-<TS>

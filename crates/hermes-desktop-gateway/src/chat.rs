@@ -33,9 +33,11 @@ use tokio::time::Instant;
 use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
+mod history;
 pub(crate) mod profiles;
 mod relay;
 mod session;
+mod slash;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
 use session::{Admitted, Budget, Next, Queued, Refused, MAX_STAGED_BYTES, MAX_STAGED_IMAGES};
@@ -135,7 +137,8 @@ pub(crate) type Reply = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + S
 /// in lib.rs). Past that, a handler that would wait is dropped before its first wait and its
 /// request answered busy, so a method that answers a waiting handler (an approval's answer)
 /// must answer at once. A handler that changes state does so before it returns, or makes no
-/// change before its first wait, so a request answered busy has changed nothing. A waiting
+/// change before its first wait (a task it spawns counts as a change, as it outlives the
+/// handler), so a request answered busy has changed nothing. A waiting
 /// handler is dropped at its await if the connection closes, so it must leave shared state
 /// whole at each await: change state under a lock rather than across an await, or hold a
 /// guard that undoes the change when dropped.
@@ -150,7 +153,13 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 }
 
 /// Every area's methods; a new area adds its table here.
-const AREAS: &[&[(&str, Handler)]] = &[METHODS, profiles::METHODS, relay::METHODS];
+const AREAS: &[&[(&str, Handler)]] = &[
+    METHODS,
+    history::METHODS,
+    profiles::METHODS,
+    relay::METHODS,
+    slash::METHODS,
+];
 
 /// The methods served on both wires.
 const METHODS: &[(&str, Handler)] = &[
@@ -282,6 +291,29 @@ enum Taken {
 /// run them all (a panic, or the runtime shutting down).
 struct DrainGuard(Option<Arc<LiveSession>>);
 
+/// Keeps a session from starting turns whilst it lives ([`Chat::hold`]); dropping it starts
+/// the prompts sent meanwhile.
+#[allow(dead_code, reason = "for session.undo and session.compress")]
+pub(super) struct HoldGuard {
+    chat: Arc<Chat>,
+    id: String,
+    session: Arc<LiveSession>,
+}
+
+impl Drop for HoldGuard {
+    fn drop(&mut self) {
+        if !self.session.release_hold() {
+            return;
+        }
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.chat.drain(&self.id, Arc::clone(&self.session), None);
+        } else {
+            // No runtime to run them on: drop them rather than leave the session busy.
+            self.session.abandon();
+        }
+    }
+}
+
 impl Drop for DrainGuard {
     fn drop(&mut self) {
         if let Some(session) = self.0.take() {
@@ -291,6 +323,13 @@ impl Drop for DrainGuard {
 }
 
 impl Chat {
+    /// The skills this gateway's profile offers: `<home>/skills`, the folder the tool-running
+    /// turns read too (`hermes_tools::register_builtins::skills_root` once that lands, which
+    /// this then calls).
+    pub(crate) fn skills_root(&self) -> PathBuf {
+        self.home.join("skills")
+    }
+
     /// Chat with `config`'s model; sessions are saved under `config`'s home.
     pub fn new(config: GatewayConfig) -> Self {
         let home = config
@@ -603,7 +642,7 @@ impl Chat {
                 slot,
                 prompt,
             }) => {
-                self.drain(id, session, prompt, slot);
+                self.drain(id, session, Some((prompt, slot)));
                 return Ok(Taken::Started {
                     generation,
                     sequence,
@@ -633,8 +672,7 @@ impl Chat {
         self: &Arc<Self>,
         id: &str,
         session: Arc<LiveSession>,
-        prompt: Queued,
-        slot: OwnedSemaphorePermit,
+        first: Option<(Queued, OwnedSemaphorePermit)>,
     ) {
         let chat = Arc::clone(self);
         let id = id.to_string();
@@ -643,17 +681,19 @@ impl Chat {
         tokio::spawn(async move {
             // Moves the whole guard in; a closure would capture only the field it assigns.
             let mut guard = guard;
-            let mut next = Some((prompt, slot));
-            while let Some((prompt, slot)) = next {
-                let turn = Turn {
-                    chat: Arc::clone(&chat),
-                    id: id.clone(),
-                    turn_id: uuid::Uuid::new_v4().simple().to_string(),
-                    slot: Some(Arc::new(slot)),
-                    owner: prompt.owner,
-                    admission: prompt.admission.map(|admission| *admission),
-                };
-                turn.run(prompt.text, prompt.images, &session).await;
+            let mut next = first;
+            loop {
+                if let Some((prompt, slot)) = next.take() {
+                    let turn = Turn {
+                        chat: Arc::clone(&chat),
+                        id: id.clone(),
+                        turn_id: uuid::Uuid::new_v4().simple().to_string(),
+                        slot: Some(Arc::new(slot)),
+                        owner: prompt.owner,
+                        admission: prompt.admission.map(|admission| *admission),
+                    };
+                    turn.run(prompt.text, prompt.images, &session).await;
+                }
                 let mut slot = None;
                 next = loop {
                     match session.next(&mut slot) {
@@ -669,8 +709,30 @@ impl Chat {
                         },
                     }
                 };
+                if next.is_none() {
+                    break;
+                }
             }
         });
+    }
+
+    /// Holds `session` (id `id`) idle for a change to its saved rows, such as an undo, that a
+    /// turn's save would otherwise undo: `None` whilst a turn runs or a prompt waits. Prompts
+    /// sent whilst the guard lives queue, or are refused past the queue's limits, and start
+    /// once it drops. A handler whose change is a blocking store write moves the guard into
+    /// that write's closure, so the hold lasts until the write ends even if the handler is
+    /// dropped at its await (a closed connection) whilst the write still runs.
+    #[allow(dead_code, reason = "for session.undo and session.compress")]
+    pub(super) fn hold(
+        self: &Arc<Self>,
+        id: &str,
+        session: &Arc<LiveSession>,
+    ) -> Option<HoldGuard> {
+        session.try_hold().then(|| HoldGuard {
+            chat: Arc::clone(self),
+            id: id.to_string(),
+            session: Arc::clone(session),
+        })
     }
 
     /// Runs `work` on the sessions database on the blocking pool. A turn's store calls block,
@@ -896,6 +958,7 @@ impl Turn {
                 })
             }
         };
+        session.end_turn();
         let slot = self.slot.take();
         match &self.admission {
             None => self.emit(session, "message.complete", payload, slot),
@@ -1101,7 +1164,7 @@ mod tests {
     use super::*;
 
     /// The methods the canonical wire answers in place of an area's handler.
-    const CANONICAL_OVERRIDES: &[&str] = &["session.create", "prompt.submit"];
+    const CANONICAL_OVERRIDES: &[&str] = &["session.create", "session.resume", "prompt.submit"];
 
     /// `Chat::call` takes the first handler that names a method, so a second registration
     /// would never run: each name is registered once across the areas, and the canonical
@@ -1124,6 +1187,231 @@ mod tests {
                 "{name}: served by an area but not a listed canonical override, or the reverse"
             );
         }
+    }
+
+    /// A prompt sent during a hold waits until the hold ends, then runs.
+    #[tokio::test]
+    async fn a_prompt_sent_during_a_hold_runs_once_it_ends() {
+        // A model on a closed local port: the turn fails fast and reaches nothing.
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "model:\n  default: m\n  provider: local\nproviders:\n  local:\n    \
+             api: http://127.0.0.1:9/v1\n    name: Local\n    api_mode: chat_completions\n",
+        )
+        .unwrap();
+        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+        let chat = Arc::new(Chat::new(config));
+        let (outbox, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let id = chat.create(&conn)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let session = chat.lock_sessions().get(&id).cloned().unwrap();
+        let hold = chat.hold(&id, &session).expect("an idle session");
+        assert!(chat.hold(&id, &session).is_none(), "already held");
+        assert!(matches!(
+            chat.start_turn(&id, "hi".into(), &conn, None),
+            Ok(Taken::Queued { .. })
+        ));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(events.try_recv().is_err(), "nothing ran during the hold");
+        drop(hold);
+        let first = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("the queued prompt starts")
+            .unwrap();
+        assert!(first.text.contains("message.start"), "{}", first.text);
+    }
+
+    /// A `session.title` set that its connection answers busy (polled once, then dropped, as
+    /// `serve_socket` does past its 16 waiting frames) leaves the title as it was.
+    #[tokio::test]
+    async fn a_title_set_dropped_at_its_first_poll_changes_nothing() {
+        use futures::FutureExt as _;
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "model:\n  default: m\n  provider: local\nproviders:\n  local:\n    \
+             api: http://127.0.0.1:9/v1\n    name: Local\n    api_mode: chat_completions\n",
+        )
+        .unwrap();
+        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+        let chat = Arc::new(Chat::new(config));
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let id = chat.create(&conn)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let set = chat.call(
+            &conn,
+            "session.title",
+            json!({"session_id": id, "title": "New"}),
+        );
+        assert!(set.now_or_never().is_none(), "a set waits for the store");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let read = chat
+            .call(&conn, "session.title", json!({"session_id": id}))
+            .await
+            .unwrap();
+        assert_eq!(read["title"], "", "{read}");
+    }
+
+    /// A `session.resume` that its connection answers busy (polled once, then dropped) leaves
+    /// that connection unsubscribed: the session's later events do not reach it.
+    #[tokio::test]
+    async fn a_resume_dropped_at_its_first_poll_subscribes_nothing() {
+        use futures::FutureExt as _;
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "model:\n  default: m\n  provider: local\nproviders:\n  local:\n    \
+             api: http://127.0.0.1:9/v1\n    name: Local\n    api_mode: chat_completions\n",
+        )
+        .unwrap();
+        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+        let chat = Arc::new(Chat::new(config));
+        let (outbox, mut owner_events) = tokio::sync::mpsc::unbounded_channel();
+        let owner = Conn::new(1, outbox, false);
+        let (outbox, mut other_events) = tokio::sync::mpsc::unbounded_channel();
+        let other = Conn::new(2, outbox, false);
+        let id = chat.create(&owner)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let resume = chat.call(&other, "session.resume", json!({"session_id": id}));
+        assert!(resume.now_or_never().is_none(), "a resume waits");
+        assert!(matches!(
+            chat.start_turn(&id, "hi".into(), &owner, None),
+            Ok(Taken::Started { .. })
+        ));
+        let first = tokio::time::timeout(Duration::from_secs(10), owner_events.recv())
+            .await
+            .expect("the turn starts")
+            .unwrap();
+        assert!(first.text.contains("message.start"), "{}", first.text);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            other_events.try_recv().is_err(),
+            "nothing reached the other connection"
+        );
+    }
+
+    /// A gateway over `home` whose model is a closed local port: a turn fails fast.
+    fn chat_in(home: &std::path::Path) -> Arc<Chat> {
+        std::fs::write(
+            home.join("config.yaml"),
+            "model:\n  default: m\n  provider: local\nproviders:\n  local:\n    \
+             api: http://127.0.0.1:9/v1\n    name: Local\n    api_mode: chat_completions\n",
+        )
+        .unwrap();
+        Arc::new(Chat::new(
+            hermes_config::load_config(home.to_str()).unwrap(),
+        ))
+    }
+
+    /// A session saved by an earlier gateway, live nowhere, resumes with its rows and is live
+    /// again.
+    #[tokio::test]
+    async fn a_session_saved_earlier_resumes_and_is_live_again() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "20261127_080000_a1b2c3";
+        hermes_agent::SessionPersistence::new(home.path())
+            .persist_session(
+                id,
+                &[Message::user("question"), Message::assistant("answer")],
+                Some("m"),
+                Some("desktop"),
+                None,
+                None,
+            )
+            .unwrap();
+        let chat = chat_in(home.path());
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        assert!(!chat.lock_sessions().contains_key(id));
+        let reply = chat
+            .call(&conn, "session.resume", json!({"session_id": id}))
+            .await
+            .unwrap();
+        assert_eq!(reply["message_count"], 2, "{reply}");
+        assert_eq!(reply["messages"][1]["text"], "answer", "{reply}");
+        assert_eq!(reply["running"], false, "{reply}");
+        assert!(chat.lock_sessions().contains_key(id), "live again");
+    }
+
+    /// A sessions database that cannot be opened fails a resume with 5000.
+    #[tokio::test]
+    async fn a_resume_whose_sessions_database_cannot_be_read_is_5000() {
+        let home = tempfile::tempdir().unwrap();
+        let chat = chat_in(home.path());
+        std::fs::create_dir(home.path().join("sessions.db")).unwrap();
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let refused = chat
+            .call(
+                &conn,
+                "session.resume",
+                json!({"session_id": "20261127_080000_a1b2c3"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(refused.0, 5000, "{}", refused.1);
+    }
+
+    /// A hold that ends with nothing waiting leaves the session idle: a prompt starts at once.
+    #[tokio::test]
+    async fn a_hold_with_nothing_waiting_leaves_the_session_idle() {
+        let home = tempfile::tempdir().unwrap();
+        let chat = chat_in(home.path());
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let id = chat.create(&conn)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let session = chat.lock_sessions().get(&id).cloned().unwrap();
+        drop(chat.hold(&id, &session).expect("an idle session"));
+        assert!(matches!(
+            chat.start_turn(&id, "hi".into(), &conn, None),
+            Ok(Taken::Started { .. })
+        ));
+    }
+
+    /// A hold dropped where no runtime can run its waiting prompts drops them, so the session
+    /// is not left busy.
+    #[test]
+    fn a_hold_dropped_without_a_runtime_drops_its_waiting_prompts() {
+        let home = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let (chat, id, session, hold) = runtime.block_on(async {
+            let chat = chat_in(home.path());
+            let id = chat.create(&conn)["session_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let session = chat.lock_sessions().get(&id).cloned().unwrap();
+            let hold = chat.hold(&id, &session).expect("an idle session");
+            assert!(matches!(
+                chat.start_turn(&id, "hi".into(), &conn, None),
+                Ok(Taken::Queued { .. })
+            ));
+            (chat, id, session, hold)
+        });
+        drop(hold);
+        assert!(
+            chat.hold(&id, &session).is_some(),
+            "idle, its waiting prompt dropped"
+        );
     }
 
     #[test]

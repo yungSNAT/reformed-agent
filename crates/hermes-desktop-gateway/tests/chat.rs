@@ -28,7 +28,12 @@ struct Model {
     pieces: Vec<&'static str>,
     delay: Duration,
     requests: Arc<Mutex<Vec<Value>>>,
+    /// Each answer waits for a permit; a test holding them all holds the model.
+    gate: Arc<tokio::sync::Semaphore>,
 }
+
+/// Permits in [`Model::gate`].
+const GATE_PERMITS: u32 = 1000;
 
 async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Response {
     let stream = body["stream"] == true;
@@ -38,6 +43,7 @@ async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Respon
         .and_then(|m| m["content"].as_str().or(m["content"][0]["text"].as_str()))
         .is_some_and(|text| text.contains("FAIL"));
     model.requests.lock().unwrap().push(body);
+    let _permit = model.gate.acquire().await.unwrap();
     tokio::time::sleep(model.delay).await;
     if fail {
         let error =
@@ -68,6 +74,7 @@ async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Respon
 struct Started {
     addr: SocketAddr,
     requests: Arc<Mutex<Vec<Value>>>,
+    gate: Arc<tokio::sync::Semaphore>,
     home: tempfile::TempDir,
 }
 
@@ -86,10 +93,12 @@ async fn start_with(
     extra_config: &str,
 ) -> Started {
     let requests = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(tokio::sync::Semaphore::new(GATE_PERMITS as usize));
     let model = Model {
         pieces,
         delay,
         requests: Arc::clone(&requests),
+        gate: Arc::clone(&gate),
     };
     let model_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let model_addr = model_listener.local_addr().unwrap();
@@ -123,6 +132,7 @@ async fn start_with(
     Started {
         addr,
         requests,
+        gate,
         home,
     }
 }
@@ -1233,6 +1243,194 @@ async fn events_since_replays_what_a_client_missed() {
         )
         .await;
     assert_eq!(bad["error"]["code"], -32602, "{bad}");
+}
+
+/// `session.title` reads and sets a live session's title, which a later turn keeps; it refuses
+/// an empty title, a missing id and an unknown session.
+#[tokio::test]
+async fn a_session_title_is_set_read_and_kept() {
+    let started = start(vec!["ok"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let read = client
+        .call(2, "session.title", json!({"session_id": session}))
+        .await;
+    assert_eq!(read["result"]["title"], "", "{read}");
+    let set = client
+        .call(
+            3,
+            "session.title",
+            json!({"session_id": session, "title": "  Trip plans "}),
+        )
+        .await;
+    assert_eq!(set["result"]["title"], "Trip plans", "{set}");
+    assert_eq!(set["result"]["pending"], false, "{set}");
+    client.submit(4, &session, "hello").await;
+    client.turn_events(&session).await;
+    let read = client
+        .call(5, "session.title", json!({"session_id": session}))
+        .await;
+    assert_eq!(read["result"]["title"], "Trip plans", "{read}");
+    assert_eq!(read["result"]["session_key"], session.as_str(), "{read}");
+    let renamed = client
+        .call(
+            6,
+            "session.title",
+            json!({"session_id": session, "title": "Trip"}),
+        )
+        .await;
+    assert_eq!(renamed["result"]["title"], "Trip", "{renamed}");
+    // Upstream's sanitize_title: control, zero-width and bidi characters go, runs of
+    // whitespace become one space, and 100 characters is the most it keeps.
+    let cleaned = client
+        .call(
+            7,
+            "session.title",
+            json!({"session_id": session, "title": "a\u{202e}b \u{200b}\t c\u{7}\u{feff}\u{fffc}"}),
+        )
+        .await;
+    assert_eq!(cleaned["result"]["title"], "ab c", "{cleaned}");
+    let read = client
+        .call(8, "session.title", json!({"session_id": session}))
+        .await;
+    assert_eq!(read["result"]["title"], "ab c", "{read}");
+    let longest = "\u{e9}".repeat(100);
+    let kept = client
+        .call(
+            9,
+            "session.title",
+            json!({"session_id": session, "title": longest}),
+        )
+        .await;
+    assert_eq!(kept["result"]["title"], longest.as_str(), "{kept}");
+    let cases = [
+        (
+            json!({"session_id": session, "title": "x".repeat(101)}),
+            4022,
+        ),
+        (
+            json!({"session_id": session, "title": "\u{200b}\u{202e}"}),
+            4021,
+        ),
+        (json!({"session_id": session, "title": "   "}), 4021),
+        (json!({"session_id": session, "title": null}), 4021),
+        (json!({"title": "x"}), 4006),
+        (json!({"session_id": "no-such-session", "title": "x"}), 4001),
+        (json!({"session_id": session, "title": 7}), 4000),
+    ];
+    for (n, (params, code)) in cases.into_iter().enumerate() {
+        let reply = client
+            .call(10 + n as u64, "session.title", params.clone())
+            .await;
+        assert_eq!(reply["error"]["code"], code, "{params}: {reply}");
+    }
+}
+
+/// The terminal UI's `session.resume` on another connection: the saved messages with `text`,
+/// and the turns started on the first connection from then on.
+#[tokio::test]
+async fn a_legacy_resume_returns_the_messages_and_streams_later_turns() {
+    let started = start(vec!["answer"], Duration::ZERO).await;
+    let mut owner = connect(started.addr).await;
+    let session = owner.create().await;
+    owner.submit(2, &session, "question").await;
+    owner.turn_events(&session).await;
+
+    let mut other = connect(started.addr).await;
+    let resumed = other
+        .call(
+            1,
+            "session.resume",
+            json!({"session_id": session, "cols": 80}),
+        )
+        .await;
+    let result = &resumed["result"];
+    assert_eq!(result["session_id"], session.as_str(), "{resumed}");
+    assert_eq!(result["resumed"], session.as_str(), "{resumed}");
+    assert_eq!(result["message_count"], 2, "{resumed}");
+    let rows: Vec<(&str, &str)> = result["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["role"].as_str().unwrap(), r["text"].as_str().unwrap()))
+        .collect();
+    assert_eq!(rows, [("user", "question"), ("assistant", "answer")]);
+    assert!(result["info"]["model"].is_string(), "{resumed}");
+    assert_eq!(result["session_key"], session.as_str(), "{resumed}");
+    assert_eq!(result["running"], false, "{resumed}");
+    assert_eq!(result["status"], "idle", "{resumed}");
+
+    owner.submit(3, &session, "again").await;
+    let seen = other.turn_events(&session).await;
+    assert_eq!(seen[0].0, "message.start");
+    assert_eq!(seen.last().unwrap().1["text"], "answer");
+
+    for (n, (params, code)) in [
+        (json!({}), 4006),
+        (json!({"session_id": "no-such-session"}), 4007),
+        (json!({"session_id": "../state"}), 4007),
+        (json!({"session_id": 5}), 4000),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let reply = other
+            .call(10 + n as u64, "session.resume", params.clone())
+            .await;
+        assert_eq!(reply["error"]["code"], code, "{params}: {reply}");
+    }
+}
+
+/// A resume during a turn streams that turn from its subscription on; the client recovers the
+/// turn's earlier events with `session.events.since`, so by `seq` it holds every event of the
+/// turn the owner saw, in order, none lost.
+#[tokio::test]
+async fn a_resume_during_a_turn_recovers_its_earlier_events_by_seq() {
+    let started = start(vec!["one ", "two"], Duration::ZERO).await;
+    // The model is held, so the turn still runs when the second connection resumes.
+    let held = started.gate.acquire_many(GATE_PERMITS).await.unwrap();
+    let mut owner = connect(started.addr).await;
+    let session = owner.create().await;
+    owner.submit(2, &session, "question").await;
+    let first = match owner.events.pop_front() {
+        Some(frame) => frame,
+        None => owner.next_json().await,
+    };
+    assert_eq!(first["method"], "event", "{first}");
+    owner.events.push_front(first);
+
+    let mut other = connect(started.addr).await;
+    let resumed = other
+        .call(1, "session.resume", json!({"session_id": session}))
+        .await;
+    assert_eq!(resumed["result"]["running"], true, "{resumed}");
+    let replay = other
+        .call(
+            2,
+            "session.events.since",
+            json!({"session_id": session, "last_seen": 0}),
+        )
+        .await;
+    assert_eq!(replay["result"]["truncated"], false, "{replay}");
+    drop(held);
+    let streamed = other.turn_events(&session).await;
+    let owned = owner.turn_events(&session).await;
+    assert!(
+        streamed[0].2 > owned[0].2,
+        "the resume came after the turn's first event: {streamed:?}"
+    );
+
+    let mut by_seq = std::collections::BTreeMap::new();
+    for event in replay["result"]["events"].as_array().unwrap() {
+        let seq = event["seq"].as_u64().unwrap();
+        let kind = event["type"].as_str().unwrap().to_string();
+        by_seq.insert(seq, (kind, event["payload"].clone(), seq));
+    }
+    for event in streamed {
+        by_seq.insert(event.2, event);
+    }
+    let recovered: Vec<_> = by_seq.into_values().collect();
+    assert_eq!(recovered, owned);
 }
 
 /// A session stages at most 16 images: the 17th is refused, and its file is not kept.

@@ -151,7 +151,7 @@ fn image_kind(data: &[u8]) -> Option<(&'static str, &'static str)> {
 
 /// Creates `dir` and its parents, `dir` itself owner-only when made, and refuses it when it is a
 /// link or a file, or on Windows when its volume keeps no file permissions.
-fn private_folder(dir: &Path) -> Result<(), String> {
+pub(crate) fn private_folder(dir: &Path) -> Result<(), String> {
     #[cfg(not(windows))]
     let made = {
         let mut builder = fs::DirBuilder::new();
@@ -322,7 +322,7 @@ fn file_name(name: &str) -> String {
 /// folders above: full access for the owner, SYSTEM and administrators only, as hermes-cli's
 /// `create_private_profile` makes profile folders.
 #[cfg(windows)]
-mod owner_only {
+pub(crate) mod owner_only {
     use std::fs::{File, OpenOptions};
     use std::io;
     use std::os::windows::ffi::OsStrExt;
@@ -395,7 +395,7 @@ mod owner_only {
     }
 
     /// A new file open for writing, as `OpenOptions::new().write(true).create_new(true)`.
-    pub(super) fn create_new(path: &Path) -> io::Result<File> {
+    pub(crate) fn create_new(path: &Path) -> io::Result<File> {
         let name = wide(path)?;
         with_owner_only(|security| {
             let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
