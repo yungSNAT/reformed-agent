@@ -1129,6 +1129,64 @@
         assert_eq!(replayed, ["call_a"]);
     }
 
+    #[tokio::test]
+    async fn an_interrupt_after_the_pre_model_hook_keeps_the_user_message() {
+        use crate::plugins::{Plugin, PluginContext, PluginMeta};
+
+        struct InterruptBeforeModel(crate::interrupt::InterruptController);
+
+        #[async_trait::async_trait]
+        impl Plugin for InterruptBeforeModel {
+            fn meta(&self) -> PluginMeta {
+                PluginMeta {
+                    name: "interrupt-before-model".into(),
+                    version: "0.1.0".into(),
+                    description: "Requests cancellation from the pre-model hook".into(),
+                    author: None,
+                }
+            }
+
+            async fn initialize(&self) -> Result<(), AgentError> {
+                Ok(())
+            }
+
+            async fn shutdown(&self) -> Result<(), AgentError> {
+                Ok(())
+            }
+
+            fn register(&self, context: &mut PluginContext) {
+                let interrupt = self.0.clone();
+                context.on(
+                    HookType::PreLlmCall,
+                    Arc::new(move |_| {
+                        interrupt.interrupt(None);
+                        HookResult::Ok
+                    }),
+                );
+            }
+        }
+
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), Arc::new(DummyProvider));
+        let mut plugins = PluginManager::new();
+        plugins.register(Arc::new(InterruptBeforeModel(agent.interrupt.clone())));
+        let agent = agent.with_plugins(Arc::new(Mutex::new(plugins)));
+        let user = Message::user("Summarise the field notes");
+        let result = agent.run(vec![user.clone()], None).await.unwrap();
+
+        assert!(result.interrupted);
+        assert!(!result.finished_naturally);
+        assert!(result.messages.contains(&user));
+        assert!(!result.messages.iter().any(|message| {
+            matches!(message.role, MessageRole::Assistant | MessageRole::Tool)
+        }));
+    }
+
     #[test]
     fn an_interrupt_before_the_tool_batch_keeps_no_unanswered_call() {
         // The user interrupts whilst the model answers with a call, so the
