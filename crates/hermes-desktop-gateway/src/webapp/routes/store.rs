@@ -163,9 +163,8 @@ fn break_if_stale(dir: &Path) {
     }
     let turn = open.open(dir.with_file_name(name)).ok();
     // Another waiter is breaking it: poll again.
-    if let Some(turn) = &turn
-        && let Err(std::fs::TryLockError::WouldBlock) = turn.try_lock()
-    {
+    let taken = |t: &std::fs::File| matches!(t.try_lock(), Err(std::fs::TryLockError::WouldBlock));
+    if turn.as_ref().is_some_and(taken) {
         return;
     }
     if let Some(seen) = stale_owner(dir) {
