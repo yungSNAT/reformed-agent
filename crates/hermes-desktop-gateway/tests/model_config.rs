@@ -341,7 +341,7 @@ async fn a_model_switch_changes_only_that_sessions_next_turns() {
 
 /// `reload.env` keeps a key that start-up read from the project `.env` (the working folder's)
 /// whilst the project file still holds it, even once a save has created the home `.env` and
-/// after a save of that key whose home line is deleted by hand.
+/// after a save of that key whose home line is deleted by hand; deleted from both, it goes.
 #[tokio::test]
 async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     use tokio::io::AsyncBufReadExt;
@@ -401,19 +401,26 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     std::fs::write(&env, "OPENAI_API_KEY=saved-key\n").unwrap();
     let reloaded = client.call(6, "reload.env", json!({})).await;
     let after = client.call(7, "model.options", json!({})).await;
+    // Then deleted from the project `.env` too: gone.
+    std::fs::write(project.path().join(".env"), "OTHER_KEY=keep-me\n").unwrap();
+    let gone = client.call(8, "reload.env", json!({})).await;
+    let removed = client.call(9, "model.options", json!({})).await;
     // Closing stdin ends the gateway normally, so a coverage run keeps its counts.
     drop(child.stdin.take());
     let exit = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await;
     assert!(exit.unwrap().unwrap().success());
     drop(stdout);
-    for reply in [&reply, &after] {
-        let rows = reply["result"]["providers"].as_array().unwrap();
-        assert!(
-            rows.iter()
-                .any(|row| row["slug"] == SAVED && row["authenticated"] == true),
-            "{reply}"
-        );
-    }
-    // The one change is the saved key going back to the project's.
+    let authenticated = |reply: &Value| {
+        reply["result"]["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["slug"] == SAVED && row["authenticated"] == true)
+    };
+    assert!(authenticated(&reply), "{reply}");
+    assert!(authenticated(&after), "{after}");
+    assert!(!authenticated(&removed), "{removed}");
+    // The saved key went back to the project's, then that went with its line.
     assert_eq!(reloaded["result"]["updated"], 1, "{reloaded}");
+    assert_eq!(gone["result"]["updated"], 1, "{gone}");
 }
