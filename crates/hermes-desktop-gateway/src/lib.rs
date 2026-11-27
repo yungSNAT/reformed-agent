@@ -360,10 +360,12 @@ async fn update_check() -> Json<Value> {
 /// The install's profiles; reading them walks folders, so off the runtime's threads.
 async fn profiles(State(gw): State<Arc<Gateway>>) -> Response {
     let chat = Arc::clone(&gw.chat);
-    match tokio::task::spawn_blocking(move || chat.profiles_route()).await {
-        Ok(listing) => Json(listing).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+    // A listing that panicked is a 500.
+    tokio::task::spawn_blocking(move || chat.profiles_route())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .into_response()
 }
 
 fn token_matches(given: Option<&str>, token: &str) -> bool {

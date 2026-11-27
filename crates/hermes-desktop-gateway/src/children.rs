@@ -327,10 +327,9 @@ impl Children {
                 if Some(running.port) != dead && matches!(running.child.try_wait(), Ok(None)) {
                     return Ok((running.port, running.token.clone()));
                 }
-                if let Some(mut gone) = slot.take() {
-                    let _ = gone.child.start_kill();
-                    let _ = gone.child.wait().await;
-                }
+                let _ = running.child.start_kill();
+                let _ = running.child.wait().await;
+                *slot = None;
             }
             let running = spawn(&program, &home).await?;
             let found = (running.port, running.token.clone());
@@ -407,9 +406,8 @@ async fn spawn(config: &ChildGateways, home: &Path) -> Result<Running, String> {
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("cannot start {}: {e}", config.program.display()))?;
-    let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-        unreachable!("both are piped");
-    };
+    let stdin = child.stdin.take().expect("standard input is piped");
+    let stdout = child.stdout.take().expect("standard output is piped");
     let mut lines = BufReader::new(stdout).lines();
     let port = tokio::time::timeout(config.start, async {
         while let Ok(Some(line)) = lines.next_line().await {
@@ -765,10 +763,10 @@ mod tests {
 
     /// A link to a scripted child that answers the first 2 requests in reverse order, then
     /// echoes each method name at once.
-    async fn scripted_link() -> (Link, Arc<Mutex<Pending>>) {
+    async fn scripted_link() -> (Link, Arc<Mutex<Pending>>, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
+        let child = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             let mut held: Vec<Value> = Vec::new();
@@ -807,12 +805,12 @@ mod tests {
         let conn = Conn::new(1, outbox, false);
         let link = Link::dial(lease, &conn).await.unwrap();
         let pending = Arc::clone(&link.pending);
-        (link, pending)
+        (link, pending, child)
     }
 
     #[tokio::test]
     async fn concurrent_requests_on_one_link_each_get_their_own_reply() {
-        let (link, pending) = scripted_link().await;
+        let (link, pending, child) = scripted_link().await;
         // Bounded, so a reply lost without dropping its sender fails the test, not hangs it.
         let (first, second) = tokio::time::timeout(Duration::from_secs(10), async {
             tokio::join!(
@@ -825,16 +823,292 @@ mod tests {
         assert_eq!(first.unwrap(), json!({"method": "first.method"}));
         assert_eq!(second.unwrap(), json!({"method": "second.method"}));
         assert!(Pending::lock(&pending).waiting.is_empty());
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
+    }
+
+    /// A lease on a child at `port` that no [`Children`] started.
+    fn lease_at(port: u16) -> Lease {
+        Lease {
+            children: install(
+                Path::new("unused"),
+                ChildGateways::new(PathBuf::from("unused")),
+            ),
+            name: "scripted".into(),
+            port,
+            token: "t".into(),
+        }
+    }
+
+    fn install(root: &Path, config: ChildGateways) -> Arc<Children> {
+        Arc::new(Children {
+            config,
+            root: root.to_path_buf(),
+            state: Mutex::default(),
+        })
+    }
+
+    /// Bounds a step that would otherwise hang the test on a regression.
+    async fn within<T>(what: &str, step: impl std::future::Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(10), step)
+            .await
+            .unwrap_or_else(|_| panic!("{what} within 10 s"))
+    }
+
+    /// A child that, before each reply, sends a binary frame and a text frame that is not JSON;
+    /// it answers `fails` with an error, `nocode` with an error that has no code or message,
+    /// and anything else with neither a result nor an error.
+    #[tokio::test]
+    async fn a_childs_errors_reach_the_caller_past_frames_that_are_not_replies() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let child = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(tungstenite::Message::Text(text))) = socket.next().await {
+                let request: Value = serde_json::from_str(&text).unwrap();
+                let id = &request["id"];
+                let reply = match request["method"].as_str() {
+                    Some("fails") => json!({"jsonrpc": "2.0", "id": id,
+                                            "error": {"code": 4002, "message": "no such session"}}),
+                    Some("nocode") => json!({"jsonrpc": "2.0", "id": id, "error": {}}),
+                    _ => json!({"jsonrpc": "2.0", "id": id}),
+                };
+                for frame in [
+                    tungstenite::Message::binary(vec![1, 2, 3]),
+                    tungstenite::Message::text("not json"),
+                    tungstenite::Message::text(reply.to_string()),
+                ] {
+                    socket.send(frame).await.unwrap();
+                }
+            }
+        });
+        let (outbox, _events) = mpsc::unbounded_channel();
+        let link = Link::dial(lease_at(port), &Conn::new(1, outbox, false))
+            .await
+            .unwrap();
+        let fails = within("the error reply", link.call("fails", Map::new())).await;
+        assert_eq!(fails, Err((4002, "no such session".into())));
+        let nocode = within("the bare error reply", link.call("nocode", Map::new())).await;
+        // Only the code is asserted: which text a bare error should carry is an open question.
+        assert_eq!(nocode.map_err(|(code, _)| code), Err(CHILD_FAILED));
+        let empty = within("the empty reply", link.call("bare", Map::new())).await;
+        assert_eq!(
+            empty,
+            Err((CHILD_FAILED, "profile gateway sent no reply".into()))
+        );
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
+    }
+
+    /// The child serves the client's wire: a canonical client's link offers it.
+    #[tokio::test]
+    #[expect(
+        clippy::result_large_err,
+        reason = "tungstenite's handshake callback returns its own error response"
+    )]
+    async fn a_canonical_clients_link_offers_the_canonical_wire_to_its_child() {
+        use tungstenite::handshake::server::{Request, Response};
+        use tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (seen, offered) = oneshot::channel();
+        let child = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let choose = move |request: &Request,
+                               mut response: Response|
+                  -> Result<
+                Response,
+                tungstenite::handshake::server::ErrorResponse,
+            > {
+                let protocol = request.headers().get(SEC_WEBSOCKET_PROTOCOL).cloned();
+                if let Some(protocol) = &protocol {
+                    response
+                        .headers_mut()
+                        .insert(SEC_WEBSOCKET_PROTOCOL, protocol.clone());
+                }
+                let _ = seen.send(protocol);
+                Ok(response)
+            };
+            let mut socket = tokio_tungstenite::accept_hdr_async(stream, choose)
+                .await
+                .unwrap();
+            while socket.next().await.is_some() {}
+        });
+        let (outbox, _events) = mpsc::unbounded_channel();
+        let link = Link::dial(lease_at(port), &Conn::new(1, outbox, true))
+            .await
+            .unwrap();
+        let offered = within("the dial", offered).await.unwrap();
+        assert_eq!(
+            offered.as_ref().and_then(|p| p.to_str().ok()),
+            Some(CANONICAL_PROTOCOL)
+        );
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
+    }
+
+    /// A child's event for a client that has gone ends the link: later requests fail at once.
+    #[tokio::test]
+    async fn an_event_for_a_client_that_has_gone_closes_the_link() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let child = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let event = json!({"jsonrpc": "2.0", "method": "event",
+                               "params": {"type": "message.delta", "session_id": "s"}});
+            socket
+                .send(tungstenite::Message::text(event.to_string()))
+                .await
+                .unwrap();
+            while socket.next().await.is_some() {}
+        });
+        let (outbox, events) = mpsc::unbounded_channel();
+        drop(events);
+        let link = Link::dial(lease_at(port), &Conn::new(1, outbox, false))
+            .await
+            .unwrap();
+        within("the link to close", async {
+            while !Pending::lock(&link.pending).closed {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert_eq!(
+            link.call("session.list", Map::new()).await,
+            Err((CHILD_FAILED, "profile gateway connection closed".into()))
+        );
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
+    }
+
+    /// A lease past the limit is refused as busy; a child that cannot start, or that exits
+    /// without reporting ready, fails the lease at once with the reason.
+    #[tokio::test]
+    async fn a_lease_is_refused_when_busy_or_when_its_child_does_not_start() {
+        let root = tempfile::tempdir().unwrap();
+        let inbox = root.path().join("profiles").join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(inbox.join("config.yaml"), "").unwrap();
+        let unused = ChildGateways::new(PathBuf::from("unused"));
+        let busy = install(root.path(), unused.with_limit(0))
+            .lease("inbox")
+            .await;
+        assert_eq!(
+            busy.err().unwrap().rpc(),
+            (CHILDREN_BUSY, "every profile gateway is in use".into())
+        );
+        let missing = root.path().join("no-such-program");
+        let config = ChildGateways::new(missing.clone());
+        let (code, message) = install(root.path(), config)
+            .lease("inbox")
+            .await
+            .err()
+            .unwrap()
+            .rpc();
+        assert_eq!(code, CHILD_FAILED);
+        let expected = format!("profile gateway failed: cannot start {}", missing.display());
+        assert!(message.starts_with(&expected), "{message}");
+        #[cfg(unix)]
+        {
+            // `echo` prints its arguments, which are not the ready line, and exits.
+            let config = ChildGateways::new(PathBuf::from("/bin/echo"))
+                .with_start_timeout(Duration::from_secs(60));
+            let silent = within("a lease on a child that exits", async {
+                install(root.path(), config).lease("inbox").await
+            })
+            .await;
+            assert_eq!(
+                silent.err().unwrap().rpc(),
+                (
+                    CHILD_FAILED,
+                    "profile gateway failed: it did not report ready".into()
+                )
+            );
+        }
+    }
+
+    /// The sweep stops a child left idle for its idle time and frees its slot, keeps one with a
+    /// lease, and ends once its gateway is gone.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_sweep_stops_idle_children_and_ends_with_its_gateway() {
+        let config = ChildGateways::new(PathBuf::from("unused")).with_idle_stop(Duration::ZERO);
+        let children = install(Path::new("unused"), config);
+        let mut sleeper = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdin = sleeper.stdin.take().unwrap();
+        let running = Running {
+            child: sleeper,
+            port: 1,
+            token: "t".into(),
+            _stdin: stdin,
+        };
+        let idle = Arc::new(tokio::sync::Mutex::new(Some(running)));
+        {
+            let mut state = children.lock();
+            for (name, gate, leases) in [
+                ("idle", Arc::clone(&idle), 0),
+                ("leased", Arc::new(tokio::sync::Mutex::new(None)), 1),
+                ("never-started", Arc::new(tokio::sync::Mutex::new(None)), 0),
+            ] {
+                let last_used = Instant::now();
+                let entry = Entry {
+                    gate,
+                    leases,
+                    last_used,
+                };
+                state.entries.insert(name.into(), entry);
+            }
+        }
+        let swept = tokio::spawn(sweep(Arc::downgrade(&children)));
+        within("the idle child to stop", async {
+            loop {
+                let stopped = {
+                    let state = children.lock();
+                    !state.entries.contains_key("idle")
+                        && !state.entries.contains_key("never-started")
+                        && state.reaping == 0
+                };
+                if stopped {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(idle.lock().await.is_none(), "the idle child was not reaped");
+        assert!(children.lock().entries.contains_key("leased"));
+        drop(children);
+        within("the sweep to end", swept).await.unwrap();
+        within("a sweep for a gateway already gone", sweep(Weak::new())).await;
     }
 
     #[tokio::test]
     async fn a_request_whose_caller_leaves_is_forgotten() {
-        let (link, pending) = scripted_link().await;
+        let (link, pending, child) = scripted_link().await;
         // The child holds the first request until a second comes, so this one is still
         // waiting when its caller gives up.
         let gave_up =
             tokio::time::timeout(Duration::from_millis(200), link.call("held", Map::new())).await;
         assert!(gave_up.is_err());
         assert!(Pending::lock(&pending).waiting.is_empty());
+        drop(link);
+        within("the child to see the link close", child)
+            .await
+            .unwrap();
     }
 }
