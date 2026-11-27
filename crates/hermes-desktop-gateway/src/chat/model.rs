@@ -403,11 +403,19 @@ impl Chat {
     pub(super) fn turn_config(&self, model: &str) -> Result<Cow<'_, GatewayConfig>, String> {
         let (provider, _) =
             hermes_provider_runtime::resolve_provider_and_model(&self.config, model);
+        // The entry named exactly first, then the first by name in another case, as
+        // `slug_entries` orders them.
         let entry = self
             .config
             .llm_providers
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(&provider));
+            .get_key_value(provider.as_str())
+            .or_else(|| {
+                self.config
+                    .llm_providers
+                    .iter()
+                    .filter(|(name, _)| name.eq_ignore_ascii_case(&provider))
+                    .min_by_key(|(name, _)| name.as_str())
+            });
         let mut vars: Vec<&str> = entry
             .and_then(|(_, c)| c.api_key_env.as_deref())
             .map(str::trim)
