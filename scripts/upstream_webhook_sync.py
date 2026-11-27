@@ -1963,7 +1963,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     worker.add_argument(
         "--elite-cmd",
-        default=os.environ.get("UPSTREAM_SYNC_ELITE_CMD", "python3 scripts/run-elite-sync-gate.py"),
+        default=os.environ.get(
+            "UPSTREAM_SYNC_ELITE_CMD",
+            "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate",
+        ),
         help="Command used for consolidated elite gate.",
     )
     worker.add_argument(

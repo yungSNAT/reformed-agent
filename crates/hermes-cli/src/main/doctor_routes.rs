@@ -1,6 +1,19 @@
 /// Handle `hermes doctor`.
 use hermes_core::subprocess::CommandNoWindowExt;
 
+fn elite_gate_override_available(cmdline: &str) -> bool {
+    cmdline.split_whitespace().next().is_some_and(|program| {
+        let candidate = std::path::Path::new(program);
+        if candidate.components().count() > 1 {
+            candidate.is_file()
+        } else {
+            std::env::var_os("PATH").is_some_and(|paths| {
+                std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
+            })
+        }
+    })
+}
+
 fn build_elite_doctor_diagnostics(cli: &Cli) -> serde_json::Value {
     let provenance_path = provenance_key_path_for_cli(cli);
     let provenance_exists = provenance_path.exists();
@@ -48,14 +61,9 @@ fn build_elite_doctor_diagnostics(cli: &Cli) -> serde_json::Value {
     let elite_gate_command = elite_gate_override
         .as_deref()
         .unwrap_or("native rust elite sync gate");
-    let gate_available = if elite_gate_override.is_some() {
-        let script_path = std::env::current_dir()
-            .ok()
-            .map(|cwd| cwd.join("scripts").join("run-elite-sync-gate.py"));
-        script_path.as_ref().map(|p| p.exists()).unwrap_or(false)
-    } else {
-        true
-    };
+    let gate_available = elite_gate_override
+        .as_deref()
+        .is_none_or(elite_gate_override_available);
 
     serde_json::json!({
         "provenance": {

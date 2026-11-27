@@ -21,7 +21,7 @@ Date: 2026-04-27
   - deterministic tar metadata + replay manifest timestamp stability
 - ELITE-26: Eval trend gate
   - `scripts/run-eval-trend-gate.py`
-  - wired into `scripts/run-elite-sync-gate.py`
+  - wired into `cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate`
 - ELITE-27: Memory fusion confidence scoring
   - `HERMES_MEMORY_FUSION_MIN_CONFIDENCE`
   - `HERMES_MEMORY_FUSION_TRACE=1` → `$HERMES_HOME/logs/memory-fusion-trace.jsonl`
@@ -37,14 +37,14 @@ Run:
 cargo test -p hermes-cli -- --nocapture
 cargo test -p hermes-tools -- --nocapture
 cargo test -p hermes-agent -- --nocapture
-python3 -m py_compile scripts/run-differential-parity-gate.py scripts/run-eval-trend-gate.py scripts/run-elite-sync-gate.py scripts/upstream_webhook_sync.py
+python3 -m py_compile scripts/upstream_webhook_sync.py
 bash -n scripts/sync-upstream.sh
 ```
 
 Gate smokes:
 
 ```bash
-python3 scripts/run-differential-parity-gate.py --repo-root . --json
-python3 scripts/run-eval-trend-gate.py --repo-root . --allow-missing-baseline --json
-python3 scripts/run-elite-sync-gate.py --repo-root . --json
+cargo run --locked -q -p hermes-parity-tools -- run-differential-parity-gate --repo-root . --json
+cargo run --locked -q -p hermes-parity-tools -- run-eval-trend-gate --repo-root . --allow-missing-baseline --json
+cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --repo-root . --json
 ```

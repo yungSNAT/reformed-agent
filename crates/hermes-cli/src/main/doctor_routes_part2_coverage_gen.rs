@@ -398,7 +398,7 @@ async fn shallow_doctor_snapshots_check_results_and_can_write_a_bundle() {
     .unwrap();
     fs::write(home.join(".env"), "OPENAI_API_KEY=home-fixture\n").unwrap();
     fs::write(home.join("SOUL.md"), "Fixture persona\n").unwrap();
-    write_fixture(&cwd.join("scripts/run-elite-sync-gate.py"), b"# fixture\n");
+    install_shell_fixture("fixture-gate", "exit 0");
     let cli = doctor_cli(&home);
     let health = route_health_state_path_for_cli(&cli);
     write_fixture(&health, br#"{"summary":{"overall":"fixture-healthy"}}"#);
@@ -482,4 +482,32 @@ async fn shallow_doctor_snapshots_check_results_and_can_write_a_bundle() {
         bundle_entries(&bundle)["doctor/snapshot.json"],
         fs::read(second_path).unwrap()
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn elite_gate_override_availability_checks_explicit_paths_and_path_commands() {
+    let Some(cli) = isolated_cli(
+        "elite_gate_override_availability_checks_explicit_paths_and_path_commands",
+        &[(
+            "HERMES_ELITE_GATE_CMD",
+            "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate",
+        )],
+    ) else {
+        return;
+    };
+    let cwd = std::env::current_dir().unwrap();
+    let explicit = cwd.join("gates/custom-elite-gate");
+    let explicit_cmd = format!("{} --json", explicit.display());
+    assert!(!elite_gate_override_available(&explicit_cmd));
+    write_fixture(&explicit, b"#!/bin/sh\nexit 0\n");
+    assert!(elite_gate_override_available(&explicit_cmd));
+
+    let missing_cargo = build_elite_doctor_diagnostics(&cli);
+    assert_eq!(missing_cargo["elite_gate"]["runner"], "shell_override");
+    assert_eq!(missing_cargo["elite_gate"]["script_available"], false);
+
+    install_shell_fixture("cargo", "exit 0");
+    let with_cargo = build_elite_doctor_diagnostics(&cli);
+    assert_eq!(with_cargo["elite_gate"]["script_available"], true);
 }

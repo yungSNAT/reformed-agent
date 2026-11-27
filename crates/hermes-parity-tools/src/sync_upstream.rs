@@ -49,7 +49,7 @@ Options:
   --redteam-cmd <command>   Red-team gate command (default: cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate)
   --elite-gate              Run consolidated elite sync gate (optional)
   --no-elite-gate           Skip consolidated elite sync gate (default)
-  --elite-cmd <command>     Elite gate command (default: python3 scripts/run-elite-sync-gate.py)
+  --elite-cmd <command>     Elite gate command (default: cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate)
   --elite-rollback-cmd <c>  Optional rollback command executed by elite gate on failure
   --no-doc-refresh          Skip generated parity/readme doc refresh
   --doc-refresh-cmd <cmd>   Override generated docs refresh command
@@ -558,7 +558,10 @@ fn parse(args: &[String]) -> Parsed {
             "cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate",
         ),
         run_elite_gate: env_or("RUN_ELITE_GATE", "0"),
-        elite_cmd: env_or("ELITE_CMD", "python3 scripts/run-elite-sync-gate.py"),
+        elite_cmd: env_or(
+            "ELITE_CMD",
+            "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate",
+        ),
         elite_rollback_cmd: env_or("ELITE_ROLLBACK_CMD", ""),
         run_doc_refresh: env_or("RUN_DOC_REFRESH", "1"),
         doc_refresh_cmd: env_or(

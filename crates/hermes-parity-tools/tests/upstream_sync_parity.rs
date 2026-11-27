@@ -1495,3 +1495,51 @@ fn install_reports_a_crontab_that_cannot_start() {
     );
     assert_eq!(out.stdout, "");
 }
+
+#[test]
+fn sync_default_elite_cmd_runs_parity_tools() {
+    let out = outcome(
+        case(
+            "default-elite-cmd",
+            Tool::Sync,
+            Scenario::Clean,
+            &[
+                "--repo-root",
+                "<ROOT>/repo",
+                "--report-dir",
+                "<ROOT>/reports",
+                "--no-tests",
+                "--no-redteam-gate",
+                "--elite-gate",
+                "--no-doc-refresh",
+                "--no-pr",
+            ],
+        )
+        .setup(|s| {
+            let line = format!(
+                "export PATH='{0}/bin:{0}/sysbin'\n",
+                s.root.to_string_lossy()
+            );
+            s.write("home/.bash_profile", &line);
+            s.write("home/.profile", &line);
+        }),
+    );
+    assert_eq!(out.code, Some(0), "stderr:\n{}", out.stderr);
+    assert!(
+        out.report.contains(
+            "elite_cmd: cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate\n"
+        ),
+        "{}",
+        out.report
+    );
+    assert!(
+        out.report.contains("elite_report: /reports/elite-b.json\n"),
+        "{}",
+        out.report
+    );
+    let calls = fs::read_to_string(out.sandbox.root.join("calls.log")).unwrap_or_default();
+    assert!(
+        calls.contains("cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate\n"),
+        "{calls}"
+    );
+}

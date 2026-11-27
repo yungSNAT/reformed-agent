@@ -16,7 +16,7 @@ strict_risk_gate: 0
 run_redteam_gate: 1
 redteam_cmd: cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate
 run_elite_gate: 0
-elite_cmd: python3 scripts/run-elite-sync-gate.py
+elite_cmd: cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate
 elite_rollback_cmd: 
 draft_pr: 0
 allow_risk_paths: 0
