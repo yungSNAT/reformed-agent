@@ -360,6 +360,8 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
         .parse()
         .unwrap();
     let mut client = connect(std::net::SocketAddr::from(([127, 0, 0, 1], port))).await;
+    // A reload that changes nothing first: it must not mark the project key as the home file's.
+    client.call(4, "reload.env", json!({})).await;
     let reply = client
         .call(
             1,
