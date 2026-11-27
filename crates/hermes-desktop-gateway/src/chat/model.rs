@@ -604,6 +604,28 @@ mod tests {
         assert_eq!(chat.keys.value(var), None);
     }
 
+    #[test]
+    fn a_saved_key_goes_to_the_variable_an_unexpanded_config_key_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let var = "DESKTOP_MODEL_UNIT_TEST_UNEXPANDED_KEY";
+        let provider: LlmProviderConfig =
+            serde_json::from_value(json!({ "api_key": format!("${{{var}}}") })).unwrap();
+        let mut config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
+            ..GatewayConfig::default()
+        };
+        config.llm_providers.insert("xiaomi".into(), provider);
+        let chat = Chat::new(config);
+        chat.save_key("xiaomi", "saved-key").unwrap();
+        let env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert_eq!(env, format!("{var}=saved-key\n"));
+        let config = chat.turn_config("xiaomi:m").unwrap();
+        assert_eq!(
+            config.llm_providers["xiaomi"].api_key.as_deref(),
+            Some("saved-key")
+        );
+    }
+
     #[tokio::test]
     async fn the_key_methods_serve_only_clients_on_this_machine() {
         let dir = tempfile::tempdir().unwrap();
