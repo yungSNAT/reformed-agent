@@ -216,10 +216,14 @@ fn break_stale(dir: &Path, seen: &[u8]) {
     }
 }
 
+/// A step another writer takes at the named point.
+#[cfg(test)]
+type Seam = (&'static str, Box<dyn FnOnce()>);
+
 #[cfg(test)]
 thread_local! {
     /// Steps another writer takes at a named point of this thread's lock code, each once.
-    pub(super) static SEAMS: std::cell::RefCell<Vec<(&'static str, Box<dyn FnOnce()>)>> =
+    pub(super) static SEAMS: std::cell::RefCell<Vec<Seam>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
