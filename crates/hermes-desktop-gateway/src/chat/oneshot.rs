@@ -184,3 +184,36 @@ fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), Rpc
         .map_or(1024, |n| n.min(MAX_TOKENS) as u32);
     Ok((instructions, input, temperature, max_tokens))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Closed blocks go, in any case; an opening tag with no close is kept with what follows,
+    /// as upstream's patterns match only closed blocks.
+    #[test]
+    fn reasoning_blocks() {
+        for (reply, kept) in [
+            ("<think>plan</think> answer", "answer"),
+            ("<THINK>plan</Think>answer<thought>x</thought>!", "answer!"),
+            ("answer <think>never closed", "answer <think>never closed"),
+            ("<think>a</think>b <think>open", "b <think>open"),
+        ] {
+            assert_eq!(without_reasoning(reply), kept, "{reply}");
+        }
+    }
+
+    /// An unknown template is refused with 4031 and its name.
+    #[test]
+    fn an_unknown_template_is_4031() {
+        let params = json!({"template": "limerick"});
+        let refused = prompt(params.as_object().unwrap()).unwrap_err();
+        assert_eq!(
+            refused,
+            (
+                UNKNOWN_TEMPLATE,
+                "unknown one-shot template: limerick".into()
+            )
+        );
+    }
+}
