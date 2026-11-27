@@ -24,12 +24,16 @@ use crate::harness::{
 /// after [`RESULTS_MARKER`], so whatever the adapter prints first, newline or not, stays apart.
 /// `-c` puts the working folder first on `sys.path` (unless `-P` or `PYTHONSAFEPATH` is in
 /// force); the checkout takes that place before anything but the built-in `sys` is imported.
+/// The streams named after the checkout reach a Windows console and are written in UTF-8.
 const ANTHROPIC_SHIM: &str = r#"
 import sys
 if getattr(sys.flags, "safe_path", False):
     sys.path.insert(0, sys.argv[1])
 else:
     sys.path[0] = sys.argv[1]
+for name in sys.argv[2:]:
+    stream = getattr(sys, name)
+    stream.reconfigure(encoding="utf-8", errors=stream.errors)
 import json
 from agent import anthropic_adapter as aa
 results = json.dumps([
