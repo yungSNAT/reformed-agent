@@ -456,11 +456,12 @@ mod tests {
     #[test]
     fn a_folder_is_not_read_as_an_image() {
         let dir = tempfile::tempdir().unwrap();
-        let refused = read_image(dir.path()).unwrap_err().to_string();
-        // Windows refuses to open a folder as a file; Unix opens it, and the handle is checked.
-        if cfg!(unix) {
-            assert_eq!(refused, "not a regular file");
-        }
+        let refused = read_image(dir.path());
+        // Unix opens a folder, and the handle is checked; Windows refuses to open it as a file.
+        #[cfg(unix)]
+        assert_eq!(refused.unwrap_err().to_string(), "not a regular file");
+        #[cfg(not(unix))]
+        assert!(refused.is_err());
     }
 }
 
