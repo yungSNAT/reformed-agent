@@ -939,6 +939,7 @@ impl Turn {
                 })
             }
         };
+        session.end_turn();
         let slot = self.slot.take();
         match &self.admission {
             None => self.emit(session, "message.complete", payload, slot),

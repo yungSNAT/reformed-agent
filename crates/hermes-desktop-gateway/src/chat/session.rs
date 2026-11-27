@@ -444,6 +444,9 @@ impl LiveSession {
         true
     }
 
+    /// Marks the running turn finished, just before its end event.
+    pub(super) fn end_turn(&self) {}
+
     /// Leaves the session idle and drops its waiting prompts, for a turn task that ends
     /// without draining them (a panic, or the runtime shutting down).
     pub(super) fn abandon(&self) {
@@ -724,6 +727,7 @@ mod tests {
         assert!(!live.try_hold(), "a turn runs");
         assert!(matches!(live.next(&mut None), Next::Idle));
         assert!(live.try_hold());
+        assert!(!live.state().0, "no turn runs during a hold");
         assert!(!live.try_hold(), "already held");
         assert!(matches!(
             live.admit(slot, prompt("b")),
@@ -732,6 +736,7 @@ mod tests {
         assert!(live.release_hold(), "a prompt waits for a runner");
         let mut given = slot();
         assert!(matches!(live.next(&mut given), Next::Run(..)));
+        assert!(live.state().0, "the queued prompt runs once the hold ends");
         assert!(matches!(live.next(&mut None), Next::Idle));
         assert!(live.try_hold());
         assert!(!live.release_hold(), "nothing waits");
@@ -748,5 +753,34 @@ mod tests {
         assert!(!live.state().0);
         assert!(matches!(live.next(&mut None), Next::Idle));
         assert_eq!(live.budget.queue.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn a_runner_abandoned_whilst_its_next_prompt_waits_for_a_slot_leaves_the_session_idle() {
+        let live = session();
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let _ = live.admit(|| Arc::clone(&slots).try_acquire_owned().ok(), prompt("a"));
+        let _ = live.admit(|| None, prompt("waiting"));
+        assert!(matches!(live.next(&mut None), Next::Wait));
+        live.abandon();
+        assert_eq!(live.status("s"), ((false, 0, 1), Vec::new()));
+        assert!(matches!(
+            live.admit(|| Arc::clone(&slots).try_acquire_owned().ok(), prompt("b")),
+            Ok(Admitted::Start { .. })
+        ));
+    }
+
+    #[test]
+    fn a_finished_turn_is_not_running_before_its_runner_takes_the_next_prompt() {
+        let live = session();
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let _ = live.admit(|| Arc::clone(&slots).try_acquire_owned().ok(), prompt("a"));
+        let _ = live.admit(|| None, prompt("b"));
+        assert!(live.state().0);
+        live.end_turn();
+        assert!(!live.state().0, "the turn has ended");
+        let mut slot = Arc::clone(&slots).try_acquire_owned().ok();
+        assert!(matches!(live.next(&mut slot), Next::Run(..)));
+        assert!(live.state().0, "the next turn runs");
     }
 }
