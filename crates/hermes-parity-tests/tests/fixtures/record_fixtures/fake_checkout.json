@@ -1,0 +1,131 @@
+{
+  "source": "@SOURCE@",
+  "cases": [
+    {
+      "op": "checkpoint_shadow_dir_id",
+      "input": {
+        "abs_path": "/workspace/demo"
+      },
+      "py": "4de1d2f8b60db00a"
+    },
+    {
+      "op": "checkpoint_validate_commit_hash",
+      "input": {
+        "commit_hash": "abc"
+      },
+      "py": "Invalid commit hash (expected 4-64 hex characters): 'abc'"
+    },
+    {
+      "op": "checkpoint_validate_commit_hash",
+      "input": {
+        "commit_hash": "-abc123"
+      },
+      "py": "Invalid commit hash (must not start with '-'): '-abc123'"
+    },
+    {
+      "op": "checkpoint_validate_commit_hash",
+      "input": {
+        "commit_hash": "ABCDEF1234"
+      },
+      "py": null
+    },
+    {
+      "op": "checkpoint_parse_shortstat",
+      "input": {
+        "stat_line": "1 file changed, 2 insertions(+), 3 deletions(-)"
+      },
+      "py": {
+        "files_changed": 1,
+        "insertions": 2,
+        "deletions": 3
+      }
+    },
+    {
+      "op": "checkpoint_parse_shortstat",
+      "input": {
+        "stat_line": "2 files changed, 10 insertions(+)"
+      },
+      "py": {
+        "files_changed": 2,
+        "insertions": 10,
+        "deletions": 0
+      }
+    },
+    {
+      "op": "normalize_model_name",
+      "input": {
+        "model": "anthropic/claude-opus-4.6",
+        "preserve_dots": false
+      },
+      "py": "claude-opus-4-6"
+    },
+    {
+      "op": "normalize_model_name",
+      "input": {
+        "model": "anthropic/qwen3.5-plus",
+        "preserve_dots": true
+      },
+      "py": "qwen3.5-plus"
+    },
+    {
+      "op": "sanitize_tool_id",
+      "input": {
+        "tool_id": "abc.123"
+      },
+      "py": "abc_123"
+    },
+    {
+      "op": "sanitize_tool_id",
+      "input": {
+        "tool_id": ""
+      },
+      "py": "tool_0"
+    },
+    {
+      "op": "is_oauth_token",
+      "input": {
+        "key": "sk-ant-api03-xxx"
+      },
+      "py": false
+    },
+    {
+      "op": "is_oauth_token",
+      "input": {
+        "key": "sk-ant-oat-xxx"
+      },
+      "py": true
+    },
+    {
+      "op": "common_betas_for_base_url",
+      "input": {
+        "base_url": null
+      },
+      "py": [
+        "interleaved-thinking-2025-05-14",
+        "caf\u00e9-beta"
+      ]
+    },
+    {
+      "op": "common_betas_for_base_url",
+      "input": {
+        "base_url": "https://api.minimax.io/anthropic/v1"
+      },
+      "py": [
+        "fine-grained-tool-streaming-2025-05-14"
+      ]
+    },
+    {
+      "op": "default_anthropic_beta_list",
+      "input": {
+        "base_url": null,
+        "is_oauth": true
+      },
+      "py": [
+        "interleaved-thinking-2025-05-14",
+        "caf\u00e9-beta",
+        "oauth-2025-04-20",
+        "fake-oauth-beta"
+      ]
+    }
+  ]
+}

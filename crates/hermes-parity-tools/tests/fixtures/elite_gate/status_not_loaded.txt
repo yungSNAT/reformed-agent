@@ -1,0 +1,18 @@
+exit=Some(0)
+--- stdout
+[not loaded] com.hermes_agent_ultra.nightly_elite_gate
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate-launchd.out.log ===
+(missing)
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate-launchd.err.log ===
+(missing)
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate/nightly-elite-gate-latest.json ===
+(missing)
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate/nightly-elite-gate-fallback.log ===
+(missing)
+--- stderr
+--- calls
+launchctl print gui/<UID>/com.hermes_agent_ultra.nightly_elite_gate

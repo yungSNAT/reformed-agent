@@ -1,0 +1,6 @@
+exit=Some(0)
+--- stdout
+Removed: <ROOT>/home/Library/LaunchAgents/com.hermes_agent_ultra.nightly_elite_gate.plist
+--- stderr
+--- calls
+launchctl bootout gui/<UID> <ROOT>/home/Library/LaunchAgents/com.hermes_agent_ultra.nightly_elite_gate.plist

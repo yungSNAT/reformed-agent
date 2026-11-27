@@ -19,23 +19,46 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::store::{
-    blocking, home, install_root, not_found, webapp_only, write_private, StoreLock,
-};
+use super::store::{blocking, not_found, webapp_only, write_private, Served, StoreLock};
 use crate::webapp::api::{served_profile, ApiError, ApiResult, Ctx};
 
-pub fn router() -> Router {
+/// Each handler that touches a file gets `served` from the route, not from the request.
+pub fn router(served: &Served) -> Router {
+    let (get_prefs, patch_prefs, root, list, cwd) = (
+        served.clone(),
+        served.clone(),
+        served.clone(),
+        served.clone(),
+        served.clone(),
+    );
     Router::new()
         .route(
             "/api/ui-preferences",
-            get(get_ui_preferences).patch(patch_ui_preferences),
+            get(move |ctx: Ctx| get_ui_preferences(get_prefs.clone(), ctx)).patch(
+                move |ctx: Ctx, body: Json<PreferencesPatch>| {
+                    patch_ui_preferences(patch_prefs.clone(), ctx, body)
+                },
+            ),
         )
-        .route("/api/desktop-plugins/root", get(desktop_plugins_root))
-        .route("/api/desktop-plugins/list", get(desktop_plugins_list))
+        .route(
+            "/api/desktop-plugins/root",
+            get(move |ctx: Ctx| desktop_plugins_root(root.clone(), ctx)),
+        )
+        .route(
+            "/api/desktop-plugins/list",
+            get(move |ctx: Ctx, q: Query<HashMap<String, String>>| {
+                desktop_plugins_list(list.clone(), ctx, q)
+            }),
+        )
         .route("/api/local-models/status", get(local_models_status))
         .route("/api/local-models/jobs", get(local_models_jobs))
         .route("/api/sessions/owner-backfill", post(owner_backfill))
-        .route("/api/fs/default-cwd", get(default_cwd))
+        .route(
+            "/api/fs/default-cwd",
+            get(move |ctx: Ctx, q: Query<HashMap<String, String>>| {
+                default_cwd(cwd.clone(), ctx, q)
+            }),
+        )
 }
 
 // ---- UI preferences -------------------------------------------------------------------------
@@ -222,9 +245,9 @@ pub(crate) fn write_preferences(
     Ok(json!({"exists": true, "revision": revision, "values": values, "generation": generation}))
 }
 
-async fn get_ui_preferences(ctx: Ctx) -> ApiResult {
+async fn get_ui_preferences(served: Served, ctx: Ctx) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = install_root(&ctx).join(PREFERENCES_FILE);
+    let path = served.install_root().join(PREFERENCES_FILE);
     blocking(move || Ok(read_preferences(&path)?.to_json()))
         .await
         .map(Json)
@@ -238,9 +261,13 @@ struct PreferencesPatch {
     seed: bool,
 }
 
-async fn patch_ui_preferences(ctx: Ctx, Json(body): Json<PreferencesPatch>) -> ApiResult {
+async fn patch_ui_preferences(
+    served: Served,
+    ctx: Ctx,
+    Json(body): Json<PreferencesPatch>,
+) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = install_root(&ctx).join(PREFERENCES_FILE);
+    let path = served.install_root().join(PREFERENCES_FILE);
     let changes: Map<String, Value> = body
         .values
         .into_iter()
@@ -303,15 +330,19 @@ pub(crate) fn list_plugins(root: &Path, raw: &str) -> Result<Value, ApiError> {
     Ok(json!({"entries": entries.into_iter().map(|(_, row)| row).collect::<Vec<_>>()}))
 }
 
-async fn desktop_plugins_root(ctx: Ctx) -> ApiResult {
+async fn desktop_plugins_root(served: Served, ctx: Ctx) -> ApiResult {
     webapp_only(&ctx)?;
-    let root = install_root(&ctx);
+    let root = served.install_root();
     blocking(move || Ok(json!({"root": plugins_root(&root)?.to_string_lossy()})))
         .await
         .map(Json)
 }
 
-async fn desktop_plugins_list(ctx: Ctx, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+async fn desktop_plugins_list(
+    served: Served,
+    ctx: Ctx,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult {
     webapp_only(&ctx)?;
     let Some(path) = q.get("path").cloned() else {
         return Err(ApiError(
@@ -319,7 +350,7 @@ async fn desktop_plugins_list(ctx: Ctx, Query(q): Query<HashMap<String, String>>
             "path is required".into(),
         ));
     };
-    let root = install_root(&ctx);
+    let root = served.install_root();
     blocking(move || list_plugins(&plugins_root(&root)?, &path))
         .await
         .map(Json)
@@ -417,19 +448,24 @@ fn dirs_home() -> PathBuf {
 /// The checked-out branch of `cwd`, or "" outside a repository, on a detached head, or when git
 /// is missing, too old to read safely, or slow.
 pub(crate) fn branch_of(cwd: &Path) -> String {
-    let Some(mut git) = hermes_core::git::read_only_git(cwd) else {
+    let Some(git) = hermes_core::git::read_only_git(cwd) else {
         return String::new();
     };
-    git.args(["branch", "--show-current"]);
+    let mut git = git.command(hermes_core::git::GitRead::Branch);
+    git.arg("--show-current");
     match hermes_core::git::output_within_timeout(&mut git, Duration::from_secs(2)) {
         Some(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_owned(),
         _ => String::new(),
     }
 }
 
-async fn default_cwd(ctx: Ctx, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+async fn default_cwd(
+    served: Served,
+    ctx: Ctx,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult {
     served_profile(&ctx.api, q.get("profile").map(String::as_str))?;
-    let home = home(&ctx);
+    let home = served.home().to_path_buf();
     blocking(move || {
         let cwd = default_cwd_for(&home);
         let branch = branch_of(&cwd);

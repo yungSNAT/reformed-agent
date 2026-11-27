@@ -427,7 +427,7 @@ mod tests {
     use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
     use async_trait::async_trait;
-    use hermes_core::{tool_schema, JsonSchema, ToolError};
+    use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler};
 
     struct NoopTool {
         schema: ToolSchema,
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl hermes_core::ToolHandler for NoopTool {
+    impl ToolHandler for NoopTool {
         async fn execute(&self, _params: serde_json::Value) -> Result<String, ToolError> {
             Ok("ok".to_string())
         }
@@ -814,12 +814,14 @@ mod tests {
     fn coding_focus_collapses_default_cli_toolset_and_keeps_live_mcp() {
         let _lock = env_test_lock();
         let tmp = tempfile::tempdir().unwrap();
+        let previous_cwd = tmp.path().join("original-work-dir");
+        let _previous = EnvGuard::set("TERMINAL_CWD", previous_cwd.to_str().unwrap());
         std::fs::write(
             tmp.path().join("Cargo.toml"),
             "[package]\nname='x'\nversion='0.1.0'\n",
         )
         .unwrap();
-        let _cwd = EnvGuard::set("TERMINAL_CWD", tmp.path().to_str().unwrap());
+        let cwd = EnvGuard::set("TERMINAL_CWD", tmp.path().to_str().unwrap());
         let mut cfg = GatewayConfig::default();
         cfg.agent.coding_context = "focus".to_string();
         let reg = registry_with_minimal_tools();
@@ -847,6 +849,11 @@ mod tests {
         assert!(names.contains(&"mcp_lattice_search".to_string()));
         assert!(!names.contains(&"send_message".to_string()));
         assert!(!names.contains(&"image_generate".to_string()));
+        drop(cwd);
+        assert_eq!(
+            std::env::var_os("TERMINAL_CWD").as_deref(),
+            Some(previous_cwd.as_os_str())
+        );
     }
 
     #[test]
@@ -984,22 +991,21 @@ mod tests {
         assert!(names.contains(&"CustomTool".to_string()));
     }
 
-    #[test]
-    fn platform_toolsets_resolve_live_mcp_server_aliases() {
+    #[tokio::test]
+    async fn platform_toolsets_resolve_live_mcp_server_aliases() {
+        const TOOL: &str = "mcp_dynserver_ping";
         let mut cfg = GatewayConfig::default();
         cfg.platform_toolsets
             .insert("cli".to_string(), vec!["dynserver".to_string()]);
         let reg = registry_with_minimal_tools();
-        let schema = tool_schema(
-            "mcp_dynserver_ping",
-            "MCP server ping",
-            JsonSchema::new("object"),
-        );
+        let handler = Arc::new(NoopTool {
+            schema: tool_schema(TOOL, "MCP server ping", JsonSchema::new("object")),
+        });
         reg.register(
-            "mcp_dynserver_ping",
+            TOOL,
             "mcp-dynserver",
-            schema.clone(),
-            Arc::new(NoopTool { schema }),
+            handler.schema(),
+            handler,
             Arc::new(|| true),
             Vec::new(),
             true,
@@ -1010,7 +1016,15 @@ mod tests {
         reg.register_toolset_alias("dynserver", "mcp-dynserver");
 
         let names = resolve_platform_tool_names(&cfg, "cli", &reg);
-        assert_eq!(names, vec!["mcp_dynserver_ping".to_string()]);
+        assert_eq!(names, [TOOL]);
+        let schemas = resolve_platform_tool_schemas(&cfg, "cli", &reg);
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas[0].name, TOOL);
+        assert_eq!(
+            reg.dispatch_async(&schemas[0].name, serde_json::json!({}))
+                .await,
+            ToolRegistry::tool_result("ok")
+        );
     }
 
     fn schema_names(cfg: &GatewayConfig, reg: &Arc<ToolRegistry>) -> Vec<String> {
