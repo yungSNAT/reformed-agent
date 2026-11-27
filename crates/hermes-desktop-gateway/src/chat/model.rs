@@ -104,27 +104,53 @@ fn local(
 #[derive(Default)]
 pub(super) struct Keys {
     changed: Mutex<HashMap<String, Option<String>>>,
-    /// The names in the home `.env` when this gateway started, whose values start-up set over
-    /// the shell's. Not the project `.env`: a reload reads that one only to fill gaps.
-    from_file: BTreeSet<String>,
+    /// The names this gateway has seen in the home `.env` (at start-up, on a save or a reload),
+    /// as [`env_key`] gives them. Not the project `.env`: a reload reads that one only to fill
+    /// gaps, so a key it holds may be missing from what a reload reads.
+    from_file: Mutex<BTreeSet<String>>,
+}
+
+/// `name` as the environment compares it: upper-cased on Windows, whose names ignore case.
+fn env_key(name: &str) -> String {
+    if cfg!(windows) {
+        name.to_ascii_uppercase()
+    } else {
+        name.to_string()
+    }
+}
+
+/// The names in `home`'s `.env` as [`env_key`] gives them: none for a missing file, `None` for
+/// one that cannot be read.
+fn home_env_names(home: &Path) -> Option<BTreeSet<String>> {
+    match std::fs::read_to_string(home.join(".env")) {
+        Ok(contents) => Some(
+            contents
+                .lines()
+                .filter_map(dotenv_assignment)
+                .map(|(name, _)| env_key(name))
+                .collect(),
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(BTreeSet::new()),
+        Err(_) => None,
+    }
 }
 
 impl Keys {
     /// No changes yet; the names in `home`'s `.env` as it stands.
     pub(super) fn at_start_up(home: &Path) -> Self {
-        let from_file = std::fs::read_to_string(home.join(".env"))
-            .map(|contents| {
-                contents
-                    .lines()
-                    .filter_map(dotenv_assignment)
-                    .map(|(name, _)| name.to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
         Self {
             changed: Mutex::default(),
-            from_file,
+            from_file: Mutex::new(home_env_names(home).unwrap_or_default()),
         }
+    }
+
+    fn names_from_file(&self) -> MutexGuard<'_, BTreeSet<String>> {
+        self.from_file.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Records `names` as seen in the home `.env`.
+    fn saw_in_home_file(&self, names: impl IntoIterator<Item = String>) {
+        self.names_from_file().extend(names);
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Option<String>>> {
@@ -132,10 +158,9 @@ impl Keys {
         self.changed.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Whether `var`'s value came from a `.env` file: changed since start-up, or in the home
-    /// `.env` at start-up.
-    fn came_from_env_file(&self, var: &str) -> bool {
-        self.changed(var) || self.from_file.contains(var)
+    /// Whether this gateway has seen `var` in the home `.env`.
+    fn came_from_home_file(&self, var: &str) -> bool {
+        self.names_from_file().contains(&env_key(var))
     }
 
     /// `var`'s value now, if set and not blank: a change since start-up, else the environment's.
@@ -486,6 +511,7 @@ impl Chat {
             )
         })?;
         self.keys.set(var, Some(key.to_string()));
+        self.keys.saw_in_home_file([env_key(var)]);
         drop(_write);
         let canonical = canonical_provider_id(slug);
         let mut row = option_rows(&self.config, &self.keys, "", false)
@@ -528,24 +554,36 @@ impl Chat {
     }
 
     /// `reload.env`: re-reads the key variables as start-up does (`hermes_config`'s order, the
-    /// managed `.env` last); the number changed. A key read from a `.env` file (at start-up or
-    /// since) and now gone from a readable `.env` is removed, as upstream removes it; one only
-    /// the shell set stays. Other variables and a value that would not read back as itself take
-    /// effect at the next start.
+    /// managed `.env` last, names compared as [`env_key`]); the number changed. A key this
+    /// gateway has seen in the home `.env` and now gone from it and from what a reload reads is
+    /// removed, as upstream removes a known key gone from a readable home `.env`; one only the
+    /// shell or the project `.env` set stays. Other variables and a value that would not read
+    /// back as itself take effect at the next start.
     fn reload_env(&self) -> usize {
         let _write = env_write();
-        let values = dotenv_values_in(&self.home);
-        let env_file = self.home.join(".env");
-        let readable = !env_file.exists() || std::fs::read_to_string(&env_file).is_ok();
-        self.key_variables()
+        let home_names = home_env_names(&self.home);
+        let values: HashMap<String, String> = dotenv_values_in(&self.home)
+            .into_iter()
+            .map(|(name, value)| (env_key(&name), value))
+            .collect();
+        let changed = self
+            .key_variables()
             .iter()
-            .filter(|var| match values.get(var.as_str()) {
+            .filter(|var| match values.get(&env_key(var)) {
                 Some(value) => {
                     env_value_round_trips(var, value) && self.keys.set(var, Some(value.clone()))
                 }
-                None => readable && self.keys.came_from_env_file(var) && self.keys.set(var, None),
+                None => {
+                    home_names
+                        .as_ref()
+                        .is_some_and(|names| !names.contains(&env_key(var)))
+                        && self.keys.came_from_home_file(var)
+                        && self.keys.set(var, None)
+                }
             })
-            .count()
+            .count();
+        self.keys.saw_in_home_file(home_names.unwrap_or_default());
+        changed
     }
 
     /// `config.set {session_id, key, value}`: only `model`, for one live session, as upstream
@@ -848,6 +886,22 @@ mod tests {
         assert!(chat.keys.changed(var));
         assert_eq!(chat.keys.value(var), None);
         assert!(!chat.keys.changed("OTHER_KEY"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reload_env_drops_a_start_up_key_whose_line_differs_in_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let var = "DESKTOP_MODEL_UNIT_TEST_CASE_KEY";
+        let config = xiaomi_chat(dir.path(), json!({ "api_key_env": var })).config;
+        let path = dir.path().join(".env");
+        let line = var.to_ascii_lowercase();
+        std::fs::write(&path, format!("OTHER_KEY=keep-me\n{line}=start-up-key\n")).unwrap();
+        let chat = Chat::new(config);
+        std::fs::write(&path, "OTHER_KEY=keep-me\n").unwrap();
+        chat.reload_env();
+        assert!(chat.keys.changed(var));
+        assert_eq!(chat.keys.value(var), None);
     }
 
     #[test]
