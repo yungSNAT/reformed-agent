@@ -524,6 +524,7 @@ async fn a_browser_socket_opens_once_with_its_ticket_and_own_origin() {
         }
     };
     assert_eq!(reply["error"]["code"], 4030, "{reply}");
+    assert_eq!(reply["error"]["message"], "not available to this client");
     assert!(!marker.exists());
     // Spent.
     assert_eq!(
