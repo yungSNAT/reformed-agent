@@ -183,6 +183,7 @@ async fn a_local_caller_reads_the_working_folder_but_not_the_hermes_home() {
             .filter_map(|e| e["name"].as_str())
             .collect();
         assert!(names.contains(&"proj"), "{who}: {body}");
+        assert!(!names.contains(&"hermes"), "{who}: {body}");
 
         let file = get(at("/api/fs/read-data-url", &base.join("proj/a.txt")))
             .await

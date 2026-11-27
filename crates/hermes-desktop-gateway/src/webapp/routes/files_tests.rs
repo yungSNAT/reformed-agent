@@ -57,6 +57,10 @@ fn credential_names_and_folders_are_sensitive_anywhere() {
         "/h/x/.envrc",
         "/h/.ssh",
         "/h/.ssh/id_rsa",
+        "/h/backup/id_rsa",
+        "/h/backup/id_ed25519",
+        "/h/backup/id_ecdsa",
+        "/h/backup/id_dsa",
         "/h/.AWS/config",
         "/p/.config/gh/hosts.yml",
         "/h/.hermes/webapp/session-token",
@@ -176,7 +180,7 @@ fn a_listing_hides_build_and_credential_entries_and_lists_folders_first() {
     let Ok(Opened::Dir(dir)) = open_resolved(&resolved) else {
         panic!("not a folder")
     };
-    let (entries, truncated) = list_entries(dir, &resolved.path).unwrap();
+    let (entries, truncated) = list_entries(dir, &resolved.path, &[t.hermes.clone()]).unwrap();
     let names: Vec<(&str, bool)> = entries
         .iter()
         .map(|e| {
@@ -197,6 +201,16 @@ fn a_listing_hides_build_and_credential_entries_and_lists_folders_first() {
         ]
     );
     assert!(!truncated);
+    // Refused trees (such as the Hermes home) are hidden from their parent's listing too.
+    let root_listing = list(&t, &at(&t, "")).unwrap();
+    let root_names: Vec<&str> = root_listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .collect();
+    assert!(!root_names.contains(&".hermes"), "{root_names:?}");
+    assert!(root_names.contains(&"proj"), "{root_names:?}");
 }
 
 #[test]
@@ -394,7 +408,7 @@ fn a_submodule_cannot_run_its_own_filter_on_status() {
     std::fs::write(repo.join("sub/a.txt"), "two\n").unwrap();
     let status = status_at(&t, "proj");
     assert!(!marker.exists(), "a submodule's filter ran");
-    let Some(status) = status else { return }; // git older than 2.39.1: nothing ran either
+    let status = status.expect("a status (git 2.39.1 or newer)");
     assert_eq!(status["branch"], "main");
 }
 
@@ -407,12 +421,18 @@ fn a_path_outside_the_roots_answers_alike_whether_or_not_it_exists() {
     let locked = t.outside.join("locked");
     std::fs::create_dir(&locked).unwrap();
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let outside_aws = t.outside.join(".aws");
+    std::fs::create_dir(&outside_aws).unwrap();
+    std::fs::write(outside_aws.join("notes.txt"), "secret").unwrap();
+    symlink(&outside_aws, t.outside.join("lnk")).unwrap();
     for p in [
         t.outside.clone(),
         t.outside.join("secret.txt"),
         t.outside.join("missing"),
         t.outside.join("missing/deeper"),
         locked.join("x"),
+        t.outside.join("lnk/notes.txt"),
+        t.outside.join("lnk/missing"),
         t.root.join("escape/missing"),
         t.root.join("escape/secret.txt"),
         t.root.join("proj/../../outside/missing"),
@@ -581,6 +601,12 @@ fn every_git_call_carries_the_overrides_no_behaviour_test_can_see() {
     // behaviour test; this test fails if one is dropped.
     let t = tree();
     let mut cmd = git(&t.root, &t.root, GitRead::Status).expect("git 2.39.1 or later");
+    assert!(
+        cmd.get_envs().any(|(k, v)| {
+            k == "GIT_CEILING_DIRECTORIES" && v == Some(t.root.parent().unwrap().as_os_str())
+        }),
+        "GIT_CEILING_DIRECTORIES missing"
+    );
     cmd.args(STATUS_ARGS);
     let args: Vec<String> = cmd
         .get_args()
@@ -737,10 +763,13 @@ fn a_bad_descriptor_or_a_name_with_a_nul_fails_cleanly() {
 }
 
 fn list(t: &Tree, raw: &str) -> Result<Value, ApiError> {
-    listing(resolve(raw, &roots(t), None).and_then(|r| {
-        let opened = open_resolved(&r)?;
-        Ok((r, opened))
-    }))
+    listing(
+        resolve(raw, &roots(t), None).and_then(|r| {
+            let opened = open_resolved(&r)?;
+            Ok((r, opened))
+        }),
+        std::slice::from_ref(&t.hermes),
+    )
 }
 
 #[test]
@@ -794,7 +823,7 @@ fn a_descriptor_that_is_not_a_folder_lists_as_a_read_error() {
         .into();
     let resolved = resolve(&at(&t, "proj/src"), &roots(&t), None).unwrap();
     assert_eq!(
-        listing(Ok((resolved, Opened::Dir(file)))).unwrap(),
+        listing(Ok((resolved, Opened::Dir(file))), &[]).unwrap(),
         json!({"entries": [], "error": "read-error"})
     );
 }
@@ -885,15 +914,6 @@ fn untracked_line_counts_skip_what_is_not_small_readable_text() {
 }
 
 #[test]
-fn a_prefix_that_leaves_the_folder_gives_no_top() {
-    assert_eq!(
-        top_of(Path::new("/a/b/c"), "b/c/"),
-        Some(PathBuf::from("/a"))
-    );
-    assert_eq!(top_of(Path::new("/a/b"), "../x"), None);
-}
-
-#[test]
 fn status_names_the_remote_default_branch_and_the_distance_from_upstream() {
     let t = tree();
     let repo = t.root.join("proj");
@@ -945,4 +965,135 @@ fn status_of_a_repository_without_a_commit_counts_its_untracked_lines() {
     // `a.txt` and the folder `src/`, whose lines are not counted.
     assert_eq!(status["untracked"], 2);
     assert_eq!(status["added"], 1);
+}
+
+#[test]
+fn a_repository_whose_worktree_or_git_folder_escapes_is_refused() {
+    // core.worktree pointing into the refused Hermes home must not leak its names.
+    let t = tree();
+    std::fs::write(t.hermes.join("gateway-connection-tokens.json"), "{}").unwrap();
+    let repo = t.root.join("proj");
+    run(&repo, &["init", "-q", "-b", "main"]);
+    commit_all(&repo);
+    run(
+        &repo,
+        &["config", "core.worktree", t.hermes.to_str().unwrap()],
+    );
+    assert_eq!(status_at(&t, "proj"), None, "core.worktree into .hermes");
+
+    // core.worktree pointing to the root ancestor (which has no .git) must also be refused.
+    run(
+        &repo,
+        &["config", "core.worktree", t.root.to_str().unwrap()],
+    );
+    run(&repo, &["config", "status.showUntrackedFiles", "all"]);
+    assert_eq!(status_at(&t, "proj"), None, "core.worktree to root");
+
+    // Reset worktree: a real linked worktree inside the root still works.
+    run(&repo, &["config", "--unset", "core.worktree"]);
+    run(&repo, &["config", "--unset", "status.showUntrackedFiles"]);
+    let wt = t.root.join("wt");
+    run(
+        &repo,
+        &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
+    );
+    let wt_status = status_at(&t, "wt").expect("linked worktree inside root");
+    assert_eq!(wt_status["branch"], "feat");
+
+    // A .git gitfile pointing to a repository outside the root is refused.
+    let ext = t.outside.join("ext");
+    std::fs::create_dir(&ext).unwrap();
+    run(&ext, &["init", "-q", "-b", "secret"]);
+    std::fs::write(ext.join("s.txt"), "x\n").unwrap();
+    commit_all(&ext);
+    let linked = t.root.join("linked");
+    std::fs::create_dir(&linked).unwrap();
+    std::fs::write(
+        linked.join(".git"),
+        format!("gitdir: {}\n", ext.join(".git").display()),
+    )
+    .unwrap();
+    assert_eq!(status_at(&t, "linked"), None, "gitfile outside root");
+
+    // Even a real repository at the root itself omits refused trees from status entries.
+    let t2 = tree();
+    run(&t2.root, &["init", "-q", "-b", "main"]);
+    let status = status_at(&t2, "proj").expect("real repo at root");
+    let paths: Vec<&str> = status["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert!(
+        !paths.iter().any(|p| p.starts_with(".hermes")),
+        "refused tree listed in status: {paths:?}"
+    );
+}
+
+#[test]
+fn a_root_under_a_colon_parent_still_stops_discovery_above_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let colon_parent = base.join("a:b");
+    let root = colon_parent.join("home");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    run(&colon_parent, &["init", "-q", "-b", "outer"]);
+    let r = Roots::new(std::slice::from_ref(&root), &[]);
+    let repo = repo_dir(proj.to_str().unwrap(), &r, Some(&root)).unwrap();
+    assert_eq!(repo_status(&repo, &[]), None);
+}
+
+#[test]
+fn a_system_or_kernel_home_folder_is_not_a_root() {
+    for bad in [
+        "/",
+        "/proc/self",
+        "/sys/kernel",
+        "/dev/shm",
+        "/etc",
+        "/run",
+        "/root",
+        "/var",
+        "/var/home",
+        "/var/lib/x",
+        "/home",
+        "/Users",
+        "/tmp",
+        "/private/var/db",
+    ] {
+        assert!(!home_root_allowed(Path::new(bad)), "{bad}");
+    }
+    for ok in ["/home/u", "/Users/u", "/var/home/u", "/tmp/x"] {
+        assert!(home_root_allowed(Path::new(ok)), "{ok}");
+    }
+    let root_home = roots_for(Some(Path::new("/")), Path::new("/"), &[]);
+    assert!(root_home.allowed.is_empty(), "{:?}", root_home.allowed);
+    assert_eq!(
+        resolve("/etc/hosts", &root_home, Some(Path::new("/"))).unwrap_err(),
+        Refusal::Outside
+    );
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(
+            resolve("/proc/self/environ", &root_home, Some(Path::new("/"))).unwrap_err(),
+            Refusal::Outside
+        );
+        let proc_home = roots_for(Some(Path::new("/proc/self")), Path::new("/proc/self"), &[]);
+        assert!(proc_home.allowed.is_empty(), "{:?}", proc_home.allowed);
+    }
+}
+
+#[test]
+fn a_renamed_all_digit_file_does_not_inflate_line_counts() {
+    let t = tree();
+    let repo = t.root.join("proj");
+    run(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("7"), "one\n").unwrap();
+    commit_all(&repo);
+    run(&repo, &["mv", "7", "8"]);
+    let status = status_at(&t, "proj").expect("a status");
+    assert_eq!(status["added"], 0, "rename path inflated added: {status}");
+    assert_eq!(status["removed"], 0);
 }
