@@ -345,6 +345,52 @@ async fn ops_eval_gate_persists_the_missing_input_and_regression_reports() {
     assert!(checks[1..].iter().all(|check| check["ok"] == true));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn ops_slo_gate_rolls_back_only_an_unhealthy_check_and_saves_the_report() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::ops_control_contract::ops_slo_gate_rolls_back_only_an_unhealthy_check_and_saves_the_report",
+    ) {
+        return;
+    }
+    let home = hermes_config::hermes_home();
+    let reports = home.join(".sync-reports");
+    let rollback_marker = home.join("rolled-back.txt");
+    std::env::set_var("HERMES_REPO_ROOT", &home);
+    std::env::set_var(
+        "HERMES_SLO_ROLLBACK_CMD",
+        "printf '%s' 'previous fixture restored' > rolled-back.txt",
+    );
+    let mut app = build_test_app_with_stream(&home).await;
+
+    for (check, violated) in [("printf '%s' 'checks passed'", false), ("exit 3", true)] {
+        std::env::set_var("HERMES_SLO_CHECK_CMD", check);
+        let output = command_output(&mut app, "/ops", &["gate", "slo"]).await;
+        let (payload, path) = output.split_once("\nreport_path=").unwrap();
+        let path = Path::new(path);
+        assert_eq!(path.parent(), Some(reports.as_path()));
+        let report: Value = serde_json::from_str(payload).unwrap();
+        let persisted: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(report, persisted);
+        assert_eq!(report["check"]["command"], check);
+        assert_eq!(report["violated"], violated);
+        assert_eq!(report["ok"], !violated);
+        assert_eq!(report["dry_run"], false);
+        assert_eq!(rollback_marker.is_file(), violated);
+        if violated {
+            assert_eq!(report["check"]["exit_code"], 3);
+            assert_eq!(report["rollback"]["ok"], true);
+            assert_eq!(
+                std::fs::read_to_string(&rollback_marker).unwrap(),
+                "previous fixture restored"
+            );
+        } else {
+            assert_eq!(report["check"]["stdout_tail"], "checks passed");
+            assert!(report["rollback"].is_null());
+        }
+    }
+}
+
 #[tokio::test]
 async fn ops_recommendations_and_autopilot_overrides_follow_local_state() {
     if !crate::isolated_test_profile::enter(
