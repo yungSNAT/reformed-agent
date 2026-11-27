@@ -411,15 +411,50 @@ pub fn is_env_name(key: &str) -> bool {
         && bytes.all(|b| b == b'_' || b.is_ascii_alphanumeric())
 }
 
+/// Variables that steer how the next process runs, which upstream's `.env` writer refuses
+/// (`hermes_cli/config.py` `_ENV_VAR_NAME_DENY_PREFIXES` and `_ENV_VAR_NAME_DENYLIST`, with
+/// `hermes_constants.py` `LAUNCH_ONLY_ENV_KEYS`).
+const ENV_WRITE_DENY_PREFIXES: &[&str] = &["LD_", "DYLD_", "GIT_CONFIG_"];
+const ENV_WRITE_DENYLIST: &[&str] = &[
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONEXECUTABLE",
+    "PYTHONNOUSERSITE", "PYTHONBREAKPOINT", "PYTHONCASEOK", "NODE_OPTIONS", "NODE_PATH",
+    "PERL5OPT", "PERL5LIB", "PERLLIB", "RUBYOPT", "RUBYLIB", "CLASSPATH", "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "GOFLAGS", "RUSTFLAGS", "PATH", "SHELL", "BROWSER",
+    "EDITOR", "VISUAL", "PAGER", "MANPAGER", "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_SHELL",
+    "GIT_SSH", "GIT_ASKPASS", "SSH_ASKPASS", "SUDO_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+    "GIT_PAGER", "GIT_EXTERNAL_DIFF", "GIT_PROXY_COMMAND", "GIT_TEMPLATE_DIR", "GIT_DIR",
+    "BASH_ENV", "ENV", "ZDOTDIR", "PROMPT_COMMAND", "VIMINIT", "EXINIT", "HERMES_HOME",
+    "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_ENV", "HERMES_CONFIG_PATH", "HERMES_ENV_PATH",
+    "HERMES_OPTIONAL_MCPS", "HERMES_YOLO_MODE", "HERMES_ACCEPT_HOOKS", "HERMES_REDACT_SECRETS",
+    "HERMES_INTERACTIVE", "HERMES_EXEC_ASK", "HERMES_GATEWAY_SESSION", "HERMES_CRON_SESSION",
+    "HERMES_SINGLE_QUERY_SESSION", "HERMES_SESSION_KEY", "HERMES_SESSION_PLATFORM",
+    "HERMES_MANAGED_DIR", "GATEWAY_STATUS_REPORT_URL", "HERMES_INSTALL_STATE_DIR",
+];
+
+/// Whether the `.env` writer may set or remove `key`: a variable name ([`is_env_name`]) that
+/// does not steer the next process. Windows reads variable names in any letter case.
+pub fn env_name_writable(key: &str) -> bool {
+    let policy = if cfg!(windows) {
+        key.to_ascii_uppercase()
+    } else {
+        key.to_string()
+    };
+    is_env_name(key)
+        && !ENV_WRITE_DENY_PREFIXES.iter().any(|p| policy.starts_with(p))
+        && !ENV_WRITE_DENYLIST.contains(&policy.as_str())
+}
+
 /// Sets `key` to `value` in the `.env` file at `path`, or removes it when `value` is `None`, as
-/// `hermes config set` writes it, leaving the file owner-only. A key that is not a variable name
-/// ([`is_env_name`]) or a value that would not read back as itself ([`env_value_round_trips`])
-/// is refused before anything is written. Gives whether the file changed: removing an absent
-/// key writes nothing.
+/// `hermes config set` writes it, leaving the file owner-only. A key the writer may not touch
+/// ([`env_name_writable`]) or a value that would not read back as itself
+/// ([`env_value_round_trips`]) is refused before anything is written. Gives whether the file
+/// changed: removing an absent key writes nothing.
 pub fn set_env_file_value(path: &Path, key: &str, value: Option<&str>) -> Result<bool, ConfigError> {
-    if !is_env_name(key) {
+    if !env_name_writable(key) {
         return Err(ConfigError::ValidationError(
-            "a .env key must be a variable name ([A-Za-z_][A-Za-z0-9_]*)".into(),
+            "a .env key must be a variable name ([A-Za-z_][A-Za-z0-9_]*) that does not steer \
+             the next process"
+                .into(),
         ));
     }
     if value.is_some_and(|value| !env_value_round_trips(key, value)) {

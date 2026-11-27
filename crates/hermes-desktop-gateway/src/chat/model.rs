@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 
 use hermes_config::loader::{
-    dotenv_values_in, env_value_round_trips, is_env_name, set_env_file_value,
+    dotenv_values_in, env_name_writable, env_value_round_trips, set_env_file_value,
 };
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use hermes_core::providers::{canonical_provider_id, provider_api_key_env_vars, KNOWN_PROVIDERS};
@@ -384,19 +384,19 @@ impl Chat {
     /// this gateway does not know.
     fn slug_key_vars(&self, slug: &str) -> Option<Vec<&str>> {
         let known = key_vars(slug)?;
-        let configured = self
-            .slug_entries(slug)
-            .into_iter()
-            .flat_map(|(_, c)| {
-                let reference = c
-                    .api_key
+        let configured = self.slug_entries(slug).into_iter().flat_map(|(_, c)| {
+            let reference = c
+                .api_key
+                .as_deref()
+                .and_then(|literal| literal_source(literal.trim(), &[]));
+            // An empty `${}` stays, to be refused as no variable name.
+            reference.into_iter().chain(
+                c.api_key_env
                     .as_deref()
-                    .and_then(|literal| literal_source(literal.trim(), &[]));
-                reference
-                    .into_iter()
-                    .chain(c.api_key_env.as_deref().map(str::trim))
-            })
-            .filter(|var| !var.is_empty());
+                    .map(str::trim)
+                    .filter(|var| !var.is_empty()),
+            )
+        });
         let mut vars: Vec<&str> = configured.chain(known.iter().copied()).collect();
         let mut seen = std::collections::HashSet::new();
         vars.retain(|var| seen.insert(*var));
@@ -418,10 +418,13 @@ impl Chat {
         let Some(var) = vars.first().copied() else {
             return Err((NO_KEY_VARIABLE, format!("no env var defined for {slug}")));
         };
-        if !is_env_name(var) {
+        if !env_name_writable(var) {
             return Err((
                 NO_KEY_VARIABLE,
-                format!("config.yaml names a key variable for {slug} that is not a variable name"),
+                format!(
+                    "config.yaml names a key variable for {slug} that is not a variable name or \
+                     that steers the next process"
+                ),
             ));
         }
         let written_out = self.slug_entries(slug).into_iter().any(|(_, c)| {
@@ -431,7 +434,10 @@ impl Chat {
         if written_out {
             return Err((
                 CONFIGURED_IN_FILE,
-                format!("config.yaml sets the key for {slug}: change it there"),
+                format!(
+                    "config.yaml sets the key for {slug} (written out or from another variable): \
+                     change it there"
+                ),
             ));
         }
         if !env_value_round_trips(var, key) {
@@ -469,12 +475,12 @@ impl Chat {
         let path = self.home.join(".env");
         let mut cleared = false;
         let _write = env_write();
-        // A name that is not a variable name was never saved.
+        // A name the writer refuses was never saved.
         for var in self
             .slug_key_vars(slug)
             .unwrap_or_default()
             .into_iter()
-            .filter(|var| is_env_name(var))
+            .filter(|var| env_name_writable(var))
         {
             let in_file = set_env_file_value(&path, var, None).map_err(|_| {
                 (
