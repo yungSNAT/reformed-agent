@@ -8,14 +8,15 @@ mod support;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use support::{call, connect, next_json, rpc, send, start_with};
+use support::{call, connect, next_json, release_slow, rpc, send, slow_arrived, start_with};
 
 #[tokio::test]
 async fn slow_one_shot_calls_are_bounded_and_hold_nothing_up() {
     let (addr, _requests, _home) = start_with(true, Some(Duration::from_secs(1))).await;
 
-    // A turn streams on the connection whilst a 2-second call waits; the connection's write
-    // timeout is 1 second, so a stalled connection would close before the turn's end.
+    // A turn streams on the connection whilst a one-shot call is held at the model until the
+    // turn has ended, so a turn that waited for the call would never end. The connection's
+    // write timeout is 1 second, so a connection stalled behind the call would close instead.
     let mut socket = connect(addr).await;
     let created = rpc(&mut socket, 1, "session.create", json!({})).await;
     let session = created["result"]["session_id"]
@@ -23,6 +24,7 @@ async fn slow_one_shot_calls_are_bounded_and_hold_nothing_up() {
         .unwrap()
         .to_string();
     send(&mut socket, 2, "llm.oneshot", json!({"input": "SLOW"})).await;
+    slow_arrived(1).await;
     send(
         &mut socket,
         3,
@@ -30,16 +32,19 @@ async fn slow_one_shot_calls_are_bounded_and_hold_nothing_up() {
         json!({"session_id": session, "text": "hello"}),
     )
     .await;
-    let (mut completed, mut answered) = (false, false);
-    while !(completed && answered) {
+    loop {
         let frame = next_json(&mut socket).await;
+        assert_ne!(frame["id"], 2, "the held one-shot call answered: {frame}");
         if frame["params"]["type"] == "message.complete" {
-            assert!(!answered, "the turn waited for the one-shot call");
-            completed = true;
+            break;
         }
+    }
+    release_slow();
+    loop {
+        let frame = next_json(&mut socket).await;
         if frame["id"] == 2 {
             assert!(frame["result"]["text"].is_string(), "{frame}");
-            answered = true;
+            break;
         }
     }
 
@@ -48,7 +53,7 @@ async fn slow_one_shot_calls_are_bounded_and_hold_nothing_up() {
     for id in 10..14 {
         send(&mut busy, id, "llm.oneshot", json!({"input": "SLOW"})).await;
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    slow_arrived(5).await;
     let mut other = connect(addr).await;
     let reply = call(&mut other, 20, json!({"input": "fast"})).await;
     assert_eq!(reply["error"]["code"], 4090, "{reply}");

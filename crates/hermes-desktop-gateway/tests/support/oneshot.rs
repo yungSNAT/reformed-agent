@@ -1,9 +1,10 @@
 //! The `llm.oneshot` tests' gateway and scripted OpenAI-compatible model, which keeps each
-//! request body and answers a prompt containing `SLOW` after 2 seconds.
+//! request body and holds a prompt containing `SLOW` until the test lets it through.
 
 #![allow(dead_code, reason = "each test file uses part of it")]
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,11 +28,38 @@ pub const THINKING_REPLY: &str =
 
 pub type Requests = Arc<Mutex<Vec<Value>>>;
 
+/// One permit per `SLOW` request the test lets through ([`release_slow`]), so a test orders
+/// events by what it lets through rather than by how long anything takes.
+static SLOW_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(0);
+
+/// How many `SLOW` requests have reached the model.
+static SLOW_ARRIVED: AtomicUsize = AtomicUsize::new(0);
+
+/// Lets one held `SLOW` request be answered.
+pub fn release_slow() {
+    SLOW_GATE.add_permits(1);
+}
+
+/// Waits until `count` `SLOW` requests have reached the model.
+pub async fn slow_arrived(count: usize) {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while SLOW_ARRIVED.load(Ordering::SeqCst) < count {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{count} SLOW requests did not reach the model within 20 seconds"));
+}
+
 async fn complete(State(requests): State<Requests>, Json(body): Json<Value>) -> Response {
     let stream = body["stream"] == true;
     let text = body.to_string();
     if text.contains("SLOW") {
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        SLOW_ARRIVED.fetch_add(1, Ordering::SeqCst);
+        // Never closed, so it cannot fail.
+        if let Ok(permit) = SLOW_GATE.acquire().await {
+            permit.forget();
+        }
     }
     let reply = if text.contains("THINK") {
         THINKING_REPLY
