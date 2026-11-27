@@ -4,7 +4,7 @@
 mod model_support;
 
 use model_support::*;
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn bad_requests_are_refused_with_upstreams_codes_and_change_nothing() {
@@ -152,10 +152,7 @@ async fn model_options_lists_the_configured_providers_and_the_current_model() {
     let rows = result["providers"].as_array().unwrap();
     // Only configured providers by default, and known ones whose key the machine running the
     // tests exports.
-    let configured: Vec<&Value> = rows
-        .iter()
-        .filter(|row| row["source"] != "env")
-        .collect();
+    let configured: Vec<&Value> = rows.iter().filter(|row| row["source"] != "env").collect();
     assert_eq!(configured.len(), 1, "{reply}");
     let mock = configured[0];
     assert_eq!(mock["slug"], "mock");

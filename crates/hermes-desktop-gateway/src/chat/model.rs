@@ -47,7 +47,9 @@ pub(super) const METHODS: &[(&str, Handler)] = &[
     }),
     ("model.disconnect", |r| {
         let slug = text(&r.params, "slug");
-        local(r, DISCONNECT_FAILED, move |chat| chat.disconnect_provider(&slug))
+        local(r, DISCONNECT_FAILED, move |chat| {
+            chat.disconnect_provider(&slug)
+        })
     }),
     ("reload.env", |r| {
         local(r, RELOAD_FAILED, |chat| {
@@ -273,7 +275,8 @@ impl Chat {
     /// The configuration a turn on `model` runs with: the gateway's, with the provider's key
     /// from a change since start-up; an error when that change removed the key it had.
     pub(super) fn turn_config(&self, model: &str) -> Result<Cow<'_, GatewayConfig>, String> {
-        let (provider, _) = hermes_provider_runtime::resolve_provider_and_model(&self.config, model);
+        let (provider, _) =
+            hermes_provider_runtime::resolve_provider_and_model(&self.config, model);
         let entry = self
             .config
             .llm_providers
@@ -341,8 +344,12 @@ impl Chat {
                     .into(),
             ));
         }
-        set_env_file_value(&self.home.join(".env"), var, Some(key))
-            .map_err(|_| (SAVE_FAILED, "could not write this profile's .env".to_string()))?;
+        set_env_file_value(&self.home.join(".env"), var, Some(key)).map_err(|_| {
+            (
+                SAVE_FAILED,
+                "could not write this profile's .env".to_string(),
+            )
+        })?;
         self.keys.set(var, Some(key.to_string()));
         let canonical = canonical_provider_id(slug);
         let mut row = option_rows(&self.config, &self.keys, "", false)
@@ -501,16 +508,14 @@ mod tests {
         for origin in [Origin::Remote, Origin::Webapp] {
             for (method, params) in &requests {
                 let reply = call(origin, method, params.clone()).await;
-                assert_eq!(
-                    reply.unwrap_err().0,
-                    LOCAL_ONLY,
-                    "{method} from {origin:?}"
-                );
+                assert_eq!(reply.unwrap_err().0, LOCAL_ONLY, "{method} from {origin:?}");
             }
         }
         assert!(!dir.path().join(".env").exists());
         assert!(!chat.keys.changed("XIAOMI_API_KEY"));
         // The same request from this machine is served.
-        assert!(call(Origin::Local, "model.options", json!({})).await.is_ok());
+        assert!(call(Origin::Local, "model.options", json!({}))
+            .await
+            .is_ok());
     }
 }

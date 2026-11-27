@@ -50,7 +50,10 @@ fn one_key_is_set_or_removed_and_the_file_kept_owner_only() {
         assert_eq!(mode & 0o777, 0o600, "an existing file");
     }
     assert!(set_env_file_value(&path, "B", None).unwrap());
-    assert!(!set_env_file_value(&path, "B", None).unwrap(), "already gone");
+    assert!(
+        !set_env_file_value(&path, "B", None).unwrap(),
+        "already gone"
+    );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "# note\nA=new\n");
 
     let before = std::fs::read_to_string(&path).unwrap();
