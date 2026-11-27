@@ -167,3 +167,5 @@ Every tool has a CLI equivalent for human operators and scripts:
 - etc.
 
 Use the tools from inside an agent; the CLI exists for the human at the terminal.
+
+From your terminal, `hermes kanban done`, `block` and `move` act only on your own task, never while your run is live, and refuse `--force`, and every other `hermes kanban` write is refused there, so finish with `kanban_complete`. That guards against accidents between workers; it is not an access boundary: any process of the same OS user can act as an operator with `--force`.

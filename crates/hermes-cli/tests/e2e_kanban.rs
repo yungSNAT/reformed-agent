@@ -306,8 +306,18 @@ async fn the_cli_refuses_a_live_task_and_holds_a_bound_child_to_its_own() {
         &kanban_as(home, &as_bg_1, &["done", "K-0002", "--force"]).await,
         "--force is for operators",
     );
+    // Nor its own task whilst its run is live: the worker's tools finish it.
+    refused(
+        &kanban_as(home, &as_bg_1, &["done", "K-0001", "ok"]).await,
+        "Let the worker finish it through its kanban tools",
+    );
     assert_eq!(std::fs::read(&store).unwrap(), before);
-    // Its own running task it may finish.
+    // Once the run has ended, its own task it may finish.
+    std::fs::write(
+        home.join("hermes/background_jobs/bg_1.json"),
+        r#"{"id": "bg_1", "status": "completed"}"#,
+    )
+    .unwrap();
     let own = kanban_as(home, &as_bg_1, &["done", "K-0001", "ok"]).await;
     assert!(
         own.status.success(),
@@ -394,7 +404,21 @@ async fn a_worker_terminal_with_only_the_marker_is_held_to_its_own_task() {
         .await,
         "is not <board>/<task>",
     );
+    // Its own task only once the run has ended, and never with --force.
+    refused(
+        &kanban_as(home, &marker, &["done", "K-0001", "ok"]).await,
+        "a live worker is running it",
+    );
+    refused(
+        &kanban_as(home, &marker, &["done", "K-0001", "ok", "--force"]).await,
+        "--force is for operators",
+    );
     assert_eq!(std::fs::read(&store).unwrap(), before);
+    std::fs::write(
+        home.join("hermes/background_jobs/bg_1.json"),
+        r#"{"id": "bg_1", "status": "completed"}"#,
+    )
+    .unwrap();
     // Its own task, and an operator with --force, still work.
     assert!(kanban_as(home, &marker, &["done", "K-0001", "ok"])
         .await
@@ -405,6 +429,85 @@ async fn a_worker_terminal_with_only_the_marker_is_held_to_its_own_task() {
         .status
         .success());
     assert_eq!(lanes(home), [KanbanLane::Done, KanbanLane::Done]);
+}
+
+/// A worker's terminal child can set the marker or the binding to another
+/// worker's task. Neither may allow what having none refuses.
+#[tokio::test]
+async fn a_forged_marker_or_binding_never_beats_having_none() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path();
+    two_running_workers(home, "running").await;
+    let store = home.join("hermes/alpha/kanban/boards.json");
+    let before = std::fs::read(&store).unwrap();
+    let marker = [("HERMES_KANBAN_WORKER_SCOPE", "runs/K-0002")];
+    let binding = [
+        ("HERMES_KANBAN_BOARD", "runs"),
+        ("HERMES_KANBAN_TASK", "K-0002"),
+        ("HERMES_KANBAN_RUN_ID", "bg_2"),
+    ];
+    let none: [(&str, &str); 0] = [];
+    for env in [&none[..], &marker, &binding] {
+        for args in [
+            &["done", "K-0002", "x"][..],
+            &["block", "K-0002", "stop"],
+            &["move", "K-0002", "todo"],
+        ] {
+            refused(
+                &kanban_as(home, env, args).await,
+                "a live worker is running it",
+            );
+        }
+    }
+    for env in [&marker[..], &binding] {
+        refused(
+            &kanban_as(home, env, &["done", "K-0002", "x", "--force"]).await,
+            "--force is for operators",
+        );
+    }
+    assert_eq!(std::fs::read(&store).unwrap(), before);
+}
+
+/// As upstream fences a worker's descendants off every board write, a
+/// worker's terminal may not dispatch, claim, add or otherwise write.
+#[tokio::test]
+async fn a_worker_terminal_cannot_write_the_board_beyond_its_own_lifecycle() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path();
+    two_running_workers(home, "running").await;
+    let note = home.join("note.txt");
+    std::fs::write(&note, "fixture").unwrap();
+    let note = note.to_str().unwrap();
+    let store = home.join("hermes/alpha/kanban/boards.json");
+    let before = std::fs::read(&store).unwrap();
+    let marker = [("HERMES_KANBAN_WORKER_SCOPE", "runs/K-0001")];
+    let binding = [
+        ("HERMES_KANBAN_BOARD", "runs"),
+        ("HERMES_KANBAN_TASK", "K-0001"),
+        ("HERMES_KANBAN_RUN_ID", "bg_1"),
+    ];
+    for env in [&marker[..], &binding] {
+        for args in [
+            &["dispatch", "K-0002"][..],
+            &["claim", "K-0002", "me"],
+            &["use", "Other"],
+            &["init", "Other"],
+            &["add", "third"],
+            &["attach", "K-0002", note],
+            &["detach", "K-0002", "note.txt"],
+            &["archive-done"],
+            &["sync"],
+            &["specify", "--all"],
+        ] {
+            refused(
+                &kanban_as(home, env, args).await,
+                &format!("Refusing `kanban {}`", args[0]),
+            );
+        }
+    }
+    assert_eq!(std::fs::read(&store).unwrap(), before);
+    // An operator still can.
+    assert_kanban(home, &["add", "third"], "K-0003").await;
 }
 
 #[tokio::test]

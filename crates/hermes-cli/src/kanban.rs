@@ -16,8 +16,9 @@ pub use specify::specify_kanban;
 pub(crate) use store::lock_store;
 pub use store::{kanban_store_path, load_store, save_store};
 pub use tools::{
-    check_cli_lifecycle, kanban_tool_names, offer_kanban_worker_tools, register_kanban_tools,
-    KanbanWorkerBinding, ENV_WORKER_SCOPE, KANBAN_TOOLSET, KANBAN_WORKER_ENV,
+    check_cli_lifecycle, check_cli_verb, kanban_tool_names, offer_kanban_worker_tools,
+    register_kanban_tools, KanbanWorkerBinding, ENV_WORKER_SCOPE, KANBAN_TOOLSET,
+    KANBAN_WORKER_ENV,
 };
 pub use worker::{
     build_worker_context, run_kanban_goal_loop, KanbanGoalBlockFn, KanbanGoalJudgeFn,

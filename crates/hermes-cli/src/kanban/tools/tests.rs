@@ -1391,6 +1391,95 @@ fn a_worker_tree_cannot_reach_its_task_id_on_another_board() {
 }
 
 #[test]
+fn a_worker_tree_may_run_only_reads_and_its_own_lifecycle() {
+    let reads_and_lifecycle = [
+        "status",
+        "show",
+        "boards",
+        "list",
+        "attachments",
+        "help",
+        "done",
+        "block",
+        "move",
+    ];
+    let writes = [
+        "init",
+        "use",
+        "select",
+        "add",
+        "attach",
+        "attachment",
+        "detach",
+        "remove-attachment",
+        "claim",
+        "archive-done",
+        "archive",
+        "dispatch",
+        "sync",
+        "specify",
+        "unknown",
+    ];
+    for verb in reads_and_lifecycle.iter().chain(&writes) {
+        assert!(check_cli_verb_with(verb, false).is_ok(), "{verb}");
+    }
+    for verb in reads_and_lifecycle {
+        assert!(check_cli_verb_with(verb, true).is_ok(), "{verb}");
+    }
+    for verb in writes {
+        let error = check_cli_verb_with(verb, true).unwrap_err();
+        assert!(
+            error.contains(&format!("Refusing `kanban {verb}`")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_forged_marker_or_binding_never_beats_having_none() {
+    let fx = fixture();
+    let store = store(&fx);
+    let board = &store.boards[0];
+    let other = &board.tasks[2];
+    fx.job_status("run-z", "running");
+    let operator = caller(&fx, None, None);
+    let forged_marker = caller(&fx, None, Some(&format!("main/{}", other.id)));
+    let forged_binding = caller(
+        &fx,
+        Some(KanbanWorkerBinding {
+            board: "main".to_string(),
+            task: other.id.clone(),
+            run: "run-z".to_string(),
+        }),
+        None,
+    );
+    for who in [&operator, &forged_marker, &forged_binding] {
+        let error = check_cli_lifecycle_with(board, other, "done", true, false, who).unwrap_err();
+        assert!(
+            error.contains("a live worker is running it (background job run-z)"),
+            "{error}"
+        );
+    }
+    for who in [&forged_marker, &forged_binding] {
+        let error = check_cli_lifecycle_with(board, other, "done", true, true, who).unwrap_err();
+        assert!(error.contains("--force is for operators"), "{error}");
+    }
+    // The worker's own tree is held the same way on its own live task.
+    fx.job_status("run-a", "running");
+    let own = &board.tasks[0];
+    for who in [
+        caller(&fx, worker("run-a"), None),
+        caller(&fx, None, Some("main/K-0001")),
+    ] {
+        let error = check_cli_lifecycle_with(board, own, "block", false, false, &who).unwrap_err();
+        assert!(
+            error.contains("Let the worker finish it through its kanban tools"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn a_session_under_a_worker_never_gets_the_orchestrator_tools() {
     let mut config = hermes_config::GatewayConfig::default();
     config

@@ -40,8 +40,9 @@ pub const KANBAN_WORKER_ENV: [&str; 3] = [ENV_BOARD, ENV_TASK, ENV_RUN_ID];
 /// `<board>/<task>` of the dispatched worker whose process tree this is.
 /// Unlike the binding it is not stripped from child processes, so a worker's
 /// terminal children keep it and the CLI holds them to the worker's own task
-/// on its own board. It guards against a misdirected task id, not against a
-/// child that edits its own environment.
+/// on its own board. It guards against accidents between workers; it is not
+/// an access boundary, as any process of the same OS user can clear it and
+/// act as an operator with `--force`.
 pub const ENV_WORKER_SCOPE: &str = "HERMES_KANBAN_WORKER_SCOPE";
 
 /// The board and task a worker tree is held to.
@@ -310,12 +311,12 @@ fn background_jobs_path() -> PathBuf {
 }
 
 /// The checks `hermes kanban done`, `block` and `move` make before changing
-/// `task`. A process holding a worker binding is held to the tools' scope:
-/// its own running task only, and no `force`. Any other caller may not
-/// change a doing task whose run is live unless it passes `force`, as
-/// upstream's CLI refuses a live claim (`LiveClaimError`, `--force`).
-/// Finishing a task (`completes`) also needs every parent done, `force` or
-/// not.
+/// `task`. No caller may change a doing task whose run is live unless it
+/// passes `force`, as upstream's CLI refuses a live claim (`LiveClaimError`,
+/// `--force`). A process holding a worker binding or marker is also held to
+/// the worker's own task and may not pass `force`, so a binding or marker
+/// set by hand never allows what having none would refuse. Finishing a task
+/// (`completes`) also needs every parent done, `force` or not.
 pub fn check_cli_lifecycle(
     board: &KanbanBoard,
     task: &KanbanTask,
@@ -329,6 +330,36 @@ pub fn check_cli_lifecycle(
         jobs_dir: background_jobs_path(),
     };
     check_cli_lifecycle_with(board, task, verb, completes, force, &caller)
+}
+
+/// `hermes kanban` subcommands a worker's process tree may run: the read-only
+/// ones, and `done`, `block` and `move`, which [`check_cli_lifecycle`] holds
+/// to the worker's own task. Every other board write is refused there, as
+/// upstream refuses every board write from a worker's descendants.
+pub fn check_cli_verb(action: &str) -> Result<(), String> {
+    let in_worker_tree =
+        KanbanWorkerBinding::from_env().is_some() || std::env::var_os(ENV_WORKER_SCOPE).is_some();
+    check_cli_verb_with(action, in_worker_tree)
+}
+
+fn check_cli_verb_with(action: &str, in_worker_tree: bool) -> Result<(), String> {
+    const WORKER_TREE_VERBS: [&str; 9] = [
+        "status",
+        "show",
+        "boards",
+        "list",
+        "attachments",
+        "help",
+        "done",
+        "block",
+        "move",
+    ];
+    if !in_worker_tree || WORKER_TREE_VERBS.contains(&action) {
+        return Ok(());
+    }
+    Err(format!(
+        "Refusing `kanban {action}`: this process runs under a dispatched kanban worker, which may change only its own task, with done, block or move."
+    ))
 }
 
 /// Who is running a `hermes kanban` lifecycle command.
@@ -347,12 +378,13 @@ fn check_cli_lifecycle_with(
     caller: &CliCaller,
 ) -> Result<(), String> {
     let command = format!("kanban {verb}");
-    match (&caller.binding, &caller.worker_tree) {
-        (Some(_), _) if force => {
-            return Err(format!(
-                "Refusing `{command} --force`: this process is a dispatched kanban worker, and --force is for operators."
-            ))
-        }
+    let operators_only = || {
+        format!(
+            "Refusing `{command} --force`: this process is a dispatched kanban worker, and --force is for operators."
+        )
+    };
+    let in_worker_tree = match (&caller.binding, &caller.worker_tree) {
+        (Some(_), _) if force => return Err(operators_only()),
         (Some(binding), _) => {
             if board.id != binding.board {
                 return Err(format!(
@@ -360,7 +392,8 @@ fn check_cli_lifecycle_with(
                     binding.board, board.id
                 ));
             }
-            check_worker_owns(binding, task, &command).map_err(|error| error.to_string())?
+            check_worker_owns(binding, task, &command).map_err(|error| error.to_string())?;
+            true
         }
         // A worker's terminal child: the binding was stripped, the marker kept.
         (None, Some(Err(raw))) => {
@@ -375,17 +408,26 @@ fn check_cli_lifecycle_with(
                     task.id, board.id, own.task, own.board
                 ));
             }
-        }
-        (None, None) => {
-            if let Some(run) = task.background_job_id.as_deref() {
-                if !force && task.lane == KanbanLane::Doing && run_is_live(&caller.jobs_dir, run)
-                {
-                    return Err(format!(
-                        "Refusing `{command}` on {}: a live worker is running it (background job {run}). Wait for the worker, stop that job, or re-run with --force.",
-                        task.id
-                    ));
-                }
+            if force {
+                return Err(operators_only());
             }
+            true
+        }
+        (None, None) => false,
+    };
+    // Every caller, a worker's own tree included, so that setting a binding
+    // or marker by hand never beats having none.
+    if let Some(run) = task.background_job_id.as_deref() {
+        if !force && task.lane == KanbanLane::Doing && run_is_live(&caller.jobs_dir, run) {
+            let next = if in_worker_tree {
+                "Let the worker finish it through its kanban tools, or stop that job."
+            } else {
+                "Wait for the worker, stop that job, or re-run with --force."
+            };
+            return Err(format!(
+                "Refusing `{command}` on {}: a live worker is running it (background job {run}). {next}",
+                task.id
+            ));
         }
     }
     if completes {
