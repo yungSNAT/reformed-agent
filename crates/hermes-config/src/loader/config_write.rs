@@ -345,7 +345,7 @@ fn default_container_for(tail: &[String]) -> serde_yaml::Value {
 }
 
 fn save_env_key_value(path: &Path, key: &str, value: &str) -> Result<(), ConfigError> {
-    let (out, _) = env_text_with(path, key, Some(value));
+    let (out, _) = env_text_with(path, key, Some(value))?;
     // `.env` holds provider keys: a link whose folder is missing is refused.
     resolve_credential_link_target(path).map_err(io_to_config_error)?;
     atomic_write_bytes(path, out.as_bytes())
@@ -353,9 +353,18 @@ fn save_env_key_value(path: &Path, key: &str, value: &str) -> Result<(), ConfigE
 
 /// The `.env` text at `path` with `key` set once to `value` in place of its first line (a
 /// newline escaped), or with every `key` line removed when `value` is `None`; and whether that
-/// changes anything.
-fn env_text_with(path: &Path, key: &str, value: Option<&str>) -> (String, bool) {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
+/// changes anything. A file that cannot be read, other than a missing one, is an error: reading
+/// it as empty would write the one key over every other line.
+fn env_text_with(
+    path: &Path,
+    key: &str,
+    value: Option<&str>,
+) -> Result<(String, bool), ConfigError> {
+    let original = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(io_to_config_error(e)),
+    };
     let assignment = |value: &str| format!("{key}={}", value.replace('\n', "\\n"));
     let mut lines = Vec::new();
     let mut found = false;
@@ -374,7 +383,7 @@ fn env_text_with(path: &Path, key: &str, value: Option<&str>) -> (String, bool) 
     }
     let mut out = lines.join("\n");
     out.push('\n');
-    (out, value.is_some() || found)
+    Ok((out, value.is_some() || found))
 }
 
 /// Whether `key=value` reads back from a `.env` file as exactly `value` under `key`: no control
@@ -401,7 +410,7 @@ pub fn set_env_file_value(path: &Path, key: &str, value: Option<&str>) -> Result
             "the value for {key} cannot be stored in a .env file"
         )));
     }
-    let (out, changed) = env_text_with(path, key, value);
+    let (out, changed) = env_text_with(path, key, value)?;
     if !changed {
         return Ok(false);
     }

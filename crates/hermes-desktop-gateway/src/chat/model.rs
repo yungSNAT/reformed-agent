@@ -138,18 +138,32 @@ fn key_vars(slug: &str) -> Option<&'static [&'static str]> {
         .then(|| provider_api_key_env_vars(&configured, &canonical))
 }
 
+/// The variable a provider's `config.yaml` key comes from, as start-up leaves it (it expands
+/// `${VAR}`): a whole `${VAR}` it could not expand, or the start-up value of one of `vars`.
+/// `None` for a key written out.
+fn literal_source<'a>(literal: &'a str, vars: &[&'a str]) -> Option<&'a str> {
+    if let Some(var) = literal.strip_prefix("${").and_then(|v| v.strip_suffix('}')) {
+        return Some(var.trim());
+    }
+    vars.iter()
+        .copied()
+        .find(|var| std::env::var(var).is_ok_and(|value| value.trim() == literal))
+}
+
 /// A configured provider's key variable and whether its key is set.
-fn configured_key(provider: &LlmProviderConfig, keys: &Keys) -> (Option<String>, bool) {
+fn configured_key(slug: &str, provider: &LlmProviderConfig, keys: &Keys) -> (Option<String>, bool) {
     let env = provider
         .api_key_env
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty());
     let literal = provider.api_key.as_deref().map(str::trim).unwrap_or("");
-    let from_literal = match literal.strip_prefix("${").and_then(|v| v.strip_suffix('}')) {
-        Some(var) => keys.value(var.trim()).is_some(),
-        None => !literal.is_empty(),
-    };
+    let vars: Vec<&str> = env
+        .into_iter()
+        .chain(key_vars(slug).unwrap_or_default().iter().copied())
+        .collect();
+    let from_literal = !literal.is_empty()
+        && literal_source(literal, &vars).is_none_or(|var| keys.value(var).is_some());
     (
         env.map(str::to_string),
         from_literal || env.is_some_and(|var| keys.value(var).is_some()),
@@ -192,7 +206,7 @@ fn option_rows(
                 models.insert(0, model.to_string());
             }
         }
-        let (key_env, authenticated) = configured_key(provider, keys);
+        let (key_env, authenticated) = configured_key(slug, provider, keys);
         let mut row = row(slug, is_current(slug), models, "configured");
         row.insert("is_user_defined".into(), true.into());
         row.insert("auth_type".into(), "api_key".into());
@@ -252,7 +266,8 @@ fn parse_switch(value: &str) -> Option<(String, Option<String>)> {
 }
 
 impl Chat {
-    /// The variables a key is read from: each known provider's and each configured `key_env`.
+    /// The variables a key is read from: each known provider's, each configured `key_env` and
+    /// each `${VAR}` a configured `api_key` still holds.
     fn key_variables(&self) -> Vec<String> {
         let mut vars: Vec<String> = KNOWN_PROVIDERS
             .iter()
@@ -266,6 +281,10 @@ impl Chat {
                     .map(|var| var.trim().to_string())
                     .filter(|var| !var.is_empty()),
             )
+            .chain(self.config.llm_providers.values().filter_map(|provider| {
+                let literal = provider.api_key.as_deref()?.trim();
+                literal_source(literal, &[]).map(str::to_string)
+            }))
             .collect();
         vars.sort();
         vars.dedup();
@@ -282,17 +301,25 @@ impl Chat {
             .llm_providers
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(&provider));
-        // A key written in `config.yaml` comes first, as the provider build reads it.
-        if entry.is_some_and(|(_, c)| c.api_key.as_deref().is_some_and(|k| !k.trim().is_empty())) {
-            return Ok(Cow::Borrowed(&self.config));
-        }
-        let vars: Vec<&str> = entry
+        let mut vars: Vec<&str> = entry
             .and_then(|(_, c)| c.api_key_env.as_deref())
             .map(str::trim)
             .filter(|var| !var.is_empty())
             .into_iter()
             .chain(key_vars(&provider).unwrap_or_default().iter().copied())
             .collect();
+        // A key in `config.yaml` that start-up took from a variable follows that variable;
+        // one written out comes first, as the provider build reads it.
+        let literal = entry
+            .and_then(|(_, c)| c.api_key.as_deref())
+            .map(str::trim)
+            .unwrap_or("");
+        if !literal.is_empty() {
+            match literal_source(literal, &vars) {
+                Some(var) => vars = vec![var],
+                None => return Ok(Cow::Borrowed(&self.config)),
+            }
+        }
         if !vars.iter().any(|var| self.keys.changed(var)) {
             return Ok(Cow::Borrowed(&self.config));
         }
@@ -497,13 +524,15 @@ mod tests {
         let start_up = std::env::var("PATH").unwrap();
         let chat = chat_with_key(&start_up, Some("PATH"));
         assert_eq!(turn_key(&chat).unwrap().as_deref(), Some(start_up.as_str()));
-        let (_, authenticated) = configured_key(&chat.config.llm_providers["envkey"], &chat.keys);
+        let (_, authenticated) =
+            configured_key("envkey", &chat.config.llm_providers["envkey"], &chat.keys);
         assert!(authenticated);
         chat.keys.set("PATH", Some("saved-key".into()));
         assert_eq!(turn_key(&chat).unwrap().as_deref(), Some("saved-key"));
         chat.keys.set("PATH", None);
         assert!(turn_key(&chat).unwrap_err().contains("disconnected"));
-        let (_, authenticated) = configured_key(&chat.config.llm_providers["envkey"], &chat.keys);
+        let (_, authenticated) =
+            configured_key("envkey", &chat.config.llm_providers["envkey"], &chat.keys);
         assert!(!authenticated, "a removed key is not configured");
 
         // A reference start-up could not expand stays `${VAR}`; a key saved since is used.
