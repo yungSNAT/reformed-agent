@@ -1381,7 +1381,11 @@ impl AgentLoop {
             self.notify_memory_writes(&tool_calls, &results);
             self.notify_delegations(&tool_calls, &results);
 
-            budget::enforce_budget(&mut results, &self.config.budget);
+            budget::enforce_budget(
+                &mut results,
+                &self.config.budget,
+                self.config.session_id.as_deref(),
+            );
 
             if !results.is_empty() {
                 let w = budget_pressure_text(

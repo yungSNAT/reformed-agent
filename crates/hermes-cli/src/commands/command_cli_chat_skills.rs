@@ -127,6 +127,8 @@ pub async fn handle_cli_chat(
         let skill_provider: Arc<dyn hermes_core::SkillProvider> =
             Arc::new(SkillManager::new(skill_store));
         hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
+        let kanban_binding = crate::kanban::KanbanWorkerBinding::from_env();
+        crate::kanban::register_kanban_tools(&tool_registry, &config, kanban_binding.clone());
         wire_stdio_clarify_backend(&tool_registry);
         connect_configured_mcp_servers(&config, &hermes_config::hermes_home(), &tool_registry)
             .await;
@@ -146,7 +148,10 @@ pub async fn handle_cli_chat(
             .map_err(|e| hermes_core::AgentError::Config(format!("cron load: {e}")))?;
         cron_scheduler.start().await;
         wire_cron_scheduler_backend(&tool_registry, cron_scheduler);
-        hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &tool_registry)
+        let mut schemas =
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &tool_registry);
+        crate::kanban::offer_kanban_worker_tools(&mut schemas, kanban_binding.as_ref());
+        schemas
     } else {
         Vec::new()
     };
