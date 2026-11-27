@@ -320,7 +320,7 @@ fn resolve(raw: &str, cwd: &Path) -> Result<Option<PathBuf>, Refused> {
         .filter(|rest| rest.is_empty() || rest.starts_with(['/', '\\']))
         .and_then(|rest| Some(home()?.join(rest.trim_start_matches(['/', '\\']))))
     {
-        // With no home folder `~` stays as written, as upstream's `expanduser` leaves it.
+        // With no `HOME` or `USERPROFILE`, `~` stays as written.
         expanded
     } else {
         PathBuf::from(&token)
@@ -409,7 +409,7 @@ mod tests {
         std::fs::write(cwd.join("shot.png"), b"x").unwrap();
 
         assert_eq!(split_path_input("'a b c"), ("a b c".into(), String::new()));
-        assert_eq!(dropped("'./a b' c", cwd).ok().flatten(), None);
+        assert!(matches!(dropped("'./a b' c", cwd), Ok(None)));
         assert_eq!(
             dropped("./a b c", cwd).ok().flatten(),
             Some((cwd.join("./a"), "b c".into()))
