@@ -1041,9 +1041,13 @@ mod unix {
             }
         }
 
-        #[tokio::test]
-        async fn a_run_polled_once_and_dropped_starts_no_child() {
+        #[test]
+        fn a_run_polled_once_and_dropped_starts_no_child() {
             use futures::FutureExt;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             let dir = tempfile::tempdir().unwrap();
             let runs = dir.path().join("runs");
             let counting = || {
@@ -1051,15 +1055,18 @@ mod unix {
                 command.arg("-c").arg("echo run >> runs");
                 command
             };
-            let once = supervise(
-                counting(),
-                dir.path().to_path_buf(),
-                Duration::from_secs(30),
-                Slot(9007),
-            )
-            .now_or_never();
+            let once = {
+                let _enter = rt.enter();
+                supervise(
+                    counting(),
+                    dir.path().to_path_buf(),
+                    Duration::from_secs(30),
+                    Slot(9007),
+                )
+                .now_or_never()
+            };
             assert!(once.is_none(), "a child run answers only after a wait");
-            // Block this runtime's only thread, so no supervisor can kill what the poll started.
+            // Keep the runtime idle, so no supervisor can kill what the poll started.
             std::thread::sleep(Duration::from_secs(1));
             let count = || {
                 std::fs::read_to_string(&runs)
@@ -1067,13 +1074,12 @@ mod unix {
                     .unwrap_or(0)
             };
             assert_eq!(count(), 0, "the dropped request started its command");
-            let ended = supervise(
+            let ended = rt.block_on(supervise(
                 counting(),
                 dir.path().to_path_buf(),
                 Duration::from_secs(30),
                 Slot(9007),
-            )
-            .await;
+            ));
             assert!(matches!(ended, Ended::Exited { code: Some(0), .. }));
             assert_eq!(count(), 1);
         }
