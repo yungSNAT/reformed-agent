@@ -40,7 +40,6 @@ impl Gateway {
             chat_id: incoming.chat_id.clone(),
             thread_id: Self::reply_thread_id(incoming).map(str::to_string),
             process: crate::reply_recovery::this_process(),
-            process_started: crate::reply_recovery::this_process_started(),
             reply: None,
             attempts: 0,
         };
