@@ -172,32 +172,51 @@ fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata()
 
 fn elite_sync_gate(root: &Path, report: &Path, redteam: &str, chaos: &str) -> Command {
     let mut command = Command::new(bin());
-    command.current_dir(root).args([
-        "run-elite-sync-gate",
-        "--repo-root",
-        root.to_str().expect("utf8"),
-        "--redteam-cmd",
-        redteam,
-        "--chaos-cmd",
-        chaos,
-        "--hotpath-cmd",
-        "true",
-        "--parity-diff-cmd",
-        "true",
-        "--surface-coverage-cmd",
-        "true",
-        "--eval-trend-cmd",
-        "true",
-        "--release-security-cmd",
-        "true",
-        "--performance-autopilot-cmd",
-        "true",
-        "--rollback-cmd",
-        "true",
-        "--report-path",
-        report.to_str().expect("utf8"),
-        "--json",
-    ]);
+    command
+        .env_clear()
+        .env("HOME", root)
+        .env("USERPROFILE", root)
+        .current_dir(root)
+        .args([
+            "run-elite-sync-gate",
+            "--repo-root",
+            root.to_str().expect("utf8"),
+            "--redteam-cmd",
+            redteam,
+            "--chaos-cmd",
+            chaos,
+            "--hotpath-cmd",
+            "true",
+            "--parity-diff-cmd",
+            "true",
+            "--surface-coverage-cmd",
+            "true",
+            "--eval-trend-cmd",
+            "true",
+            "--release-security-cmd",
+            "true",
+            "--performance-autopilot-cmd",
+            "true",
+            "--rollback-cmd",
+            "true",
+            "--report-path",
+            report.to_str().expect("utf8"),
+            "--json",
+        ]);
+    for key in ["PATH", "SystemRoot"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        let profile = std::path::PathBuf::from(profile);
+        let profile = if profile.starts_with("%t") {
+            profile
+        } else {
+            std::path::absolute(profile).expect("absolute coverage profile path")
+        };
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
     command
 }
 

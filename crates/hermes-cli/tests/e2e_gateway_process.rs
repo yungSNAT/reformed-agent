@@ -146,7 +146,7 @@ mod unix {
     }
 
     #[test]
-    fn gateway_restart_stops_previous_process_before_validating_new_config() {
+    fn gateway_restart_stops_previous_process_and_validates_new_config() {
         let dir = tempfile::tempdir().expect("tempdir");
         let home = dir.path();
         let pid_path = home.join("gateway.pid");
