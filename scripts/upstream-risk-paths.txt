@@ -18,7 +18,8 @@ crates/hermes-gateway/src/adapter.rs
 scripts/setup-*.sh
 scripts/sync-upstream.sh
 scripts/cron-upstream-sync.sh
-scripts/install-upstream-sync-cron.sh
+crates/hermes-parity-tools/src/sync_upstream.rs
+crates/hermes-parity-tools/src/upstream_sync_cron.rs
 
 # Release and supply-chain surfaces
 Cargo.toml

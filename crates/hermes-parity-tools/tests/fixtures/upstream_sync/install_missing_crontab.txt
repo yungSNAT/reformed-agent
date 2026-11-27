@@ -1,0 +1,15 @@
+exit=Some(1)
+--- stdout
+--- stderr
+crontab command not found
+--- calls
+--- cron script mode 644
+--- refs remotes/origin.git
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/main <C:fork: carry>
+--- status
+## main...origin/main
+?? scripts/cron-upstream-sync.sh
