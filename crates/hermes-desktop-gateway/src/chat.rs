@@ -703,7 +703,9 @@ impl Chat {
     /// Holds `session` (id `id`) idle for a change to its saved rows, such as an undo, that a
     /// turn's save would otherwise undo: `None` whilst a turn runs or a prompt waits. Prompts
     /// sent whilst the guard lives queue, or are refused past the queue's limits, and start
-    /// once it drops.
+    /// once it drops. A handler whose change is a blocking store write moves the guard into
+    /// that write's closure, so the hold lasts until the write ends even if the handler is
+    /// dropped at its await (a closed connection) whilst the write still runs.
     #[allow(dead_code, reason = "for session.undo and session.compress")]
     pub(super) fn hold(
         self: &Arc<Self>,

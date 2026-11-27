@@ -1,6 +1,13 @@
 //! A session for a second window or a reconnecting client, on the legacy wire: `session.resume`
 //! (attach to a live or saved session) and `session.title` (read or set its title), as
 //! upstream's tui_gateway/methods_session.py answers them.
+//!
+//! Differences from upstream at `ae2a81cc`: resume serves a live session or its saved rows
+//! only (no lookup by title, no compression tips, no lazy or deferred modes) and its reply has
+//! no `started_at` and an `inflight` of null; a title is not refused for being another
+//! session's (this store keeps no title index), one that cleans to nothing is refused as
+//! missing rather than clearing the title, and no `session.info` event follows a title
+//! change, as this gateway's legacy wire sends none.
 
 use std::sync::Arc;
 
@@ -8,10 +15,13 @@ use serde_json::{json, Map, Value};
 
 use super::{Handler, LiveSession, Reply, Request, RpcError, INVALID_PARAMS, SESSION_NOT_FOUND};
 
-// Upstream's codes: 4006 no session id, 4021 no title, 5000 the sessions database cannot be
-// read on resume, 5007 a title cannot be read or stored.
+// Upstream's codes: 4006 no session id, 4007 no such session to resume, 4021 no title, 4022 a
+// title too long, 5000 the sessions database cannot be read on resume, 5007 a title cannot be
+// read or stored.
 const SESSION_ID_REQUIRED: i64 = 4006;
+const RESUME_NOT_FOUND: i64 = 4007;
 const TITLE_REQUIRED: i64 = 4021;
+const TITLE_INVALID: i64 = 4022;
 const RESUME_STORAGE: i64 = 5000;
 const TITLE_STORAGE: i64 = 5007;
 
@@ -37,7 +47,7 @@ fn resume(req: Request) -> Reply {
         let lookup = id.clone();
         let rows = match tokio::task::spawn_blocking(move || chat.history(&lookup)).await {
             Err(e) => return Err((RESUME_STORAGE, e.to_string())),
-            Ok(None) => return Err((SESSION_NOT_FOUND, "session not found".into())),
+            Ok(None) => return Err((RESUME_NOT_FOUND, "session not found".into())),
             Ok(Some(Err(e))) => return Err((RESUME_STORAGE, e)),
             Ok(Some(Ok(rows))) => rows,
         };
@@ -46,7 +56,7 @@ fn resume(req: Request) -> Reply {
             match sessions.get(&id) {
                 Some(session) => Arc::clone(session),
                 None if rows.is_empty() => {
-                    return Err((SESSION_NOT_FOUND, "session not found".into()))
+                    return Err((RESUME_NOT_FOUND, "session not found".into()))
                 }
                 None => Arc::clone(
                     sessions
@@ -56,6 +66,7 @@ fn resume(req: Request) -> Reply {
             }
         };
         session.subscribe(req.conn.id, &req.conn.outbox);
+        let ((running, _, _), _) = session.status(&id);
         let messages: Vec<Value> = rows
             .into_iter()
             .map(|mut row| {
@@ -69,6 +80,10 @@ fn resume(req: Request) -> Reply {
             "message_count": messages.len(),
             "messages": messages,
             "info": req.chat.session_info(),
+            "session_key": id,
+            "running": running,
+            "status": if running { "working" } else { "idle" },
+            "inflight": null,
         }))
     })
 }
@@ -92,13 +107,16 @@ fn title(req: Request) -> Reply {
             return Ok(json!({"title": title.unwrap_or_default(), "session_key": id}));
         };
         let title = match given {
-            Value::String(title) => title.trim().to_string(),
+            Value::String(title) => clean_title(title)?,
             Value::Null => String::new(),
             _ => return Err((INVALID_PARAMS, "title must be a string".into())),
         };
         if title.is_empty() {
             return Err((TITLE_REQUIRED, "title required".into()));
         }
+        // A request its connection answers busy is dropped at its first poll: wait once here,
+        // so the store write below is never queued for a request answered busy.
+        tokio::task::yield_now().await;
         let model = req.chat.model().map(str::to_string);
         let (key, value) = (id.clone(), title.clone());
         req.chat
@@ -120,4 +138,30 @@ fn title(req: Request) -> Reply {
             .map_err(|e| (TITLE_STORAGE, e))?;
         Ok(json!({"pending": false, "title": title, "session_key": id}))
     })
+}
+
+/// Upstream's longest title, in characters (hermes_state.py `MAX_TITLE_LENGTH`).
+const MAX_TITLE_CHARS: usize = 100;
+
+/// `title` as upstream's `sanitize_title` stores it: without ASCII controls (tab and line
+/// breaks count as whitespace) or zero-width, bidi-override, object-replacement and annotation
+/// characters, each run of whitespace one space, trimmed; longer than [`MAX_TITLE_CHARS`] is
+/// refused with 4022.
+fn clean_title(title: &str) -> Result<String, RpcError> {
+    let invisible = |c: &char| {
+        matches!(c,
+            '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'
+            | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2069}'
+            | '\u{feff}' | '\u{fff9}'..='\u{fffc}')
+    };
+    let kept: String = title.chars().filter(|c| !invisible(c)).collect();
+    let cleaned = kept.split_whitespace().collect::<Vec<_>>().join(" ");
+    let length = cleaned.chars().count();
+    if length > MAX_TITLE_CHARS {
+        return Err((
+            TITLE_INVALID,
+            format!("Title too long ({length} chars, max {MAX_TITLE_CHARS})"),
+        ));
+    }
+    Ok(cleaned)
 }
