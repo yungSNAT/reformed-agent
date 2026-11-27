@@ -139,14 +139,19 @@ async fn a_local_caller_reads_the_working_folder_but_not_the_hermes_home() {
     let (_runtime, origin) = serving(&home);
     work_folder(&home, &base);
     let token = credential(&home, &origin).await;
-    let ticket = native_ticket(&home);
-    let browser = [
-        ("X-Hermes-Session-Token", token.as_str()),
-        ("Origin", origin.as_str()),
-    ];
-    let native = [("X-Hermes-Gateway-Ticket", ticket.as_str())];
-    for (who, headers) in [("browser", &browser[..]), ("native", &native[..])] {
-        let get = |route: String| call(&origin, "GET", &route, headers).send();
+    for who in ["browser", "native"] {
+        // A native ticket is one-use, so each native request mints its own.
+        let get = |route: String| {
+            let ticket = (who == "native").then(|| native_ticket(&home));
+            let headers: Vec<(&str, &str)> = match &ticket {
+                Some(ticket) => vec![("X-Hermes-Gateway-Ticket", ticket.as_str())],
+                None => vec![
+                    ("X-Hermes-Session-Token", token.as_str()),
+                    ("Origin", origin.as_str()),
+                ],
+            };
+            call(&origin, "GET", &route, &headers).send()
+        };
 
         let list = get(at("/api/fs/list", &base)).await.unwrap();
         assert_eq!(list.status(), 200, "{who} lists the working folder");
