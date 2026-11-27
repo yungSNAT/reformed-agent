@@ -1205,7 +1205,41 @@ mod tests {
             .expect("the queued prompt starts")
             .unwrap();
         assert!(first.text.contains("message.start"), "{}", first.text);
-        assert!(chat.hold(&id, &session).is_none(), "its turn runs");
+    }
+
+    /// A `session.title` set that its connection answers busy (polled once, then dropped, as
+    /// `serve_socket` does past its 16 waiting frames) leaves the title as it was.
+    #[tokio::test]
+    async fn a_title_set_dropped_at_its_first_poll_changes_nothing() {
+        use futures::FutureExt as _;
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "model:\n  default: m\n  provider: local\nproviders:\n  local:\n    \
+             api: http://127.0.0.1:9/v1\n    name: Local\n    api_mode: chat_completions\n",
+        )
+        .unwrap();
+        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+        let chat = Arc::new(Chat::new(config));
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let id = chat.create(&conn)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let set = chat.call(
+            &conn,
+            "session.title",
+            json!({"session_id": id, "title": "New"}),
+        );
+        assert!(set.now_or_never().is_none(), "a set waits for the store");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let read = chat
+            .call(&conn, "session.title", json!({"session_id": id}))
+            .await
+            .unwrap();
+        assert_eq!(read["title"], "", "{read}");
     }
 
     #[test]

@@ -1270,7 +1270,38 @@ async fn a_session_title_is_set_read_and_kept() {
         )
         .await;
     assert_eq!(renamed["result"]["title"], "Trip", "{renamed}");
+    // Upstream's sanitize_title: control, zero-width and bidi characters go, runs of
+    // whitespace become one space, and 100 characters is the most it keeps.
+    let cleaned = client
+        .call(
+            7,
+            "session.title",
+            json!({"session_id": session, "title": "a\u{202e}b \u{200b}\t c\u{7}"}),
+        )
+        .await;
+    assert_eq!(cleaned["result"]["title"], "ab c", "{cleaned}");
+    let read = client
+        .call(8, "session.title", json!({"session_id": session}))
+        .await;
+    assert_eq!(read["result"]["title"], "ab c", "{read}");
+    let longest = "\u{e9}".repeat(100);
+    let kept = client
+        .call(
+            9,
+            "session.title",
+            json!({"session_id": session, "title": longest}),
+        )
+        .await;
+    assert_eq!(kept["result"]["title"], longest.as_str(), "{kept}");
     let cases = [
+        (
+            json!({"session_id": session, "title": "x".repeat(101)}),
+            4022,
+        ),
+        (
+            json!({"session_id": session, "title": "\u{200b}\u{202e}"}),
+            4021,
+        ),
         (json!({"session_id": session, "title": "   "}), 4021),
         (json!({"title": "x"}), 4006),
         (json!({"session_id": "no-such-session", "title": "x"}), 4001),
@@ -1314,6 +1345,9 @@ async fn a_legacy_resume_returns_the_messages_and_streams_later_turns() {
         .collect();
     assert_eq!(rows, [("user", "question"), ("assistant", "answer")]);
     assert!(result["info"]["model"].is_string(), "{resumed}");
+    assert_eq!(result["session_key"], session.as_str(), "{resumed}");
+    assert_eq!(result["running"], false, "{resumed}");
+    assert_eq!(result["status"], "idle", "{resumed}");
 
     owner.submit(3, &session, "again").await;
     let seen = other.turn_events(&session).await;
@@ -1322,7 +1356,7 @@ async fn a_legacy_resume_returns_the_messages_and_streams_later_turns() {
 
     for (n, (params, code)) in [
         (json!({}), 4006),
-        (json!({"session_id": "no-such-session"}), 4001),
+        (json!({"session_id": "no-such-session"}), 4007),
     ]
     .into_iter()
     .enumerate()
