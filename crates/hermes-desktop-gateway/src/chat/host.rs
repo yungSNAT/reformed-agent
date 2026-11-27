@@ -861,13 +861,13 @@ mod unix {
         }
 
         async fn gone(pid: i32) -> bool {
-            for _ in 0..100 {
-                if !alive(pid) {
-                    return true;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while alive(pid) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            false
+            })
+            .await
+            .is_ok()
         }
 
         fn background_pid(path: &Path) -> i32 {
@@ -879,13 +879,13 @@ mod unix {
         }
 
         async fn written(path: &Path) {
-            for _ in 0..100 {
-                if std::fs::read_to_string(path).is_ok_and(|text| text.ends_with('\n')) {
-                    return;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !std::fs::read_to_string(path).is_ok_and(|text| text.ends_with('\n')) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            panic!("the child never started");
+            })
+            .await
+            .expect("the child never started");
         }
 
         fn shell(pidfile: &Path) -> Command {
@@ -963,13 +963,16 @@ mod unix {
 
         /// A slot for `conn`, waiting while other tests hold the process's 4.
         async fn slot(conn: u64) -> Slot {
-            for _ in 0..100 {
-                if let Ok(slot) = Slot::take(conn) {
-                    return slot;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if let Ok(slot) = Slot::take(conn) {
+                        return slot;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            panic!("no slot came free");
+            })
+            .await
+            .expect("no slot came free")
         }
 
         fn kill(pid: i32) {
@@ -1072,6 +1075,105 @@ mod unix {
             let survived = !gone(pid).await;
             assert!(ended.is_ok(), "the answer waited on a descendant");
             assert!(!survived, "a descendant in the run's session outlived it");
+        }
+
+        #[test]
+        fn an_absent_or_null_text_is_empty_and_any_other_kind_is_refused() {
+            let mut params = Map::new();
+            assert_eq!(text(&params, "word", 8), Ok(""));
+            params.insert("word".into(), Value::Null);
+            assert_eq!(text(&params, "word", 8), Ok(""));
+            params.insert("word".into(), json!(7));
+            assert_eq!(
+                text(&params, "word", 8),
+                Err((crate::chat::INVALID_PARAMS, "word must be a string".into()))
+            );
+        }
+
+        fn chat_at(home: &Path) -> Chat {
+            Chat::new(hermes_config::GatewayConfig {
+                home_dir: Some(home.to_string_lossy().into_owned()),
+                ..Default::default()
+            })
+        }
+
+        /// An executable `sh` script at `dir/name`.
+        fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+            let path = dir.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        }
+
+        #[tokio::test]
+        async fn a_cli_run_that_prints_nothing_says_so_with_its_code() {
+            let dir = tempfile::tempdir().unwrap();
+            let program = script(dir.path(), "quiet", "exit 3");
+            let chat = chat_at(dir.path());
+            let reply = run_cli(
+                &program,
+                &chat,
+                &[],
+                Duration::from_secs(30),
+                slot(9010).await,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                reply,
+                json!({"blocked": false, "code": 3, "output": "(no output)"})
+            );
+        }
+
+        #[tokio::test]
+        async fn a_cli_run_past_its_limit_times_out() {
+            let dir = tempfile::tempdir().unwrap();
+            let program = script(dir.path(), "slow", "sleep 20");
+            let chat = chat_at(dir.path());
+            let reply = run_cli(
+                &program,
+                &chat,
+                &[],
+                Duration::from_secs(1),
+                slot(9011).await,
+            )
+            .await;
+            assert_eq!(reply, Err((CLI_TIMED_OUT, "cli.exec: timeout".into())));
+        }
+
+        #[tokio::test]
+        async fn a_cli_program_that_is_missing_cannot_start() {
+            let dir = tempfile::tempdir().unwrap();
+            let chat = chat_at(dir.path());
+            let program = dir.path().join("absent");
+            let reply = run_cli(
+                &program,
+                &chat,
+                &[],
+                Duration::from_secs(30),
+                slot(9012).await,
+            )
+            .await;
+            assert_eq!(
+                reply,
+                Err((
+                    CLI_FAILED,
+                    format!("could not start hermes: {}", std::io::ErrorKind::NotFound)
+                ))
+            );
+        }
+
+        /// Group 0 is the caller's own: killing it would end this test process.
+        #[test]
+        fn a_leader_of_0_or_1_is_never_killed() {
+            kill_run(0);
+            kill_run(1);
+        }
+
+        #[tokio::test]
+        async fn a_missing_stream_reads_as_empty() {
+            let (_stop, stopped) = watch::channel(());
+            assert_eq!(read_capped(None::<tokio::io::Empty>, stopped).await, "");
         }
 
         // Other tests hold slots too, so the first 2 and the last wait for the process's 4.
