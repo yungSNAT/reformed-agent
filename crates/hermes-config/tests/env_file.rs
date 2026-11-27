@@ -4,6 +4,35 @@
 use hermes_config::loader::{dotenv_values_in, env_value_round_trips, set_env_file_value};
 
 #[test]
+fn a_variable_that_steers_the_next_process_is_never_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    let original = "PATH=/usr/bin\n";
+    std::fs::write(&path, original).unwrap();
+    for name in [
+        "PATH",
+        "LD_PRELOAD",
+        "LD_ANYTHING",
+        "DYLD_INSERT_LIBRARIES",
+        "GIT_CONFIG_KEY_0",
+        "NODE_OPTIONS",
+        "PYTHONPATH",
+        "HERMES_HOME",
+        "HERMES_YOLO_MODE",
+        "HERMES_MANAGED_DIR",
+    ] {
+        assert!(
+            set_env_file_value(&path, name, Some("k")).is_err(),
+            "{name}"
+        );
+        assert!(set_env_file_value(&path, name, None).is_err(), "{name}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original, "{name}");
+    }
+    // A credential with a Hermes prefix is not one of them.
+    assert!(set_env_file_value(&path, "HERMES_LANGFUSE_PUBLIC_KEY", Some("k")).unwrap());
+}
+
+#[test]
 fn only_a_value_that_reads_back_as_itself_round_trips() {
     assert!(env_value_round_trips("K", "sk-abc_123.def/ghi+jkl="));
     for refused in [

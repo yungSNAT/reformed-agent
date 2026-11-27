@@ -681,9 +681,8 @@ mod tests {
         chat.disconnect_provider("xiaomi").unwrap();
         assert_eq!(env(), "OTHER_KEY=keep-me\n");
         assert_eq!(chat.keys.value(var), None);
-        assert_eq!(
-            chat.keys.value("OTHER_KEY"),
-            None,
+        assert!(
+            !chat.keys.changed("OTHER_KEY"),
             "only the saved key was held"
         );
     }
@@ -708,6 +707,10 @@ mod tests {
             json!({"api_key": "${ DESKTOP_MODEL_UNIT_TEST_SPACED }"}),
             json!({"api_key": "${A}${B}"}),
             json!({"api_key_env": "X\nOPENAI_API_KEY"}),
+            json!({"api_key": "${}"}),
+            json!({"api_key_env": "PATH"}),
+            json!({"api_key_env": "LD_PRELOAD"}),
+            json!({"api_key": "${HERMES_HOME}"}),
         ] {
             let dir = tempfile::tempdir().unwrap();
             let chat = xiaomi_chat(dir.path(), fields.clone());
@@ -715,7 +718,15 @@ mod tests {
             assert_eq!(code, NO_KEY_VARIABLE, "{fields}");
             let env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
             assert_eq!(env, "OTHER_KEY=keep-me\n", "{fields}");
-            assert_eq!(chat.keys.value("OPENAI_API_KEY"), None, "{fields}");
+            for var in [
+                "OPENAI_API_KEY",
+                "XIAOMI_API_KEY",
+                "PATH",
+                "LD_PRELOAD",
+                "HERMES_HOME",
+            ] {
+                assert!(!chat.keys.changed(var), "{fields} {var}");
+            }
         }
     }
 
