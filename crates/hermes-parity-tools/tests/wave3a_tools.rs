@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write as _;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
@@ -169,39 +170,44 @@ fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata()
     assert!(!help_text.contains("super-secret-env-token-12345"));
 }
 
+fn elite_sync_gate(root: &Path, report: &Path, redteam: &str, chaos: &str) -> Command {
+    let mut command = Command::new(bin());
+    command.current_dir(root).args([
+        "run-elite-sync-gate",
+        "--repo-root",
+        root.to_str().expect("utf8"),
+        "--redteam-cmd",
+        redteam,
+        "--chaos-cmd",
+        chaos,
+        "--hotpath-cmd",
+        "true",
+        "--parity-diff-cmd",
+        "true",
+        "--surface-coverage-cmd",
+        "true",
+        "--eval-trend-cmd",
+        "true",
+        "--release-security-cmd",
+        "true",
+        "--performance-autopilot-cmd",
+        "true",
+        "--rollback-cmd",
+        "true",
+        "--report-path",
+        report.to_str().expect("utf8"),
+        "--json",
+    ]);
+    command
+}
+
 #[test]
 fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     let report = root.join(".sync-reports/elite.json");
 
-    let pass = Command::new(bin())
-        .args([
-            "run-elite-sync-gate",
-            "--repo-root",
-            root.to_str().expect("utf8"),
-            "--redteam-cmd",
-            "true",
-            "--chaos-cmd",
-            "true",
-            "--hotpath-cmd",
-            "true",
-            "--parity-diff-cmd",
-            "true",
-            "--surface-coverage-cmd",
-            "true",
-            "--eval-trend-cmd",
-            "true",
-            "--release-security-cmd",
-            "true",
-            "--performance-autopilot-cmd",
-            "true",
-            "--rollback-cmd",
-            "true",
-            "--report-path",
-            report.to_str().expect("utf8"),
-            "--json",
-        ])
+    let pass = elite_sync_gate(root, &report, "true", "true")
         .output()
         .expect("run");
     assert_eq!(
@@ -214,33 +220,7 @@ fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
     assert_eq!(p_json["ok"], true);
     assert_eq!(p_json["summary"]["passed_sections"], 8);
 
-    let fail = Command::new(bin())
-        .args([
-            "run-elite-sync-gate",
-            "--repo-root",
-            root.to_str().expect("utf8"),
-            "--redteam-cmd",
-            "false",
-            "--chaos-cmd",
-            "true",
-            "--hotpath-cmd",
-            "true",
-            "--parity-diff-cmd",
-            "true",
-            "--surface-coverage-cmd",
-            "true",
-            "--eval-trend-cmd",
-            "true",
-            "--release-security-cmd",
-            "true",
-            "--performance-autopilot-cmd",
-            "true",
-            "--rollback-cmd",
-            "true",
-            "--report-path",
-            report.to_str().expect("utf8"),
-            "--json",
-        ])
+    let fail = elite_sync_gate(root, &report, "false", "true")
         .output()
         .expect("run");
     assert_eq!(fail.status.code(), Some(1));
@@ -248,6 +228,90 @@ fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
     assert_eq!(f_json["ok"], false);
     assert_eq!(f_json["summary"]["failed_sections"], 1);
     assert_eq!(f_json["rollback"]["ok"], true);
+}
+
+#[cfg(unix)]
+#[test]
+fn elite_sync_gate_compares_chaos_baseline_and_current_reports() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().canonicalize().expect("canonical tempdir");
+    let baseline = root.join("Croft Manor baseline.json");
+    let current = root.join("current.json");
+    let missing_baseline = root.join("missing.json");
+    let report = root.join(".sync-reports/elite gate.json");
+    let compare_report = root.join(".sync-reports/elite gate-chaos-compare.json");
+    let chaos_cmd = "printf '%s\\n' 'report=current.json'";
+    let compare_cmd = format!(
+        "'{}' compare-adapter-chaos-reports",
+        bin().replace('\'', "'\\''")
+    );
+    let scenario_report = |outcome: &str| {
+        serde_json::json!({
+            "passed": true,
+            "scenario_runs": [{"scenario": "adapter", "actual": {"outcome": outcome}}],
+        })
+        .to_string()
+    };
+    fs::write(&baseline, scenario_report("success")).expect("write baseline");
+    fs::write(&current, scenario_report("success")).expect("write current report");
+
+    let run = |baseline: &Path, chaos: &str, exit_code| -> Value {
+        let output = elite_sync_gate(&root, &report, "true", chaos)
+            .args(["--chaos-baseline", baseline.to_str().expect("utf8")])
+            .args(["--chaos-compare-cmd", &compare_cmd])
+            .output()
+            .expect("run gate");
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).expect("gate report");
+        assert_eq!(report["summary"]["total_sections"], 9);
+        assert_eq!(report["summary"]["failed_sections"], exit_code);
+        report
+    };
+
+    for (baseline, chaos) in [(&baseline, "true"), (&missing_baseline, chaos_cmd)] {
+        let gate = run(baseline, chaos, 1);
+        let compare = &gate["sections"]["chaos_compare"];
+        assert_eq!(compare["ok"], false);
+        assert_eq!(
+            compare["reason"],
+            "baseline report missing or current chaos report unavailable"
+        );
+        assert!(!compare_report.exists());
+    }
+
+    for (outcome, exit_code, regression_types) in [
+        ("success", 0, &[][..]),
+        ("error", 1, &["outcome_regression"][..]),
+    ] {
+        fs::write(&current, scenario_report(outcome)).expect("write current report");
+        let gate = run(&baseline, chaos_cmd, exit_code);
+        let compare = &gate["sections"]["chaos_compare"];
+        assert_eq!(gate["ok"], exit_code == 0);
+        assert_eq!(compare["exit_code"], exit_code);
+        assert_eq!(
+            compare["report_path"],
+            compare_report.to_str().expect("utf8")
+        );
+
+        let saved: Value =
+            serde_json::from_slice(&fs::read(&compare_report).expect("read comparison"))
+                .expect("comparison report");
+        assert_eq!(saved["baseline"], baseline.to_str().expect("utf8"));
+        assert_eq!(saved["current"], current.to_str().expect("utf8"));
+        assert_eq!(saved["ok"], exit_code == 0);
+        let types: Vec<_> = saved["regressions"]
+            .as_array()
+            .expect("regressions")
+            .iter()
+            .map(|regression| regression["type"].as_str().expect("regression type"))
+            .collect();
+        assert_eq!(types, regression_types);
+    }
 }
 
 #[test]
