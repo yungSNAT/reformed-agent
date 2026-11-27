@@ -90,6 +90,42 @@ fn a_waiter_acting_on_an_old_judgement_never_displaces_a_live_lock() {
     assert!(c.borrow().is_none(), "C took the store whilst B held it");
 }
 
+/// Whilst another waiter of this gateway holds the break turn, a waiter leaves the stale lock to
+/// it; once the turn is free, the next waiter breaks it.
+#[cfg(unix)]
+#[test]
+fn a_waiter_leaves_a_stale_lock_to_the_waiter_already_breaking_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    dead_lock(&path);
+    let turn = std::fs::File::create(path.with_file_name("store.json.lock.break")).unwrap();
+    turn.lock().unwrap();
+    break_if_stale(&lock_dir(&path));
+    assert_eq!(
+        std::fs::read(lock_dir(&path).join("owner")).unwrap(),
+        b"dead",
+        "a waiter broke the lock whilst another held the turn"
+    );
+    drop(turn);
+    break_if_stale(&lock_dir(&path));
+    assert!(!lock_dir(&path).exists(), "the free turn broke nothing");
+}
+
+/// A waiter that cannot open the break turn file breaks nothing.
+#[cfg(unix)]
+#[test]
+fn a_waiter_that_cannot_open_the_break_turn_breaks_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    dead_lock(&path);
+    std::fs::create_dir(path.with_file_name("store.json.lock.break")).unwrap();
+    break_if_stale(&lock_dir(&path));
+    assert_eq!(
+        std::fs::read(lock_dir(&path).join("owner")).unwrap(),
+        b"dead"
+    );
+}
+
 /// What the protocol promises a writer displaced by a racing break: it no longer holds the lock,
 /// so the write answers busy, and releasing it leaves the new holder's lock alone.
 #[test]

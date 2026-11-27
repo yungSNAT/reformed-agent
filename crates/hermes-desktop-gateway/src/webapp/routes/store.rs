@@ -227,20 +227,22 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-#[cfg(test)]
+/// Runs the step a test armed for `at`; a no-op outside tests.
 fn seam(at: &str) {
-    let step = SEAMS.with(|seams| {
-        let mut seams = seams.borrow_mut();
-        let found = seams.iter().position(|(name, _)| *name == at);
-        found.map(|i| seams.remove(i).1)
-    });
-    if let Some(step) = step {
-        step();
+    #[cfg(test)]
+    {
+        let step = SEAMS.with(|seams| {
+            let mut seams = seams.borrow_mut();
+            let found = seams.iter().position(|(name, _)| *name == at);
+            found.map(|i| seams.remove(i).1)
+        });
+        if let Some(step) = step {
+            step();
+        }
     }
+    #[cfg(not(test))]
+    let _ = at;
 }
-
-#[cfg(not(test))]
-fn seam(_: &str) {}
 
 /// Replaces `path` whole. A new file is made owner-only before any bytes land; the atomic writer
 /// keeps an existing file's mode.
