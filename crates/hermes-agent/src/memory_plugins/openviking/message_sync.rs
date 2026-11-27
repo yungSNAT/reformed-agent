@@ -12,8 +12,8 @@ fn openviking_sync_trace_enabled() -> bool {
 
 fn preview_sync_value(value: impl AsRef<str>) -> String {
     let mut text = value.as_ref().replace('\n', "\\n");
-    if text.len() > 160 {
-        text.truncate(160);
+    if let Some((cut, _)) = text.char_indices().nth(160) {
+        text.truncate(cut);
         text.push_str("...");
     }
     text
