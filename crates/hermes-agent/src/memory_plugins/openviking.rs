@@ -978,3 +978,6 @@ mod recall_config_tests;
 #[cfg(test)]
 #[path = "openviking_coverage_gen.rs"]
 mod coverage_gen;
+
+#[cfg(test)]
+mod message_sync_tests;

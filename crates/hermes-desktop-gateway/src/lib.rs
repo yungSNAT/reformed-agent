@@ -3,8 +3,9 @@
 //! Hermes Desktop's remote mode probes `GET /api/health` (or `/api/status`), then opens a WebSocket to
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
-//! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
-//! self-update as off. Other methods get JSON-RPC 'method not found' (-32601).
+//! a session's saved messages at `GET /api/sessions/{id}/messages`, lists the install's profiles
+//! at `GET /api/profiles` (behind the token, as the messages route), and reports the wake word
+//! and self-update as off. Other methods get JSON-RPC 'method not found' (-32601).
 //!
 //! One connection's requests can run at the same time and be answered out of order, as JSON-RPC
 //! allows: a request whose handler waits (a turn, an approval) does not hold up the next. A
@@ -50,6 +51,7 @@ use tokio::sync::mpsc;
 pub mod approval;
 mod attach;
 pub mod chat;
+mod children;
 #[cfg(unix)]
 pub mod local;
 mod tickets;
@@ -57,6 +59,8 @@ pub mod webapp;
 
 pub use chat::Chat;
 use chat::{Conn, Origin, Outgoing, Reply};
+pub use children::{ChildGateways, MAX_CHILDREN};
+use children::{Children, Forwards, Lease, Refused};
 use tickets::{Purpose, Tickets};
 use webapp::api::Caller;
 
@@ -127,6 +131,10 @@ struct Gateway {
     /// Local mode's Webapp, when this listener was bound for it.
     #[cfg(unix)]
     webapp: Option<Arc<webapp::Webapp>>,
+    /// Gateways for the install's other profiles, when this one starts them.
+    children: Option<Arc<Children>>,
+    /// A child of another gateway: a dial with its token may select the canonical wire.
+    child: bool,
 }
 
 /// What a local runtime adds to the router: its home and Webapp.
@@ -163,7 +171,62 @@ pub async fn serve(
     .await
 }
 
+/// As [`serve`], also serving the install's other profiles, each from a child gateway that
+/// `children` starts: a socket opened with `?profile=<name>`, a request whose params name a
+/// profile, and the history route's `profile`.
+pub async fn serve_with_profiles(
+    listener: tokio::net::TcpListener,
+    token: String,
+    chat: Chat,
+    children: ChildGateways,
+) -> std::io::Result<()> {
+    let port = listener.local_addr()?.port();
+    let children = Children::start(children, &chat);
+    let app = router_with(
+        Auth::Token(token),
+        port,
+        chat,
+        Extras::default(),
+        Some(children),
+        false,
+    );
+    axum::serve(listener, app).await
+}
+
+/// As [`serve`] for a child of [`serve_with_profiles`]: the parent's dial with `token` that
+/// offers `hermes-gateway-v1` (and no ticket) speaks the canonical wire.
+pub async fn serve_child(
+    listener: tokio::net::TcpListener,
+    token: String,
+    chat: Chat,
+) -> std::io::Result<()> {
+    let port = listener.local_addr()?.port();
+    axum::serve(
+        listener,
+        router_with(
+            Auth::Token(token),
+            port,
+            chat,
+            Extras::default(),
+            None,
+            true,
+        ),
+    )
+    .await
+}
+
 fn router(auth: Auth, port: u16, chat: Chat, extras: Extras) -> Router {
+    router_with(auth, port, chat, extras, None, false)
+}
+
+fn router_with(
+    auth: Auth,
+    port: u16,
+    chat: Chat,
+    extras: Extras,
+    children: Option<Arc<Children>>,
+    child: bool,
+) -> Router {
     let chat = Arc::new(chat);
     #[cfg(unix)]
     let profile = extras
@@ -184,12 +247,15 @@ fn router(auth: Auth, port: u16, chat: Chat, extras: Extras) -> Router {
         api,
         #[cfg(unix)]
         webapp: extras.webapp.filter(|w| w.serves_routes()),
+        children,
+        child,
     });
     #[allow(unused_mut)]
     let mut private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
         .route("/api/hermes/update/check", get(update_check))
-        .merge(webapp::api::groups());
+        .route("/api/profiles", get(profiles))
+        .merge(webapp::api::groups(&gateway.api));
     #[allow(unused_mut)]
     let mut public = Router::new()
         .route("/api/health", get(health))
@@ -291,6 +357,15 @@ async fn update_check() -> Json<Value> {
     }))
 }
 
+/// The install's profiles; reading them walks folders, so off the runtime's threads.
+async fn profiles(State(gw): State<Arc<Gateway>>) -> Response {
+    let chat = Arc::clone(&gw.chat);
+    match tokio::task::spawn_blocking(move || chat.profiles_route()).await {
+        Ok(listing) => Json(listing).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 fn token_matches(given: Option<&str>, token: &str) -> bool {
     bool::from(given.unwrap_or_default().as_bytes().ct_eq(token.as_bytes()))
 }
@@ -386,8 +461,9 @@ fn admit(
 }
 
 /// A session's saved user and assistant messages, oldest first: the first `limit` with
-/// `order=oldest` (the default), the last `limit` with `order=latest`. Unknown query keys,
-/// such as the desktop's `profile`, are ignored.
+/// `order=oldest` (the default), the last `limit` with `order=latest`. A `profile` naming
+/// another of the install's profiles reads that profile's sessions where this gateway serves its
+/// children (404 otherwise, and for one not listed); other query keys are ignored.
 async fn messages(
     State(gw): State<Arc<Gateway>>,
     Path(session_id): Path<String>,
@@ -398,7 +474,15 @@ async fn messages(
         .and_then(|l| l.parse::<usize>().ok())
         .unwrap_or(MAX_HISTORY)
         .clamp(1, MAX_HISTORY);
-    let mut rows = match gw.chat.history(&session_id) {
+    let history = match query.get("profile").map(String::as_str) {
+        // Another profile's sessions only where its sockets are served too.
+        Some(name) if !gw.chat.serves(name) => match gw.chat.named_profile(name) {
+            Some(home) if gw.children.is_some() => chat::profiles::history_in(&home, &session_id),
+            _ => return StatusCode::NOT_FOUND.into_response(),
+        },
+        _ => gw.chat.history(&session_id),
+    };
+    let mut rows = match history {
         None => return StatusCode::NOT_FOUND.into_response(),
         Some(Err(err)) => {
             return (
@@ -449,13 +533,28 @@ async fn upgrade(
             None
         }
     };
+    let scope = match query.get("profile") {
+        Some(name) if !gw.chat.serves(name) => match &gw.children {
+            Some(children) => match children.lease(name).await {
+                Ok(lease) => Some(lease),
+                Err(Refused::Unknown) => return StatusCode::NOT_FOUND.into_response(),
+                Err(Refused::Busy) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+                Err(Refused::Failed(_)) => return StatusCode::BAD_GATEWAY.into_response(),
+            },
+            None => return StatusCode::NOT_FOUND.into_response(),
+        },
+        _ => None,
+    };
     let chat = Arc::clone(&gw.chat);
-    let canonical = offered.is_some();
+    let children = gw.children.clone();
+    let canonical = offered.is_some() || (gw.child && offers_canonical(&headers));
     // Both listeners take loopback connections only: the token one checks `Host` and `Origin`,
     // and the ticket one is local mode's, where a browser socket is the Webapp's. A new kind of
-    // listener must choose here.
+    // listener must choose here. A child serves its parent's clients: it takes the origin the
+    // parent names for each.
     let origin = match (&revoke, &gw.auth) {
         (Some(_), _) => Origin::Webapp,
+        (None, Auth::Token(_)) if gw.child => children::child_origin(&headers),
         (None, Auth::Token(_) | Auth::Native(_)) => Origin::Local,
     };
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
@@ -466,7 +565,17 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, chat, canonical, origin, revoke))
+        .on_upgrade(move |socket| session(socket, chat, canonical, origin, revoke, scope, children))
+}
+
+/// True when the dial offers `hermes-gateway-v1`.
+fn offers_canonical(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|p| p.trim() == CANONICAL_PROTOCOL)
 }
 
 /// What closes a browser socket: the credential generation it opened under, and the watch that
@@ -568,6 +677,8 @@ async fn session(
     canonical: bool,
     origin: Origin,
     mut revoke: Option<Revoke>,
+    scope: Option<Lease>,
+    children: Option<Arc<Children>>,
 ) {
     let mut ready = json!({
         "jsonrpc": "2.0",
@@ -594,7 +705,8 @@ async fn session(
         canonical,
     );
     conn.origin = origin;
-    let call = |method: &str, params: Value| chat.call(&conn, method, params);
+    let forwards = Forwards::new(Arc::clone(&chat), conn.clone(), scope, children);
+    let call = |method: &str, params: Value| forwards.call(method, params);
     serve_socket(
         &mut socket,
         &mut events,
@@ -835,6 +947,7 @@ fn attach_request(text: &str) -> Option<Value> {
         name: Option<String>,
         content_base64: Option<String>,
         data: Option<String>,
+        profile: Option<String>,
     }
     /// A string, number or null id. Not an untagged enum, which would buffer an array or
     /// object id whole before refusing it.
@@ -875,6 +988,7 @@ fn attach_request(text: &str) -> Option<Value> {
         name,
         content_base64,
         data,
+        profile,
     }) = request.params;
     let fields = match request.method.as_str() {
         "file.attach" if data_url.is_some() => [("data_url", data_url), ("name", name)],
@@ -885,6 +999,9 @@ fn attach_request(text: &str) -> Option<Value> {
     };
     let mut params = serde_json::Map::new();
     params.insert("session_id".into(), Value::String(session_id));
+    if let Some(profile) = profile {
+        params.insert("profile".into(), Value::String(profile));
+    }
     for (key, value) in fields {
         if let Some(value) = value {
             params.insert(key.into(), Value::String(value));

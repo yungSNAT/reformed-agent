@@ -119,7 +119,7 @@ t4 = kanban_create(
 )["task_id"]
 ```
 
-`parents=[...]` gates promotion — children stay in `todo` until every parent reaches `done`, then auto-promote to `ready`. No manual coordination needed; the dispatcher and dependency engine handle it.
+`parents=[...]` gates completion — `kanban_complete` refuses a child, naming its open parents, until every parent reaches `done`. Children stay in `todo`; dispatch each once its parents are done.
 
 ### Step 4 — Complete your own task
 
@@ -161,7 +161,7 @@ Tell them what you created in plain prose:
 
 **Same-profile queue:** 50 tasks, all assigned to `translator`, no dependencies between them. Dispatcher serializes — translator processes them in priority order, accumulating experience in their own memory.
 
-**Human-in-the-loop:** Any task can `kanban_block()` to wait for input. Dispatcher respawns after `/unblock`. The comment thread carries the full context.
+**Human-in-the-loop:** Any task can `kanban_block()` to wait for input. Dispatch it again after `kanban_unblock`. The block reason carries the context.
 
 ## Pitfalls
 
@@ -187,4 +187,4 @@ When a worker profile keeps crashing, hallucinating, or getting blocked by its o
 2. **Reassign** (or `hermes kanban reassign <task_id> <new-profile> --reclaim`) — switch the task to a different profile and let the dispatcher pick it up with a fresh worker.
 3. **Change profile model** — the dashboard prints a copy-paste hint for `hermes -p <profile> model` since profile config lives on disk; edit it in a terminal, then Reclaim to retry with the new model.
 
-Hallucination warnings appear on tasks where a worker's `kanban_complete(created_cards=[...])` claim included card ids that don't exist or weren't created by the worker's profile (the gate blocks the completion), or where the free-form summary references `t_<hex>` ids that don't resolve (advisory prose scan, non-blocking). Both produce audit events that persist even after recovery actions — the trail stays for debugging.
+Hallucination warnings appear on tasks where a worker's `kanban_complete(created_cards=[...])` claim included card ids that don't exist on the board (the gate blocks the completion), or where the free-form summary references `t_<hex>` ids that don't resolve (advisory prose scan, non-blocking). Both produce audit events that persist even after recovery actions — the trail stays for debugging.
