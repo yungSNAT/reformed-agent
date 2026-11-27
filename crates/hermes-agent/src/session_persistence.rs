@@ -1369,6 +1369,7 @@ impl SessionPersistence {
 /// A held session budget lock. A `flock` belongs to the open file description, which a
 /// fork child on another thread shares until it execs, so merely closing our descriptor
 /// would leave the lock held; an explicit unlock releases it for every holder.
+#[derive(Debug)]
 pub(crate) struct BudgetLock(std::fs::File);
 
 impl Drop for BudgetLock {
