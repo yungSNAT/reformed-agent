@@ -109,6 +109,7 @@ fn a_database_without_a_sessions_table_has_no_titles_to_set() {
     let directory = tempfile::tempdir().unwrap();
     let persistence = SessionPersistence::new(directory.path());
     let database = Connection::open(persistence.db_path()).unwrap();
+    assert!(persistence.db_path().exists());
 
     assert!(!persistence
         .update_session_title("session", "title")
