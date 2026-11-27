@@ -6,6 +6,13 @@
 //! clients on to `command.dispatch`. That serves quick-command aliases, installed skills,
 //! `/queue` and `/steer`. Nothing here runs a command or reads a path a client names: an exec
 //! quick command is refused, and a paste is written under `<home>/pastes`.
+//!
+//! Upstream writes a paste with default permissions and follows a link in the folder's place.
+//! Here a paste file is owner-only (mode 0600 in a 0700 folder on Unix; on Windows the protected
+//! descriptor `attach` gives staged images: owner, SYSTEM and administrators), and a link or a
+//! file in the folder's place is refused. On Unix the file is created relative to the folder
+//! opened without following a link; on Windows a link swapped in after the folder is checked is
+//! not caught.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -87,9 +94,16 @@ fn slash_exec(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
 
 /// Whether `command.dispatch` would serve `/name`.
 fn dispatchable(chat: &Chat, name: &str, arg: &str) -> Result<bool, RpcError> {
-    Ok(matches!(name, "queue" | "q" | "steer")
-        || chat.config.quick_commands.contains_key(name)
-        || skill(chat, name, arg)?.is_some())
+    if let Some(quick) = chat.config.quick_commands.get(name) {
+        // command.dispatch answers a quick command before anything else, and serves only an
+        // alias with a target: an exec quick command runs nothing here.
+        return Ok(quick.kind.trim().eq_ignore_ascii_case("alias")
+            && quick
+                .target
+                .as_deref()
+                .is_some_and(|t| !t.trim().is_empty()));
+    }
+    Ok(matches!(name, "queue" | "q" | "steer") || skill(chat, name, arg)?.is_some())
 }
 
 /// `command.dispatch {name, arg, session_id?}`: a directive for the client, in upstream's
@@ -200,7 +214,8 @@ fn paste_collapse(chat: &Chat, params: &Map<String, Value>) -> Result<Value, Rpc
 
 /// Writes `text` to `paste_<n>_<HHMMSS>.txt` (UTC) in `dir`, never over an existing file.
 fn write_paste(dir: &Path, text: &str) -> std::io::Result<(u64, PathBuf)> {
-    create_private_dir(dir)?;
+    crate::attach::private_folder(dir).map_err(std::io::Error::other)?;
+    let folder = open_folder(dir)?;
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs() % 86_400);
@@ -212,15 +227,11 @@ fn write_paste(dir: &Path, text: &str) -> std::io::Result<(u64, PathBuf)> {
     );
     loop {
         let number = PASTES.fetch_add(1, Ordering::Relaxed) + 1;
-        let path = dir.join(format!("paste_{number}_{clock}.txt"));
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        match options.open(&path) {
+        let name = format!("paste_{number}_{clock}.txt");
+        match create_in(&folder, &name) {
             Ok(mut file) => {
                 file.write_all(text.as_bytes())?;
-                return Ok((number, path));
+                return Ok((number, dir.join(name)));
             }
             // A file left by an earlier run of the gateway: take the next number.
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -229,10 +240,37 @@ fn write_paste(dir: &Path, text: &str) -> std::io::Result<(u64, PathBuf)> {
     }
 }
 
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
+/// The pastes folder, opened without following a link in its place, so a link made there before
+/// or after it was created is refused, and each file is created relative to it.
+#[cfg(unix)]
+fn open_folder(dir: &Path) -> std::io::Result<std::os::fd::OwnedFd> {
+    use rustix::fs::{Mode, OFlags};
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    Ok(rustix::fs::open(dir, flags, Mode::empty())?)
+}
+
+/// Creates `name` in `folder`, owner-only, never over an existing file or through a link.
+#[cfg(unix)]
+fn create_in(folder: &std::os::fd::OwnedFd, name: &str) -> std::io::Result<std::fs::File> {
+    use rustix::fs::{Mode, OFlags};
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let file = rustix::fs::openat(folder, name, flags, Mode::RUSR | Mode::WUSR)?;
+    Ok(std::fs::File::from(file))
+}
+
+/// The pastes folder, already checked to be a folder and not a link or junction.
+#[cfg(windows)]
+fn open_folder(dir: &Path) -> std::io::Result<PathBuf> {
+    Ok(dir.to_path_buf())
+}
+
+/// Creates `name` in `folder`, owner-only, never over an existing entry.
+#[cfg(windows)]
+fn create_in(folder: &Path, name: &str) -> std::io::Result<std::fs::File> {
+    let path = folder.join(name);
+    // Any entry takes the name, a dangling link included: create-new would follow one.
+    if std::fs::symlink_metadata(&path).is_ok() {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
+    crate::attach::owner_only::create_new(&path)
 }
