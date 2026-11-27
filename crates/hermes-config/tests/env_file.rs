@@ -29,7 +29,10 @@ fn a_variable_that_steers_the_next_process_is_never_written() {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original, "{name}");
     }
     // Windows reads `path` as `PATH`.
-    assert_eq!(set_env_file_value(&path, "path", Some("k")).is_err(), cfg!(windows));
+    assert_eq!(
+        set_env_file_value(&path, "path", Some("k")).is_err(),
+        cfg!(windows)
+    );
     // A credential with a Hermes prefix is not one of them.
     assert!(set_env_file_value(&path, "HERMES_LANGFUSE_PUBLIC_KEY", Some("k")).unwrap());
 }
