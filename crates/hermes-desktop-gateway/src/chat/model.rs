@@ -1057,6 +1057,13 @@ mod tests {
                     "{provider}"
                 );
             }
+            // A third spelling takes the entry first by name.
+            let config = chat.turn_config("Mimo:m").unwrap();
+            assert_eq!(
+                config.llm_providers["MIMO"].api_key.as_deref(),
+                Some("upper-key")
+            );
+            assert_eq!(config.llm_providers["mimo"].api_key, None);
         }
     }
 
