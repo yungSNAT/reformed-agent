@@ -43,7 +43,7 @@ pub fn strip_reserved_params(params: &mut Value) {
     }
 }
 
-type ViewSettler = fn(call_id: &str, shown: &str);
+type ViewSettler = fn(session_id: Option<&str>, call_id: &str, shown: &str);
 
 static VIEW_SETTLER: OnceLock<ViewSettler> = OnceLock::new();
 
@@ -54,10 +54,11 @@ pub fn set_view_settler(settler: ViewSettler) {
 
 /// Hands the file tools a tool result as the model will see it, after the
 /// agent loop's own cuts, so a read counts only if the model was given it
-/// whole.
-pub fn settle_view(call_id: &str, shown: &str) {
+/// whole. `session_id` is the one the agent loop gave
+/// [`scope_file_tool_params`] for the call.
+pub fn settle_view(session_id: Option<&str>, call_id: &str, shown: &str) {
     if let Some(settler) = VIEW_SETTLER.get() {
-        settler(call_id, shown);
+        settler(session_id, call_id, shown);
     }
 }
 

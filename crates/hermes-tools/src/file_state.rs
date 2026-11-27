@@ -93,8 +93,8 @@ struct Session {
 #[derive(Default)]
 struct State {
     sessions: HashMap<String, Session>,
-    /// Keyed by call id.
-    pending: HashMap<String, Pending>,
+    /// Keyed by session and call id, as providers reuse call ids.
+    pending: HashMap<(String, String), Pending>,
     clock: u64,
 }
 
@@ -169,9 +169,11 @@ fn forget_least_used<V>(
 }
 
 fn session(params: &Value) -> &str {
-    params
-        .get(SESSION_PARAM)
-        .and_then(Value::as_str)
+    session_key(params.get(SESSION_PARAM).and_then(Value::as_str))
+}
+
+fn session_key(id: Option<&str>) -> &str {
+    id.map(str::trim)
         .filter(|key| !key.is_empty())
         .unwrap_or("default")
 }
@@ -249,17 +251,18 @@ pub async fn note_read(
         });
         (start, end, content == lines[start..end].join("\n"))
     };
+    let key = (session(params).to_string(), call.to_string());
     let mut state = state();
     // Otherwise the file changed between the backend's read and this one: the
     // version the model saw is unknown, so the read counts for nothing.
-    state.pending.remove(call);
+    state.pending.remove(&key);
     if matches {
         if state.pending.len() >= MAX_PENDING {
             forget_least_used(&mut state.pending, |p| p.used);
         }
         let used = state.tick();
         let read = Pending {
-            session: session(params).to_string(),
+            session: key.0.clone(),
             file: file.to_path_buf(),
             version: Version::of(&bytes),
             lines: lines.len(),
@@ -268,7 +271,7 @@ pub async fn note_read(
             delivered: None,
             used,
         };
-        state.pending.insert(call.to_string(), read);
+        state.pending.insert(key, read);
     }
 }
 
@@ -283,14 +286,11 @@ pub fn delivered(tool: &str, params: &Value, intact: bool, returned: &str, defer
     let Some(call) = call(params) else {
         return;
     };
+    let key = (session(params).to_string(), call.to_string());
     let mut state = state();
-    let Some(mut read) = state.pending.remove(call) else {
+    let Some(mut read) = state.pending.remove(&key) else {
         return;
     };
-    // Another session's read under a reused call id: dropped, so it never counts.
-    if read.session != session(params) {
-        return;
-    }
     let file = read.file.clone();
     state.seen(&read.session, file).last_read = Some(read.version);
     if !intact {
@@ -298,18 +298,19 @@ pub fn delivered(tool: &str, params: &Value, intact: bool, returned: &str, defer
     }
     if deferred {
         read.delivered = Some(Version::of(returned.as_bytes()));
-        state.pending.insert(call.to_string(), read);
+        state.pending.insert(key, read);
     } else {
         state.credit(read);
     }
 }
 
-/// Settles the agent loop's call `call_id` with `shown`, its result as the
-/// model will see it: the read counts only if `shown` is exactly what the
+/// Settles session `session_id`'s call `call_id` with `shown`, its result as
+/// the model will see it: the read counts only if `shown` is exactly what the
 /// registry returned.
-pub fn settle_view(call_id: &str, shown: &str) {
+pub fn settle_view(session_id: Option<&str>, call_id: &str, shown: &str) {
+    let key = (session_key(session_id).to_string(), call_id.to_string());
     let mut state = state();
-    let Some(read) = state.pending.remove(call_id) else {
+    let Some(read) = state.pending.remove(&key) else {
         return;
     };
     if read.delivered == Some(Version::of(shown.as_bytes())) {
@@ -431,10 +432,10 @@ mod tests {
         note_read(&x, &a, None, None, "x's file\n").await;
         note_read(&y, &b, None, None, "y's file\n").await;
         delivered("read_file", &x, true, "x's view", true);
-        settle_view("reused-call", "x's view");
+        settle_view(Some("reused-id-x"), "reused-call", "x's view");
 
         assert!(state().peek("reused-id-y", &b) == (None, None));
-        assert!(state().peek("reused-id-x", &a).0.is_none());
+        assert!(state().peek("reused-id-x", &a).0.is_some());
     }
 
     #[tokio::test]
@@ -452,8 +453,8 @@ mod tests {
         note_read(&b, &file, None, None, "same text\n").await;
         delivered("read_file", &b, true, "same view", true);
         // A's model is given its read whole; B's budget cuts B's.
-        settle_view("reused-settle", "same view");
-        settle_view("reused-settle", "same [cut]");
+        settle_view(Some("reused-settle-a"), "reused-settle", "same view");
+        settle_view(Some("reused-settle-b"), "reused-settle", "same [cut]");
 
         assert!(state().peek("reused-settle-a", &file).0.is_some());
         assert!(state().peek("reused-settle-b", &file).0.is_none());

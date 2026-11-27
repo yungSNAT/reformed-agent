@@ -343,13 +343,13 @@ async fn a_read_the_agent_cuts_does_not_bless_a_write() {
     let (_dir, path) = fixture("cut.txt", "first line\nsecond line\n");
     let returned = agent_read(&tools, "b1", "b1-cut", &path).await;
     let cut = format!("{}\n[... truncated ...]", &returned[..10]);
-    hermes_core::file_edit::settle_view("b1-cut", &cut);
+    hermes_core::file_edit::settle_view(Some("b1"), "b1-cut", &cut);
     refused(&write(&tools, "b1", &path, "replacement\n").await);
 
     let returned = agent_read(&tools, "b1", "b1-whole", &path).await;
     // Not yet settled: the model has not been given it.
     refused(&write(&tools, "b1", &path, "replacement\n").await);
-    hermes_core::file_edit::settle_view("b1-whole", &returned);
+    hermes_core::file_edit::settle_view(Some("b1"), "b1-whole", &returned);
     ok(&write(&tools, "b1", &path, "replacement\n").await);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "replacement\n");
 }
