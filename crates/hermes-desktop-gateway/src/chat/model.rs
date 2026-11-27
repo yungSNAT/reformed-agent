@@ -944,57 +944,6 @@ mod tests {
     }
 
     #[test]
-    fn a_saved_key_goes_to_the_entry_named_as_the_slug_first() {
-        // `llm_providers` is a `HashMap`: each new map iterates in its own order.
-        for _ in 0..32 {
-            let mut config = GatewayConfig::default();
-            for (name, var) in [("xiaomi", "CANONICAL_KEY"), ("mimo", "EXACT_KEY")] {
-                let provider: LlmProviderConfig =
-                    serde_json::from_value(json!({ "api_key_env": var })).unwrap();
-                config.llm_providers.insert(name.into(), provider);
-            }
-            let chat = Chat::new(config);
-            let vars = chat.slug_key_vars("mimo").unwrap();
-            assert_eq!(vars[0], "EXACT_KEY");
-            // The build for `mimo` reads only `mimo`'s entry.
-            assert!(!vars.contains(&"CANONICAL_KEY"), "{vars:?}");
-        }
-    }
-
-    #[test]
-    fn an_entry_never_takes_the_key_variable_of_one_named_so_in_another_case() {
-        let upper = "DESKTOP_MODEL_UNIT_TEST_SIBLING_KEY";
-        // `llm_providers` is a `HashMap`: each new map iterates in its own order.
-        for _ in 0..32 {
-            let mut config = GatewayConfig::default();
-            for (name, entry) in [
-                ("mimo", json!({ "base_url": "http://127.0.0.1:9/v1" })),
-                ("MIMO", json!({ "api_key_env": upper })),
-                ("XIAOMI", json!({ "api_key_env": "UPPER_CANONICAL_KEY" })),
-                ("xiaomi", json!({ "api_key_env": "CANONICAL_KEY" })),
-            ] {
-                let provider: LlmProviderConfig = serde_json::from_value(entry).unwrap();
-                config.llm_providers.insert(name.into(), provider);
-            }
-            let chat = Chat::new(config);
-            // `mimo` names no variable: the registry's, as its build reads, never `MIMO`'s or
-            // `xiaomi`'s, so a save and a disconnect of `mimo` leave their keys alone.
-            let registry = key_vars("xiaomi").unwrap();
-            let expected = |first: &'static str| {
-                let mut vars = vec![first];
-                vars.extend(registry.iter().copied().filter(|var| *var != first));
-                vars
-            };
-            assert_eq!(chat.slug_key_vars("mimo").unwrap(), registry);
-            assert_eq!(chat.slug_key_vars("MIMO").unwrap(), expected(upper));
-            assert_eq!(
-                chat.slug_key_vars("XIAOMI").unwrap(),
-                expected("UPPER_CANONICAL_KEY")
-            );
-        }
-    }
-
-    #[test]
     fn a_turn_takes_the_key_of_the_entry_named_as_its_provider() {
         let (lower, upper) = (
             "DESKTOP_MODEL_UNIT_TEST_TURN_LOWER_KEY",

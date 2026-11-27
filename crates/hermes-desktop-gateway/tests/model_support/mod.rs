@@ -190,3 +190,41 @@ pub fn code(reply: &Value) -> i64 {
 pub fn env_lines(home: &Path) -> String {
     std::fs::read_to_string(home.join(".env")).unwrap_or_default()
 }
+
+/// An in-process gateway whose `llm_providers` are `entries` (`(name, api_key_env)`), each
+/// pointed at one scripted model, with default `model`; returns its home, a connected client
+/// and what the model saw.
+pub async fn start_providers(
+    model: &str,
+    entries: &[(&str, Option<&str>)],
+) -> (tempfile::TempDir, Client, Seen) {
+    let (model_addr, seen) = model_server().await;
+    let home = tempfile::tempdir().unwrap();
+    let mut config = hermes_config::GatewayConfig {
+        model: Some(model.into()),
+        home_dir: Some(home.path().to_string_lossy().into_owned()),
+        ..hermes_config::GatewayConfig::default()
+    };
+    for (name, var) in entries {
+        let entry = json!({"base_url": format!("http://{model_addr}/v1"), "api_key_env": var});
+        config
+            .llm_providers
+            .insert((*name).into(), serde_json::from_value(entry).unwrap());
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(hermes_desktop_gateway::serve(
+        listener,
+        TOKEN.to_string(),
+        hermes_desktop_gateway::Chat::new(config),
+    ));
+    (home, connect(addr).await, seen)
+}
+
+pub fn auth_sent(seen: &Seen) -> Vec<String> {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .map(|(_, auth)| auth.clone())
+        .collect()
+}
