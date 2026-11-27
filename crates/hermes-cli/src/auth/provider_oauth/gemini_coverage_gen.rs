@@ -261,3 +261,4 @@ fn callback_timeout_returns_no_code() {
 }
 
 include!("gemini_part2_coverage_gen.rs");
+include!("gemini_part3_coverage_gen.rs");

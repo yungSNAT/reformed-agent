@@ -1327,6 +1327,48 @@ mod tests {
     }
 
     #[test]
+    fn tool_message_remediation_matches_denial_reason() {
+        let _guard = env_test_lock();
+        for (code, hint) in [
+            ("PARAMS_TOO_LARGE", "Reduce payload size"),
+            ("tool_denylisted", "Switch to an approved tool surface"),
+            ("tool_not_allowlisted", "Switch to an approved tool surface"),
+            (
+                "sandbox_profile_violation",
+                "Command matched sandbox denial pattern",
+            ),
+            ("fixture_policy_denial", "Review policy decision details"),
+        ] {
+            let payload = serde_json::json!({"policy": {"code": code}}).to_string();
+            let lines = format_tool_message_lines(&payload);
+            let header = lines
+                .iter()
+                .position(|line| line == "[remediation]")
+                .unwrap();
+            let advice = &lines[header + 1];
+            assert!(
+                advice.starts_with(&format!("- {hint}")),
+                "{code}: {lines:?}"
+            );
+        }
+
+        for error in ["Blocked by tool policy", "Denied by security policy"] {
+            let payload = serde_json::json!({"error": error}).to_string();
+            let lines = format_tool_message_lines(&payload);
+            assert!(lines.iter().any(|line| line == error), "{lines:?}");
+            assert!(
+                lines.windows(2).any(|block| block[0] == "[remediation]"
+                    && block[1].starts_with("- Review policy decision details")),
+                "{lines:?}"
+            );
+        }
+        assert_eq!(
+            format_tool_message_lines(r#"{"error":"Fixture unavailable"}"#),
+            ["[error]", "Fixture unavailable"]
+        );
+    }
+
+    #[test]
     fn test_format_tool_message_lines_truncates_large_payload() {
         let _guard = env_test_lock();
         let cap = max_tool_output_lines();

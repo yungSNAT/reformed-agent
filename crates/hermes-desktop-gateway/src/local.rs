@@ -32,7 +32,7 @@ use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 use crate::tickets::{Purpose, Tickets, TICKET_TTL};
-use crate::{router, Auth, Chat};
+use crate::{router, Auth, Chat, Extras};
 
 /// The capability the desktop requires (`assertLocalGatewayEndpoint`).
 const CAPABILITY: &str = "session-authority-v1";
@@ -449,22 +449,27 @@ impl LocalRuntime {
     /// runtime, which runs the servers.
     pub fn serve(&mut self, chat: Chat) -> Result<(), String> {
         let home = self.home.clone();
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
-            .and_then(|listener| {
-                listener.set_nonblocking(true)?;
-                tokio::net::TcpListener::from_std(listener)
-            })
-            .map_err(|e| format!("cannot bind 127.0.0.1: {e}"))?;
+        // The Webapp's address when `webapp.enabled` asks for it, else a free 127.0.0.1 port.
+        let (listener, webapp) = crate::webapp::bind(&home)?;
+        let listener = listener
+            .set_nonblocking(true)
+            .and_then(|()| tokio::net::TcpListener::from_std(listener))
+            .map_err(|e| format!("cannot serve the bound listener: {e}"))?;
         let port = listener
             .local_addr()
             .map_err(|e| format!("cannot read the bound address: {e}"))?
             .port();
-        self.api_origin = format!("http://127.0.0.1:{port}");
+        self.api_origin = webapp.native_origin();
         let (control, identity) = bind_control(&home)?;
         self.files.push((home.join(SOCKET), identity));
 
         let tickets = Arc::clone(&self.tickets);
-        let app = router(Auth::Native(Arc::clone(&tickets)), port, chat);
+        let extras = Extras {
+            home: Some(home.clone()),
+            webapp: Some(Arc::clone(&webapp)),
+        };
+        let app = router(Auth::Native(Arc::clone(&tickets)), port, chat, extras)
+            .into_make_service_with_connect_info::<std::net::SocketAddr>();
         self.tasks.push(tokio::spawn(async move {
             if let Err(err) = axum::serve(listener, app).await {
                 tracing::error!("local desktop gateway stopped: {err}");
@@ -475,6 +480,7 @@ impl LocalRuntime {
             instance_id: self.instance_id.clone(),
             api_origin: self.api_origin.clone(),
             tickets,
+            webapp,
         });
         self.tasks
             .push(tokio::spawn(serve_control(control, control_state)));
@@ -494,6 +500,7 @@ struct Control {
     instance_id: String,
     api_origin: String,
     tickets: Arc<Tickets>,
+    webapp: Arc<crate::webapp::Webapp>,
 }
 
 async fn serve_control(listener: tokio::net::UnixListener, control: Arc<Control>) {
@@ -537,6 +544,10 @@ impl Control {
         let result = match (verb, &request) {
             (Some("identify"), _) => Ok(self.identify()),
             (Some("session-ticket"), Some(request)) => self.session_ticket(request, peer_ok),
+            (
+                Some(verb @ ("webapp-status" | "webapp-launch" | "webapp-sign-out")),
+                Some(request),
+            ) => self.webapp.control(verb, request, peer_ok),
             _ => Err(format!("unknown verb: {}", verb.unwrap_or("none"))),
         };
         let mut reply = match result {

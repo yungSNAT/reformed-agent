@@ -550,6 +550,45 @@
     }
 
     #[test]
+    fn fallback_order_preserves_first_spelling_and_skips_active_model() {
+        let mut config = AgentConfig {
+            model: "fixture:primary".into(),
+            provider: Some("fixture".into()),
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        config.retry.fallback_models = vec![
+            " ".into(),
+            " Fixture:Primary ".into(),
+            " fixture:Nearby ".into(),
+            "FIXTURE:NEARBY".into(),
+        ];
+        config.retry.fallback_model = Some(" fixture:backup ".into());
+
+        for (degrade_model, expected) in [
+            (" fixture:cheap ", "fixture:cheap"),
+            (" ", "fixture:backup"),
+        ] {
+            let mut config = config.clone();
+            config.cost_guard_degrade_model = Some(degrade_model.into());
+            let agent = AgentLoop::new(
+                config,
+                Arc::new(ToolRegistry::new()),
+                Arc::new(DummyProvider),
+            );
+            assert_eq!(
+                agent.resolve_retry_failover_chain("fixture:primary"),
+                ["fixture:Nearby", "fixture:backup"]
+            );
+            assert_eq!(
+                agent.resolve_reliability_degrade_model("fixture:primary", None),
+                Some("fixture:backup".into())
+            );
+            assert_eq!(agent.resolve_cost_degrade_model().as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
     fn test_primary_credential_pool_stays_with_the_primary_provider() {
         let mut runtime_providers = HashMap::new();
         runtime_providers.insert(

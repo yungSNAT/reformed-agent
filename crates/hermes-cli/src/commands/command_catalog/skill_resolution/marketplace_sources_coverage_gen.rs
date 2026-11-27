@@ -103,6 +103,112 @@ async fn resolve_skills_sh_source_empty_identifier_errors() {
 }
 
 #[tokio::test]
+async fn marketplace_manifest_resolves_names_and_deduplicates_suggestions() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    let url = format!("{}/manifest", server.uri());
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/manifest"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "plugins": [
+                {"name": "Field", "skills": [
+                    " ", "./skills/Robin", "/skills/robin-study", "./skills/Robin",
+                    "work/reef/robin-track"
+                ]},
+                {"name": "Other", "skills": ["./skills/heron"]}
+            ]
+        })))
+        .expect(6)
+        .mount(&server)
+        .await;
+
+    for identifier in [
+        " ROBIN/ ",
+        "/skills/robin/",
+        "FIELD/robin",
+        "Field/skills/Robin",
+    ] {
+        let source = resolve_claude_marketplace_skill_from_request(client.get(&url), identifier)
+            .await
+            .unwrap();
+        assert_eq!(source.repo, "anthropics/skills");
+        assert_eq!(source.branch, "main");
+        assert_eq!(source.skill_dir, "skills/Robin");
+    }
+
+    for (identifier, suggestions) in [
+        (
+            "rob",
+            "skills/Robin, skills/robin-study, work/reef/robin-track",
+        ),
+        ("missing", "none"),
+    ] {
+        let error = resolve_claude_marketplace_skill_from_request(client.get(&url), identifier)
+            .await
+            .unwrap_err();
+        assert!(config_message(error).ends_with(&format!("Suggestions: {suggestions}")));
+    }
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| { !request.headers.contains_key("authorization") }));
+}
+
+#[tokio::test]
+async fn marketplace_manifest_reports_fetch_and_decode_failures() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    assert!(server.address().ip().is_loopback());
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    for (resource, response, expected) in [
+        (
+            "/unavailable",
+            ResponseTemplate::new(503).set_body_string("catalogue unavailable"),
+            "Claude marketplace lookup failed (503 Service Unavailable): catalogue unavailable",
+        ),
+        (
+            "/invalid",
+            ResponseTemplate::new(200).set_body_string("invalid JSON"),
+            "Invalid Claude marketplace payload:",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(resource))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let request = client.get(format!("{}{resource}", server.uri()));
+        let error = resolve_claude_marketplace_skill_from_request(request, "robin")
+            .await
+            .unwrap_err();
+        assert!(config_message(error).starts_with(expected));
+    }
+
+    let invalid_url = client.get("not a URL");
+    let error = resolve_claude_marketplace_skill_from_request(invalid_url, "robin")
+        .await
+        .unwrap_err();
+    assert!(config_message(error).starts_with("Claude marketplace request failed:"));
+}
+
+#[tokio::test]
 async fn skills_sh_search_filters_and_preserves_the_first_result_for_each_identifier() {
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
