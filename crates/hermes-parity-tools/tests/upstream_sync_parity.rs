@@ -1046,7 +1046,7 @@ fn outcome_in_removed_dir(subcommand: &str) -> Outcome {
         .env("LOCK_FILE", sandbox.path("home/cron.lock"))
         .args([
             "-c",
-            r#"mkdir "$1" && cd "$1" && rmdir "$1" && exec "$2" "$3""#,
+            r#"mkdir "$1" && cd "$1" && rm -r "$1" && exec "$2" "$3""#,
             "sh",
             &sandbox.path("gone"),
             bin(),
@@ -1057,7 +1057,11 @@ fn outcome_in_removed_dir(subcommand: &str) -> Outcome {
 
 #[test]
 fn sync_names_the_missing_upstream_remote() {
-    let out = outcome(sync("upstream", Scenario::NoUpdates, &["--upstream", "mirror"]));
+    let out = outcome(sync(
+        "upstream",
+        Scenario::NoUpdates,
+        &["--upstream", "mirror"],
+    ));
     assert_eq!(out.code, Some(1));
     assert_eq!(
         out.stderr,
@@ -1126,7 +1130,11 @@ fn sync_reports_a_repo_root_it_cannot_enter() {
         &["--repo-root", "<ROOT>/absent"],
     ));
     assert_eq!(out.code, Some(1));
-    assert!(out.stderr.starts_with("cd: <ROOT>/absent: "), "{}", out.stderr);
+    assert!(
+        out.stderr.starts_with("cd: <ROOT>/absent: "),
+        "{}",
+        out.stderr
+    );
 }
 
 #[test]
@@ -1190,7 +1198,12 @@ fn sync_exits_127_when_git_cannot_start_for_a_ref() {
             .setup(faulty_git),
     );
     assert_eq!(out.code, Some(127));
-    assert!(out.stderr.ends_with("git: No such file or directory (os error 2)\n"), "{}", out.stderr);
+    assert!(
+        out.stderr
+            .ends_with("git: No such file or directory (os error 2)\n"),
+        "{}",
+        out.stderr
+    );
     assert_eq!(out.report, "");
 }
 
@@ -1208,9 +1221,13 @@ fn sync_exits_with_git_code_when_a_ref_lookup_fails() {
 #[test]
 fn sync_cherry_pick_needs_linear_commits() {
     let out = outcome(
-        sync("fail-rev-list", Scenario::Clean, &["--strategy", "cherry-pick", "--no-pr"])
-            .env("GIT_FAIL_ON", "rev-list --reverse")
-            .setup(faulty_git),
+        sync(
+            "fail-rev-list",
+            Scenario::Clean,
+            &["--strategy", "cherry-pick", "--no-pr"],
+        )
+        .env("GIT_FAIL_ON", "rev-list --reverse")
+        .setup(faulty_git),
     );
     assert_eq!(out.code, Some(1));
     assert!(
@@ -1231,7 +1248,12 @@ fn sync_records_a_gate_that_bash_cannot_run() {
         }),
     );
     assert_eq!(out.code, Some(1));
-    assert!(out.stderr.ends_with("[sync-upstream] ERROR: Red-team gate failed\n"), "{}", out.stderr);
+    assert!(
+        out.stderr
+            .ends_with("[sync-upstream] ERROR: Red-team gate failed\n"),
+        "{}",
+        out.stderr
+    );
     assert!(
         out.report.ends_with(
             "status: redteam-gate-failed\nredteam_output: bash: No such file or directory (os error 2)\n"
@@ -1258,7 +1280,11 @@ fn sync_records_no_gate_report_when_a_gate_prints_none() {
         ],
     ));
     assert_eq!(out.code, Some(0), "{}", out.stderr);
-    assert!(out.report.contains("status: synced-branch-pr\n"), "{}", out.report);
+    assert!(
+        out.report.contains("status: synced-branch-pr\n"),
+        "{}",
+        out.report
+    );
     assert!(
         !out.report.contains("redteam_report") && !out.report.contains("elite_report"),
         "{}",
@@ -1268,14 +1294,18 @@ fn sync_records_no_gate_report_when_a_gate_prints_none() {
 
 #[test]
 fn sync_stops_when_the_report_cannot_be_written() {
-    let out = outcome(sync("read-only-reports", Scenario::NoUpdates, &[]).setup(|s| {
-        fs::set_permissions(s.root.join("reports"), fs::Permissions::from_mode(0o555))
-            .expect("chmod");
-    }));
+    let out = outcome(
+        sync("read-only-reports", Scenario::NoUpdates, &[]).setup(|s| {
+            fs::set_permissions(s.root.join("reports"), fs::Permissions::from_mode(0o555))
+                .expect("chmod");
+        }),
+    );
     assert_eq!(out.code, Some(1));
     assert!(
         out.stderr.starts_with("<ROOT>/reports/upstream-sync-")
-            && out.stderr.ends_with(".txt: Permission denied (os error 13)\n"),
+            && out
+                .stderr
+                .ends_with(".txt: Permission denied (os error 13)\n"),
         "{}",
         out.stderr
     );
@@ -1284,14 +1314,27 @@ fn sync_stops_when_the_report_cannot_be_written() {
 #[test]
 fn sync_strict_gate_passes_an_update_that_changes_no_files() {
     let out = outcome(
-        sync("empty-update", Scenario::NoUpdates, &["--strict-risk-gate", "--dry-run"]).setup(|s| {
+        sync(
+            "empty-update",
+            Scenario::NoUpdates,
+            &["--strict-risk-gate", "--dry-run"],
+        )
+        .setup(|s| {
             // Upstream gains origin's tree plus an empty commit: one pending
             // commit and no changed file.
             s.git_in("seed", &["checkout", "-q", "fork"]);
-            s.git_in("seed", &["commit", "-q", "--allow-empty", "-m", "upstream: empty"]);
             s.git_in(
                 "seed",
-                &["push", "-q", &s.path("remotes/NousResearch/hermes-agent.git"), "fork:main"],
+                &["commit", "-q", "--allow-empty", "-m", "upstream: empty"],
+            );
+            s.git_in(
+                "seed",
+                &[
+                    "push",
+                    "-q",
+                    &s.path("remotes/NousResearch/hermes-agent.git"),
+                    "fork:main",
+                ],
             );
         }),
     );
@@ -1304,15 +1347,27 @@ fn sync_strict_gate_passes_an_update_that_changes_no_files() {
 #[test]
 fn sync_strict_gate_stops_on_an_unreadable_risk_file() {
     let out = outcome(
-        sync("unreadable-risk", Scenario::Risk, &["--strict-risk-gate", "--dry-run"]).setup(|s| {
-            let file = s.root.join("repo/scripts/upstream-risk-paths.txt");
+        sync(
+            "unreadable-risk",
+            Scenario::Risk,
+            &[
+                "--strict-risk-gate",
+                "--dry-run",
+                "--risk-paths-file",
+                "<ROOT>/home/risk.txt",
+            ],
+        )
+        .setup(|s| {
+            // Outside the work tree, so `git status` stays clean.
+            s.write("home/risk.txt", RISK_PATHS);
+            let file = s.root.join("home/risk.txt");
             fs::set_permissions(file, fs::Permissions::from_mode(0o000)).expect("chmod");
         }),
     );
     assert_eq!(out.code, Some(1));
     assert_eq!(
         out.stderr,
-        "<ROOT>/repo/scripts/upstream-risk-paths.txt: Permission denied (os error 13)\n"
+        "<ROOT>/home/risk.txt: Permission denied (os error 13)\n"
     );
     assert!(!out.report.contains("risk_gate_status"), "{}", out.report);
 }
@@ -1340,7 +1395,8 @@ fn cron_reports_a_lock_dir_it_cannot_create() {
     );
     assert_eq!(out.code, Some(1));
     assert!(
-        out.stderr.starts_with("mkdir <ROOT>/repo/README.md/locks: "),
+        out.stderr
+            .starts_with("mkdir <ROOT>/repo/README.md/locks: "),
         "{}",
         out.stderr
     );
@@ -1356,9 +1412,8 @@ fn cron_reports_a_lock_file_it_cannot_open() {
 
 #[test]
 fn install_reports_a_log_dir_it_cannot_create() {
-    let out = outcome(
-        install("log-dir", &[]).env("LOG_FILE", "<ROOT>/repo/README.md/logs/sync.log"),
-    );
+    let out =
+        outcome(install("log-dir", &[]).env("LOG_FILE", "<ROOT>/repo/README.md/logs/sync.log"));
     assert_eq!(out.code, Some(1));
     assert!(
         out.stderr.starts_with("mkdir <ROOT>/repo/README.md/logs: "),
@@ -1400,6 +1455,9 @@ fn install_reports_a_crontab_that_cannot_start() {
         put_tool(s, "bin/crontab", "#!/bin/sh\nrm -f \"$0\"\nexit 1\n");
     }));
     assert_eq!(out.code, Some(1));
-    assert_eq!(out.stderr, "crontab: No such file or directory (os error 2)\n");
+    assert_eq!(
+        out.stderr,
+        "crontab: No such file or directory (os error 2)\n"
+    );
     assert_eq!(out.stdout, "");
 }
