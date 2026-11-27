@@ -547,6 +547,33 @@ mod tests {
         assert_eq!(turn_key(&chat).unwrap().as_deref(), Some("written-key"));
     }
 
+    #[test]
+    fn a_saved_key_goes_to_the_key_env_the_provider_is_configured_with() {
+        let dir = tempfile::tempdir().unwrap();
+        let var = "DESKTOP_MODEL_UNIT_TEST_CONFIGURED_KEY";
+        let provider: LlmProviderConfig =
+            serde_json::from_value(json!({ "api_key_env": var })).unwrap();
+        let mut config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
+            ..GatewayConfig::default()
+        };
+        config.llm_providers.insert("xiaomi".into(), provider);
+        let chat = Chat::new(config);
+        let env = || std::fs::read_to_string(dir.path().join(".env")).unwrap();
+
+        chat.save_key("xiaomi", "saved-key").unwrap();
+        assert_eq!(env(), format!("{var}=saved-key\n"));
+        let config = chat.turn_config("xiaomi:m").unwrap();
+        assert_eq!(
+            config.llm_providers["xiaomi"].api_key.as_deref(),
+            Some("saved-key")
+        );
+        drop(config);
+        chat.disconnect_provider("xiaomi").unwrap();
+        assert!(!env().contains(var), "{}", env());
+        assert_eq!(chat.keys.value(var), None);
+    }
+
     #[tokio::test]
     async fn the_key_methods_serve_only_clients_on_this_machine() {
         let dir = tempfile::tempdir().unwrap();
