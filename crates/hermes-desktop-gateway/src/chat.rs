@@ -134,7 +134,8 @@ pub(crate) type Reply = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + S
 /// in lib.rs). Past that, a handler that would wait is dropped before its first wait and its
 /// request answered busy, so a method that answers a waiting handler (an approval's answer)
 /// must answer at once. A handler that changes state does so before it returns, or makes no
-/// change before its first wait, so a request answered busy has changed nothing. A waiting
+/// change before its first wait (a task it spawns counts as a change, as it outlives the
+/// handler), so a request answered busy has changed nothing. A waiting
 /// handler is dropped at its await if the connection closes, so it must leave shared state
 /// whole at each await: change state under a lock rather than across an await, or hold a
 /// guard that undoes the change when dropped.

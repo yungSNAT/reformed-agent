@@ -169,9 +169,11 @@ struct Hub {
     evicted_through: u64,
     /// The budget's clock when the log was last written.
     touched: u64,
-    /// A turn runs, or the next waiting prompt waits for a turn slot (`waits_for_slot`).
+    /// A runner owns the session: a turn runs, or none does (`between_turns`) because the
+    /// turn has ended and its runner has not yet started the next, the next waits for a turn
+    /// slot, or the session is held.
     busy: bool,
-    waits_for_slot: bool,
+    between_turns: bool,
     queue: VecDeque<Queued>,
     queue_bytes: usize,
     /// Prompts admitted (the canonical receipt's `sequence`).
@@ -342,7 +344,7 @@ impl LiveSession {
     /// [`Self::state`] and the running and queued admissions, taken together.
     pub(super) fn status(&self, session_id: &str) -> ((bool, u64, u64), Vec<Value>) {
         let hub = self.hub();
-        let running = hub.busy && !hub.waits_for_slot;
+        let running = hub.busy && !hub.between_turns;
         let pending = hub.pending(session_id, running);
         ((running, hub.seq, hub.generation), pending)
     }
@@ -397,13 +399,13 @@ impl LiveSession {
     pub(super) fn next(&self, slot: &mut Option<OwnedSemaphorePermit>) -> Next {
         let mut hub = self.hub();
         hub.current = None;
-        hub.waits_for_slot = false;
+        hub.between_turns = false;
         if hub.queue.is_empty() {
             hub.busy = false;
             return Next::Idle;
         }
         let Some(permit) = slot.take() else {
-            hub.waits_for_slot = true;
+            hub.between_turns = true;
             return Next::Wait;
         };
         let Some(mut prompt) = hub.queue.pop_front() else {
@@ -429,6 +431,7 @@ impl LiveSession {
             return false;
         }
         hub.busy = true;
+        hub.between_turns = true;
         true
     }
 
@@ -439,20 +442,26 @@ impl LiveSession {
         let mut hub = self.hub();
         if hub.queue.is_empty() {
             hub.busy = false;
+            hub.between_turns = false;
             return false;
         }
         true
     }
 
-    /// Marks the running turn finished, just before its end event.
-    pub(super) fn end_turn(&self) {}
+    /// Marks the running turn finished, just before its end event, so a snapshot taken
+    /// before the runner starts the next prompt says no turn runs.
+    pub(super) fn end_turn(&self) {
+        let mut hub = self.hub();
+        hub.current = None;
+        hub.between_turns = hub.busy;
+    }
 
     /// Leaves the session idle and drops its waiting prompts, for a turn task that ends
     /// without draining them (a panic, or the runtime shutting down).
     pub(super) fn abandon(&self) {
         let mut hub = self.hub();
         hub.busy = false;
-        hub.waits_for_slot = false;
+        hub.between_turns = false;
         hub.current = None;
         hub.queue.clear();
         release(&self.budget.queue, hub.queue_bytes);
