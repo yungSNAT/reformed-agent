@@ -9,6 +9,7 @@
 pub mod config;
 pub mod file_identity;
 pub mod loader;
+pub mod managed_config;
 pub mod managed_gateway;
 pub mod managed_node;
 pub mod merge;
@@ -33,14 +34,15 @@ pub use config::{
     ToolsSettings, VertexConfig, WebConfig, WebsiteBlocklistConfig, DEFAULT_TOOL_OUTPUT_MAX_BYTES,
     DEFAULT_TOOL_OUTPUT_MAX_LINES, DEFAULT_TOOL_OUTPUT_MAX_LINE_LENGTH,
 };
-pub use file_identity::{file_identity, FileIdentity};
+pub use file_identity::{file_identity, file_identity_from_file, FileIdentity};
 pub use loader::{
     apply_user_config_patch, atomic_json_write, atomic_json_write_pretty, atomic_write_bytes,
-    atomic_yaml_write, dotenv_assignment, load_config, load_effective_config_yaml_value,
-    load_prefill_messages, load_prefill_messages_file, load_user_config_file, managed_scope_dir,
-    resolve_credential_link_target, resolve_prefill_messages_file, resolve_prefill_messages_path,
-    resolve_symlink_target, save_config_yaml, set_user_config_value, user_config_field_display,
-    validate_config, ConfigError, ConfigSetResult,
+    atomic_write_bytes_no_follow, atomic_write_owner_only, atomic_yaml_write, dotenv_assignment,
+    load_config, load_effective_config_yaml_value, load_prefill_messages,
+    load_prefill_messages_file, load_user_config_file, managed_scope_dir,
+    read_regular_file_no_follow, resolve_credential_link_target, resolve_prefill_messages_file,
+    resolve_prefill_messages_path, resolve_symlink_target, save_config_yaml, set_user_config_value,
+    user_config_field_display, validate_config, ConfigError, ConfigSetResult, NoFollowRead,
 };
 pub use managed_gateway::{
     build_vendor_gateway_url, coerce_modal_mode, env_var_enabled, get_tool_gateway_scheme,

@@ -237,3 +237,5 @@ async fn test_legacy_create_conversation() {
 include!("tests/queue_and_steer.rs");
 
 include!("tests/tools_and_execution.rs");
+
+include!("tests/drain_race.rs");

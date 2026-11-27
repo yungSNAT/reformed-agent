@@ -1,25 +1,72 @@
 use super::*;
 
+// The embedded picker flag is shared by all tests in this process.
+static PICKER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn embedded_picker_guard_toggles_active_flag() {
+    let _lock = PICKER_TEST_LOCK.lock().expect("picker test lock");
     assert!(!embedded_picker_active());
+    assert!(tui_event_reader().is_some());
     {
         let _guard = EmbeddedPickerGuard::enter();
         assert!(embedded_picker_active());
+        assert!(tui_event_reader().is_none());
     }
     assert!(!embedded_picker_active());
+    assert!(tui_event_reader().is_some());
 }
 
 #[test]
-fn embedded_picker_guard_nested_drop_resets_flag() {
-    let outer = EmbeddedPickerGuard::enter();
+fn embedded_picker_waits_for_a_tui_read_in_progress() {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::{Duration, Instant};
+
+    let _lock = PICKER_TEST_LOCK.lock().expect("picker test lock");
+    std::thread::scope(|scope| {
+        let reader = tui_event_reader().expect("TUI owns the terminal input");
+        let (sent, received) = channel();
+        scope.spawn(move || {
+            let _ = sent.send(tui_event_reader().is_none());
+        });
+        assert_eq!(received.recv_timeout(Duration::from_secs(5)), Ok(true));
+
+        let (entered, picker) = channel();
+        scope.spawn(move || {
+            let _guard = EmbeddedPickerGuard::enter();
+            entered.send(()).unwrap();
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !embedded_picker_active() {
+            assert!(
+                Instant::now() < deadline,
+                "picker did not request terminal input"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            picker.recv_timeout(Duration::from_millis(20)),
+            Err(RecvTimeoutError::Timeout),
+        );
+        drop(reader);
+        picker.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    assert!(tui_event_reader().is_some());
+}
+
+#[test]
+fn embedded_picker_guard_drop_resets_flag() {
+    let _lock = PICKER_TEST_LOCK.lock().expect("picker test lock");
+    let guard = EmbeddedPickerGuard::enter();
     assert!(embedded_picker_active());
-    drop(outer);
+    drop(guard);
     assert!(!embedded_picker_active());
 }
 
 #[test]
 fn curses_select_embedded_empty_items_returns_unconfirmed() {
+    let _lock = PICKER_TEST_LOCK.lock().expect("picker test lock");
     let result = curses_select_embedded("Pick", &[], 5);
     assert_eq!(result.index, 0);
     assert!(!result.confirmed);

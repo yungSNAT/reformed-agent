@@ -32,6 +32,7 @@ pub const EVENTS_CHAT_ID: &str = "ha_events";
 pub const MAX_MESSAGE_LENGTH: usize = 4096;
 pub const DEFAULT_URL: &str = "http://homeassistant.local:8123";
 const DEFAULT_COOLDOWN_SECONDS: u64 = 30;
+const MAX_TRACKED_ENTITIES: usize = 4096;
 const BACKOFF_SECS: [u64; 4] = [5, 10, 30, 60];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -360,6 +361,7 @@ impl HomeAssistantAdapter {
         service: &str,
         message: &str,
     ) -> Result<(), GatewayError> {
+        validate_service_segment("service", service)?;
         let path = format!("notify/{service}");
         let body = serde_json::json!({ "message": message });
         self.inner.post_service(&path, &body, "HA notify").await
@@ -385,11 +387,29 @@ impl HomeAssistantAdapter {
         service: &str,
         data: &serde_json::Value,
     ) -> Result<(), GatewayError> {
+        validate_service_segment("domain", domain)?;
+        validate_service_segment("service", service)?;
         let path = format!("{domain}/{service}");
         self.inner
             .post_service(&path, data, "HA service call")
             .await
     }
+}
+
+fn validate_service_segment(kind: &str, segment: &str) -> Result<(), GatewayError> {
+    let valid = !segment.is_empty()
+        && !segment.starts_with('.')
+        && !segment.ends_with('.')
+        && !segment.contains("..")
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if !valid {
+        return Err(GatewayError::SendFailed(format!(
+            "invalid Home Assistant {kind} segment: {segment:?}"
+        )));
+    }
+    Ok(())
 }
 
 impl HaInner {
@@ -432,12 +452,27 @@ impl HaInner {
             return false;
         }
         let cooldown = Duration::from_secs(self.config.cooldown_seconds);
+        if cooldown.is_zero() {
+            return true;
+        }
         let mut last = self.last_event.lock().unwrap_or_else(|e| e.into_inner());
         if last
             .get(entity_id)
             .is_some_and(|at| now.saturating_duration_since(*at) < cooldown)
         {
             return false;
+        }
+        if !last.contains_key(entity_id) && last.len() >= MAX_TRACKED_ENTITIES {
+            last.retain(|_, at| now.saturating_duration_since(*at) < cooldown);
+            if last.len() >= MAX_TRACKED_ENTITIES {
+                if let Some(oldest_key) = last
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(k, _)| k.clone())
+                {
+                    last.remove(&oldest_key);
+                }
+            }
         }
         last.insert(entity_id.to_string(), now);
         true
@@ -697,6 +732,7 @@ impl PlatformAdapter for HomeAssistantAdapter {
                 "file": file_path
             }
         });
+        validate_service_segment("chat_id", chat_id)?;
         let path = format!("notify/{chat_id}");
         self.inner
             .post_service(&path, &body, "HA file notify")

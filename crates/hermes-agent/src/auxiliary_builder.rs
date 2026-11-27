@@ -687,6 +687,76 @@ fn register_kimi_direct_key(
 mod tests {
     use super::*;
 
+    #[test]
+    fn main_runtime_registers_provider_specific_model_and_vision_capability() {
+        let cases = [
+            (
+                " Claude-Code ",
+                "anthropic/claude-sonnet-4.6",
+                "anthropic",
+                "claude-sonnet-4-6",
+            ),
+            ("codex", "openai/gpt-5", "openai-codex", "gpt-5"),
+            ("nous", "openai/gpt-5", "nous", "openai/gpt-5"),
+            ("alibaba", "qwen/qwen-plus", "qwen", "qwen-plus"),
+            ("moonshot", "moonshot/kimi-k2.5", "kimi", "kimi-k2.5"),
+            ("minimax", "minimax-m2.7", "minimax", "minimax-m2.7"),
+            ("github-copilot", "openai/gpt-5", "copilot", "gpt-5"),
+            ("copilot-acp", "openai/gpt-5", "copilot-acp", "gpt-5"),
+        ];
+        for (provider, requested, label, model) in cases {
+            let runtime = AuxiliaryMainRuntime::new(provider, requested)
+                .with_base_url("http://127.0.0.1:9/v1")
+                .with_api_key("fixture-only")
+                .with_supports_vision(false);
+            let mut builder = AuxiliaryClient::builder();
+            let mut summary = AuxiliaryWiringSummary {
+                registered: Vec::new(),
+                skipped: Vec::new(),
+            };
+
+            let registered = register_main_runtime(&mut builder, &mut summary, &runtime);
+            assert_eq!(registered.as_deref(), Some(label), "{provider}");
+            assert_eq!(summary.registered, [format!("main:{label}")]);
+            assert!(summary.skipped.is_empty());
+            assert_eq!(
+                builder.build().chain_entries(),
+                [(label.to_string(), model.to_string(), false)],
+                "{provider}"
+            );
+        }
+    }
+
+    #[test]
+    fn main_runtime_skips_incomplete_configuration_and_unknown_endpoint() {
+        let mut builder = AuxiliaryClient::builder();
+        let mut summary = AuxiliaryWiringSummary {
+            registered: Vec::new(),
+            skipped: Vec::new(),
+        };
+        let incomplete = AuxiliaryMainRuntime::new("anthropic", " ");
+        let unknown = AuxiliaryMainRuntime::new("fixture-provider", "fixture-model")
+            .with_api_key("fixture-only");
+
+        assert_eq!(
+            register_main_runtime(&mut builder, &mut summary, &incomplete),
+            None
+        );
+        assert_eq!(
+            register_main_runtime(&mut builder, &mut summary, &unknown),
+            None
+        );
+        assert_eq!(
+            summary.skipped,
+            [
+                "main runtime (missing provider/model)",
+                "main:fixture-provider (no working client)",
+            ]
+        );
+        assert!(summary.registered.is_empty());
+        assert_eq!(builder.build().chain_len(), 0);
+    }
+
     const KEYS: &[&str] = &[
         "OPENROUTER_API_KEY",
         "HERMES_OPENAI_API_KEY",

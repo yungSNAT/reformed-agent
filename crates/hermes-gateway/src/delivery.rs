@@ -1079,6 +1079,32 @@ mod tests {
     }
 
     #[test]
+    fn long_output_is_only_deliverable_without_an_audit_copy_if_it_can_be_chunked() {
+        let home = tempfile::tempdir().unwrap();
+        let blocked = home.path().join("cron");
+        std::fs::write(&blocked, "occupied").unwrap();
+        let mut adapter = MessageRecordingAdapter {
+            messages: Arc::new(Mutex::new(Vec::new())),
+            splits_long_messages: true,
+        };
+        let content = "draft page\n".repeat(MAX_PLATFORM_OUTPUT);
+
+        let prepared =
+            prepare_platform_message_for_adapter_at(&adapter, &content, None, home.path()).unwrap();
+        assert_eq!(prepared.as_ref(), content);
+
+        adapter.splits_long_messages = false;
+        let error = prepare_platform_message_for_adapter_at(&adapter, &content, None, home.path())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            GatewayError::SendFailed(message)
+                if message.starts_with("Failed to save full platform output before truncation:")
+        ));
+        assert_eq!(std::fs::read_to_string(blocked).unwrap(), "occupied");
+    }
+
+    #[test]
     fn save_full_platform_output_uses_unique_paths_for_same_label() {
         let tmp = tempfile::tempdir().unwrap();
 
@@ -1284,6 +1310,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delivery_reports_missing_home_channels() {
+        let home = tempfile::tempdir().unwrap();
+        let registry = DeadTargetRegistry::with_path(home.path().join("dead_targets.json"));
+        let router = DeliveryRouter::with_dead_target_registry(registry);
+        let home_target = DeliveryTarget::platform_home("telegram");
+
+        let text_error = router
+            .route_delivery(&home_target, "report", None, None)
+            .await
+            .unwrap_err();
+        let file_error = router
+            .route_file_delivery(&home_target, "report.txt", None, None, None)
+            .await
+            .unwrap_err();
+        for error in [text_error, file_error] {
+            assert!(matches!(
+                error,
+                GatewayError::SendFailed(message)
+                    if message.contains("'telegram' has no chat_id/home channel configured")
+            ));
+        }
+
+        assert!(router.fallback_queue().is_empty());
+    }
+
+    #[tokio::test]
     async fn route_delivery_preserves_explicit_ntfy_topic() {
         let router = DeliveryRouter::new();
         let messages = Arc::new(Mutex::new(Vec::new()));
@@ -1446,6 +1498,18 @@ mod tests {
             .await
             .is_err());
         assert_eq!(calls.lock().unwrap().as_slice(), ["42", "42"]);
+
+        assert!(router.unregister_adapter("telegram").await);
+        let error = router
+            .route_file_delivery(&target, path, None, None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            GatewayError::SendFailed(message)
+                if message == "No adapter registered for platform 'telegram'"
+        ));
+        assert!(router.fallback_queue().is_empty());
     }
 
     #[tokio::test]

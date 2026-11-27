@@ -73,6 +73,66 @@ fn config_file_activates_provider_and_loads_values() {
 }
 
 #[test]
+fn recall_config_reads_environment_values() {
+    const CHILD: &str = "REFORMED_OPENVIKING_RECALL_CONFIG_TEST";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let home = tempfile::tempdir().unwrap();
+        let executable = std::env::current_exe().expect("test executable");
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let test = format!("{module}::recall_config_reads_environment_values");
+        let mut command = std::process::Command::new(executable);
+        command
+            .env_clear()
+            .envs([
+                (CHILD, "1"),
+                ("OPENVIKING_RECALL_LIMIT", " 9 "),
+                ("OPENVIKING_RECALL_SCORE_THRESHOLD", " .375 "),
+                ("OPENVIKING_RECALL_MAX_INJECTED_CHARS", "1200"),
+                ("OPENVIKING_RECALL_TIMEOUT_SECONDS", ".875"),
+                ("OPENVIKING_RECALL_REQUEST_TIMEOUT_SECONDS", "1.75"),
+                ("OPENVIKING_RECALL_FULL_READ_LIMIT", "5"),
+                ("OPENVIKING_RECALL_PREFER_ABSTRACT", " nO "),
+                ("OPENVIKING_RECALL_RESOURCES", " yes "),
+            ])
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env("HERMES_HOME", home.path())
+            .current_dir(home.path())
+            .args(["--exact", &test, "--color", "never"]);
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env(
+                "LLVM_PROFILE_FILE",
+                std::path::absolute(profile).expect("resolve coverage output path"),
+            );
+        }
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system_root);
+        }
+        let output = command.output().expect("run isolated OpenViking fixture");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains(&format!("test {test} ... ok")),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    let profile = tempfile::tempdir().unwrap();
+    let home = profile.path().to_str().expect("UTF-8 fixture path");
+    let inherited = OpenVikingConfig::load(home).recall;
+    assert_eq!(inherited.limit, 9);
+    assert_eq!(inherited.score_threshold, 0.375);
+    assert_eq!(inherited.max_injected_chars, 1200);
+    assert_eq!(inherited.timeout, Duration::from_millis(875));
+    assert_eq!(inherited.request_timeout, Duration::from_millis(1750));
+    assert_eq!(inherited.full_read_limit, 5);
+    assert!(!inherited.prefer_abstract);
+    assert!(inherited.include_resources);
+}
+
+#[test]
 fn save_config_merges_and_writes_owner_only() {
     let _guard = config_io::TEST_ENV_LOCK.lock().expect("env lock");
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -229,6 +289,7 @@ fn plugin_with_endpoint(endpoint: String) -> OpenVikingMemoryPlugin {
     *plugin.state.lock().unwrap() = Some(VikingState {
         client: Client::builder()
             .timeout(Duration::from_secs(2))
+            .no_proxy()
             .build()
             .expect("client"),
         endpoint,
@@ -880,6 +941,115 @@ fn add_resource_payload_routes_remote_url_as_path() {
     assert_eq!(body["reason"], "docs");
     assert_eq!(body["wait"], true);
     assert!(upload.is_none());
+}
+
+#[tokio::test]
+async fn add_resource_uploads_local_bytes_and_only_registers_valid_upload_ids() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let directory = tempfile::tempdir().unwrap();
+    let sample = directory.path().join("resource-fixture.txt");
+    let content = "Local resource fixture bytes";
+    std::fs::write(&sample, content).unwrap();
+    let parent = "viking://resources/fixture";
+    let cases = [
+        (
+            200,
+            r#"{"result":{"temp_file_id":"nested"},"temp_file_id":"flat"}"#,
+            Ok("nested"),
+        ),
+        (200, r#"{"temp_file_id":"flat"}"#, Ok("flat")),
+        (
+            200,
+            r#"{"result":{"temp_file_id":" "}}"#,
+            Err("OpenViking temp_upload did not return temp_file_id"),
+        ),
+        (
+            200,
+            r#"{"result":{}}"#,
+            Err("OpenViking temp_upload did not return temp_file_id"),
+        ),
+        (200, "invalid json", Err("OpenViking temp_upload JSON:")),
+        (
+            413,
+            "fixture upload too large",
+            Err("OpenViking temp_upload HTTP 413"),
+        ),
+    ];
+
+    for (status, response, expected) in cases {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/resources/temp_upload"))
+            .respond_with(ResponseTemplate::new(status).set_body_string(response))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/resources"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "added"})))
+            .expect(u64::from(expected.is_ok()))
+            .mount(&server)
+            .await;
+        let endpoint = server.uri();
+        let args = json!({
+            "url": sample, "parent": parent, "reason": "Fixture notes", "wait": true
+        });
+        let result = tokio::task::spawn_blocking(move || {
+            let plugin = plugin_with_endpoint(endpoint);
+            plugin.handle_tool_call("viking_add_resource", &args)
+        })
+        .await
+        .unwrap();
+        let result: Value = serde_json::from_str(&result).unwrap();
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), if expected.is_ok() { 2 } else { 1 });
+        let (upload, registration) = requests.split_first().unwrap();
+        assert_eq!(upload.url.path(), "/api/v1/resources/temp_upload");
+        let boundary = upload.headers["content-type"]
+            .to_str()
+            .unwrap()
+            .strip_prefix("multipart/form-data; boundary=")
+            .unwrap();
+        assert!(!boundary.is_empty());
+        let payload = std::str::from_utf8(&upload.body).unwrap();
+        let part = payload
+            .strip_prefix(&format!("--{boundary}\r\n"))
+            .unwrap()
+            .strip_suffix(&format!("\r\n--{boundary}--\r\n"))
+            .unwrap();
+        let (headers, body) = part.split_once("\r\n\r\n").unwrap();
+        assert!(headers.lines().any(|line| line.eq_ignore_ascii_case(
+            r#"content-disposition: form-data; name="file"; filename="resource-fixture.txt""#
+        )));
+        assert_eq!(body, content);
+        assert_eq!(std::fs::read_to_string(&sample).unwrap(), content);
+
+        match expected {
+            Ok(id) => {
+                assert_eq!(result, json!({"status": "added"}));
+                let [request] = registration else {
+                    panic!("expected one resource registration");
+                };
+                assert_eq!(request.url.path(), "/api/v1/resources");
+                assert_eq!(
+                    request.body_json::<Value>().unwrap(),
+                    json!({
+                        "temp_file_id": id, "source_name": "resource-fixture.txt",
+                        "parent": parent, "reason": "Fixture notes", "wait": true
+                    })
+                );
+            }
+            Err(prefix) => {
+                let error = result["error"].as_str().unwrap();
+                assert!(error.starts_with(prefix), "{error}");
+                if status == 413 {
+                    assert!(error.ends_with("fixture upload too large"), "{error}");
+                }
+            }
+        }
+    }
 }
 
 #[test]

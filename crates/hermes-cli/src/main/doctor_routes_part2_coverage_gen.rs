@@ -229,6 +229,97 @@ fn assert_probes_cannot_connect(cli: &Cli) {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn deep_doctor_reports_gateway_health_pid_and_replay_integrity() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let Some(cli) = isolated_cli(
+        "deep_doctor_reports_gateway_health_pid_and_replay_integrity",
+        &[],
+    ) else {
+        // The parent has already run this scenario and checked the child's exit.
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let plist = gateway_launchd_plist_path().expect("fixture launch agent path");
+        assert!(plist.starts_with(std::env::current_dir().unwrap()));
+        assert!(!plist.exists());
+    }
+    let server = MockServer::start().await;
+    for (route, status) in [("/healthy", 200), ("/unavailable", 503)] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(status))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+
+    let mut checks = Vec::new();
+    let endpoint = format!("{}/unavailable", server.uri());
+    append_deep_doctor_checks(&cli, &mut checks, &endpoint)
+        .await
+        .unwrap();
+    let snapshot = json!({"checks": checks});
+    assert_eq!(
+        snapshot_check(&snapshot, "gateway_service_status")["ok"],
+        true
+    );
+    let missing_pid = snapshot_check(&snapshot, "gateway_pid");
+    assert_eq!(missing_pid["ok"], false);
+    assert!(missing_pid["pid"].is_null());
+    assert_eq!(
+        snapshot_check(&snapshot, "contextlattice_health")["ok"],
+        false
+    );
+    let empty = snapshot_check(&snapshot, "replay_traces");
+    assert_eq!(empty["count"], 0);
+    assert_eq!(empty["summaries"], json!([]));
+
+    let pid = std::process::id();
+    let pid_path = gateway_pid_path_for_cli(&cli);
+    install_shell_fixture(
+        "ps",
+        &format!(
+            r#"test "$*" = '-p {pid} -o command=' || exit 1
+printf '%s\n' 'hermes-agent-ultra gateway'"#
+        ),
+    );
+    write_fixture(&pid_path, pid.to_string());
+    let replay = hermes_state_root(&cli).join("logs/replay");
+    fs::create_dir_all(replay.join("ignore-directory")).unwrap();
+    write_fixture(
+        &replay.join("a.jsonl"),
+        b"{\"seq\":1,\"event_hash\":\"first\"}\n",
+    );
+    write_fixture(&replay.join("b.jsonl"), b"invalid replay line\n");
+
+    let mut checks = Vec::new();
+    let endpoint = format!("{}/healthy", server.uri());
+    append_deep_doctor_checks(&cli, &mut checks, &endpoint)
+        .await
+        .unwrap();
+    let snapshot = json!({"checks": checks});
+    let active_pid = snapshot_check(&snapshot, "gateway_pid");
+    assert_eq!(active_pid["ok"], true);
+    assert_eq!(active_pid["pid"], pid);
+    assert_eq!(active_pid["pid_path"], pid_path.display().to_string());
+    let health = snapshot_check(&snapshot, "contextlattice_health");
+    assert_eq!(health["ok"], true);
+    assert_eq!(health["url"], endpoint);
+    let replay_check = snapshot_check(&snapshot, "replay_traces");
+    assert_eq!(replay_check["ok"], true);
+    assert_eq!(replay_check["count"], 2);
+    assert_eq!(replay_check["chain_ok"], false);
+    assert_eq!(replay_check["summaries"][0]["file"], "b.jsonl");
+    assert_eq!(replay_check["summaries"][0]["invalid_lines"], 1);
+    assert_eq!(replay_check["summaries"][1]["file"], "a.jsonl");
+    assert_eq!(replay_check["summaries"][1]["last_event_hash"], "first");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn shallow_doctor_snapshots_check_results_and_can_write_a_bundle() {
     let mut vars = vec![
         ("HERMES_ELITE_GATE_CMD", "fixture-gate"),

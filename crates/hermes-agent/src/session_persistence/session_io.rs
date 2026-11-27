@@ -307,9 +307,10 @@ impl SessionPersistence {
                    c.id DESC",
             ) {
                 Ok(stmt) => stmt,
-                Err(rusqlite::Error::SqliteFailure(_, Some(message)))
-                    if message.contains("no such table") || message.contains("no such column") =>
-                {
+                Err(
+                    rusqlite::Error::SqliteFailure(_, Some(message))
+                    | rusqlite::Error::SqlInputError { msg: message, .. },
+                ) if message.contains("no such table") || message.contains("no such column") => {
                     return Ok(current);
                 }
                 Err(e) => {

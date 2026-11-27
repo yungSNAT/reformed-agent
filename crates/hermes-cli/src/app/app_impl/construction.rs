@@ -110,6 +110,7 @@ impl App {
             agent_tool_registry,
             provider,
         ))
+        .with_session_budget_root(state_root.clone())
         .with_callbacks(Self::stream_callbacks(stream_handle_shared.clone()));
         let orchestrator = Arc::new(SubAgentOrchestrator::from_parent(
             &agent_inner,
