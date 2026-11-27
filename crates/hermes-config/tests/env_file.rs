@@ -117,8 +117,15 @@ fn a_key_that_is_not_a_variable_name_is_refused_and_nothing_written() {
         "VÄR",
     ] {
         assert!(!env_value_round_trips(name, "k"), "{name:?}");
-        assert!(set_env_file_value(&path, name, Some("k")).is_err(), "{name:?}");
+        assert!(
+            set_env_file_value(&path, name, Some("k")).is_err(),
+            "{name:?}"
+        );
         assert!(set_env_file_value(&path, name, None).is_err(), "{name:?}");
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), original, "{name:?}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            original,
+            "{name:?}"
+        );
     }
 }

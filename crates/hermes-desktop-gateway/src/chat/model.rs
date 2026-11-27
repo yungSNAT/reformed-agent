@@ -14,7 +14,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 
-use hermes_config::loader::{dotenv_values_in, env_value_round_trips, set_env_file_value};
+use hermes_config::loader::{
+    dotenv_values_in, env_value_round_trips, is_env_name, set_env_file_value,
+};
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use hermes_core::providers::{canonical_provider_id, provider_api_key_env_vars, KNOWN_PROVIDERS};
 use serde_json::{json, Map, Value};
@@ -147,11 +149,12 @@ fn key_vars(slug: &str) -> Option<&'static [&'static str]> {
 }
 
 /// The variable a provider's `config.yaml` key comes from, as start-up leaves it (it expands
-/// `${VAR}`): a whole `${VAR}` it could not expand, or the start-up value of one of `vars`.
-/// `None` for a key written out.
+/// `${VAR}`): the text of a whole `${...}` it could not expand, untrimmed as the provider build
+/// looks it up (it may not be a variable name), or the start-up value of one of `vars`. `None`
+/// for a key written out.
 fn literal_source<'a>(literal: &'a str, vars: &[&'a str]) -> Option<&'a str> {
     if let Some(var) = literal.strip_prefix("${").and_then(|v| v.strip_suffix('}')) {
-        return Some(var.trim());
+        return Some(var);
     }
     vars.iter()
         .copied()
@@ -360,19 +363,30 @@ impl Chat {
         json!({"providers": providers, "model": model, "provider": current})
     }
 
+    /// The `config.yaml` entries for `slug`: the one named as the slug first, then by name.
+    fn slug_entries(&self, slug: &str) -> Vec<(&String, &LlmProviderConfig)> {
+        let slug = slug.trim();
+        let canonical = canonical_provider_id(&slug.to_ascii_lowercase());
+        let mut entries: Vec<_> = self
+            .config
+            .llm_providers
+            .iter()
+            .filter(|(name, _)| {
+                name.eq_ignore_ascii_case(slug) || name.eq_ignore_ascii_case(&canonical)
+            })
+            .collect();
+        entries.sort_by_key(|(name, _)| (!name.eq_ignore_ascii_case(slug), name.as_str()));
+        entries
+    }
+
     /// A known provider's key variables, first to last: the `${VAR}` its configured `api_key`
     /// still holds, the `key_env` it is configured with, then its own; `None` for a provider
     /// this gateway does not know.
     fn slug_key_vars(&self, slug: &str) -> Option<Vec<&str>> {
         let known = key_vars(slug)?;
-        let canonical = canonical_provider_id(&slug.trim().to_ascii_lowercase());
         let configured = self
-            .config
-            .llm_providers
-            .iter()
-            .filter(|(name, _)| {
-                name.eq_ignore_ascii_case(slug.trim()) || name.eq_ignore_ascii_case(&canonical)
-            })
+            .slug_entries(slug)
+            .into_iter()
             .flat_map(|(_, c)| {
                 let reference = c
                     .api_key
@@ -390,8 +404,10 @@ impl Chat {
     }
 
     /// `model.save_key {slug, api_key}`: the key goes into this home's `.env` and the next
-    /// turns; answers the provider's refreshed row. A key that a `.env` file would not read
-    /// back as itself is refused before anything is written.
+    /// turns; answers the provider's refreshed row. Refused before anything is written: a key
+    /// that a `.env` file would not read back as itself, a key variable from `config.yaml` that
+    /// is not a variable name, and a provider whose key `config.yaml` writes out (it would win
+    /// over the saved one).
     fn save_key(&self, slug: &str, key: &str) -> Result<Value, RpcError> {
         if slug.is_empty() || key.is_empty() {
             return Err((REQUIRED, "slug and api_key are required".into()));
@@ -402,6 +418,22 @@ impl Chat {
         let Some(var) = vars.first().copied() else {
             return Err((NO_KEY_VARIABLE, format!("no env var defined for {slug}")));
         };
+        if !is_env_name(var) {
+            return Err((
+                NO_KEY_VARIABLE,
+                format!("config.yaml names a key variable for {slug} that is not a variable name"),
+            ));
+        }
+        let written_out = self.slug_entries(slug).into_iter().any(|(_, c)| {
+            let literal = c.api_key.as_deref().map_or("", str::trim);
+            !literal.is_empty() && literal_source(literal, &vars).is_none()
+        });
+        if written_out {
+            return Err((
+                CONFIGURED_IN_FILE,
+                format!("config.yaml sets the key for {slug}: change it there"),
+            ));
+        }
         if !env_value_round_trips(var, key) {
             return Err((
                 UNKNOWN,
@@ -437,7 +469,13 @@ impl Chat {
         let path = self.home.join(".env");
         let mut cleared = false;
         let _write = env_write();
-        for var in self.slug_key_vars(slug).unwrap_or_default() {
+        // A name that is not a variable name was never saved.
+        for var in self
+            .slug_key_vars(slug)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|var| is_env_name(var))
+        {
             let in_file = set_env_file_value(&path, var, None).map_err(|_| {
                 (
                     DISCONNECT_FAILED,
@@ -643,7 +681,11 @@ mod tests {
         chat.disconnect_provider("xiaomi").unwrap();
         assert_eq!(env(), "OTHER_KEY=keep-me\n");
         assert_eq!(chat.keys.value(var), None);
-        assert_eq!(chat.keys.value("OTHER_KEY"), None, "only the saved key was held");
+        assert_eq!(
+            chat.keys.value("OTHER_KEY"),
+            None,
+            "only the saved key was held"
+        );
     }
 
     /// A gateway whose `xiaomi` provider has `fields` in `config.yaml`, with a `.env` holding
@@ -704,7 +746,10 @@ mod tests {
                 config.llm_providers.insert(name.into(), provider);
             }
             let chat = Chat::new(config);
-            assert_eq!(chat.slug_key_vars("mimo").unwrap()[..2], ["EXACT_KEY", "CANONICAL_KEY"]);
+            assert_eq!(
+                chat.slug_key_vars("mimo").unwrap()[..2],
+                ["EXACT_KEY", "CANONICAL_KEY"]
+            );
         }
     }
 

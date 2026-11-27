@@ -392,7 +392,8 @@ fn env_text_with(
 /// reader would take off or resolve.
 pub fn env_value_round_trips(key: &str, value: &str) -> bool {
     let line = format!("{key}={value}");
-    !value.chars().any(char::is_control)
+    is_env_name(key)
+        && !value.chars().any(char::is_control)
         && value.trim() == value
         && !(value.starts_with("${") && value.ends_with('}'))
         && sanitize_env_lines(&line) == line
@@ -400,11 +401,27 @@ pub fn env_value_round_trips(key: &str, value: &str) -> bool {
             .is_some_and(|(k, v)| k == key && strip_quotes(v.trim()) == value)
 }
 
+/// Whether `key` is a variable name a `.env` line can hold: `[A-Za-z_][A-Za-z0-9_]*`, as
+/// upstream's `.env` writer requires.
+pub fn is_env_name(key: &str) -> bool {
+    let mut bytes = key.bytes();
+    bytes
+        .next()
+        .is_some_and(|b| b == b'_' || b.is_ascii_alphabetic())
+        && bytes.all(|b| b == b'_' || b.is_ascii_alphanumeric())
+}
+
 /// Sets `key` to `value` in the `.env` file at `path`, or removes it when `value` is `None`, as
-/// `hermes config set` writes it, leaving the file owner-only. A value that would not read back
-/// as itself ([`env_value_round_trips`]) is refused before anything is written. Gives whether
-/// the file changed: removing an absent key writes nothing.
+/// `hermes config set` writes it, leaving the file owner-only. A key that is not a variable name
+/// ([`is_env_name`]) or a value that would not read back as itself ([`env_value_round_trips`])
+/// is refused before anything is written. Gives whether the file changed: removing an absent
+/// key writes nothing.
 pub fn set_env_file_value(path: &Path, key: &str, value: Option<&str>) -> Result<bool, ConfigError> {
+    if !is_env_name(key) {
+        return Err(ConfigError::ValidationError(
+            "a .env key must be a variable name ([A-Za-z_][A-Za-z0-9_]*)".into(),
+        ));
+    }
     if value.is_some_and(|value| !env_value_round_trips(key, value)) {
         return Err(ConfigError::ValidationError(format!(
             "the value for {key} cannot be stored in a .env file"
