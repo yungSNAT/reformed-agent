@@ -418,8 +418,25 @@ mod tests {
             resolve("'shot.png'", cwd).ok().flatten(),
             Some(cwd.join("shot.png"))
         );
-        for nothing in ["''", "file://["] {
+        for nothing in ["''", "file://[", "shot.png/.", "."] {
             assert!(matches!(resolve(nothing, cwd), Ok(None)), "{nothing}");
+        }
+        std::fs::create_dir(cwd.join("sub")).unwrap();
+        assert_eq!(
+            resolve("./sub/../shot.png", cwd).ok().flatten(),
+            Some(cwd.join("./sub/../shot.png"))
+        );
+        #[cfg(unix)]
+        {
+            std::fs::write(cwd.join("sub/real.png"), b"x").unwrap();
+            std::os::unix::fs::symlink("sub/real.png", cwd.join("rel.png")).unwrap();
+            assert_eq!(
+                resolve("rel.png", cwd).ok().flatten(),
+                Some(cwd.join("rel.png"))
+            );
+            std::os::unix::fs::symlink(cwd.join("loop_b.png"), cwd.join("loop_a.png")).unwrap();
+            std::os::unix::fs::symlink(cwd.join("loop_a.png"), cwd.join("loop_b.png")).unwrap();
+            assert!(matches!(resolve("loop_a.png", cwd), Ok(None)));
         }
     }
 
@@ -508,6 +525,74 @@ mod answers_at_once {
             .now_or_never()
             .expect("answered at once");
         assert_eq!(reply.unwrap()["count"], 1);
+    }
+
+    /// `image.attach` refuses non-local origins before reading or staging anything.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn attach_refuses_non_local_origins() {
+        for origin in [Origin::Webapp, Origin::Remote] {
+            let home = tempfile::tempdir().unwrap();
+            let mut request = local_attach(home.path());
+            request.conn.origin = origin;
+            let chat = Arc::clone(&request.chat);
+            let refused = super::attach(request)
+                .now_or_never()
+                .expect("answered at once")
+                .unwrap_err();
+            assert_eq!(refused.0, super::super::IMAGE_UNSUPPORTED, "{origin:?}");
+            assert!(chat
+                .lock_sessions()
+                .values()
+                .all(|session| session.images().is_empty()));
+        }
+    }
+
+    /// A Webapp client can detach an image staged on its session (for example from
+    /// `image.attach_bytes`), and cannot touch any unstaged host file.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_webapp_client_detaches_staged_images_only() {
+        let home = tempfile::tempdir().unwrap();
+        let request = local_attach(home.path());
+        let chat = Arc::clone(&request.chat);
+        let id = request.params["session_id"].as_str().unwrap().to_string();
+        let host_file = home.path().join("shot.png");
+        let staged_reply = super::attach(request)
+            .now_or_never()
+            .expect("answered at once")
+            .unwrap();
+        let staged_path = staged_reply["path"].as_str().unwrap().to_string();
+
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let mut conn = Conn::new(2, outbox, false);
+        conn.origin = Origin::Webapp;
+
+        // An unstaged host path is untouched.
+        let params = json!({"session_id": id, "path": host_file.display().to_string()})
+            .as_object()
+            .unwrap()
+            .clone();
+        let reply = super::detach(Request {
+            chat: Arc::clone(&chat),
+            conn: conn.clone(),
+            params,
+        })
+        .now_or_never()
+        .expect("answered at once")
+        .unwrap();
+        assert_eq!(reply, json!({"detached": false, "count": 1}));
+        assert!(host_file.exists());
+
+        // The session's staged copy is removed.
+        let params = json!({"session_id": id, "path": staged_path})
+            .as_object()
+            .unwrap()
+            .clone();
+        let reply = super::detach(Request { chat, conn, params })
+            .now_or_never()
+            .expect("answered at once")
+            .unwrap();
+        assert_eq!(reply, json!({"detached": true, "count": 0}));
+        assert!(!std::path::Path::new(&staged_path).exists());
     }
 
     /// A staging folder that cannot be made is a write failure (5027), and nothing is staged.

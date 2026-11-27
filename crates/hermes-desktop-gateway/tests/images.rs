@@ -128,9 +128,11 @@ async fn dropped_path_spellings_resolve() {
     std::fs::write(&source, png("spelling")).unwrap();
     let escaped = source.display().to_string().replace(' ', "\\ ");
     let url = url::Url::from_file_path(&source).unwrap().to_string();
+    let mixed_url = url.replacen("file://", "File://", 1);
     let spellings = [
         (format!("{escaped} and words"), "and words"),
         (url, ""),
+        (mixed_url, ""),
         (format!("{} tell me", source.display()), "tell me"),
     ];
     for (n, (raw, remainder)) in spellings.iter().enumerate() {
@@ -167,7 +169,7 @@ async fn dropped_path_spellings_resolve() {
         reply["result"]["text"],
         "[User attached image: my shot.png]"
     );
-    assert_eq!(reply["result"]["count"], 4);
+    assert_eq!(reply["result"]["count"], 5);
 }
 
 /// A detached image is not sent and its staged copy is removed; the others still go.
@@ -309,6 +311,8 @@ async fn image_attach_refuses_share_and_device_paths() {
         "//nohost.invalid/share/a.png",
         r#""\\nohost.invalid\share\a b.png" and words"#,
         "file://nohost.invalid/share/a.png",
+        "FILE://nohost.invalid/share/a.png",
+        "File://nohost.invalid/share/a.png",
     ];
     assert!(paths[0].as_bytes().starts_with(br"\\"));
     let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
@@ -351,6 +355,17 @@ async fn image_attach_refuses_reserved_device_names() {
         paths.push(path.display().to_string());
     }
     paths.push("NUL.png".to_string());
+    // Intermediate reserved device components are refused too, even where the folder exists.
+    for dir_name in ["CON", "NUL", "COM1", "COM1.txt"] {
+        let nested = folder.path().join(dir_name).join("shot.png");
+        #[cfg(not(windows))]
+        {
+            std::fs::create_dir(folder.path().join(dir_name)).unwrap();
+            std::fs::write(&nested, png(dir_name)).unwrap();
+        }
+        paths.push(nested.display().to_string());
+    }
+    paths.push(r"C:\temp\NUL\shot.png".to_string());
     expect_refused(&mut client, &session, &paths).await;
 
     // A name that only starts like one is served.
@@ -384,6 +399,45 @@ async fn image_attach_bounds_the_read_itself() {
     assert!(staged_images(started.home.path()).is_empty());
 }
 
+/// A local symlink pointing to a network share or reserved device component is refused before
+/// following it to its target.
+#[tokio::test]
+async fn image_attach_refuses_links_to_refused_paths() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let mut paths = Vec::new();
+    #[cfg(unix)]
+    {
+        let unc_bs = folder.path().join("unc_bs.png");
+        std::os::unix::fs::symlink(r"\\nohost.invalid\share\a.png", &unc_bs).unwrap();
+        let unc_fs = folder.path().join("unc_fs.png");
+        std::os::unix::fs::symlink("//nohost.invalid/share/a.png", &unc_fs).unwrap();
+        let unc_dir = folder.path().join("unc_dir");
+        std::os::unix::fs::symlink("//nohost.invalid/share", &unc_dir).unwrap();
+        let reserved = folder.path().join("reserved.png");
+        std::os::unix::fs::symlink(folder.path().join("NUL").join("shot.png"), &reserved).unwrap();
+        paths.push(unc_bs.display().to_string());
+        paths.push(unc_fs.display().to_string());
+        paths.push(unc_dir.join("a.png").display().to_string());
+        paths.push(reserved.display().to_string());
+    }
+    #[cfg(windows)]
+    {
+        let unc_file = folder.path().join("unc_file.png");
+        std::os::windows::fs::symlink_file(r"\\nohost.invalid\share\a.png", &unc_file)
+            .expect("a symlink on Windows needs Developer Mode or an elevated shell");
+        let unc_dir = folder.path().join("unc_dir");
+        std::os::windows::fs::symlink_dir(r"\\nohost.invalid\share", &unc_dir)
+            .expect("a symlink on Windows needs Developer Mode or an elevated shell");
+        paths.push(unc_file.display().to_string());
+        paths.push(unc_dir.join("a.png").display().to_string());
+    }
+    expect_refused(&mut client, &session, &paths).await;
+    assert!(staged_images(started.home.path()).is_empty());
+}
+
 /// A FIFO is refused at once instead of waiting for a writer.
 #[cfg(unix)]
 #[tokio::test]
@@ -403,6 +457,80 @@ async fn image_attach_refuses_a_fifo() {
     .await
     .expect("refused at once");
     assert_eq!(reply["error"]["code"], 4016, "{reply}");
+}
+
+/// A symlink to a FIFO is refused at once without blocking or staging anything.
+#[cfg(unix)]
+#[tokio::test]
+async fn image_attach_refuses_a_symlink_to_a_fifo() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let fifo = folder.path().join("pipe");
+    let name = std::ffi::CString::new(fifo.display().to_string()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let link = folder.path().join("link.png");
+    std::os::unix::fs::symlink(&fifo, &link).unwrap();
+    let params = json!({"session_id": session, "path": link.display().to_string()});
+    let reply = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.call(2, "image.attach", params),
+    )
+    .await
+    .expect("refused at once");
+    assert_eq!(reply["error"]["code"], 4016, "{reply}");
+    assert!(staged_images(started.home.path()).is_empty());
+}
+
+/// Detaching an already-missing staged file succeeds; a removal failure (for example a file
+/// replaced by a folder) returns 5027 and keeps the entry so a retry cleans it up.
+#[tokio::test]
+async fn image_detach_reports_removal_failure_and_keeps_the_entry() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let attach = |tag| json!({"session_id": session, "content_base64": b64(&png(tag))});
+    let gone_path = client.call(2, "image.attach_bytes", attach("gone")).await["result"]["path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let blocked_path = client.call(3, "image.attach_bytes", attach("blocked")).await["result"]
+        ["path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Already removed on disk (`NotFound`) still detaches cleanly.
+    std::fs::remove_file(&gone_path).unwrap();
+    let reply = client
+        .call(
+            4,
+            "image.detach",
+            json!({"session_id": session, "path": gone_path}),
+        )
+        .await;
+    assert_eq!(
+        reply["result"],
+        json!({"detached": true, "count": 1}),
+        "{reply}"
+    );
+
+    // Replacing the staged file with a folder makes `remove_file` fail; 5027 and retained.
+    std::fs::remove_file(&blocked_path).unwrap();
+    std::fs::create_dir(&blocked_path).unwrap();
+    let detach = json!({"session_id": session, "path": blocked_path});
+    let reply = client.call(5, "image.detach", detach.clone()).await;
+    assert_eq!(reply["error"]["code"], 5027, "{reply}");
+
+    // Once the obstruction is gone, retrying detaches the retained entry.
+    std::fs::remove_dir(&blocked_path).unwrap();
+    let reply = client.call(6, "image.detach", detach).await;
+    assert_eq!(
+        reply["result"],
+        json!({"detached": true, "count": 0}),
+        "{reply}"
+    );
 }
 
 /// A session cannot take back another session's staged image.

@@ -693,6 +693,10 @@ mod tests {
             stage_image(&dir, "data:image/png,x"),
             Err(ImageError::Invalid(_))
         ));
+        assert_eq!(
+            stage_image(&dir, "data:image/png;base64,").err(),
+            Some(ImageError::Invalid("image is empty".into()))
+        );
         // Over the limit by its length alone, so nothing is decoded or made.
         let large = "A".repeat((MAX_IMAGE_BYTES / 3 + 1) * 4);
         assert_eq!(stage_image(&dir, &large).err(), Some(ImageError::TooLarge));
