@@ -34,6 +34,7 @@ use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
 mod history;
+mod oneshot;
 pub(crate) mod profiles;
 mod relay;
 mod session;
@@ -156,6 +157,7 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 const AREAS: &[&[(&str, Handler)]] = &[
     METHODS,
     history::METHODS,
+    oneshot::METHODS,
     profiles::METHODS,
     relay::METHODS,
     slash::METHODS,
