@@ -1830,16 +1830,19 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "futures",
+ "getrandom 0.4.3",
  "hermes-agent",
  "hermes-app-runtime",
  "hermes-config",
  "hermes-core",
  "hermes-provider-runtime",
  "libc",
+ "percent-encoding",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subtle",
  "tempfile",
  "tokio",
@@ -1847,6 +1850,7 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.61.2",
+ "yaml_serde",
 ]
 
 [[package]]
