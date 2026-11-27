@@ -2,7 +2,7 @@
 //! handler may read ([`Api`]), the extractor that carries both ([`Ctx`]) and the group list
 //! ([`GROUPS`]) that `router()` merges behind the credential guard.
 //!
-//! A group is one file `src/webapp/routes/<group>.rs` with `pub fn router() -> Router` and
+//! A group is one file `src/webapp/routes/<group>.rs` with `pub fn router(&Served) -> Router` and
 //! handlers such as `async fn get_config(ctx: Ctx, Query(q): Query<HashMap<String, String>>) ->
 //! ApiResult`, plus one [`Group`] in [`GROUPS`] naming its [`Audience`]: `Browser` when the
 //! Webapp calls it, `NativeOnly` when a browser credential must not reach it. Groups add no auth
@@ -20,6 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 
+use super::routes::store::Served;
 use crate::Chat;
 
 /// Who the credential guard admitted.
@@ -86,15 +87,19 @@ pub enum Audience {
 }
 
 /// One group of routes and who they serve. `routes` holds at least one route and sets no
-/// fallback (the router's fallback serves the bundle).
+/// fallback (the router's fallback serves the bundle). It is given the served home once, when
+/// the router is built, so a handler never derives a file path from the request.
 pub struct Group {
     pub audience: Audience,
-    pub routes: fn() -> Router,
+    pub routes: fn(&Served) -> Router,
 }
 
 /// Every group, merged once behind the credential guard. One entry per group, such as
 /// `Group { audience: Audience::Browser, routes: routes::config::router }`.
-pub const GROUPS: &[Group] = &[];
+pub const GROUPS: &[Group] = &[Group {
+    audience: Audience::Browser,
+    routes: super::routes::startup::router,
+}];
 
 /// Checks the profile a request names (`?profile=`) against the one this gateway serves: absent
 /// or equal is Ok; any other name is 404, as this gateway serves one profile.
@@ -109,16 +114,16 @@ pub fn served_profile(api: &Api, requested: Option<&str>) -> Result<(), ApiError
     }
 }
 
-/// The groups as one router, ready to merge into a router of any state.
-pub(crate) fn groups<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    merge(GROUPS)
+/// The groups as one router for `api`'s home, ready to merge into a router of any state.
+pub(crate) fn groups<S: Clone + Send + Sync + 'static>(api: &Api) -> Router<S> {
+    merge(GROUPS, &Served::of(api))
 }
 
-fn merge<S: Clone + Send + Sync + 'static>(groups: &[Group]) -> Router<S> {
+fn merge<S: Clone + Send + Sync + 'static>(groups: &[Group], served: &Served) -> Router<S> {
     groups
         .iter()
         .fold(Router::new(), |router, group| {
-            let routes = (group.routes)();
+            let routes = (group.routes)(served);
             router.merge(match group.audience {
                 Audience::Browser => routes,
                 Audience::NativeOnly => routes.route_layer(middleware::from_fn(native_only)),
@@ -145,11 +150,11 @@ mod tests {
     use super::*;
     use axum::routing::get;
 
-    fn native_routes() -> Router {
+    fn native_routes(_: &Served) -> Router {
         Router::new().route("/native", get(|| async { "native" }))
     }
 
-    fn shared_routes() -> Router {
+    fn shared_routes(_: &Served) -> Router {
         Router::new().route("/shared", get(|| async { "shared" }))
     }
 
@@ -183,7 +188,8 @@ mod tests {
                 routes: shared_routes,
             },
         ];
-        let app: Router = merge::<()>(&groups).layer(middleware::from_fn(admit_as));
+        let app: Router = merge::<()>(&groups, &Served::new(PathBuf::from("/nonexistent")))
+            .layer(middleware::from_fn(admit_as));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

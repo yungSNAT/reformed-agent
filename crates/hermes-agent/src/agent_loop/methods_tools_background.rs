@@ -689,7 +689,11 @@ impl AgentLoop {
                     }
                 }
 
-                match (entry.handler)(params) {
+                let call = || (entry.handler)(params);
+                match hermes_core::traits::with_tool_call_delegate_depth(
+                    current_delegate_depth,
+                    call,
+                ) {
                     Ok(output) => {
                         if looks_like_tool_error_output(&output) {
                             ToolResult::err(tool_call_id, output)
@@ -840,6 +844,7 @@ impl AgentLoop {
             let raw_args = tc.function.arguments.clone();
             let registry = self.tool_registry.clone();
             let plugin_manager = self.plugin_manager.clone();
+            let session_id = self.config.session_id.clone();
 
             join_set.spawn(async move {
                 let params: Value = match serde_json::from_str(&raw_args) {
@@ -860,7 +865,13 @@ impl AgentLoop {
                     original_args: params.clone(),
                     turn,
                 };
-                let terminal = |next_params: Value| {
+                let terminal = |mut next_params: Value| {
+                    hermes_core::file_edit::scope_file_tool_params(
+                        &tool_name,
+                        &mut next_params,
+                        session_id.as_deref(),
+                        &tool_call_id,
+                    );
                     Self::execute_tool_call_terminal(
                         &registry,
                         &tool_call_id,
@@ -1120,5 +1131,40 @@ impl AgentLoop {
         if todo_markers > 0 {
             tracing::debug!(todo_markers, "Hydrated todo markers from prior context");
         }
+    }
+}
+
+#[cfg(test)]
+mod tool_call_depth_tests {
+    use super::*;
+
+    /// A handler sees the delegate depth of the agent making the call, so a
+    /// tool can refuse delegated sub-agents that share the parent's registry.
+    #[test]
+    fn a_tool_call_carries_its_agents_delegate_depth() {
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "probe",
+            hermes_core::tool_schema("probe", "probe", hermes_core::JsonSchema::new("object")),
+            Arc::new(|_| {
+                Ok(format!(
+                    "{:?}",
+                    hermes_core::traits::tool_call_delegate_depth()
+                ))
+            }),
+        );
+        for depth in [0, 2] {
+            let result = AgentLoop::execute_tool_call_terminal(
+                &registry,
+                "call",
+                "probe",
+                json!({}),
+                5,
+                depth,
+                None,
+            );
+            assert_eq!(result.content, format!("Some({depth})"));
+        }
+        assert_eq!(hermes_core::traits::tool_call_delegate_depth(), None);
     }
 }
