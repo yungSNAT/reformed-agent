@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -69,8 +69,13 @@ async fn start(limit: usize) -> Started {
 /// no children when `limit` is `None`. A further named profile, `bare`, sets no key of its own:
 /// its provider reads [`PARENT_KEY_ENV`], which only the root's `.env` sets.
 async fn start_at(limit: Option<usize>, at: &str) -> Started {
+    start_running(limit, at, Path::new(BIN)).await
+}
+
+/// As [`start_at`], with children running `program`.
+async fn start_running(limit: Option<usize>, at: &str, program: &Path) -> Started {
     // As the binary does: the child environment is taken before any configuration is loaded.
-    let children = limit.map(|limit| ChildGateways::new(PathBuf::from(BIN)).with_limit(limit));
+    let children = limit.map(|limit| ChildGateways::new(program.to_path_buf()).with_limit(limit));
     let keys = Arc::new(Mutex::new(Vec::new()));
     let model_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let model_addr = model_listener.local_addr().unwrap();
@@ -495,6 +500,37 @@ async fn a_child_that_never_reports_ready_is_killed_and_reaped() {
         .parse()
         .unwrap();
     assert_gone(pid).await;
+}
+
+/// A child whose port refuses connections has lost its listener, even while its exit cannot be
+/// collected yet (a killed process whose last thread is still exiting): the next request
+/// replaces it instead of failing on the dead port.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_whose_port_refuses_is_replaced_before_the_request_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let scripts = tempfile::tempdir().unwrap();
+    let dead = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mark = scripts.path().join("started");
+    let program = scripts.path().join("child.sh");
+    // The first start reports a port nothing listens on and stays up until its input closes;
+    // later starts run the gateway. Shell builtins only: a child's PATH is not kept.
+    let script = format!(
+        "#!/bin/sh\nif [ ! -e '{mark}' ]; then\n  : > '{mark}'\n  \
+         echo 'HERMES_BACKEND_READY port={dead}'\n  while read -r _; do :; done\n  exit 0\nfi\n\
+         exec '{BIN}' \"$@\"\n",
+        mark = mark.display()
+    );
+    write(&program, &script);
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let started = start_running(Some(4), "", &program).await;
+    let mut client = connect(started.addr, Some("inbox")).await;
+    client.turn(None).await;
+    assert_eq!(*started.keys.lock().unwrap(), ["Bearer inbox-key"]);
 }
 
 #[cfg(target_os = "linux")]
