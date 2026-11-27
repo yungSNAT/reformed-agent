@@ -94,7 +94,7 @@ async fn complete_path(req: Request) -> Result<Value, RpcError> {
 
 #[cfg(unix)]
 mod unix {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::process::Stdio;
     use std::sync::Mutex;
@@ -166,7 +166,12 @@ mod unix {
         let slot = Slot::take(req.conn.id)?;
         let mut child = Command::new("/bin/sh");
         child.arg("-c").arg(command);
-        match supervise(child, folder()?, SHELL_TIMEOUT, slot).await {
+        shell_reply(supervise(child, folder()?, SHELL_TIMEOUT, slot).await)
+    }
+
+    /// `shell.exec`'s answer for a run that ended as `ended`.
+    fn shell_reply(ended: Ended) -> Result<Value, RpcError> {
+        match ended {
             Ended::Exited {
                 stdout,
                 stderr,
@@ -190,16 +195,26 @@ mod unix {
             approval_mode_off: true,
             ..CommandGuardContext::from_env()
         };
+        // With approval off the guard stops at the hardline policy and cannot fail; were it to,
+        // the command is refused.
         match check_all_command_guards_with_context(command, "local", context, None) {
             Ok(result) if result.approved => None,
-            Ok(result) => Some(result.description.unwrap_or_default()),
-            Err(_) => Some("the safety check could not run".into()),
+            result => Some(result.map_or_else(
+                |_| "the safety check could not run".into(),
+                |result| result.description.unwrap_or_default(),
+            )),
         }
     }
 
     /// `cli.exec {argv, timeout?}`: the `hermes` CLI beside this executable, with no shell, for
     /// the exact argument sequences [`allowed`] lists; anything else is answered as blocked.
     pub(super) async fn cli_exec(req: Request) -> Result<Value, RpcError> {
+        let exe = std::env::current_exe().ok();
+        cli_exec_beside(req, exe.as_deref().and_then(Path::parent)).await
+    }
+
+    /// [`cli_exec`] with `bin` as the folder that holds `hermes`.
+    async fn cli_exec_beside(req: Request, bin: Option<&Path>) -> Result<Value, RpcError> {
         let argv = argv(&req.params)?;
         let timeout = match req.params.get("timeout") {
             None | Some(Value::Null) => 240,
@@ -215,9 +230,8 @@ mod unix {
         if !allowed(&req.chat.home, &argv) {
             return Ok(json!({"blocked": true, "hint": BLOCKED_HINT, "code": -1, "output": ""}));
         }
-        let program = std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("hermes")))
+        let program = bin
+            .map(|dir| dir.join("hermes"))
             .filter(|path| path.is_file())
             .ok_or((CLI_FAILED, "hermes CLI not found".into()))?;
         let slot = Slot::take(req.conn.id)?;
@@ -346,7 +360,7 @@ mod unix {
     }
 
     /// Running children, per connection and in all.
-    static RUNNING: Mutex<Option<HashMap<u64, usize>>> = Mutex::new(None);
+    static RUNNING: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 
     /// One running child's place in [`RUNNING`], given back when dropped.
     pub(super) struct Slot(u64);
@@ -354,7 +368,6 @@ mod unix {
     impl Slot {
         pub(super) fn take(conn: u64) -> Result<Self, RpcError> {
             let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-            let running = running.get_or_insert_with(HashMap::new);
             let mine = running.get(&conn).copied().unwrap_or(0);
             if mine >= PER_CONNECTION || running.values().sum::<usize>() >= PER_PROCESS {
                 return Err((BUSY, "busy".into()));
@@ -367,12 +380,10 @@ mod unix {
     impl Drop for Slot {
         fn drop(&mut self) {
             let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(running) = running.as_mut() {
-                if let Some(count) = running.get_mut(&self.0) {
-                    *count -= 1;
-                    if *count == 0 {
-                        running.remove(&self.0);
-                    }
+            if let Some(count) = running.get_mut(&self.0) {
+                *count -= 1;
+                if *count == 0 {
+                    running.remove(&self.0);
                 }
             }
         }
@@ -420,23 +431,19 @@ mod unix {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        // SAFETY: setsid is async-signal-safe and touches no memory of ours.
+        // SAFETY: `new_session` calls only setsid, which is async-signal-safe.
         unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    Err(std::io::Error::last_os_error())
-                } else {
-                    Ok(())
-                }
-            });
+            command.pre_exec(new_session);
         }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => return Ended::NotStarted(err.kind()),
         };
-        let Some(leader) = child.id().and_then(|pid| i32::try_from(pid).ok()) else {
-            return Ended::NotStarted(std::io::ErrorKind::Other);
-        };
+        // A child not yet waited on has its id, and a pid fits in `pid_t`.
+        let leader = child
+            .id()
+            .and_then(|pid| i32::try_from(pid).ok())
+            .expect("a child just started has a pid");
         let (stop, stopped) = watch::channel(());
         let stdout = tokio::spawn(read_capped(child.stdout.take(), stopped.clone()));
         let stderr = tokio::spawn(read_capped(child.stderr.take(), stopped));
@@ -475,25 +482,33 @@ mod unix {
             .unwrap_or(Ended::NotStarted(std::io::ErrorKind::Other))
     }
 
-    /// Blocks until `pid` has exited, leaving it unreaped.
-    fn wait_unreaped(pid: i32) {
-        loop {
-            // SAFETY: waitid writes only into `info`, which lives on this stack.
-            let done = unsafe {
-                let mut info: libc::siginfo_t = std::mem::zeroed();
-                libc::waitid(
-                    libc::P_PID,
-                    pid.unsigned_abs(),
-                    &mut info,
-                    libc::WEXITED | libc::WNOWAIT,
-                )
-            };
-            if done == 0
-                || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
-            {
-                return;
-            }
+    /// Makes the calling process the leader of a new session and process group. Runs in the
+    /// forked child before exec, so it calls only setsid.
+    fn new_session() -> std::io::Result<()> {
+        // SAFETY: setsid takes no arguments and touches no memory of ours.
+        if unsafe { libc::setsid() } == -1 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
         }
+    }
+
+    /// Blocks until `pid` has exited, leaving it unreaped; returns at once if `pid` is not a
+    /// child of this process.
+    fn wait_unreaped(pid: i32) {
+        // SAFETY: waitid writes only into `info`, which lives on this stack.
+        let wait = || unsafe {
+            let mut info: libc::siginfo_t = std::mem::zeroed();
+            libc::waitid(
+                libc::P_PID,
+                pid.unsigned_abs(),
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        while wait() != 0
+            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+        {}
     }
 
     /// Kills the process group led by `leader` and, on Linux, every process in its session.
@@ -955,10 +970,7 @@ mod unix {
 
         fn held(conn: u64) -> usize {
             let running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-            running
-                .as_ref()
-                .and_then(|running| running.get(&conn).copied())
-                .unwrap_or(0)
+            running.get(&conn).copied().unwrap_or(0)
         }
 
         /// A slot for `conn`, waiting while other tests hold the process's 4.
@@ -1176,14 +1188,205 @@ mod unix {
             assert_eq!(read_capped(None::<tokio::io::Empty>, stopped).await, "");
         }
 
-        // Other tests hold slots too, so the first 2 and the last wait for the process's 4.
+        // Other tests hold slots too, so the first 2 wait for the process's 4.
         #[tokio::test]
         async fn a_connection_runs_at_most_2_children() {
             let first = slot(9004).await;
             let _second = slot(9004).await;
             assert_eq!(Slot::take(9004).err().unwrap().0, BUSY);
+            let third = tokio::spawn(slot(9004));
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(!third.is_finished(), "a third child started beside 2");
             drop(first);
-            slot(9004).await;
+            third.await.unwrap();
+        }
+
+        fn request(chat: Chat, conn: u64, params: Value) -> Request {
+            let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+            Request {
+                chat: std::sync::Arc::new(chat),
+                conn: crate::chat::Conn::new(conn, outbox, false),
+                params: params.as_object().unwrap().clone(),
+            }
+        }
+
+        #[tokio::test]
+        async fn shell_exec_runs_only_with_the_local_terminal_backend() {
+            let mut config = hermes_config::GatewayConfig::default();
+            config.terminal.backend = TerminalBackendType::Docker;
+            let reply = shell_exec(request(
+                Chat::new(config),
+                9020,
+                json!({"command": "echo hi"}),
+            ))
+            .await;
+            assert_eq!(
+                reply,
+                Err((
+                    NOT_AVAILABLE,
+                    "shell.exec runs only with the local terminal backend".into()
+                ))
+            );
+        }
+
+        #[tokio::test]
+        async fn a_dangerous_command_the_hardline_passes_is_still_refused() {
+            let chat = Chat::new(hermes_config::GatewayConfig::default());
+            let command = json!({"command": "sqlite3 app.db 'DELETE FROM users'"});
+            let reply = shell_exec(request(chat, 9021, command)).await;
+            assert_eq!(
+                reply,
+                Err((
+                    BLOCKED,
+                    "blocked: SQL DELETE without WHERE. Use the agent for dangerous commands."
+                        .into()
+                ))
+            );
+        }
+
+        #[test]
+        fn a_shell_run_that_times_out_or_cannot_start_says_so() {
+            assert_eq!(
+                shell_reply(Ended::TimedOut),
+                Err((TIMED_OUT, "command timed out (30s)".into()))
+            );
+            let kind = std::io::ErrorKind::NotFound;
+            assert_eq!(
+                shell_reply(Ended::NotStarted(kind)),
+                Err((NOT_STARTED, format!("could not start the command: {kind}")))
+            );
+        }
+
+        #[tokio::test]
+        async fn cli_exec_takes_a_positive_timeout_and_refuses_0() {
+            let dir = tempfile::tempdir().unwrap();
+            let call = |timeout: u64| {
+                request(
+                    chat_at(dir.path()),
+                    9022,
+                    json!({"argv": ["version"], "timeout": timeout}),
+                )
+            };
+            assert_eq!(
+                cli_exec_beside(call(0), None).await,
+                Err((
+                    BAD_ARGV,
+                    "timeout must be a positive number of seconds".into()
+                ))
+            );
+            let reply = cli_exec_beside(call(5), None).await.unwrap();
+            assert_eq!(reply["blocked"], true);
+        }
+
+        #[tokio::test]
+        async fn an_allowed_cli_call_runs_the_hermes_beside_the_gateway() {
+            let home = tempfile::tempdir().unwrap();
+            std::fs::create_dir(home.path().join("profiles")).unwrap();
+            std::fs::write(home.path().join("profiles/work.yaml"), "").unwrap();
+            let bin = tempfile::tempdir().unwrap();
+            let call = || {
+                request(
+                    chat_at(home.path()),
+                    9023,
+                    json!({"argv": ["profile", "delete", "work", "--yes"]}),
+                )
+            };
+            assert_eq!(
+                cli_exec_beside(call(), Some(bin.path())).await,
+                Err((CLI_FAILED, "hermes CLI not found".into()))
+            );
+            named_script(
+                bin.path(),
+                "hermes",
+                r#"printf '%s|' "$@"; printf '%s' "$HERMES_HOME""#,
+            );
+            // Other tests hold slots too: a busy answer is asked again.
+            let reply = tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    match cli_exec_beside(call(), Some(bin.path())).await {
+                        Err((BUSY, _)) => tokio::time::sleep(Duration::from_millis(100)).await,
+                        reply => return reply,
+                    }
+                }
+            })
+            .await
+            .expect("no slot came free");
+            assert_eq!(
+                reply,
+                Ok(json!({
+                    "blocked": false,
+                    "code": 0,
+                    "output": format!("profile|delete|work|--yes|{}", home.path().display()),
+                }))
+            );
+        }
+
+        #[tokio::test]
+        async fn an_empty_word_completes_to_nothing() {
+            let chat = Chat::new(hermes_config::GatewayConfig::default());
+            let reply = complete_path(request(chat, 9024, json!({"word": ""}))).await;
+            assert_eq!(reply, Ok(json!({"items": []})));
+        }
+
+        #[test]
+        fn a_listing_stops_at_30_items() {
+            let dir = tempfile::tempdir().unwrap();
+            for n in 0..31 {
+                std::fs::write(dir.path().join(format!("f{n:02}")), "").unwrap();
+            }
+            let items = items(dir.path(), "f");
+            let texts = texts(&items);
+            assert_eq!(texts.len(), 30);
+            assert_eq!((texts[0], texts[29]), ("f00", "f29"));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn a_name_that_is_not_unicode_is_not_listed() {
+            use std::os::unix::ffi::OsStrExt;
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("a"), "").unwrap();
+            let odd = std::ffi::OsStr::from_bytes(b"a\xff");
+            std::fs::write(dir.path().join(odd), "").unwrap();
+            assert_eq!(texts(&items(dir.path(), "a")), ["a"]);
+        }
+
+        #[test]
+        fn waiting_on_a_process_that_is_not_a_child_returns_at_once() {
+            wait_unreaped(i32::try_from(std::process::id()).unwrap());
+        }
+
+        const SESSION_CHILD: &str = "HERMES_HOST_TEST_SESSION_CHILD";
+
+        /// `new_session` runs in a forked child before exec, where coverage is never written, so
+        /// this test re-runs itself in a child process of the test binary that calls it and
+        /// exits normally.
+        #[test]
+        fn a_new_session_makes_the_process_its_leader_and_only_once() {
+            let name = "a_new_session_makes_the_process_its_leader_and_only_once";
+            if std::env::var_os(SESSION_CHILD).is_some() {
+                new_session().unwrap();
+                // SAFETY: getsid and getpgrp take plain integers and touch no memory of ours.
+                let (session, group) = unsafe { (libc::getsid(0), libc::getpgrp()) };
+                let pid = i32::try_from(std::process::id()).unwrap();
+                assert_eq!((session, group), (pid, pid));
+                // A session leader cannot start another session.
+                let again = new_session().unwrap_err();
+                assert_eq!(again.raw_os_error(), Some(libc::EPERM));
+                return;
+            }
+            let path = module_path!().split_once("::").unwrap().1;
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &format!("{path}::{name}"), "--test-threads", "1"])
+                .env(SESSION_CHILD, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}");
+            assert!(
+                stdout.contains("1 passed"),
+                "the child ran no test: {stdout}"
+            );
         }
     }
 }
