@@ -40,15 +40,54 @@ use sha2::{Digest, Sha256};
 use hermes_core::git::GitRead;
 
 use super::startup::default_cwd_for;
-use super::store::{blocking, home, install_root};
+use super::store::{blocking, Served};
 use crate::webapp::api::{served_profile, ApiError, ApiResult, Caller, Ctx};
 
-pub fn router() -> Router {
+/// Each handler gets `served` from the route, not from the request; the requested path reaches
+/// the file system only through [`resolve`].
+pub fn router(served: &Served) -> Router {
+    let (list, read, status, rev) = (
+        served.clone(),
+        served.clone(),
+        served.clone(),
+        served.clone(),
+    );
     Router::new()
-        .route("/api/fs/list", get(fs_list))
-        .route("/api/fs/read-data-url", get(read_data_url))
-        .route("/api/git/status", get(git_status))
-        .route("/api/git/review/rev-parse", get(rev_parse))
+        .route(
+            "/api/fs/list",
+            get(
+                move |ctx: Ctx, ext: Extensions, q: Query<HashMap<String, String>>| {
+                    fs_list(list.clone(), ctx, ext, q)
+                },
+            ),
+        )
+        .route(
+            "/api/fs/read-data-url",
+            get(
+                move |ctx: Ctx,
+                      ext: Extensions,
+                      headers: HeaderMap,
+                      q: Query<HashMap<String, String>>| {
+                    read_data_url(read.clone(), ctx, ext, headers, q)
+                },
+            ),
+        )
+        .route(
+            "/api/git/status",
+            get(
+                move |ctx: Ctx, ext: Extensions, q: Query<HashMap<String, String>>| {
+                    git_status(status.clone(), ctx, ext, q)
+                },
+            ),
+        )
+        .route(
+            "/api/git/review/rev-parse",
+            get(
+                move |ctx: Ctx, ext: Extensions, q: Query<HashMap<String, String>>| {
+                    rev_parse(rev.clone(), ctx, ext, q)
+                },
+            ),
+        )
 }
 
 /// The largest file `read-data-url` returns (upstream's `WEBAPP_ATTACHMENT_MAX_BYTES`).
@@ -856,13 +895,14 @@ pub(crate) fn extra_root_allowed(dir: &Path, home: Option<&Path>) -> bool {
 }
 
 fn admit(
+    served: &Served,
     ctx: &Ctx,
     ext: &Extensions,
     q: &HashMap<String, String>,
 ) -> Result<(Roots, Option<PathBuf>), ApiError> {
     local_only(ctx.caller, peer(ext))?;
     served_profile(&ctx.api, q.get("profile").map(String::as_str))?;
-    let hermes_home = home(ctx);
+    let hermes_home = served.home().to_path_buf();
     let user_home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from);
@@ -876,7 +916,7 @@ fn admit(
     {
         allowed.push(cwd);
     }
-    let refused = [hermes_home.clone(), install_root(ctx)];
+    let refused = [hermes_home.clone(), served.install_root()];
     Ok((Roots::new(&allowed, &refused), user_home))
 }
 
@@ -887,8 +927,13 @@ fn path_param(q: &HashMap<String, String>) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError(StatusCode::BAD_REQUEST, "path is required".into()))
 }
 
-async fn fs_list(ctx: Ctx, ext: Extensions, Query(q): Query<HashMap<String, String>>) -> ApiResult {
-    let (roots, home) = admit(&ctx, &ext, &q)?;
+async fn fs_list(
+    served: Served,
+    ctx: Ctx,
+    ext: Extensions,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult {
+    let (roots, home) = admit(&served, &ctx, &ext, &q)?;
     let raw = path_param(&q)?;
     blocking(move || {
         let resolved = match resolve(&raw, &roots, home.as_deref()) {
@@ -946,13 +991,14 @@ pub(crate) fn data_url(
 }
 
 async fn read_data_url(
+    served: Served,
     ctx: Ctx,
     ext: Extensions,
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let work = async {
-        let (roots, home) = admit(&ctx, &ext, &q)?;
+        let (roots, home) = admit(&served, &ctx, &ext, &q)?;
         let raw = path_param(&q)?;
         let wanted: Vec<String> = headers
             .get(header::IF_NONE_MATCH)
@@ -1027,11 +1073,12 @@ pub(crate) fn repo_dir(raw: &str, roots: &Roots, home: Option<&Path>) -> Result<
 }
 
 async fn git_status(
+    served: Served,
     ctx: Ctx,
     ext: Extensions,
     Query(q): Query<HashMap<String, String>>,
 ) -> ApiResult {
-    let (roots, home) = admit(&ctx, &ext, &q)?;
+    let (roots, home) = admit(&served, &ctx, &ext, &q)?;
     let raw = path_param(&q)?;
     blocking(move || {
         let dir = match repo_dir(&raw, &roots, home.as_deref()) {
@@ -1050,11 +1097,12 @@ async fn git_status(
 }
 
 async fn rev_parse(
+    served: Served,
     ctx: Ctx,
     ext: Extensions,
     Query(q): Query<HashMap<String, String>>,
 ) -> ApiResult {
-    let (roots, home) = admit(&ctx, &ext, &q)?;
+    let (roots, home) = admit(&served, &ctx, &ext, &q)?;
     let raw = path_param(&q)?;
     let wanted = q
         .get("ref")
