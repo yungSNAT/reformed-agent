@@ -406,3 +406,22 @@ async fn paste_collapse_refuses_a_link_in_the_pastes_folders_place() {
     assert_eq!(reply["error"]["code"], 5021, "{reply}");
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
 }
+
+/// A pastes folder the gateway may not write to fails the paste with the reason, and leaves
+/// nothing in it.
+#[cfg(unix)]
+#[tokio::test]
+async fn paste_collapse_reports_a_paste_it_cannot_save() {
+    use std::os::unix::fs::PermissionsExt;
+    let (mut socket, home) = start().await;
+    let pastes = home.path().join("pastes");
+    std::fs::create_dir(&pastes).unwrap();
+    std::fs::set_permissions(&pastes, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let reply = call(&mut socket, "paste.collapse", json!({"text": "kept"})).await;
+    std::fs::set_permissions(&pastes, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        error(&reply),
+        (5021, "could not save the paste: permission denied")
+    );
+    assert_eq!(std::fs::read_dir(&pastes).unwrap().count(), 0);
+}
