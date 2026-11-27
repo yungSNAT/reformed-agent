@@ -1001,6 +1001,28 @@ mod tests {
     }
 
     #[test]
+    fn a_key_saved_through_an_alias_entry_answers_with_the_canonical_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let var = "DESKTOP_MODEL_UNIT_TEST_ALIAS_KEY";
+        let provider: LlmProviderConfig =
+            serde_json::from_value(json!({ "api_key_env": var })).unwrap();
+        let mut config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
+            ..GatewayConfig::default()
+        };
+        config.llm_providers.insert("mimo".into(), provider);
+        let chat = Chat::new(config);
+        // The picker lists the entry as `mimo`, so the reply names its canonical provider.
+        let saved = chat.save_key("mimo", "saved-key").unwrap();
+        assert_eq!(
+            saved["provider"],
+            json!({"slug": "xiaomi", "name": "xiaomi", "total_models": 0, "models": [],
+                   "is_current": false, "source": "env", "authenticated": true})
+        );
+        assert_eq!(chat.keys.value(var).as_deref(), Some("saved-key"));
+    }
+
+    #[test]
     fn the_set_up_check_reports_a_disconnected_start_up_key() {
         // Start-up read `PATH` from the environment; the gateway has since removed it.
         let provider: LlmProviderConfig =
