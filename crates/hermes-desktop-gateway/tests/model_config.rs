@@ -549,8 +549,10 @@ async fn a_turn_sends_the_key_saved_for_its_provider_whichever_entry_spelling_it
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
+/// An in-process gateway whose one `xiaomi` entry, keyed by `key_env`, points at a scripted model;
+/// the home folder, a client and what the model saw. The scripted model answers in SSE, which
+/// `llm.oneshot` cannot parse, so its replies are errors by design: only the headers matter.
+async fn oneshot_gateway(key_env: &str) -> (tempfile::TempDir, Client, Seen) {
     let (model_addr, seen) = model_server().await;
     let home = tempfile::tempdir().unwrap();
     let mut config = hermes_config::GatewayConfig {
@@ -558,8 +560,7 @@ async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
         home_dir: Some(home.path().to_string_lossy().into_owned()),
         ..hermes_config::GatewayConfig::default()
     };
-    let entry = json!({"base_url": format!("http://{model_addr}/v1"),
-        "api_key_env": "DESKTOP_MODEL_CONFIG_ONESHOT_KEY"});
+    let entry = json!({"base_url": format!("http://{model_addr}/v1"), "api_key_env": key_env});
     config
         .llm_providers
         .insert("xiaomi".into(), serde_json::from_value(entry).unwrap());
@@ -570,7 +571,20 @@ async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
         TOKEN.to_string(),
         hermes_desktop_gateway::Chat::new(config),
     ));
-    let mut client = connect(addr).await;
+    (home, connect(addr).await, seen)
+}
+
+fn auth_sent(seen: &Seen) -> Vec<String> {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .map(|(_, auth)| auth.clone())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
+    let (_home, mut client, seen) = oneshot_gateway("DESKTOP_MODEL_CONFIG_ONESHOT_KEY").await;
     let oneshot = json!({"input": "hello"});
 
     let reply = client
@@ -588,11 +602,28 @@ async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
     assert_eq!(reply["result"]["disconnected"], true, "{reply}");
     client.call(4, "llm.oneshot", oneshot).await;
     // As a turn's: the key just saved, then none once it is removed.
-    let sent: Vec<String> = seen
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(_, auth)| auth.clone())
-        .collect();
-    assert_eq!(sent, ["Bearer saved-key", ""]);
+    assert_eq!(auth_sent(&seen), ["Bearer saved-key", ""]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn llm_oneshot_is_refused_before_any_request_once_a_shell_key_is_disconnected() {
+    const KEY_ENV: &str = "DESKTOP_MODEL_CONFIG_ONESHOT_SHELL_KEY";
+    // Set as the shell would: disconnect cannot remove it, so the next call must refuse.
+    unsafe { std::env::set_var(KEY_ENV, "shell-key") };
+    let (_home, mut client, seen) = oneshot_gateway(KEY_ENV).await;
+    let oneshot = json!({"input": "hello"});
+
+    client.call(1, "llm.oneshot", oneshot.clone()).await;
+    let reply = client
+        .call(2, "model.disconnect", json!({"slug": "xiaomi"}))
+        .await;
+    assert_eq!(reply["result"]["disconnected"], true, "{reply}");
+    let refused = client.call(3, "llm.oneshot", oneshot).await;
+    assert_eq!(code(&refused), 5030, "{refused}");
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.starts_with("one-shot generation failed: No API key for provider 'xiaomi'"),
+        "{refused}"
+    );
+    assert_eq!(auth_sent(&seen), ["Bearer shell-key"]);
 }
