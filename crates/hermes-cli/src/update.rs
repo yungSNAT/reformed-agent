@@ -85,8 +85,48 @@ async fn check_release(request: reqwest::RequestBuilder, repo: &str) -> Result<S
 mod tests {
     use super::*;
     use serde_json::json;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn update_command_reports_when_the_proxy_refuses_github() {
+        if !crate::isolated_test_profile::enter(
+            "update::tests::update_command_reports_when_the_proxy_refuses_github",
+        ) {
+            return;
+        }
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        std::env::set_var(
+            "HTTPS_PROXY",
+            format!("http://{}", proxy.local_addr().unwrap()),
+        );
+
+        let (result, request) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(check_for_updates(), async {
+                let (socket, _) = proxy.accept().await.unwrap();
+                let mut socket = BufReader::new(socket);
+                let mut request = String::new();
+                socket.read_line(&mut request).await.unwrap();
+                socket
+                    .get_mut()
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .unwrap();
+                request
+            })
+        })
+        .await
+        .unwrap();
+        assert!(
+            request.starts_with("CONNECT api.github.com:443 "),
+            "{request}"
+        );
+        assert!(matches!(
+            result,
+            Err(AgentError::Io(message)) if message.starts_with("Update check HTTP error:")
+        ));
+    }
 
     #[tokio::test]
     async fn release_check_distinguishes_versions_and_github_failures() {
