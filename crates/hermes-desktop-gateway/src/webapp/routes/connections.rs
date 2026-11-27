@@ -365,9 +365,8 @@ pub(crate) fn mutate<T>(
     path: &Path,
     change: impl FnOnce(&mut Map<String, Value>, &mut Vec<Map<String, Value>>) -> Result<T, StoreError>,
 ) -> Result<(Map<String, Value>, T), StoreError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(unreadable)?;
-    }
+    let parent = path.parent().map_or(Ok(()), std::fs::create_dir_all);
+    parent.map_err(unreadable)?;
     let lock = StoreLock::take(path, "gateway connections store").map_err(StoreError::Busy)?;
     let (doc, corrupt) = read_doc(path)?;
     // The rewritten list holds only entries that are objects; any other is kept in a copy.
@@ -1281,10 +1280,8 @@ pub(crate) async fn relay(
             Some(body) => outbound.body(body),
             None => outbound,
         };
-        tokio::time::timeout(HEADERS_TIMEOUT, outbound.send())
-            .await
-            .ok()?
-            .ok()
+        let sent = tokio::time::timeout(HEADERS_TIMEOUT, outbound.send()).await;
+        sent.ok().and_then(Result::ok)
     };
     let Some(response) = sent.await else {
         tracing::info!(connection = %id, "gateway relay failed");
