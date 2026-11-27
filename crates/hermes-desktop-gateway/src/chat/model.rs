@@ -753,6 +753,53 @@ mod tests {
     }
 
     #[test]
+    fn a_key_config_yaml_takes_from_another_variable_is_not_shadowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = xiaomi_chat(dir.path(), json!({}));
+        let mut config = chat.config.clone();
+        // `mimo` saves to its own `key_env`; `xiaomi`'s key is `PATH`'s start-up value.
+        let start_up = std::env::var("PATH").unwrap();
+        for (name, fields) in [
+            (
+                "mimo",
+                json!({"api_key_env": "DESKTOP_MODEL_UNIT_TEST_WRITE_KEY"}),
+            ),
+            (
+                "xiaomi",
+                json!({"api_key_env": "PATH", "api_key": start_up}),
+            ),
+        ] {
+            config
+                .llm_providers
+                .insert(name.into(), serde_json::from_value(fields).unwrap());
+        }
+        let chat = Chat::new(config);
+        let (code, _) = chat.save_key("mimo", "saved-key").unwrap_err();
+        assert_eq!(code, CONFIGURED_IN_FILE);
+        let env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert_eq!(env, "OTHER_KEY=keep-me\n");
+        assert!(!chat.keys.changed("DESKTOP_MODEL_UNIT_TEST_WRITE_KEY"));
+    }
+
+    #[test]
+    fn reload_env_drops_a_saved_key_removed_from_a_readable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let var = "DESKTOP_MODEL_UNIT_TEST_RELOADED_KEY";
+        let chat = xiaomi_chat(dir.path(), json!({ "api_key_env": var }));
+        let path = dir.path().join(".env");
+        chat.save_key("xiaomi", "saved-key").unwrap();
+        std::fs::write(&path, "OTHER_KEY=keep-me\n").unwrap();
+        assert_eq!(chat.reload_env(), 1);
+        assert_eq!(chat.keys.value(var), None);
+        assert!(!chat.keys.changed("OTHER_KEY"));
+        // A file that cannot be read removes nothing.
+        chat.save_key("xiaomi", "saved-key").unwrap();
+        std::fs::write(&path, b"\xff\n").unwrap();
+        assert_eq!(chat.reload_env(), 0);
+        assert_eq!(chat.keys.value(var).as_deref(), Some("saved-key"));
+    }
+
+    #[test]
     fn a_saved_key_goes_to_the_entry_named_as_the_slug_first() {
         // `llm_providers` is a `HashMap`: each new map iterates in its own order.
         for _ in 0..32 {
