@@ -61,6 +61,15 @@ esac
 exit 0
 "#;
 
+/// Real git, with the messages of the commands whose output the tools do not
+/// read sent to a side log, so the records do not depend on git's wording.
+const GIT_WRAPPER: &str = r#"#!/usr/bin/env bash
+case "$1" in
+  rev-parse|remote|status|log|diff|rev-list|merge-base) exec "$REAL_GIT" "$@" ;;
+esac
+"$REAL_GIT" "$@" >> "$GIT_NOISE" 2>&1
+"#;
+
 const FAKE_CRONTAB: &str = r#"#!/usr/bin/env bash
 printf 'crontab %s\n' "$*" >> "$FAKE_LOG"
 store="$HOME/crontab.txt"
@@ -109,6 +118,7 @@ impl Sandbox {
             ("cargo", FAKE_CARGO),
             ("gh", FAKE_GH),
             ("crontab", FAKE_CRONTAB),
+            ("git", GIT_WRAPPER),
         ] {
             let path = root.join("bin").join(name);
             fs::write(&path, text).expect("write fake");
@@ -144,6 +154,8 @@ impl Sandbox {
             .env("TMPDIR", self.path("tmp"))
             .env("LC_ALL", "C")
             .env("FAKE_LOG", self.path("calls.log"))
+            .env("REAL_GIT", self.path("sysbin/git"))
+            .env("GIT_NOISE", self.path("git-noise.log"))
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
             .env("GIT_COMMITTER_NAME", "t")
@@ -237,7 +249,9 @@ impl Sandbox {
     }
 
     /// Run one implementation and return its masked record.
-    fn record(&self, mut cmd: Command, drop_gh_missing: bool) -> String {
+    /// `cron` cases run with the cron `PATH` in front, so real git answers
+    /// there: its fetch lines and the host's `gh` notice are left out.
+    fn record(&self, mut cmd: Command, cron: bool) -> String {
         let (out_path, err_path) = (self.root.join("stdout.txt"), self.root.join("stderr.txt"));
         cmd.stdout(fs::File::create(&out_path).expect("stdout file"))
             .stderr(fs::File::create(&err_path).expect("stderr file"));
@@ -246,14 +260,24 @@ impl Sandbox {
         let took = started.elapsed();
         assert!(took.as_secs() < 30, "run took {took:?}");
         let mut stdout = fs::read_to_string(&out_path).expect("stdout");
-        if drop_gh_missing {
+        let keep = |l: &&str| {
+            !(l.contains("gh CLI not found") || l.starts_with("From ") || l.starts_with(" * "))
+        };
+        if cron {
             stdout = stdout
                 .lines()
-                .filter(|l| !l.contains("gh CLI not found"))
+                .filter(keep)
                 .map(|l| format!("{l}\n"))
                 .collect();
         }
-        let stderr = fs::read_to_string(&err_path).expect("stderr");
+        let mut stderr = fs::read_to_string(&err_path).expect("stderr");
+        if cron {
+            stderr = stderr
+                .lines()
+                .filter(keep)
+                .map(|l| format!("{l}\n"))
+                .collect();
+        }
         let calls = fs::read_to_string(self.root.join("calls.log")).unwrap_or_default();
         let mut text = format!(
             "exit={:?}\n--- stdout\n{stdout}--- stderr\n{stderr}--- calls\n{calls}",
