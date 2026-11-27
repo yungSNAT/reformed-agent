@@ -448,10 +448,11 @@ fn dirs_home() -> PathBuf {
 /// The checked-out branch of `cwd`, or "" outside a repository, on a detached head, or when git
 /// is missing, too old to read safely, or slow.
 pub(crate) fn branch_of(cwd: &Path) -> String {
-    let Some(mut git) = hermes_core::git::read_only_git(cwd) else {
+    let Some(git) = hermes_core::git::read_only_git(cwd) else {
         return String::new();
     };
-    git.args(["branch", "--show-current"]);
+    let mut git = git.command(hermes_core::git::GitRead::Branch);
+    git.arg("--show-current");
     match hermes_core::git::output_within_timeout(&mut git, Duration::from_secs(2)) {
         Some(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_owned(),
         _ => String::new(),
