@@ -436,4 +436,26 @@ mod tests {
         assert!(state().peek("reused-id-y", &b) == (None, None));
         assert!(state().peek("reused-id-x", &a).0.is_none());
     }
+
+    #[tokio::test]
+    async fn a_reused_call_id_settles_only_its_own_sessions_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("shared.txt");
+        std::fs::write(&file, "same text\n").unwrap();
+        let (a, b) = (
+            params("reused-settle-a", "reused-settle"),
+            params("reused-settle-b", "reused-settle"),
+        );
+
+        note_read(&a, &file, None, None, "same text\n").await;
+        delivered("read_file", &a, true, "same view", true);
+        note_read(&b, &file, None, None, "same text\n").await;
+        delivered("read_file", &b, true, "same view", true);
+        // A's model is given its read whole; B's budget cuts B's.
+        settle_view("reused-settle", "same view");
+        settle_view("reused-settle", "same [cut]");
+
+        assert!(state().peek("reused-settle-a", &file).0.is_some());
+        assert!(state().peek("reused-settle-b", &file).0.is_none());
+    }
 }
