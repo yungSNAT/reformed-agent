@@ -141,7 +141,9 @@ fn write_roster(root: &Path, agents: Option<&Value>) -> Result<usize, String> {
     // Owner-only on every write, as upstream writes it, before the content goes in: the atomic
     // write keeps the mode it finds.
     create_private(&path).map_err(|e| e.to_string())?;
-    hermes_config::atomic_json_write(&path, &roster).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(&roster).map_err(|e| e.to_string())?;
+    // A link swapped in since is renamed over, never followed.
+    hermes_config::atomic_write_bytes_no_follow(&path, &bytes, None).map_err(|e| e.to_string())?;
     Ok(count)
 }
 
