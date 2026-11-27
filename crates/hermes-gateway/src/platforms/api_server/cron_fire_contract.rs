@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -10,10 +12,33 @@ const CHILD_HOME: &str = "HERMES_CRON_FIRE_TEST_CHILD_HOME";
 const ISSUER: &str = "https://portal.example.invalid";
 const AUDIENCE: &str = "fixture-cron";
 
+fn child_profile_path(pattern: &Path) -> PathBuf {
+    if pattern.starts_with("%t") {
+        return pattern.to_path_buf();
+    }
+    std::path::absolute(pattern).expect("absolute LLVM profile path")
+}
+
+#[test]
+fn child_profile_path_preserves_llvm_temp_directory_pattern() {
+    let relative = Path::new("coverage/%p.profraw");
+    let absolute = std::env::current_dir()
+        .expect("current directory")
+        .join(relative);
+    let temp_pattern = Path::new("%t/%p.profraw");
+    assert_eq!(child_profile_path(relative), absolute);
+    assert_eq!(child_profile_path(&absolute), absolute);
+    assert_eq!(child_profile_path(temp_pattern), temp_pattern);
+}
+
 #[tokio::test]
 async fn cron_fire_verifies_claims_and_dispatches_only_a_current_job() {
     let Some(home) = std::env::var_os(CHILD_HOME) else {
         let profile = tempfile::tempdir().expect("fixture home");
+        let coverage_path = std::env::var_os("LLVM_PROFILE_FILE")
+            .as_deref()
+            .map(Path::new)
+            .map(child_profile_path);
         let mut child = tokio::process::Command::new(std::env::current_exe().expect("test binary"));
         child
             .env_clear()
@@ -22,24 +47,14 @@ async fn cron_fire_verifies_claims_and_dispatches_only_a_current_job() {
             .env("USERPROFILE", profile.path())
             .env("HERMES_HOME", profile.path())
             .env("HERMES_MANAGED_DIR", profile.path().join("managed"))
+            .envs(Some("SystemRoot").zip(std::env::var_os("SystemRoot")))
+            .envs(Some("LLVM_PROFILE_FILE").zip(coverage_path))
             .current_dir(profile.path())
             .kill_on_drop(true)
             .args([
                 "--exact",
                 "platforms::api_server::tests::cron_fire_contract::cron_fire_verifies_claims_and_dispatches_only_a_current_job",
             ]);
-        if let Some(root) = std::env::var_os("SystemRoot") {
-            child.env("SystemRoot", root);
-        }
-        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
-            let path = std::path::PathBuf::from(profile);
-            let path = if path.starts_with("%t") {
-                path
-            } else {
-                std::path::absolute(path).expect("absolute LLVM profile path")
-            };
-            child.env("LLVM_PROFILE_FILE", path);
-        }
         let output = tokio::time::timeout(Duration::from_secs(15), child.output())
             .await
             .expect("isolated API test timeout")
@@ -64,7 +79,7 @@ async fn cron_fire_verifies_claims_and_dispatches_only_a_current_job() {
     }]})
     .to_string();
     std::fs::write(
-        std::path::PathBuf::from(home).join("config.yaml"),
+        PathBuf::from(home).join("config.yaml"),
         serde_yaml::to_string(&json!({
             "cron": {
                 "provider": "chronos",
