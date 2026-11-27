@@ -85,7 +85,7 @@ impl FileTokenStore {
         };
         if migrate_legacy {
             // Rewrite legacy plaintext content to encrypted envelope format.
-            store.flush().await?;
+            store.update(|_| {}).await?;
         }
         Ok(store)
     }
@@ -95,15 +95,27 @@ impl FileTokenStore {
     }
 
     pub async fn upsert(&self, credential: OAuthCredential) -> Result<(), AgentError> {
-        self.cache
-            .write()
-            .await
-            .insert(credential.provider.clone(), credential);
-        self.flush().await
+        self.update(|cache| {
+            cache.insert(credential.provider.clone(), credential);
+        })
+        .await
     }
 
     pub async fn remove(&self, provider: &str) -> Result<(), AgentError> {
-        self.cache.write().await.remove(provider);
+        self.update(|cache| {
+            cache.remove(provider);
+        })
+        .await
+    }
+
+    /// Applies `change` to the store as it is on disk now and writes it, holding the lock file
+    /// the agent's OAuth refresh takes (`tokens.json.lock` beside the resolved store), so a token
+    /// another process saved since this store was opened is kept.
+    async fn update(&self, change: impl FnOnce(&mut TokenCache)) -> Result<(), AgentError> {
+        let _lock = lock_store_file(&self.path).await?;
+        let (mut current, _) = load_token_cache(&self.path, &self.key).await?;
+        change(&mut current);
+        *self.cache.write().await = current;
         self.flush().await
     }
 
@@ -121,6 +133,28 @@ impl FileTokenStore {
         };
         write_file_private(&self.path, &content).await
     }
+}
+
+/// An exclusive lock on `<resolved store>.lock`, released when the file drops.
+async fn lock_store_file(path: &Path) -> Result<std::fs::File, AgentError> {
+    let target = tokio::fs::canonicalize(path)
+        .await
+        .unwrap_or_else(|_| path.to_path_buf());
+    let mut lock_path = target.into_os_string();
+    lock_path.push(".lock");
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        file.lock()?;
+        Ok(file)
+    })
+    .await
+    .map_err(|e| AgentError::Io(e.to_string()))?
+    .map_err(|e: std::io::Error| AgentError::Io(format!("cannot lock the token store: {e}")))
 }
 
 async fn load_token_cache(
@@ -689,6 +723,65 @@ mod tests {
         assert!(write_file_private(&link, b"secret").await.is_err());
         assert!(!missing.exists(), "the link's target folder was created");
         assert!(link.is_symlink());
+    }
+
+    /// A login writes the store as it is on disk, so a token another process saved (the agent
+    /// rotating a refresh token) since this store was opened is kept.
+    #[tokio::test]
+    async fn file_token_store_keeps_what_another_writer_saved_since_it_opened() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        let refresh = FileTokenStore::new(&path).await.unwrap();
+        let login = FileTokenStore::new(&path).await.unwrap();
+        refresh
+            .upsert(sample_credential("openai", "rotated"))
+            .await
+            .unwrap();
+        login
+            .upsert(sample_credential("anthropic", "signed-in"))
+            .await
+            .unwrap();
+        login.remove("nobody").await.unwrap();
+
+        let reopened = FileTokenStore::new(&path).await.unwrap();
+        assert_eq!(
+            reopened.get("openai").await.map(|c| c.access_token),
+            Some("rotated".to_string())
+        );
+        assert_eq!(
+            reopened.get("anthropic").await.map(|c| c.access_token),
+            Some("signed-in".to_string())
+        );
+        assert_eq!(login.list_providers().await, ["anthropic", "openai"]);
+    }
+
+    /// Whilst the agent's refresh holds `tokens.json.lock`, a login waits for it.
+    #[tokio::test]
+    async fn file_token_store_writes_wait_for_the_refresh_lock() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tokens.json");
+        let store = FileTokenStore::new(&path).await.unwrap();
+        store
+            .upsert(sample_credential("openai", "first"))
+            .await
+            .unwrap();
+        let mut lock_path = std::fs::canonicalize(&path).unwrap().into_os_string();
+        lock_path.push(".lock");
+        let refresh = std::fs::File::open(&lock_path).unwrap();
+        refresh.lock().unwrap();
+
+        let login = store.upsert(sample_credential("openai", "second"));
+        tokio::pin!(login);
+        let waited =
+            tokio::time::timeout(std::time::Duration::from_millis(300), login.as_mut()).await;
+        assert!(waited.is_err(), "the write did not wait for the lock");
+        drop(refresh);
+        login.await.unwrap();
+        let reopened = FileTokenStore::new(&path).await.unwrap();
+        assert_eq!(
+            reopened.get("openai").await.map(|c| c.access_token),
+            Some("second".to_string())
+        );
     }
 
     #[tokio::test]
