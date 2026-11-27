@@ -181,7 +181,7 @@ pub enum Ending {
     Finished,
     /// It used every turn [`AgentBuilder::max_turns`] allowed.
     MaxTurns,
-    /// Its spend reached `max_cost_usd`.
+    /// The session's spend, earlier runs included, reached `max_cost_usd`.
     CostCap,
     /// It was interrupted.
     Interrupted,
@@ -190,7 +190,9 @@ pub enum Ending {
 }
 
 impl Ending {
-    fn of(result: &AgentResult, config: &AgentConfig) -> Self {
+    /// `spent_before` is what earlier runs of the session spent: the cost guard counts it, the
+    /// result does not.
+    fn of(result: &AgentResult, config: &AgentConfig, spent_before: f64) -> Self {
         if result.interrupted {
             Ending::Interrupted
         } else if result.finished_naturally {
@@ -198,7 +200,7 @@ impl Ending {
         } else if config
             .max_cost_usd
             .zip(result.session_cost_usd)
-            .is_some_and(|(cap, spent)| spent >= cap)
+            .is_some_and(|(cap, spent)| spent_before + spent >= cap)
         {
             Ending::CostCap
         } else if result.total_turns >= config.max_turns {
@@ -232,8 +234,9 @@ impl Agent {
 
     /// Ask one question in a new conversation and run until the model answers.
     pub async fn ask(&self, prompt: impl Into<String>) -> Result<Reply, AgentError> {
+        let spent_before = self.inner.session_spent_usd();
         let result = self.run(vec![Message::user(prompt)]).await?;
-        let ending = Ending::of(&result, &self.inner.config);
+        let ending = Ending::of(&result, &self.inner.config, spent_before);
         let text = result
             .messages
             .iter()

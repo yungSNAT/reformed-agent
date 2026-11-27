@@ -99,11 +99,8 @@ static UNSAVED_OAUTH_CREDENTIALS: Mutex<UnsavedOAuthCredentials> = Mutex::new(BT
 
 /// Held across each read, exchange and write of `tokens.json`, with the
 /// `tokens.json.lock` file lock for other processes, so that one refresh
-/// token is exchanged once.
-/// shortcut: hermes-auth's `FileTokenStore` (the CLI login) takes neither
-/// lock and writes from the copy it loaded when opened, so a login running
-/// alongside a refresh can overwrite the refresh token rotated here. Upgrade:
-/// have it take the file lock and reload before each write.
+/// token is exchanged once. hermes-auth's `FileTokenStore` (the CLI login)
+/// takes the same file lock and reloads the store before each write.
 static OAUTH_STORE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 

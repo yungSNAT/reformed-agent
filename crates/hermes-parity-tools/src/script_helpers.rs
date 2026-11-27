@@ -87,7 +87,8 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
 
     while let Some(ch) = chars.next() {
         match ch {
-            c if c.is_ascii_whitespace() => {
+            // Python shlex's whitespace; a form feed or vertical tab is part of a word.
+            ' ' | '\t' | '\r' | '\n' => {
                 if in_token {
                     tokens.push(std::mem::take(&mut current));
                     in_token = false;
@@ -108,14 +109,14 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
                 loop {
                     match chars.next() {
                         Some('"') => break,
+                        // Python shlex, unlike a POSIX shell, escapes only `"` and `\` here.
                         Some('\\') => match chars.next() {
-                            Some(esc @ ('"' | '\\' | '$' | '`')) => current.push(esc),
-                            Some('\n') => {}
+                            Some(esc @ ('"' | '\\')) => current.push(esc),
                             Some(other) => {
                                 current.push('\\');
                                 current.push(other);
                             }
-                            None => return Err("No closing quotation".to_string()),
+                            None => return Err("No escaped character".to_string()),
                         },
                         Some(c) => current.push(c),
                         None => return Err("No closing quotation".to_string()),
@@ -124,8 +125,8 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
             }
             '\\' => {
                 in_token = true;
+                // No line continuation: Python keeps an escaped newline.
                 match chars.next() {
-                    Some('\n') => {}
                     Some(c) => current.push(c),
                     None => return Err("No escaped character".to_string()),
                 }
@@ -141,6 +142,10 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
     }
     Ok(tokens)
 }
+
+#[cfg(test)]
+#[path = "script_helpers_shlex_tests.rs"]
+mod shlex_tests;
 
 pub(crate) fn shlex_quote(token: &str) -> String {
     if token.is_empty() {
