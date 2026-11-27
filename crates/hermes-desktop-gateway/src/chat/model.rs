@@ -300,7 +300,7 @@ fn option_rows(
     let mut rows = Vec::new();
     let mut seen = Vec::new();
     let mut configured: Vec<_> = config.llm_providers.iter().collect();
-    // By name in any case, then by name, as `Chat::slug_entries` orders them.
+    // By name in any case, then by name.
     configured.sort_by(|(a, _), (b, _)| {
         a.to_ascii_lowercase()
             .cmp(&b.to_ascii_lowercase())
@@ -403,19 +403,7 @@ impl Chat {
     pub(super) fn turn_config(&self, model: &str) -> Result<Cow<'_, GatewayConfig>, String> {
         let (provider, _) =
             hermes_provider_runtime::resolve_provider_and_model(&self.config, model);
-        // The entry named exactly first, then the first by name in another case, as
-        // `slug_entries` orders them.
-        let entry = self
-            .config
-            .llm_providers
-            .get_key_value(provider.as_str())
-            .or_else(|| {
-                self.config
-                    .llm_providers
-                    .iter()
-                    .filter(|(name, _)| name.eq_ignore_ascii_case(&provider))
-                    .min_by_key(|(name, _)| name.as_str())
-            });
+        let entry = self.slug_entry(&provider);
         let mut vars: Vec<&str> = entry
             .and_then(|(_, c)| c.api_key_env.as_deref())
             .map(str::trim)
@@ -467,32 +455,15 @@ impl Chat {
         json!({"providers": providers, "model": model, "provider": current})
     }
 
-    /// The `config.yaml` entries for `slug`: the one named exactly as the slug first, then one
-    /// named so in another case, then the canonical provider's, one entry for each name in any
-    /// case (an entry named exactly first, then by name), so an entry never takes the key
-    /// variables of one whose name differs only in case.
-    fn slug_entries(&self, slug: &str) -> Vec<(&String, &LlmProviderConfig)> {
+    /// The `config.yaml` entry a turn on provider `slug` reads, as the provider build picks it,
+    /// so a key is saved to, and a turn sends, the variable that turn's build reads.
+    fn slug_entry(&self, slug: &str) -> Option<(&String, &LlmProviderConfig)> {
         let slug = slug.trim();
-        let canonical = canonical_provider_id(&slug.to_ascii_lowercase());
-        let mut entries: Vec<_> = self
-            .config
-            .llm_providers
-            .iter()
-            .filter(|(name, _)| {
-                name.eq_ignore_ascii_case(slug) || name.eq_ignore_ascii_case(&canonical)
-            })
-            .collect();
-        entries.sort_by_key(|(name, _)| {
-            (
-                name.as_str() != slug,
-                !name.eq_ignore_ascii_case(slug),
-                *name != &canonical,
-                name.as_str(),
-            )
-        });
-        let mut seen = std::collections::HashSet::new();
-        entries.retain(|(name, _)| seen.insert(name.to_ascii_lowercase()));
-        entries
+        hermes_provider_runtime::active_llm_provider_entry(
+            &self.config,
+            slug,
+            &hermes_provider_runtime::normalize_runtime_provider_name(slug),
+        )
     }
 
     /// A known provider's key variables, first to last: the `${VAR}` its configured `api_key`
@@ -500,7 +471,7 @@ impl Chat {
     /// this gateway does not know.
     fn slug_key_vars(&self, slug: &str) -> Option<Vec<&str>> {
         let known = key_vars(slug)?;
-        let configured = self.slug_entries(slug).into_iter().flat_map(|(_, c)| {
+        let configured = self.slug_entry(slug).into_iter().flat_map(|(_, c)| {
             let reference = c
                 .api_key
                 .as_deref()
@@ -543,7 +514,7 @@ impl Chat {
                 ),
             ));
         }
-        let written_out = self.slug_entries(slug).into_iter().any(|(_, c)| {
+        let written_out = self.slug_entry(slug).into_iter().any(|(_, c)| {
             let literal = c.api_key.as_deref().map_or("", str::trim);
             !literal.is_empty() && literal_source(literal, &vars) != Some(var)
         });
@@ -574,15 +545,19 @@ impl Chat {
         self.keys.set(var, Some(key.to_string()));
         self.keys.saw_in_home_file([env_name_key(var)]);
         drop(_write);
-        // The picker's row for the slug it sent, as upstream answers; one named exactly first.
+        // The picker's row of the entry the key went to, else of the slug sent, as upstream
+        // answers; one named exactly first.
+        let name = self
+            .slug_entry(slug)
+            .map_or(slug, |(name, _)| name.as_str());
         let mut rows = option_rows(&self.config, &self.keys, "", false);
-        rows.sort_by_key(|row| row["slug"] != slug);
+        rows.sort_by_key(|row| row["slug"] != name);
         let mut row = rows
             .into_iter()
             .find(|row| {
                 row["slug"]
                     .as_str()
-                    .is_some_and(|s| s.eq_ignore_ascii_case(slug))
+                    .is_some_and(|s| s.eq_ignore_ascii_case(name))
             })
             .unwrap_or_else(|| Value::Object(row(slug, false, Vec::new(), "env")));
         row["authenticated"] = true.into();
@@ -987,10 +962,10 @@ mod tests {
                 config.llm_providers.insert(name.into(), provider);
             }
             let chat = Chat::new(config);
-            assert_eq!(
-                chat.slug_key_vars("mimo").unwrap()[..2],
-                ["EXACT_KEY", "CANONICAL_KEY"]
-            );
+            let vars = chat.slug_key_vars("mimo").unwrap();
+            assert_eq!(vars[0], "EXACT_KEY");
+            // The build for `mimo` reads only `mimo`'s entry.
+            assert!(!vars.contains(&"CANONICAL_KEY"), "{vars:?}");
         }
     }
 
@@ -1010,21 +985,16 @@ mod tests {
                 config.llm_providers.insert(name.into(), provider);
             }
             let chat = Chat::new(config);
-            // `mimo` names no variable: the canonical entry named exactly, then the registry's,
-            // never `MIMO`'s, so a save and a disconnect of `mimo` leave `MIMO`'s key alone.
+            // `mimo` names no variable: the registry's, as its build reads, never `MIMO`'s or
+            // `xiaomi`'s, so a save and a disconnect of `mimo` leave their keys alone.
             let registry = key_vars("xiaomi").unwrap();
             let expected = |first: &'static str| {
                 let mut vars = vec![first];
                 vars.extend(registry.iter().copied().filter(|var| *var != first));
                 vars
             };
-            assert_eq!(
-                chat.slug_key_vars("mimo").unwrap(),
-                expected("CANONICAL_KEY")
-            );
-            let mut sibling = vec![upper];
-            sibling.extend(expected("CANONICAL_KEY"));
-            assert_eq!(chat.slug_key_vars("MIMO").unwrap(), sibling);
+            assert_eq!(chat.slug_key_vars("mimo").unwrap(), registry);
+            assert_eq!(chat.slug_key_vars("MIMO").unwrap(), expected(upper));
             assert_eq!(
                 chat.slug_key_vars("XIAOMI").unwrap(),
                 expected("UPPER_CANONICAL_KEY")
