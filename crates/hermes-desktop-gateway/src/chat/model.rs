@@ -460,7 +460,9 @@ impl Chat {
     }
 
     /// The `config.yaml` entries for `slug`: the one named exactly as the slug first, then one
-    /// named so in another case, then by name.
+    /// named so in another case, then the canonical provider's, one entry for each name in any
+    /// case (an entry named exactly first, then by name), so an entry never takes the key
+    /// variables of one whose name differs only in case.
     fn slug_entries(&self, slug: &str) -> Vec<(&String, &LlmProviderConfig)> {
         let slug = slug.trim();
         let canonical = canonical_provider_id(&slug.to_ascii_lowercase());
@@ -476,9 +478,12 @@ impl Chat {
             (
                 name.as_str() != slug,
                 !name.eq_ignore_ascii_case(slug),
+                *name != &canonical,
                 name.as_str(),
             )
         });
+        let mut seen = std::collections::HashSet::new();
+        entries.retain(|(name, _)| seen.insert(name.to_ascii_lowercase()));
         entries
     }
 
@@ -627,10 +632,12 @@ impl Chat {
             .key_variables()
             .iter()
             .filter(|var| match values.get(&env_name_key(var)) {
-                Some(value) => {
-                    env_value_round_trips(var, value) && self.keys.set(var, Some(value.clone()))
+                Some(value) if env_value_round_trips(var, value) => {
+                    self.keys.set(var, Some(value.clone()))
                 }
-                None => {
+                // Gone from the home `.env`, or read only as a value that would not read back
+                // as itself: what a fresh start would read.
+                _ => {
                     home_names
                         .as_ref()
                         .is_some_and(|names| !names.contains(&env_name_key(var)))
