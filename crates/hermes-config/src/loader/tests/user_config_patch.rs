@@ -190,7 +190,7 @@ fn load_config_accepts_canonical_and_legacy_prefill_messages_file_keys() {
 }
 
 #[test]
-fn load_prefill_messages_resolves_relative_json_under_config_home() {
+fn load_prefill_messages_accepts_relative_and_absolute_paths() {
     use tempfile::tempdir;
 
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -203,7 +203,7 @@ fn load_prefill_messages_resolves_relative_json_under_config_home() {
         r#"[{"role":"system","content":"few-shot system"},{"role":"user","content":"example"}]"#,
     )
     .unwrap();
-    let cfg = GatewayConfig {
+    let mut cfg = GatewayConfig {
         home_dir: Some(dir.path().to_string_lossy().to_string()),
         prefill_messages_file: Some("prefill.json".to_string()),
         ..GatewayConfig::default()
@@ -215,6 +215,26 @@ fn load_prefill_messages_resolves_relative_json_under_config_home() {
     assert_eq!(messages[0].content.as_deref(), Some("few-shot system"));
     assert_eq!(messages[1].role, hermes_core::MessageRole::User);
     assert_eq!(messages[1].content.as_deref(), Some("example"));
+
+    cfg.prefill_messages_file = Some(dir.path().join("prefill.json").to_str().unwrap().into());
+    assert_eq!(load_prefill_messages(&cfg), messages);
+}
+
+#[test]
+fn load_prefill_messages_ignores_unreadable_or_invalid_files() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(load_prefill_messages_file(dir.path()).is_empty());
+    assert!(load_prefill_messages_file(&dir.path().join("missing.json")).is_empty());
+
+    for (name, contents) in [
+        ("invalid-json", "["),
+        ("object", r#"{"role":"user","content":"example"}"#),
+        ("invalid-message", r#"[{"role":"unknown","content":"example"}]"#),
+    ] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, contents).unwrap();
+        assert!(load_prefill_messages_file(&path).is_empty(), "{name}");
+    }
 }
 
 #[test]
