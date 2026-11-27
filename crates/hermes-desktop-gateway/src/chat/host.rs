@@ -199,10 +199,11 @@ mod unix {
         // the command is refused.
         match check_all_command_guards_with_context(command, "local", context, None) {
             Ok(result) if result.approved => None,
-            result => Some(result.map_or_else(
-                |_| "the safety check could not run".into(),
-                |result| result.description.unwrap_or_default(),
-            )),
+            result => Some(
+                result.map_or("the safety check could not run".to_string(), |result| {
+                    result.description.unwrap_or_default()
+                }),
+            ),
         }
     }
 
@@ -404,12 +405,14 @@ mod unix {
     const DRAIN: Duration = Duration::from_secs(2);
 
     /// Starts `command` as the leader of its own session and process group, with stdin closed,
-    /// an environment of the kept names and those `command` sets, and `folder` as its working
-    /// folder, under a supervisor task that owns it. The supervisor ends the run when the child exits, `limit` passes or this future
-    /// is dropped. It then kills the group and, on Linux, every process left in the session
-    /// before reaping the child, so neither id can be reused under the kill; reads output for at
-    /// most [`DRAIN`] more; and gives the slot back. A descendant that starts its own session
-    /// (`setsid`), or on macOS its own process group, survives the run.
+    /// an environment of the kept names plus those `command` sets (which skip [`kept_env`]'s
+    /// filter, so a caller sets none that carries a credential), and `folder` as its working
+    /// folder, under a supervisor task that owns it. The supervisor ends the run when the child
+    /// exits, `limit` passes or this future is dropped. It then kills the group and, on Linux,
+    /// every process left in the session before reaping the child, so neither id can be reused
+    /// under the kill; reads output for at most [`DRAIN`] more; and gives the slot back. A
+    /// descendant that starts its own session (`setsid`), or on macOS its own process group,
+    /// survives the run.
     pub(super) async fn supervise(
         mut command: Command,
         folder: PathBuf,
@@ -513,9 +516,9 @@ mod unix {
                 libc::WEXITED | libc::WNOWAIT,
             )
         };
-        while wait() != 0
-            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
-        {}
+        let interrupted =
+            || std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted;
+        while wait() != 0 && interrupted() {}
     }
 
     /// Kills the process group led by `leader` and, on Linux, every process in its session.
@@ -1307,14 +1310,25 @@ mod unix {
                 "hermes",
                 r#"printf '%s|' "$@"; printf '%s' "$HERMES_HOME""#,
             );
-            // Other tests hold slots too: a busy answer is asked again.
-            let reply = tokio::time::timeout(Duration::from_secs(20), async {
+            // The connection already runs 2, so the call is busy until one is given back.
+            let first = slot(9023).await;
+            let _second = slot(9023).await;
+            let busy = cli_exec_beside(call(), Some(bin.path())).await;
+            assert_eq!(busy, Err((BUSY, "busy".into())));
+            let asked = async {
                 loop {
                     match cli_exec_beside(call(), Some(bin.path())).await {
                         Err((BUSY, _)) => tokio::time::sleep(Duration::from_millis(100)).await,
                         reply => return reply,
                     }
                 }
+            };
+            let free_one = async {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                drop(first);
+            };
+            let (reply, ()) = tokio::time::timeout(Duration::from_secs(20), async {
+                tokio::join!(asked, free_one)
             })
             .await
             .expect("no slot came free");
