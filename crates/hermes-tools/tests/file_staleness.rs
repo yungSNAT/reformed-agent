@@ -182,9 +182,9 @@ async fn write_file_requires_full_unredacted_read_of_existing_file() {
         "read_file output kept a token unredacted"
     );
     refused(&write(&tools, "t2", &path, "token=changed\n").await);
-    assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
-        format!("token={secret}\n")
+    assert!(
+        std::fs::read_to_string(&path).unwrap() == format!("token={secret}\n"),
+        "the refused write changed the file"
     );
 
     // A net-new file needs no read, and the session's own write is a baseline.
