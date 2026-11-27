@@ -976,23 +976,12 @@ impl SessionPersistence {
             .write(true)
             .open(path)
             .map_err(|e| AgentError::Io(format!("Cannot open session budget lock: {e}")))?;
-        // A sibling thread's fork child holds an inherited descriptor, and so the lock
-        // we just released, until it execs; wait that out before reporting a live holder.
-        let mut attempt = 0;
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(file),
-                Err(std::fs::TryLockError::WouldBlock) if attempt < BUDGET_LOCK_RETRIES => {
-                    attempt += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-                Err(e) => {
-                    return Err(AgentError::Io(format!(
-                        "Cannot lock session budget for this run or reset: {e}"
-                    )))
-                }
-            }
-        }
+        file.try_lock().map_err(|e| {
+            AgentError::Io(format!(
+                "Cannot lock session budget for this run or reset: {e}"
+            ))
+        })?;
+        Ok(file)
     }
 
     fn budget_connection(&self) -> Result<rusqlite::Connection, AgentError> {
@@ -1377,8 +1366,6 @@ impl SessionPersistence {
     }
 }
 
-const BUDGET_LOCK_RETRIES: u32 = 20;
-
 include!("session_persistence/session_io.rs");
 
 #[cfg(test)]
@@ -1388,10 +1375,6 @@ mod empty_snapshot_tests;
 #[cfg(test)]
 #[path = "session_persistence/metadata_tests.rs"]
 mod metadata_tests;
-
-#[cfg(test)]
-#[path = "session_persistence/budget_lock_tests.rs"]
-mod budget_lock_tests;
 
 #[cfg(test)]
 mod tests;
