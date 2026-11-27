@@ -431,14 +431,28 @@ const ENV_WRITE_DENYLIST: &[&str] = &[
     "HERMES_MANAGED_DIR", "GATEWAY_STATUS_REPORT_URL", "HERMES_INSTALL_STATE_DIR",
 ];
 
+/// `name` as this platform's environment compares it: upper-cased on Windows, whose variable
+/// names ignore case.
+pub fn env_name_key(name: &str) -> String {
+    env_name_key_on(name, cfg!(windows))
+}
+
+fn env_name_key_on(name: &str, ignores_case: bool) -> String {
+    if ignores_case {
+        name.to_ascii_uppercase()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Whether the `.env` writer may set or remove `key`: a variable name ([`is_env_name`]) that
 /// does not steer the next process. Windows reads variable names in any letter case.
 pub fn env_name_writable(key: &str) -> bool {
-    let policy = if cfg!(windows) {
-        key.to_ascii_uppercase()
-    } else {
-        key.to_string()
-    };
+    env_name_writable_on(key, cfg!(windows))
+}
+
+fn env_name_writable_on(key: &str, ignores_case: bool) -> bool {
+    let policy = env_name_key_on(key, ignores_case);
     is_env_name(key)
         && !ENV_WRITE_DENY_PREFIXES.iter().any(|p| policy.starts_with(p))
         && !ENV_WRITE_DENYLIST.contains(&policy.as_str())
