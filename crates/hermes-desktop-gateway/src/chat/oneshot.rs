@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use hermes_agent::{render_oneshot_template, strip_wrapping_code_fence, OneShotError};
+use hermes_agent::{render_oneshot_template, strip_wrapping_code_fence};
 use hermes_core::Message;
 use serde_json::{json, Map, Value};
 
@@ -150,13 +150,9 @@ fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), Rpc
             Some(Value::Object(variables)) => variables.clone(),
             _ => Map::new(),
         };
-        render_oneshot_template(template, &variables).map_err(|e| match e {
-            OneShotError::UnknownTemplate(name) => (
-                UNKNOWN_TEMPLATE,
-                format!("unknown one-shot template: {name}"),
-            ),
-            other => (PROMPT_REQUIRED, other.to_string()),
-        })?
+        // Its only error is an unknown template, whose message names it.
+        render_oneshot_template(template, &variables)
+            .map_err(|e| (UNKNOWN_TEMPLATE, e.to_string()))?
     };
     for (key, text) in [("instructions", &instructions), ("input", &input)] {
         if text.len() > MAX_TEXT_BYTES {
