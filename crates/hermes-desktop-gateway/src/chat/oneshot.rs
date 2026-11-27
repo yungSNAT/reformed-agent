@@ -199,6 +199,25 @@ mod tests {
         }
     }
 
+    /// A temperature or token limit sent as a string is read as upstream's `float()` and
+    /// `int()` read it, a fractional limit is truncated, and one that does not parse (or a
+    /// temperature that is not finite) takes its default.
+    #[test]
+    fn numbers_sent_as_strings() {
+        for (temperature, max_tokens, want) in [
+            (json!("0.8"), json!("50"), (0.8, 50)),
+            (json!(" 1.5 "), json!(" 7 "), (1.5, 7)),
+            (json!("warm"), json!("5.5"), (0.3, 1024)),
+            (json!("nan"), json!("0"), (0.3, 1024)),
+            (json!(0.5), json!(20.9), (0.5, 20)),
+        ] {
+            let params =
+                json!({"input": "x", "temperature": temperature, "max_tokens": max_tokens});
+            let (_, _, t, n) = prompt(params.as_object().unwrap()).unwrap();
+            assert_eq!((t, n), want, "{params}");
+        }
+    }
+
     /// An unknown template is refused with 4031 and its name.
     #[test]
     fn an_unknown_template_is_4031() {
