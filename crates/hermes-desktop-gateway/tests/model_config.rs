@@ -330,12 +330,12 @@ async fn a_model_switch_changes_only_that_sessions_next_turns() {
 /// whilst the project file still holds it, even once a save has created the home `.env`.
 #[tokio::test]
 async fn reload_env_keeps_a_key_the_project_env_still_holds() {
-    use std::io::BufRead;
+    use tokio::io::AsyncBufReadExt;
     let home = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join(".env"), "XIAOMI_API_KEY=project-key\n").unwrap();
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_hermes-desktop-gateway"))
-        // A failed assertion drops stdin, so the gateway stops with the test.
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_hermes-desktop-gateway"))
+        // A failed assertion drops the child: it is killed and its stdin closes.
         .args(["--port", "0", "--exit-when-stdin-closes"])
         .current_dir(project.path())
         .env("HERMES_HOME", home.path())
@@ -347,12 +347,13 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .spawn()
         .unwrap();
     // Held to the end, so the gateway's later readiness line meets an open pipe.
-    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut stdout = tokio::io::BufReader::new(child.stdout.take().unwrap());
     let mut first = String::new();
-    stdout.read_line(&mut first).unwrap();
+    stdout.read_line(&mut first).await.unwrap();
     let port: u16 = first
         .trim()
         .strip_prefix("HERMES_BACKEND_READY port=")
@@ -372,8 +373,7 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     assert!(reply.get("error").is_none(), "{reply}");
     client.call(2, "reload.env", json!({})).await;
     let reply = client.call(3, "model.options", json!({})).await;
-    child.kill().unwrap();
-    child.wait().unwrap();
+    child.kill().await.unwrap();
     drop(stdout);
     let rows = reply["result"]["providers"].as_array().unwrap();
     assert!(
