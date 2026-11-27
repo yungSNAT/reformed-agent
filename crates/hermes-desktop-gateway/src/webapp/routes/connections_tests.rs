@@ -262,6 +262,30 @@ fn an_unchanged_write_keeps_the_revision_and_a_corrupt_store_is_kept_aside() {
 }
 
 #[test]
+fn a_store_holding_an_entry_that_is_not_an_object_is_kept_aside_before_a_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    save_remote(&path, "Work", "https://gw.example");
+    let mut doc = read_doc(&path).unwrap().0.unwrap();
+    let list = doc.get_mut("connections").unwrap().as_array_mut().unwrap();
+    list.push(json!("an entry native Desktop wrote"));
+    let bytes = serde_json::to_vec(&doc).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    last_used(&path, "work").unwrap();
+    let kept: Vec<Vec<u8>> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("gateway-connections.json.corrupt-")
+        })
+        .map(|e| std::fs::read(e.path()).unwrap())
+        .collect();
+    assert_eq!(kept, vec![bytes], "the dropped entry was not kept");
+}
+
+#[test]
 fn remove_and_last_used_name_an_entry_and_the_local_one_stays() {
     let dir = tempfile::tempdir().unwrap();
     let path = store(&dir);

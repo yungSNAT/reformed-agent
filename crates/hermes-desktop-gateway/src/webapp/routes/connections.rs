@@ -8,7 +8,10 @@
 //!
 //! Stricter than upstream, each on purpose:
 //! - this gateway saves and relays only `remote` entries with a session token; `ssh`, `cloud`,
-//!   `local` and `oauth` entries are listed and kept as they are, never rewritten or dialled;
+//!   `local` and `oauth` entries are listed and never rewritten or dialled (any but `local` may
+//!   be removed, as upstream allows);
+//! - a store whose list holds an entry that is not an object is copied aside, as a corrupt one
+//!   is, before a write drops that entry;
 //! - a saved URL may not carry a user name or password (the URL is in the public view), and a
 //!   target address must not be link-local, cloud metadata, unspecified, multicast, broadcast,
 //!   IPv4-mapped, zoned or this listener itself; a private or ULA address needs the entry's
@@ -364,6 +367,11 @@ pub(crate) fn mutate<T>(
     }
     let lock = StoreLock::take(path, "gateway connections store").map_err(StoreError::Busy)?;
     let (doc, corrupt) = read_doc(path)?;
+    // The rewritten list holds only entries that are objects; any other is kept in a copy.
+    let unreadable_entry = doc
+        .as_ref()
+        .and_then(|d| d.get("connections"))
+        .is_some_and(|c| !c.as_array().is_some_and(|l| l.iter().all(Value::is_object)));
     let mut list = connections(doc.as_ref());
     let mut next = doc.clone().unwrap_or_default();
     let answer = change(&mut next, &mut list)?;
@@ -384,7 +392,7 @@ pub(crate) fn mutate<T>(
                 "gateway connections store lock was taken over".into(),
             ));
         }
-        write_doc(path, &next, corrupt)?;
+        write_doc(path, &next, corrupt || unreadable_entry)?;
     }
     Ok((next, answer))
 }
