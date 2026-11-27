@@ -877,22 +877,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let chat = xiaomi_chat(dir.path(), json!({}));
         let mut config = chat.config.clone();
-        // `mimo` saves to its own `key_env`; `xiaomi`'s key is `PATH`'s start-up value.
+        // `mimo` saves to its own `key_env`, but its key is `PATH`'s start-up value, which a
+        // turn's build sends.
         let start_up = std::env::var("PATH").unwrap();
-        for (name, fields) in [
-            (
-                "mimo",
-                json!({"api_key_env": "DESKTOP_MODEL_UNIT_TEST_WRITE_KEY"}),
-            ),
-            (
-                "xiaomi",
-                json!({"api_key_env": "PATH", "api_key": start_up}),
-            ),
-        ] {
-            config
-                .llm_providers
-                .insert(name.into(), serde_json::from_value(fields).unwrap());
-        }
+        let fields =
+            json!({"api_key_env": "DESKTOP_MODEL_UNIT_TEST_WRITE_KEY", "api_key": start_up});
+        config
+            .llm_providers
+            .insert("mimo".into(), serde_json::from_value(fields).unwrap());
         let chat = Chat::new(config);
         let (code, _) = chat.save_key("mimo", "saved-key").unwrap_err();
         assert_eq!(code, CONFIGURED_IN_FILE);
