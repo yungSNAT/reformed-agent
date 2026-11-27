@@ -1361,11 +1361,18 @@ fn a_malformed_worker_marker_fails_closed() {
         "main/K-0001 K-0002",
         &format!("main/{}", "K".repeat(101)),
     ] {
-        let child = caller(&fx, None, Some(raw));
-        for task in &board.tasks {
-            let error =
-                check_cli_lifecycle_with(board, task, "block", false, true, &child).unwrap_err();
-            assert!(error.contains("is not <board>/<task>"), "{raw:?}: {error}");
+        // A valid binding beside the malformed marker does not lift the refusal,
+        // even for the binding's own running task.
+        for binding in [None, worker("run-a")] {
+            let child = caller(&fx, binding, Some(raw));
+            for task in &board.tasks {
+                for force in [false, true] {
+                    let error =
+                        check_cli_lifecycle_with(board, task, "block", false, force, &child)
+                            .unwrap_err();
+                    assert!(error.contains("is not <board>/<task>"), "{raw:?}: {error}");
+                }
+            }
         }
     }
 }

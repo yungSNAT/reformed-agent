@@ -391,6 +391,12 @@ fn check_cli_lifecycle_with(
         )
     };
     let in_worker_tree = match (&caller.binding, &caller.worker_tree) {
+        // A malformed marker refuses every task, a binding beside it or not.
+        (_, Some(Err(raw))) => {
+            return Err(format!(
+                "Refusing `{command}`: this process runs under a dispatched kanban worker, and its {ENV_WORKER_SCOPE} value `{raw}` is not <board>/<task>, so it may not change any task."
+            ))
+        }
         (Some(_), _) if force => return Err(operators_only()),
         (Some(binding), _) => {
             if board.id != binding.board {
@@ -403,11 +409,6 @@ fn check_cli_lifecycle_with(
             true
         }
         // A worker's terminal child: the binding was stripped, the marker kept.
-        (None, Some(Err(raw))) => {
-            return Err(format!(
-                "Refusing `{command}`: this process runs under a dispatched kanban worker, and its {ENV_WORKER_SCOPE} value `{raw}` is not <board>/<task>, so it may not change any task."
-            ))
-        }
         (None, Some(Ok(own))) => {
             if board.id != own.board || !task.id.eq_ignore_ascii_case(&own.task) {
                 return Err(format!(
