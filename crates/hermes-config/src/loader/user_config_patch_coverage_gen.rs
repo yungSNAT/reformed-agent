@@ -46,7 +46,7 @@ mod loader {
                 assert_eq!(mask_secret(""), "(empty)");
                 assert_eq!(mask_secret("abc"), "***");
                 assert_eq!(mask_secret("abcd"), "***");
-                assert_eq!(mask_secret("abcdefgh"), "***efgh");
+                assert_eq!(mask_secret("abcdefgh"), "***");
             }
 
             #[test]
@@ -367,7 +367,7 @@ mod loader {
                 assert_eq!(get(&c, "llm.covprov.oauth_client_id"), "client-123");
                 assert_eq!(get(&c, "llm.covprov.base_url"), "https://api.example/v1");
                 assert_eq!(get(&c, "llm.covprov.model"), "big-model");
-                assert_eq!(get(&c, "llm.covprov.api_key"), "***abcd");
+                assert_eq!(get(&c, "llm.covprov.api_key"), "***");
             }
 
             #[test]

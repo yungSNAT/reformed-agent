@@ -162,6 +162,7 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
             "No snapshots available to rollback",
         ),
         ("/rollback", &["load"][..], "Usage: /rollback load"),
+        ("/timetravel", &["help"][..], "jump to named snapshot"),
         ("/timetravel", &["goto"][..], "Usage: /timetravel goto"),
         (
             "/timetravel",
@@ -207,6 +208,8 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
     ] {
         assert!(diff.contains(expected), "{diff}");
     }
+    let snapshots = std::fs::read_dir(&sessions).unwrap().count();
+    let messages: Vec<_> = app.messages.iter().map(message_signature).collect();
     for (args, expected) in [
         (&["diff", "missing"][..], "Snapshot 'missing' not found"),
         (
@@ -218,6 +221,14 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
             "Snapshot 'missing' not found",
         ),
         (
+            &["diff", "branch-left", "branch-"][..],
+            "Snapshot 'branch-' is ambiguous",
+        ),
+        (
+            &["merge", "missing", "branch-right"][..],
+            "Snapshot 'missing' not found",
+        ),
+        (
             &["merge", "branch-", "branch-right"][..],
             "Snapshot 'branch-' is ambiguous",
         ),
@@ -225,10 +236,22 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
             &["merge", "branch-left", "missing"][..],
             "Snapshot 'missing' not found",
         ),
+        (
+            &["merge", "branch-left", "branch-"][..],
+            "Snapshot 'branch-' is ambiguous",
+        ),
     ] {
         let output = command_output(&mut app, "/branch", args).await;
         assert!(output.contains(expected), "{args:?}: {output}");
     }
+    assert_eq!(
+        app.messages
+            .iter()
+            .map(message_signature)
+            .collect::<Vec<_>>(),
+        messages
+    );
+    assert_eq!(std::fs::read_dir(&sessions).unwrap().count(), snapshots);
 
     let merged = command_output(
         &mut app,
@@ -273,10 +296,19 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
         app.take_pending_input_prefill().as_deref(),
         Some("shared question")
     );
+    let corrupt = sessions.join("branch-corrupt.json");
+    std::fs::write(&corrupt, "malformed checkpoint fixture").unwrap();
     let listed = command_output(&mut app, "/branch", &["list"]).await;
-    assert!(
-        listed.contains("branch-left") && listed.contains("branch-right"),
-        "{listed}"
+    for expected in [
+        "✓ `branch-left` (messages=2)",
+        "✓ `branch-right` (messages=2)",
+        "⚠ `branch-corrupt` (json_invalid:",
+    ] {
+        assert!(listed.contains(expected), "{listed}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(&corrupt).unwrap(),
+        "malformed checkpoint fixture"
     );
     let forked = command_output(&mut app, "/timetravel", &["branch", "review fixture"]).await;
     assert!(forked.contains("review-fixture.json"), "{forked}");

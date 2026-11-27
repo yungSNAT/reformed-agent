@@ -7,6 +7,108 @@ fn auxiliary_main_runtime_requires_a_provider_and_model() {
     assert!(main_runtime_from_model(Some(" openai : model:version ".into())).is_some());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tool_bridge_preserves_available_schemas_and_tracks_the_live_registry() {
+    const FIXTURE_HOME: &str = "HERMES_HTTP_TEST_TOOL_BRIDGE_HOME";
+    if std::env::var_os(FIXTURE_HOME).is_none() {
+        let scratch = TempDir::new().unwrap();
+        let home = scratch.path();
+        let qualified = concat!(
+            module_path!(),
+            "::tool_bridge_preserves_available_schemas_and_tracks_the_live_registry"
+        );
+        let (_, name) = qualified.split_once("::").unwrap();
+        let mut child = tokio::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", name])
+            .current_dir(home)
+            .kill_on_drop(true)
+            .env_clear()
+            .env(FIXTURE_HOME, home)
+            .env("HOME", home)
+            .env("USERPROFILE", home)
+            .env("HERMES_HOME", home)
+            .env(
+                "HERMES_TOOL_POLICY_COUNTERS_PATH",
+                home.join("counters.json"),
+            );
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            child.env(
+                "LLVM_PROFILE_FILE",
+                std::env::current_dir().unwrap().join(profile),
+            );
+        }
+        if let Some(value) = std::env::var_os("SystemRoot") {
+            child.env("SystemRoot", value);
+        }
+        let result = tokio::time::timeout(std::time::Duration::from_secs(15), child.output())
+            .await
+            .expect("tool bridge test timed out")
+            .expect("run isolated tool bridge test");
+        assert!(result.status.success(), "{result:?}");
+        assert!(home.join("counters.json").is_file(), "{result:?}");
+        return;
+    }
+
+    struct Echo(&'static str);
+
+    #[async_trait::async_trait]
+    impl hermes_core::ToolHandler for Echo {
+        async fn execute(&self, params: Value) -> Result<String, hermes_core::ToolError> {
+            Ok(params.to_string())
+        }
+
+        fn schema(&self) -> hermes_core::ToolSchema {
+            hermes_core::ToolSchema::new(
+                self.0,
+                "Echo fixture parameters",
+                hermes_core::JsonSchema::object(
+                    [(
+                        "sample".to_owned(),
+                        json!({"type": "array", "items": {"type": "string"}}),
+                    )]
+                    .into_iter()
+                    .collect(),
+                    vec!["sample".to_owned()],
+                ),
+            )
+        }
+    }
+
+    let tools = ToolRegistry::new();
+    for (name, available) in [("fixture_echo", true), ("fixture_unavailable", false)] {
+        let handler = Arc::new(Echo(name));
+        let schema = hermes_core::ToolHandler::schema(handler.as_ref());
+        tools.register(
+            name,
+            "fixture",
+            schema,
+            handler,
+            Arc::new(move || available),
+            Vec::new(),
+            false,
+            "Echo fixture parameters",
+            "",
+            None,
+        );
+    }
+
+    let bridged = bridge_tool_registry(&tools);
+    assert_eq!(bridged.names(), ["fixture_echo"]);
+    let entry = bridged.get("fixture_echo").unwrap();
+    assert_eq!(
+        entry.schema,
+        hermes_core::ToolHandler::schema(&Echo("fixture_echo"))
+    );
+    let input = json!({"sample": ["one", "two"]});
+    let echoed: Value = serde_json::from_str(&(entry.handler)(input.clone()).unwrap()).unwrap();
+    assert_eq!(echoed, input);
+
+    assert!(tools.deregister("fixture_echo"));
+    let missing: Value = serde_json::from_str(&(entry.handler)(input).unwrap()).unwrap();
+    assert_eq!(missing, json!({"error": "Tool not found: fixture_echo"}));
+}
+
 async fn call_rpc(state: &HttpServerState, request: Value) -> Value {
     let request = serde_json::from_value(request).expect("RPC request");
     let Json(response) = exec_rpc(State(state.clone()), Json(request)).await;

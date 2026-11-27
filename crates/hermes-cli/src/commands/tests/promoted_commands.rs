@@ -984,6 +984,7 @@
                 completion_tokens: 3,
                 total_tokens: 15,
                 estimated_cost: Some(0.0123),
+                cache_read_tokens: 9,
                 ..Default::default()
             }),
             interrupted: false,
@@ -999,6 +1000,7 @@
         let output = latest_ui_assistant_text(&app);
         assert!(output.contains("Last response: 12 prompt / 3 completion / 15 total tokens"));
         assert!(output.contains("Actual session: 12 prompt / 3 completion / 15 total tokens"));
+        assert!(output.contains("15 total tokens, 9 prompt read from cache (75.0%)"));
         assert!(!output.contains("Actual cost"));
         assert!(!output.contains("$0.0123"));
         hermes_core::credits::clear_last_nous_credits_state();

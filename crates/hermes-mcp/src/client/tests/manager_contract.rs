@@ -210,6 +210,7 @@ async fn manager_operations_report_the_unknown_server_by_name() {
     let mut manager = McpManager::new(Arc::new(hermes_tools::ToolRegistry::new()));
     let name = "not-connected";
     for error in [
+        manager.disconnect(name).await.unwrap_err(),
         manager.discover_tools(name).await.unwrap_err(),
         manager.handle_tools_changed(name).await.unwrap_err(),
         manager
