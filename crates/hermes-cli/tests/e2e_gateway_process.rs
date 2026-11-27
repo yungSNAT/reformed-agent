@@ -12,7 +12,7 @@ mod unix {
     use assert_cmd::Command;
     use std::fs;
     use std::path::Path;
-    use std::process::{Command as SysCommand, Stdio};
+    use std::process::{Child, Command as SysCommand, Stdio};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -107,24 +107,84 @@ mod unix {
         );
     }
 
-    fn isolated_gateway_cli(home: &std::path::Path, args: &[&str]) -> assert_cmd::Command {
+    fn isolated_gateway_command(home: &Path, args: &[&str]) -> SysCommand {
         let managed = home.join("managed");
-        std::fs::create_dir_all(&managed).expect("create empty managed config directory");
-        let mut cmd = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("hermes"));
+        fs::create_dir_all(&managed).expect("create empty managed config directory");
+        let mut cmd = SysCommand::new(assert_cmd::cargo::cargo_bin!("hermes"));
         cmd.env_clear()
             .current_dir(home)
             .env("HOME", home)
             .env("USERPROFILE", home)
             .env("HERMES_HOME", home)
             .env("HERMES_MANAGED_DIR", managed)
-            .timeout(std::time::Duration::from_secs(15))
             .args(args);
-        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
-            if let Some(value) = std::env::var_os(key) {
-                cmd.env(key, value);
-            }
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            let profile = std::path::PathBuf::from(profile);
+            let profile = if profile.starts_with("%t") {
+                profile
+            } else {
+                std::path::absolute(profile).expect("absolute coverage profile path")
+            };
+            cmd.env("LLVM_PROFILE_FILE", profile);
         }
         cmd
+    }
+
+    fn isolated_gateway_cli(home: &Path, args: &[&str]) -> Command {
+        let mut cmd = Command::from_std(isolated_gateway_command(home, args));
+        cmd.timeout(Duration::from_secs(15));
+        cmd
+    }
+
+    struct GatewayChild(Child);
+
+    impl Drop for GatewayChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn gateway_restart_stops_previous_process_before_validating_new_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let pid_path = home.join("gateway.pid");
+        let mut previous = GatewayChild(
+            isolated_gateway_command(home, &["gateway", "run"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .expect("start isolated gateway"),
+        );
+        let pid = wait_gateway_ready(&pid_path, &mut previous.0);
+        assert_eq!(pid, previous.0.id());
+
+        fs::write(
+            home.join("config.yaml"),
+            "platforms:\n  qqbot:\n    enabled: true\n",
+        )
+        .expect("write incomplete adapter config");
+
+        let restart = isolated_gateway_cli(home, &["gateway", "restart"])
+            .assert()
+            .failure();
+        let stopped = wait_child_exit(&mut previous.0, Instant::now() + EXIT_TIMEOUT);
+        assert!(stopped.success(), "previous gateway exited with {stopped}");
+        let output = restart.get_output();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stdout.contains(&format!("Stopped existing gateway process {pid}.")),
+            "{stdout}"
+        );
+        assert!(
+            error.contains("Gateway requirement check failed"),
+            "{error}"
+        );
+        assert!(error.contains("qqbot.enabled=true"), "{error}");
+        assert!(!pid_path.exists());
     }
 
     #[test]
