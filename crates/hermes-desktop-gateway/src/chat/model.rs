@@ -24,6 +24,7 @@ use super::{ready, Chat, Handler, Origin, Reply, Request, RpcError, SESSION_NOT_
 /// Upstream's codes.
 const REQUIRED: i64 = 4001;
 const UNKNOWN: i64 = 4002;
+const CONFIGURED_IN_FILE: i64 = 4003;
 const NO_KEY_VARIABLE: i64 = 4004;
 const NOTHING_SAVED: i64 = 4005;
 const OPTIONS_FAILED: i64 = 5033;
@@ -628,14 +629,83 @@ mod tests {
         };
         config.llm_providers.insert("xiaomi".into(), provider);
         let chat = Chat::new(config);
+        let path = dir.path().join(".env");
+        std::fs::write(&path, "OTHER_KEY=keep-me\n").unwrap();
+        let env = || std::fs::read_to_string(&path).unwrap();
         chat.save_key("xiaomi", "saved-key").unwrap();
-        let env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
-        assert_eq!(env, format!("{var}=saved-key\n"));
+        assert_eq!(env(), format!("OTHER_KEY=keep-me\n{var}=saved-key\n"));
         let config = chat.turn_config("xiaomi:m").unwrap();
         assert_eq!(
             config.llm_providers["xiaomi"].api_key.as_deref(),
             Some("saved-key")
         );
+        drop(config);
+        chat.disconnect_provider("xiaomi").unwrap();
+        assert_eq!(env(), "OTHER_KEY=keep-me\n");
+        assert_eq!(chat.keys.value(var), None);
+        assert_eq!(chat.keys.value("OTHER_KEY"), None, "only the saved key was held");
+    }
+
+    /// A gateway whose `xiaomi` provider has `fields` in `config.yaml`, with a `.env` holding
+    /// one other key.
+    fn xiaomi_chat(dir: &std::path::Path, fields: Value) -> Chat {
+        let provider: LlmProviderConfig = serde_json::from_value(fields).unwrap();
+        let mut config = GatewayConfig {
+            home_dir: Some(dir.to_string_lossy().into_owned()),
+            ..GatewayConfig::default()
+        };
+        config.llm_providers.insert("xiaomi".into(), provider);
+        std::fs::write(dir.join(".env"), "OTHER_KEY=keep-me\n").unwrap();
+        Chat::new(config)
+    }
+
+    #[test]
+    fn a_config_key_variable_that_is_not_a_name_is_refused_and_nothing_written() {
+        for fields in [
+            json!({"api_key": "${X\nOPENAI_API_KEY}"}),
+            json!({"api_key": "${ DESKTOP_MODEL_UNIT_TEST_SPACED }"}),
+            json!({"api_key": "${A}${B}"}),
+            json!({"api_key_env": "X\nOPENAI_API_KEY"}),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let chat = xiaomi_chat(dir.path(), fields.clone());
+            let (code, _) = chat.save_key("xiaomi", "k").unwrap_err();
+            assert_eq!(code, NO_KEY_VARIABLE, "{fields}");
+            let env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+            assert_eq!(env, "OTHER_KEY=keep-me\n", "{fields}");
+            assert_eq!(chat.keys.value("OPENAI_API_KEY"), None, "{fields}");
+        }
+    }
+
+    #[test]
+    fn a_key_written_out_in_config_yaml_is_not_shadowed_by_a_saved_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = xiaomi_chat(dir.path(), json!({"api_key": "written-key"}));
+        let (code, message) = chat.save_key("xiaomi", "saved-key").unwrap_err();
+        assert_eq!(code, CONFIGURED_IN_FILE);
+        assert!(message.contains("config.yaml"), "{message}");
+        let env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert_eq!(env, "OTHER_KEY=keep-me\n");
+        let config = chat.turn_config("xiaomi:m").unwrap();
+        assert_eq!(
+            config.llm_providers["xiaomi"].api_key.as_deref(),
+            Some("written-key")
+        );
+    }
+
+    #[test]
+    fn a_saved_key_goes_to_the_entry_named_as_the_slug_first() {
+        // `llm_providers` is a `HashMap`: each new map iterates in its own order.
+        for _ in 0..32 {
+            let mut config = GatewayConfig::default();
+            for (name, var) in [("xiaomi", "CANONICAL_KEY"), ("mimo", "EXACT_KEY")] {
+                let provider: LlmProviderConfig =
+                    serde_json::from_value(json!({ "api_key_env": var })).unwrap();
+                config.llm_providers.insert(name.into(), provider);
+            }
+            let chat = Chat::new(config);
+            assert_eq!(chat.slug_key_vars("mimo").unwrap()[..2], ["EXACT_KEY", "CANONICAL_KEY"]);
+        }
     }
 
     #[tokio::test]

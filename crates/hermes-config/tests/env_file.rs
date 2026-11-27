@@ -95,3 +95,30 @@ fn a_env_file_that_cannot_be_read_is_left_as_it_is() {
     assert!(set_env_file_value(&path, "OTHER_KEY", None).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
+
+#[test]
+fn a_key_that_is_not_a_variable_name_is_refused_and_nothing_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    let original = "OPENAI_API_KEY=keep-me\n";
+    std::fs::write(&path, original).unwrap();
+    assert!(env_value_round_trips("_a1", "k"));
+    for name in [
+        "X\nOPENAI_API_KEY",
+        "X\rY",
+        "X\u{0}Y",
+        " VAR ",
+        "A B",
+        "A=B",
+        "1A",
+        "",
+        "A}${B",
+        "VAR:-x",
+        "VÄR",
+    ] {
+        assert!(!env_value_round_trips(name, "k"), "{name:?}");
+        assert!(set_env_file_value(&path, name, Some("k")).is_err(), "{name:?}");
+        assert!(set_env_file_value(&path, name, None).is_err(), "{name:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original, "{name:?}");
+    }
+}
