@@ -4,7 +4,6 @@ exit=Some(0)
 --- stderr
 --- calls
 --- file home/.hermes/locks/upstream-sync.lock
---- cron script mode 644
 --- refs remotes/origin.git
 refs/heads/main <C:fork: carry>
 --- refs repo

@@ -32,7 +32,6 @@ origin_sha: <C:fork: carry>
 upstream_sha: <C:base>
 
 status: no-updates
---- cron script mode 644
 --- refs remotes/origin.git
 refs/heads/main <C:fork: carry>
 --- refs repo

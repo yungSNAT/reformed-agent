@@ -62,7 +62,6 @@ docs/[nN]otes.md -> docs/notes.md
 ```
 
 risk_gate_status: blocked
---- cron script mode 644
 --- refs remotes/origin.git
 refs/heads/main <C:fork: carry>
 --- refs repo
