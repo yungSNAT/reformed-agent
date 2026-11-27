@@ -156,8 +156,8 @@ async fn a_browser_lists_the_saved_gateways_and_reaches_the_relay() {
         .unwrap();
     assert_eq!(list.status(), 200);
     let body: serde_json::Value = list.json().await.unwrap();
-    assert_eq!(body["ok"], true);
-    assert!(body["registry"]["connections"].is_array(), "{body}");
+    assert_eq!(body["version"], 2, "{body}");
+    assert_eq!(body["connections"][0]["id"], "local", "{body}");
     let relay = call(
         &origin,
         "GET",
