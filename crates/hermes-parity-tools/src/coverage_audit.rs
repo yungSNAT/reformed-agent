@@ -240,37 +240,24 @@ impl Domain {
         }
     }
 
-    fn json(&self, tests: &TestCatalogue) -> String {
+    /// The committed report keeps what changes only when coverage does. Evidence counts and
+    /// samples move whenever a matching file is added, so neither committed report keeps them.
+    fn json(&self) -> String {
         let summary = Py::dict([
             ("id", self.id.as_str().into()),
             ("classification", self.classification().into()),
             ("mapped", (!self.evidence.is_empty()).into()),
             ("upstream_scope", self.scope.clone()),
-            ("evidence_count", self.evidence.len().into()),
-            ("direct_test_evidence_count", self.direct.into()),
         ]);
         let Py::Dict(fields) = summary else {
             unreachable!("constructed above")
         };
-        let mut fields = fields
-            .into_iter()
-            .map(|(key, value)| (key, py::dumps(&value, Some(2), true)))
-            .collect::<BTreeMap<_, _>>();
-        fields.insert(
-            "evidence_sample".into(),
-            string_array(self.evidence.keys().take(25).map(EvidencePath::json)),
-        );
-        fields.insert(
-            "direct_test_evidence_sample".into(),
-            string_array(
-                self.evidence
-                    .iter()
-                    .filter(|(_, path)| direct_evidence(path, tests))
-                    .take(25)
-                    .map(|(name, _)| name.json()),
-            ),
-        );
-        indent_object(fields)
+        indent_object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, py::dumps(&value, Some(2), true)))
+                .collect(),
+        )
     }
 }
 
@@ -346,11 +333,9 @@ struct Inputs {
 
 fn evaluate(
     root: &Path,
-    tests: &TestCatalogue,
     domains: &[Domain],
     manifests: &[Manifest],
     inputs: &Inputs,
-    generated: &str,
 ) -> Result<Py, String> {
     let mut critical = Vec::new();
     let mut advisory = Vec::new();
@@ -467,11 +452,6 @@ fn evaluate(
         ("tracked_behavior_rows", tracked.into()),
         ("covered_behavior_rows", Py::Int(covered)),
         ("tracked_behavior_coverage_ratio", ratio.into()),
-        ("rust_test_files", tests.len().into()),
-        (
-            "rust_test_functions",
-            tests.values().map(BTreeSet::len).sum::<usize>().into(),
-        ),
         ("coverage_manifest_entries", entries.into()),
         (
             "coverage_manifest_entries_with_valid_rust_tests",
@@ -530,7 +510,6 @@ fn evaluate(
     ]);
     let (complete, next) = hardening_moves(root);
     Ok(Py::dict([
-        ("generated_at_utc", generated.into()),
         ("schema_version", Py::Int(1)),
         ("audit_unit", "upstream_behavior_or_test_intent".into()),
         ("summary", summary),
@@ -596,7 +575,6 @@ fn hardening_moves(root: &Path) -> (Vec<Py>, Vec<Py>) {
 }
 
 fn render_markdown(report: &Py, manifests: &[Manifest], domains: &[Domain]) -> String {
-    let generated = property(report, "generated_at_utc", "");
     let gate = report.get("audit_gate").expect("generated gate");
     let status = if gate.get("pass") == Some(&Py::Bool(true)) {
         "PASS"
@@ -606,15 +584,13 @@ fn render_markdown(report: &Py, manifests: &[Manifest], domains: &[Domain]) -> S
     let critical = property(gate, "critical_gaps", "0");
     let advisory = property(gate, "advisory_gaps", "0");
     let mut markdown = format!(
-        "# Test Coverage Audit\n\nGenerated: `{generated}`\n\n## Gate\n\n- Audit gate: **{status}**\n- Critical gaps: `{critical}`\n- Advisory gaps: `{advisory}`\n\n## Summary\n\n| Metric | Value |\n| --- | ---: |\n"
+        "# Test Coverage Audit\n\n## Gate\n\n- Audit gate: **{status}**\n- Critical gaps: `{critical}`\n- Advisory gaps: `{advisory}`\n\n## Summary\n\n| Metric | Value |\n| --- | ---: |\n"
     );
     let summary = report.get("summary").expect("generated summary");
     for key in [
         "tracked_behavior_rows",
         "covered_behavior_rows",
         "tracked_behavior_coverage_ratio",
-        "rust_test_files",
-        "rust_test_functions",
         "coverage_manifest_entries",
         "coverage_manifest_entries_with_valid_rust_tests",
         "coverage_manifest_deferred_entries",
@@ -642,15 +618,13 @@ fn render_markdown(report: &Py, manifests: &[Manifest], domains: &[Domain]) -> S
         )
         .unwrap();
     }
-    markdown.push_str("\n## Test Intent Domains\n\n| Intent | Classification | Evidence files | Direct test evidence |\n| --- | --- | ---: | ---: |\n");
+    markdown.push_str("\n## Test Intent Domains\n\n| Intent | Classification |\n| --- | --- |\n");
     for domain in domains {
         writeln!(
             markdown,
-            "| `{}` | `{}` | {} | {} |",
+            "| `{}` | `{}` |",
             domain.id,
-            domain.classification(),
-            domain.evidence.len(),
-            domain.direct
+            domain.classification()
         )
         .unwrap();
     }
@@ -707,7 +681,7 @@ fn render_markdown(report: &Py, manifests: &[Manifest], domains: &[Domain]) -> S
     markdown
 }
 
-fn generate(root: &Path, generated: &str) -> Result<(String, String, bool), String> {
+fn generate(root: &Path) -> Result<(String, String, bool), String> {
     let tests = coverage_tests::scan(root)?;
     let inputs = Inputs {
         queue: load(root, QUEUE)?,
@@ -727,7 +701,7 @@ fn generate(root: &Path, generated: &str) -> Result<(String, String, bool), Stri
             ))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let report = evaluate(root, &tests, &domains, &manifests, &inputs, generated)?;
+    let report = evaluate(root, &domains, &manifests, &inputs)?;
     let pass = report.get("audit_gate").and_then(|gate| gate.get("pass")) == Some(&Py::Bool(true));
     let markdown = render_markdown(&report, &manifests, &domains);
     let Py::Dict(fields) = report else {
@@ -739,14 +713,14 @@ fn generate(root: &Path, generated: &str) -> Result<(String, String, bool), Stri
         .collect::<BTreeMap<_, _>>();
     fields.insert(
         "intent_domains".into(),
-        string_array(domains.iter().map(|row| row.json(&tests))),
+        string_array(domains.iter().map(Domain::json)),
     );
     Ok((indent_object(fields) + "\n", markdown, pass))
 }
 
 pub fn run(args: CoverageAuditArgs) -> Result<i32, String> {
     let root = resolve_argument(Path::new(&args.repo_root))?;
-    let (json, markdown, pass) = generate(&root, &py::utc_isoformat())?;
+    let (json, markdown, pass) = generate(&root)?;
     if args.check {
         return Ok(i32::from(!pass));
     }
@@ -793,6 +767,53 @@ mod tests {
         let report = fs::read_to_string(root.join("audit.json")).unwrap();
         assert!(report.contains("unmapped_test_intents"));
         assert!(root.join("reports/audit.md").is_file());
+    }
+
+    /// Open pull requests conflicted on these committed reports whenever any of them added a
+    /// test or a file, so the reports leave out the time and the counts that move with the tree.
+    #[test]
+    fn reports_stay_byte_identical_when_a_test_or_evidence_file_is_added() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("docs/parity")).unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        for input in MANIFESTS
+            .into_iter()
+            .chain([MATRIX, QUEUE, DIVERGENCES, INTENT_REPORT])
+        {
+            fs::write(root.join(input), "{}").unwrap();
+        }
+        fs::write(
+            root.join(DOMAIN_SPECS),
+            r#"[{"id":"alpha","upstream_scope":"a","local_evidence_globs":["tests/*.rs"]}]"#,
+        )
+        .unwrap();
+        let reports = || {
+            let args = CoverageAuditArgs {
+                repo_root: root.to_str().unwrap().into(),
+                out_json: "audit.json".into(),
+                out_md: "audit.md".into(),
+                check: false,
+            };
+            assert_eq!(run(args).unwrap(), 0);
+            (
+                fs::read_to_string(root.join("audit.json")).unwrap(),
+                fs::read_to_string(root.join("audit.md")).unwrap(),
+            )
+        };
+        fs::write(root.join("tests/first.rs"), "#[test]\nfn first() {}\n").unwrap();
+        let (json, markdown) = reports();
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(root.join("tests/second.rs"), "#[test]\nfn second() {}\n").unwrap();
+        let (json_after, markdown_after) = reports();
+
+        assert_eq!(json_after, json);
+        assert_eq!(markdown_after, markdown);
+        for volatile in ["generated_at_utc", "rust_test_functions", "evidence_count"] {
+            assert!(!json.contains(volatile), "{volatile} in {json}");
+        }
+        assert!(json.contains("\"classification\": \"direct_rust_test\""));
     }
 }
 

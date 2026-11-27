@@ -63,12 +63,17 @@ fn test_coverage_audit_gate_passes() {
         count("tracked_behavior_rows"),
         "every tracked behaviour row must be covered, deferred or counted as not rechecked"
     );
-    let rust_tests = payload["summary"]["rust_test_functions"]
-        .as_u64()
-        .expect("rust_test_functions should be integer");
+    // The committed audit leaves out the Rust test count, which moves with every added test.
+    // The manifests cite Rust tests and none is missing, so the audit's scan found them.
+    let referenced: u64 = payload["coverage_manifests"]
+        .as_array()
+        .expect("coverage_manifests should be array")
+        .iter()
+        .map(|manifest| manifest["referenced_rust_tests"].as_u64().unwrap_or(0))
+        .sum();
     assert!(
-        rust_tests > 0,
-        "test coverage audit must observe Rust test functions"
+        referenced > 0,
+        "the manifests must cite Rust tests for the missing-ref check to mean anything"
     );
 }
 
