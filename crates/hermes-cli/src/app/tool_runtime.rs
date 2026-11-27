@@ -81,9 +81,15 @@ pub fn bridge_tool_registry_for_cron(
     );
     let weak = tools.downgrade();
     let overrides = Arc::new(overrides);
+    // A cron job fired inside a dispatched kanban worker must not act as it.
+    let excluded: Vec<&str> = hermes_cron::CRON_HARD_DISABLED_TOOLS
+        .iter()
+        .copied()
+        .chain(crate::kanban::kanban_tool_names())
+        .collect();
     let mut bridged = bridge_tool_schemas(
         tools,
-        hermes_cron::CRON_HARD_DISABLED_TOOLS,
+        &excluded,
         move |name, params| Ok(weak.upgrade_for_call()?.dispatch_with(name, params, &overrides)),
     );
     bridged.retain_offered(&offered);

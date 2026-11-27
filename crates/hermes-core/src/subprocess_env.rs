@@ -9,9 +9,14 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const SUBPROCESS_ENV_FORCE_PREFIX: &str = "_HERMES_FORCE_";
 pub const SUBPROCESS_ENV_PASSTHROUGH_VAR: &str = "HERMES_SUBPROCESS_ENV_PASSTHROUGH";
 
+/// Prefix of a kanban worker's binding variables, which no child may receive
+/// through a passthrough list or a force override.
+pub const KANBAN_BINDING_ENV_PREFIX: &str = "HERMES_KANBAN_";
+
 pub fn normalize_env_passthrough_name(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty()
+        || trimmed.starts_with(KANBAN_BINDING_ENV_PREFIX)
         || !trimmed
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -42,6 +47,9 @@ pub fn hermes_subprocess_env_with_passthrough(
         keys.extend(parse_subprocess_env_passthrough(&raw));
     }
     for key in keys {
+        if key.starts_with(KANBAN_BINDING_ENV_PREFIX) {
+            continue;
+        }
         if let Ok(value) = std::env::var(&key) {
             env.insert(key, value);
         }
@@ -51,7 +59,10 @@ pub fn hermes_subprocess_env_with_passthrough(
             continue;
         };
         if let Some(target) = key.strip_prefix(SUBPROCESS_ENV_FORCE_PREFIX) {
-            if !target.is_empty() && should_strip_subprocess_env_key(target, false) {
+            if !target.is_empty()
+                && !target.starts_with(KANBAN_BINDING_ENV_PREFIX)
+                && should_strip_subprocess_env_key(target, false)
+            {
                 env.insert(target.to_string(), value.to_string());
             }
         }
@@ -74,6 +85,11 @@ pub const SUBPROCESS_ALWAYS_STRIP_KEYS: &[&str] = &[
     "GITHUB_TOKEN",
     "HASS_TOKEN",
     "HERMES_DASHBOARD_SESSION_TOKEN",
+    // A kanban worker's binding is its own process's alone: a terminal or
+    // code child that inherited it could act as the worker.
+    "HERMES_KANBAN_BOARD",
+    "HERMES_KANBAN_RUN_ID",
+    "HERMES_KANBAN_TASK",
     "HERMES_POLICY_ADMIN_TOKEN",
     "MODAL_TOKEN_ID",
     "MODAL_TOKEN_SECRET",
@@ -339,6 +355,43 @@ mod tests {
         assert!(!env.contains_key("OPENAI_API_KEY"));
         assert!(!env.contains_key("HERMES_OPENAI_API_KEY"));
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn a_kanban_worker_binding_never_reaches_a_child() {
+        let env = build(
+            &[
+                ("HERMES_KANBAN_BOARD", "main"),
+                ("HERMES_KANBAN_TASK", "K-0001"),
+                ("HERMES_KANBAN_RUN_ID", "run-a"),
+                ("HERMES_KANBAN_WORKER_SCOPE", "main/K-0001"),
+                ("GITHUB_TOKEN", "placeholder"),
+                ("SAFE_VAR", "keep"),
+            ],
+            true,
+        );
+        assert_eq!(env.get("SAFE_VAR").map(String::as_str), Some("keep"));
+        // The worker-tree marker is a board and task id, not a credential: it stays so
+        // the CLI can hold a worker's terminal children to the worker's task.
+        assert_eq!(
+            env.get("HERMES_KANBAN_WORKER_SCOPE").map(String::as_str),
+            Some("main/K-0001")
+        );
+        assert!(!env.contains_key("GITHUB_TOKEN"));
+        for key in [
+            "HERMES_KANBAN_BOARD",
+            "HERMES_KANBAN_TASK",
+            "HERMES_KANBAN_RUN_ID",
+        ] {
+            assert!(!env.contains_key(key), "{key} reached the child");
+        }
+    }
+
+    #[test]
+    fn a_passthrough_list_cannot_name_a_kanban_binding_variable() {
+        assert_eq!(normalize_env_passthrough_name("HERMES_KANBAN_TASK"), None);
+        let names = parse_subprocess_env_passthrough("SAFE_VAR,HERMES_KANBAN_RUN_ID");
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), vec!["SAFE_VAR"]);
     }
 
     #[test]

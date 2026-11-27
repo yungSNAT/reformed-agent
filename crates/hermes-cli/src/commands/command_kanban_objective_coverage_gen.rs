@@ -319,8 +319,8 @@ fn kanban_command_validation_leaves_the_board_unchanged() {
 
     let before = run_kanban_command(&[]).unwrap();
     let move_usage =
-        "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary]";
-    let block_usage = "Usage: kanban block <task-id|title> <reason>";
+        "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary] [--force]";
+    let block_usage = "Usage: kanban block <task-id|title> <reason> [--force]";
     let attach_usage = "Usage: kanban attach <task-id|title> <file-path>";
     let detach_usage = "Usage: kanban detach <task-id|title> <attachment-id|filename>";
     let cases: &[(&[&str], &str)] = &[
@@ -349,7 +349,7 @@ fn kanban_command_validation_leaves_the_board_unchanged() {
             &["block", "missing", "waiting", "for totals"],
             "Task not found: missing",
         ),
-        (&["done"], "Usage: kanban done <task-id|title> [summary]"),
+        (&["done"], "Usage: kanban done <task-id|title> [summary] [--force]"),
         (&["done", "missing", "resolved"], "Task not found: missing"),
         (
             &["dispatch"],
