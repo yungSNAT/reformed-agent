@@ -283,6 +283,14 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
         .and(path("/deleteWebhook"))
         .and(body_partial_json(json!({"drop_pending_updates": false})))
         .respond_with(unavailable.clone())
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/deleteWebhook"))
+        .and(body_partial_json(json!({"drop_pending_updates": false})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "result": true})))
         .expect(1)
         .mount(&server)
         .await;
@@ -308,6 +316,13 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
             }}),
             json!({"update_id": 15, "callback_query": {
                 "id": "expired-card", "from": user(42), "data": "approval:deny:42"
+            }}),
+            json!({"update_id": 16, "callback_query": {
+                "id": "resolved-card", "from": user(42), "data": "approval:deny:43"
+            }}),
+            json!({"update_id": 17, "callback_query": {
+                "id": "other-button", "from": user(42), "data": "Show details",
+                "message": {"message_id": 17, "date": 0, "chat": {"id": 42, "type": "private"}}
             }})
         ]})))
         .expect(1)
@@ -315,9 +330,25 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
         .await;
     Mock::given(method("POST"))
         .and(path("/getUpdates"))
-        .and(body_partial_json(json!({"offset": 16})))
+        .and(body_partial_json(json!({"offset": 18})))
         .respond_with(unavailable.clone())
+        .up_to_n_times(3)
         .expect(3)
+        .mount(&server)
+        .await;
+    let empty_poll = ResponseTemplate::new(200).set_body_json(json!({"ok": true, "result": []}));
+    Mock::given(method("POST"))
+        .and(path("/getUpdates"))
+        .and(body_partial_json(json!({"offset": 18})))
+        .respond_with(empty_poll.clone())
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/getUpdates"))
+        .and(body_partial_json(json!({"offset": 18})))
+        .respond_with(empty_poll.set_delay(Duration::from_secs(10)))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -329,12 +360,22 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
         .expect(1)
         .mount(&server)
         .await;
+    Mock::given(method("POST"))
+        .and(path("/answerCallbackQuery"))
+        .and(body_partial_json(
+            json!({"callback_query_id": "resolved-card", "text": "Approval already resolved"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "result": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
     let delivered = ResponseTemplate::new(200).set_body_json(json!({
         "ok": true, "result": {"message_id": 99}
     }));
     for (reply, response) in [
         ("Received [photo message]", unavailable),
-        ("Received First update\nSecond update", delivered),
+        ("Received First update\nSecond update", delivered.clone()),
+        ("Received Show details", delivered),
     ] {
         Mock::given(method("POST"))
             .and(path("/sendMessage"))
@@ -366,8 +407,9 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
         GatewayConfig::default(),
     );
     adapter.start().await.expect("start fixture bot");
+    let recheck = Duration::from_millis(TELEGRAM_POLLING_STOPPED_RECHECK_MS);
     assert!(
-        tokio::time::timeout(Duration::from_millis(25), adapter.poll_gateway(&gateway))
+        tokio::time::timeout(recheck * 2, adapter.poll_gateway(&gateway))
             .await
             .is_err()
     );
@@ -403,11 +445,20 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
                 while adapter.is_running() {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
+                tokio::time::sleep(recheck * 2).await;
+                assert_eq!(adapter.consecutive_error_count(), 3);
+                let requests = server.received_requests().await.expect("recorded HTTP requests");
+                assert_eq!(requests.iter().filter(|request| request.url.path() == "/getUpdates").count(), 4);
+
+                adapter.start().await.expect("restart fixture bot");
+                while adapter.consecutive_error_count() != 0 {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
             } => {}
         }
     })
     .await
-    .expect("polling should pause at the reconnect threshold");
-    assert_eq!(adapter.consecutive_error_count(), 3);
+    .expect("polling should pause at the reconnect threshold and resume after restart");
+    assert!(adapter.is_running());
     server.verify().await;
 }
