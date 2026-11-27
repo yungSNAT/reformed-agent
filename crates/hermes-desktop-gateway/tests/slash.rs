@@ -294,6 +294,32 @@ async fn paste_collapse_saves_each_paste_to_its_own_owner_only_file() {
     assert_eq!(error(&empty), (4004, "empty paste"));
 }
 
+/// Upstream's paste file takes the folder's access list; here it is owner-only even in a folder
+/// everyone may read.
+#[cfg(windows)]
+#[tokio::test]
+async fn paste_collapse_writes_an_owner_only_file_in_an_open_folder() {
+    let icacls = |path: &std::path::Path, grant: &[&str]| {
+        let out = std::process::Command::new("icacls")
+            .arg(path)
+            .args(grant)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "icacls {}", path.display());
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let (mut socket, home) = start().await;
+    let pastes = home.path().join("pastes");
+    std::fs::create_dir(&pastes).unwrap();
+    // Everyone (S-1-1-0) may read whatever the folder holds.
+    icacls(&pastes, &["/grant", "*S-1-1-0:(OI)(CI)R"]);
+    let reply = call(&mut socket, "paste.collapse", json!({"text": "secret"})).await;
+    let path = std::path::PathBuf::from(reply["result"]["path"].as_str().unwrap());
+    let acl = icacls(&path, &[]);
+    assert!(!acl.contains("Everyone") && !acl.contains("(I)"), "{acl}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "secret");
+}
+
 /// Upstream follows a link in the pastes folder's place; here the paste is refused and nothing
 /// is written where the link points.
 #[cfg(unix)]
