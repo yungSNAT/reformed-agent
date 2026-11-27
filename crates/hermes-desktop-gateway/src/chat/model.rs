@@ -429,7 +429,7 @@ impl Chat {
         }
         let written_out = self.slug_entries(slug).into_iter().any(|(_, c)| {
             let literal = c.api_key.as_deref().map_or("", str::trim);
-            !literal.is_empty() && literal_source(literal, &vars).is_none()
+            !literal.is_empty() && literal_source(literal, &vars) != Some(var)
         });
         if written_out {
             return Err((
@@ -498,17 +498,22 @@ impl Chat {
     }
 
     /// `reload.env`: re-reads the key variables as start-up does (`hermes_config`'s order, the
-    /// managed `.env` last); the number changed. Other variables, and a value that would not
-    /// read back as itself, take effect at the next start.
+    /// managed `.env` last); the number changed. A key this process saved or re-read since
+    /// start-up and now gone from a readable `.env` is removed, as upstream removes it. Other
+    /// variables, a value that would not read back as itself and the removal of a key start-up
+    /// loaded take effect at the next start.
     fn reload_env(&self) -> usize {
         let _write = env_write();
         let values = dotenv_values_in(&self.home);
+        let env_file = self.home.join(".env");
+        let readable = !env_file.exists() || std::fs::read_to_string(&env_file).is_ok();
         self.key_variables()
             .iter()
-            .filter(|var| {
-                values.get(var.as_str()).is_some_and(|value| {
+            .filter(|var| match values.get(var.as_str()) {
+                Some(value) => {
                     env_value_round_trips(var, value) && self.keys.set(var, Some(value.clone()))
-                })
+                }
+                None => readable && self.keys.changed(var) && self.keys.set(var, None),
             })
             .count()
     }
