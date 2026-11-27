@@ -148,6 +148,28 @@ fn looks_like_gateway_process_includes_gateway_script_pattern() {
     assert!(!looks_like_gateway_process("python worker.py"));
 }
 
+/// `gateway stop` may read the pid file whilst a run writes it: the run replaces the file whole,
+/// so a reader finds the old pid or the new one, never an emptied file.
+#[cfg(unix)]
+#[test]
+fn write_gateway_pid_replaces_the_file_whole() {
+    use std::io::Read;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pid_path = tmp.path().join("gateway.pid");
+    std::fs::write(&pid_path, "111\n").expect("old pid");
+    let mut reader = std::fs::File::open(&pid_path).expect("open");
+    write_gateway_pid(&pid_path, 222).expect("write pid");
+    let mut old = String::new();
+    reader.read_to_string(&mut old).expect("read");
+    assert_eq!(old, "111\n", "the file a reader holds was rewritten in place");
+    assert_eq!(read_gateway_pid(&pid_path), Some(222));
+    let names: Vec<_> = std::fs::read_dir(tmp.path())
+        .expect("list")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(names, ["gateway.pid"], "no temp file left");
+}
+
 #[test]
 fn cleanup_stale_gateway_metadata_removes_the_pid_file_and_keeps_the_lock() {
     let tmp = tempfile::tempdir().expect("tempdir");

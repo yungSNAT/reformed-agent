@@ -1836,3 +1836,34 @@ async fn a_status_note_reaches_the_chat_with_its_media_markers_intact() {
         .unwrap();
     assert_ne!(sent.lock().unwrap().last().unwrap().1, text);
 }
+
+#[tokio::test]
+async fn a_conversations_turns_share_its_spend_until_new() {
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(sessions, dm, GatewayConfig::default());
+    gateway
+        .register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: Arc::new(Mutex::new(Vec::new())),
+            }),
+        )
+        .await;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = seen.clone();
+    gateway
+        .set_message_handler_with_context(Arc::new(move |_, ctx| {
+            record.lock().unwrap().push(ctx.session_spent_usd());
+            ctx.add_session_spent_usd(Some(0.25));
+            Box::pin(async { Ok("reply".to_string()) })
+        }))
+        .await;
+
+    for text in ["one", "two", "/new", "three"] {
+        gateway.route_message(&test_incoming(text)).await.unwrap();
+    }
+
+    assert_eq!(seen.lock().unwrap().as_slice(), [0.0, 0.25, 0.0]);
+}

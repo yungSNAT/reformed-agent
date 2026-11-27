@@ -234,10 +234,23 @@ fn build_agent_for_gateway_context(
             Path::new(h),
         );
     }
-    hermes_agent::attach_discovered_memory(AgentLoop::new(agent_config, agent_tools, provider))
+    let agent =
+        hermes_agent::attach_discovered_memory(AgentLoop::new(agent_config, agent_tools, provider));
+    agent.set_session_spent_usd(ctx.session_spent_usd());
+    agent
 }
 
 fn extract_last_assistant_reply(messages: &[hermes_core::Message]) -> String {
+    // A run the spend cap refused or stopped ends with the guard's note, and
+    // the reply that tripped it is not kept: the note is the answer.
+    if let Some(note) = messages
+        .last()
+        .filter(|m| m.role == MessageRole::System)
+        .and_then(|m| m.content.as_deref())
+        .filter(|text| text.starts_with("Cost guard tripped"))
+    {
+        return note.to_string();
+    }
     messages
         .iter()
         .rev()

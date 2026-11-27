@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use hermes_core::git::{
-    lazy_fetch_guard, output_within_timeout, workspace_git, LazyFetchGuard, GIT_SNAPSHOT_TIMEOUT,
+    lazy_fetch_guard, output_within_timeout, workspace_git, GitRead, LazyFetchGuard,
+    GIT_SNAPSHOT_TIMEOUT,
 };
 use serde::{Deserialize, Serialize};
 
@@ -555,13 +556,11 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
 }
 
 fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<String>) {
-    let Some(mut git) = workspace_git(root, guard) else {
+    let Some(git) = workspace_git(root, guard) else {
         return;
     };
-    // A submodule has its own config and filter drivers. Read its committed
-    // gitlink state, but never run status inside its dirty worktree.
     let status = output_within_timeout(
-        git.args(["status", "--short", "--branch", "--ignore-submodules=dirty"]),
+        git.command(GitRead::Status).args(["--short", "--branch"]),
         GIT_SNAPSHOT_TIMEOUT,
     );
     let Some(output) = status else {
@@ -608,7 +607,9 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
 
 fn git_last_commit(root: &Path, guard: LazyFetchGuard) -> Option<String> {
     let output = output_within_timeout(
-        workspace_git(root, guard)?.args(["log", "-1", "--oneline"]),
+        workspace_git(root, guard)?
+            .command(GitRead::Log)
+            .args(["-1", "--oneline"]),
         GIT_SNAPSHOT_TIMEOUT,
     )?;
     if !output.status.success() {
@@ -1283,7 +1284,9 @@ mod tests {
 
         // An older git rejects the option, so the command must leave it off
         // and set the variable that its later maintenance releases obey.
-        let git = workspace_git(tmp.path(), LazyFetchGuard::NoPromisorRemote).unwrap();
+        let git = workspace_git(tmp.path(), LazyFetchGuard::NoPromisorRemote)
+            .unwrap()
+            .command(GitRead::Status);
         assert!(!git.get_args().any(|arg| arg == "--no-lazy-fetch"));
         assert!(git
             .get_envs()

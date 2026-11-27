@@ -1,0 +1,66 @@
+exit=Some(0)
+--- stdout
+[loaded] com.hermes_agent_ultra.nightly_elite_gate
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate-launchd.out.log ===
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate-launchd.err.log ===
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate/nightly-elite-gate-latest.json ===
+{
+  "ok": true
+}
+
+=== <ROOT>/home/.hermes-agent-ultra/logs/elite-gate/nightly-elite-gate-fallback.log ===
+(missing)
+--- stderr
+--- calls
+launchctl print gui/<UID>/com.hermes_agent_ultra.nightly_elite_gate
+--- file home/.hermes-agent-ultra/logs/elite-gate-launchd.err.log
+e1
+e2
+e3--- file home/.hermes-agent-ultra/logs/elite-gate-launchd.out.log
+out line 1
+out line 2
+out line 3
+out line 4
+out line 5
+out line 6
+out line 7
+out line 8
+out line 9
+out line 10
+out line 11
+out line 12
+out line 13
+out line 14
+out line 15
+out line 16
+out line 17
+out line 18
+out line 19
+out line 20
+out line 21
+out line 22
+out line 23
+out line 24
+out line 25
+out line 26
+out line 27
+out line 28
+out line 29
+out line 30
+out line 31
+out line 32
+out line 33
+out line 34
+out line 35
+out line 36
+out line 37
+out line 38
+out line 39
+out line 40
+--- file home/.hermes-agent-ultra/logs/elite-gate/nightly-elite-gate-latest.json
+{
+  "ok": true
+}

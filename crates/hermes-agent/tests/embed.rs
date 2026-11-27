@@ -9,15 +9,16 @@ use futures::stream::BoxStream;
 use hermes_agent::embed::{Agent, Ending};
 use hermes_core::{
     AgentError, FunctionCall, JsonSchema, LlmProvider, LlmResponse, Message, StreamChunk, ToolCall,
-    ToolSchema,
+    ToolSchema, UsageStats,
 };
 use serde_json::{json, Value};
 
 /// Calls `add` once, then answers with the tool's result; or, given an answer, always gives it.
-/// Keeps every request's messages.
+/// Keeps every request's messages and reports `usage` for each.
 #[derive(Default)]
 struct Scripted {
     answer: Option<&'static str>,
+    usage: Option<UsageStats>,
     requests: Mutex<Vec<Vec<Message>>>,
 }
 
@@ -85,7 +86,7 @@ impl LlmProvider for Scripted {
         };
         Ok(LlmResponse {
             message,
-            usage: None,
+            usage: self.usage.clone(),
             model: "scripted".into(),
             finish_reason: Some("stop".into()),
         })
@@ -447,5 +448,46 @@ fn a_run_cut_short_by_its_turn_limit_says_so() {
     assert_eq!(
         reply.result.total_turns, 1,
         "the environment lifted the cap"
+    );
+}
+
+#[test]
+fn a_run_refused_because_the_session_spent_its_cap_says_so() {
+    let agent = Agent::builder(Arc::new(Scripted::answering("unreached")))
+        .model("scripted")
+        .configure(|c| c.max_cost_usd = Some(0.01))
+        .build()
+        .unwrap();
+    agent.agent_loop().set_session_spent_usd(0.01);
+
+    let reply = block_on(agent.ask("Anything?")).unwrap();
+
+    assert_eq!(reply.ending, Ending::CostCap);
+    assert_eq!(reply.result.session_cost_usd, Some(0.0), "spent nothing");
+}
+
+#[test]
+fn a_run_that_takes_the_session_past_its_cap_says_so() {
+    let provider = Scripted {
+        usage: Some(UsageStats {
+            estimated_cost: Some(0.006),
+            ..UsageStats::default()
+        }),
+        ..Scripted::answering("done")
+    };
+    let agent = Agent::builder(Arc::new(provider))
+        .model("scripted")
+        .configure(|c| c.max_cost_usd = Some(0.01))
+        .build()
+        .unwrap();
+    agent.agent_loop().set_session_spent_usd(0.006);
+
+    let reply = block_on(agent.ask("Anything?")).unwrap();
+
+    assert_eq!(reply.ending, Ending::CostCap);
+    let spent = reply.result.session_cost_usd.unwrap();
+    assert!(
+        (spent - 0.006).abs() < 1e-9,
+        "this run's own spend: {spent}"
     );
 }
