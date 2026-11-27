@@ -140,6 +140,7 @@ impl Drop for StoreLock {
 /// A writer that died holding the lock must not wedge every later write.
 fn break_if_stale(dir: &Path) {
     if let Some(seen) = stale_owner(dir) {
+        seam("judged");
         break_stale(dir, &seen);
     }
 }
@@ -176,6 +177,7 @@ fn break_stale(dir: &Path, seen: &[u8]) {
     if std::fs::rename(dir, &aside).is_err() {
         return;
     }
+    seam("aside");
     let owner = std::fs::read(aside.join("owner")).unwrap_or_default();
     if owner == seen {
         let _ = std::fs::remove_file(aside.join("owner"));
@@ -189,6 +191,28 @@ fn break_stale(dir: &Path, seen: &[u8]) {
         let _ = std::fs::remove_dir(&aside);
     }
 }
+
+#[cfg(test)]
+thread_local! {
+    /// Steps another writer takes at a named point of this thread's lock code, each once.
+    pub(super) static SEAMS: std::cell::RefCell<Vec<(&'static str, Box<dyn FnOnce()>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn seam(at: &str) {
+    let step = SEAMS.with(|seams| {
+        let mut seams = seams.borrow_mut();
+        let found = seams.iter().position(|(name, _)| *name == at);
+        found.map(|i| seams.remove(i).1)
+    });
+    if let Some(step) = step {
+        step();
+    }
+}
+
+#[cfg(not(test))]
+fn seam(_: &str) {}
 
 /// Replaces `path` whole. A new file is made owner-only before any bytes land; the atomic writer
 /// keeps an existing file's mode.

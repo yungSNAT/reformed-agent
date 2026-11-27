@@ -62,6 +62,34 @@ fn a_stale_break_leaves_a_lock_retaken_since_it_was_judged() {
     assert!(StoreLock::take(&path, "store").is_err());
 }
 
+/// Waiters A, B and C over a dead lock: A judges it stale; B breaks it and takes the store; A then
+/// acts on its judgement whilst C takes any name left free. B must still hold the store.
+#[cfg(unix)]
+#[test]
+fn a_waiter_acting_on_an_old_judgement_never_displaces_a_live_lock() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    dead_lock(&path);
+    let (b, c) = (Rc::new(RefCell::new(None)), Rc::new(RefCell::new(None)));
+    let (b_path, b_slot, c_slot) = (path.clone(), b.clone(), c.clone());
+    let b_takes = move || {
+        *b_slot.borrow_mut() = Some(StoreLock::take(&b_path, "store").unwrap());
+        // Armed only now, so it fires in A's break, not in B's.
+        let c_takes = move || *c_slot.borrow_mut() = StoreLock::take(&b_path, "store").ok();
+        SEAMS.with(|s| s.borrow_mut().push(("aside", Box::new(c_takes))));
+    };
+    SEAMS.with(|s| s.borrow_mut().push(("judged", Box::new(b_takes))));
+    break_if_stale(&lock_dir(&path));
+    let b = b.borrow_mut().take().expect("B took the store");
+    assert!(
+        b.held(),
+        "a live lock was displaced by a waiter's old judgement"
+    );
+    assert!(c.borrow().is_none(), "C took the store whilst B held it");
+}
+
 /// What the protocol promises a writer displaced by a racing break: it no longer holds the lock,
 /// so the write answers busy, and releasing it leaves the new holder's lock alone.
 #[test]
