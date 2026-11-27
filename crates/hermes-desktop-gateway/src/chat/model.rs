@@ -128,6 +128,12 @@ impl Keys {
     }
 }
 
+/// Held across each `.env` change, so 2 key methods at once cannot lose one's change.
+fn env_write() -> MutexGuard<'static, ()> {
+    static WRITE: Mutex<()> = Mutex::new(());
+    WRITE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// The variables a known provider's key is read from, first to last; `None` for a provider
 /// this gateway does not know.
 fn key_vars(slug: &str) -> Option<&'static [&'static str]> {
@@ -352,6 +358,26 @@ impl Chat {
         json!({"providers": providers, "model": model, "provider": current})
     }
 
+    /// A known provider's key variables, first to last: the `key_env` it is configured with,
+    /// then its own; `None` for a provider this gateway does not know.
+    fn slug_key_vars(&self, slug: &str) -> Option<Vec<&str>> {
+        let known = key_vars(slug)?;
+        let canonical = canonical_provider_id(&slug.trim().to_ascii_lowercase());
+        let configured = self
+            .config
+            .llm_providers
+            .iter()
+            .filter(|(name, _)| {
+                name.eq_ignore_ascii_case(slug.trim()) || name.eq_ignore_ascii_case(&canonical)
+            })
+            .filter_map(|(_, c)| c.api_key_env.as_deref().map(str::trim))
+            .filter(|var| !var.is_empty());
+        let mut vars: Vec<&str> = configured.chain(known.iter().copied()).collect();
+        let mut seen = std::collections::HashSet::new();
+        vars.retain(|var| seen.insert(*var));
+        Some(vars)
+    }
+
     /// `model.save_key {slug, api_key}`: the key goes into this home's `.env` and the next
     /// turns; answers the provider's refreshed row. A key that a `.env` file would not read
     /// back as itself is refused before anything is written.
@@ -359,8 +385,10 @@ impl Chat {
         if slug.is_empty() || key.is_empty() {
             return Err((REQUIRED, "slug and api_key are required".into()));
         }
-        let vars = key_vars(slug).ok_or((UNKNOWN, format!("unknown provider: {slug}")))?;
-        let Some(var) = vars.first() else {
+        let vars = self
+            .slug_key_vars(slug)
+            .ok_or((UNKNOWN, format!("unknown provider: {slug}")))?;
+        let Some(var) = vars.first().copied() else {
             return Err((NO_KEY_VARIABLE, format!("no env var defined for {slug}")));
         };
         if !env_value_round_trips(var, key) {
@@ -371,6 +399,7 @@ impl Chat {
                     .into(),
             ));
         }
+        let _write = env_write();
         set_env_file_value(&self.home.join(".env"), var, Some(key)).map_err(|_| {
             (
                 SAVE_FAILED,
@@ -395,7 +424,8 @@ impl Chat {
         }
         let path = self.home.join(".env");
         let mut cleared = false;
-        for var in key_vars(slug).unwrap_or_default() {
+        let _write = env_write();
+        for var in self.slug_key_vars(slug).unwrap_or_default() {
             let in_file = set_env_file_value(&path, var, None).map_err(|_| {
                 (
                     DISCONNECT_FAILED,
