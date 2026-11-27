@@ -325,3 +325,57 @@ async fn a_model_switch_changes_only_that_sessions_next_turns() {
     let models: Vec<&str> = seen.iter().map(|(model, _)| model.as_str()).collect();
     assert_eq!(models, ["other-model", "mock-model", "other-model"]);
 }
+
+/// `reload.env` keeps a key that start-up read from the project `.env` (the working folder's)
+/// whilst the project file still holds it, even once a save has created the home `.env`.
+#[tokio::test]
+async fn reload_env_keeps_a_key_the_project_env_still_holds() {
+    use std::io::BufRead;
+    let home = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join(".env"), "XIAOMI_API_KEY=project-key\n").unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_hermes-desktop-gateway"))
+        .args(["--port", "0"])
+        .current_dir(project.path())
+        .env("HERMES_HOME", home.path())
+        .env("HERMES_DASHBOARD_SESSION_TOKEN", TOKEN)
+        .env_remove("HERMES_AGENT_ULTRA_HOME")
+        .env_remove("HERMES_MANAGED_DIR")
+        .env_remove("XIAOMI_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // Held to the end, so the gateway's later readiness line meets an open pipe.
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut first = String::new();
+    stdout.read_line(&mut first).unwrap();
+    let port: u16 = first
+        .trim()
+        .strip_prefix("HERMES_BACKEND_READY port=")
+        .unwrap_or_else(|| panic!("first line: {first}"))
+        .parse()
+        .unwrap();
+    let mut client = connect(std::net::SocketAddr::from(([127, 0, 0, 1], port))).await;
+    let reply = client
+        .call(
+            1,
+            "model.save_key",
+            json!({"slug": "openai", "api_key": "saved-key"}),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    client.call(2, "reload.env", json!({})).await;
+    let reply = client.call(3, "model.options", json!({})).await;
+    child.kill().unwrap();
+    child.wait().unwrap();
+    drop(stdout);
+    let rows = reply["result"]["providers"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row["slug"] == SAVED && row["authenticated"] == true),
+        "{reply}"
+    );
+}
