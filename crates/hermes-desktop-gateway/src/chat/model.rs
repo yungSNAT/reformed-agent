@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use hermes_config::loader::{
-    dotenv_values_in, env_name_writable, env_value_round_trips, set_env_file_value,
+    dotenv_assignment, dotenv_values_in, env_name_writable, env_value_round_trips, set_env_file_value,
 };
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use hermes_core::providers::{canonical_provider_id, provider_api_key_env_vars, KNOWN_PROVIDERS};
@@ -103,16 +103,26 @@ fn local(
 #[derive(Default)]
 pub(super) struct Keys {
     changed: Mutex<HashMap<String, Option<String>>>,
-    /// The names start-up read from the `.env` files (`dotenv_values_in`).
+    /// The names in the home `.env` when this gateway started, whose values start-up set over
+    /// the shell's. Not the project `.env`: a reload reads that one only to fill gaps.
     from_file: BTreeSet<String>,
 }
 
 impl Keys {
-    /// No changes yet; the `.env` files of `home` as start-up read them.
+    /// No changes yet; the names in `home`'s `.env` as it stands.
     pub(super) fn at_start_up(home: &Path) -> Self {
+        let from_file = std::fs::read_to_string(home.join(".env"))
+            .map(|contents| {
+                contents
+                    .lines()
+                    .filter_map(dotenv_assignment)
+                    .map(|(name, _)| name.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             changed: Mutex::default(),
-            from_file: dotenv_values_in(home).into_keys().collect(),
+            from_file,
         }
     }
 
@@ -121,8 +131,8 @@ impl Keys {
         self.changed.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Whether `var`'s value came from a `.env` file: changed since start-up, or read from one
-    /// at start-up.
+    /// Whether `var`'s value came from a `.env` file: changed since start-up, or in the home
+    /// `.env` at start-up.
     fn from_env_file(&self, var: &str) -> bool {
         self.changed(var) || self.from_file.contains(var)
     }
