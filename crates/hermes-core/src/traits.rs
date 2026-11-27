@@ -63,6 +63,23 @@ pub trait ToolHandler: Send + Sync {
     fn schema(&self) -> ToolSchema;
 }
 
+tokio::task_local! {
+    static TOOL_CALL_DELEGATE_DEPTH: u32;
+}
+
+/// Run `call` as a tool call of the agent at `depth` delegations below the
+/// top-level agent (0 for the top level). The mark is visible to the tool's
+/// handler on this thread, including an async handler the call blocks on.
+pub fn with_tool_call_delegate_depth<R>(depth: u32, call: impl FnOnce() -> R) -> R {
+    TOOL_CALL_DELEGATE_DEPTH.sync_scope(depth, call)
+}
+
+/// The delegate depth of the agent whose tool call is running, or `None`
+/// when the call did not come through an agent loop.
+pub fn tool_call_delegate_depth() -> Option<u32> {
+    TOOL_CALL_DELEGATE_DEPTH.try_with(|depth| *depth).ok()
+}
+
 // ---------------------------------------------------------------------------
 // PlatformAdapter
 // ---------------------------------------------------------------------------
