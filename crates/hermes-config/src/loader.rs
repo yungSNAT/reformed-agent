@@ -938,7 +938,8 @@ fn find_embedded_assignment_start(value: &str) -> Option<usize> {
     None
 }
 
-fn strip_quotes(s: &str) -> &str {
+/// `s` without one pair of matching surrounding quotes, as a `.env` value is read.
+pub fn strip_quotes(s: &str) -> &str {
     if s.len() >= 2
         && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
     {

@@ -17,7 +17,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use hermes_config::loader::{
     dotenv_assignment, dotenv_values_in, env_name_key, env_name_writable, env_value_round_trips,
-    set_env_file_value,
+    set_env_file_value, strip_quotes,
 };
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use hermes_core::providers::{canonical_provider_id, provider_api_key_env_vars, KNOWN_PROVIDERS};
@@ -105,23 +105,33 @@ pub(super) struct Keys {
     from_file: Mutex<BTreeSet<String>>,
     /// The names in the home `.env` at start-up, as [`env_name_key`] gives them.
     started_in_home_file: BTreeSet<String>,
+    /// The names in the project `.env` (the working folder's) at start-up, likewise.
+    started_in_project_file: BTreeSet<String>,
 }
 
-/// The names in `home`'s `.env` as [`env_name_key`] gives them: none for a missing file,
-/// `None` for one that cannot be read.
-fn home_env_names(home: &Path) -> Option<BTreeSet<String>> {
-    match std::fs::read_to_string(home.join(".env")) {
+/// The assignments in `dir`'s `.env` as start-up reads them, names as [`env_name_key`] gives
+/// them: none for a missing file, `None` for one that cannot be read.
+fn env_file_values(dir: &Path) -> Option<HashMap<String, String>> {
+    match std::fs::read_to_string(dir.join(".env")) {
         Ok(contents) => Some(
             contents
                 .lines()
                 .filter_map(dotenv_assignment)
-                .map(|(name, _)| env_name_key(name))
+                .map(|(name, value)| (env_name_key(name), strip_quotes(value.trim()).to_string()))
                 .collect(),
         ),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(BTreeSet::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(HashMap::new()),
         Err(_) => None,
     }
 }
+
+/// The names in `home`'s `.env`, as [`env_file_values`] gives them.
+fn home_env_names(home: &Path) -> Option<BTreeSet<String>> {
+    env_file_values(home).map(|values| values.into_keys().collect())
+}
+
+/// The project `.env`'s folder: the working folder, as start-up reads it.
+const PROJECT: &str = "";
 
 impl Keys {
     /// No changes yet; the names in `home`'s `.env` as it stands.
@@ -131,6 +141,7 @@ impl Keys {
             changed: Mutex::default(),
             from_file: Mutex::new(names.clone()),
             started_in_home_file: names,
+            started_in_project_file: home_env_names(Path::new(PROJECT)).unwrap_or_default(),
         }
     }
 
@@ -175,22 +186,31 @@ impl Keys {
         changed
     }
 
-    /// Drops `var`'s value from the home `.env`, whose line is gone: back to its start-up value
-    /// when the shell or the project `.env` set that, else removed. A disconnect stays. Whether
-    /// its value changed.
-    fn drop_home_value(&self, var: &str) -> bool {
-        let set_elsewhere = !self.started_in_home_file.contains(&env_name_key(var))
-            && std::env::var_os(var).is_some();
-        if !set_elsewhere {
-            return self.set(var, None);
+    /// Drops `var`'s value from the home `.env`, whose line is gone, as a fresh start would
+    /// read it: the shell's start-up value when the shell set it, else the project `.env`'s
+    /// value now (`project`; `None` when it cannot be read, which keeps a key start-up took from
+    /// it), else removed. A disconnect stays. Whether its value changed.
+    fn drop_home_value(&self, var: &str, project: Option<&HashMap<String, String>>) -> bool {
+        if matches!(self.lock().get(var), Some(None)) {
+            return false;
         }
-        let before = self.value(var);
-        let mut changed = self.lock();
-        if matches!(changed.get(var), Some(Some(_))) {
-            changed.remove(var);
+        let key = env_name_key(var);
+        let in_project = self.started_in_project_file.contains(&key);
+        if !in_project
+            && !self.started_in_home_file.contains(&key)
+            && std::env::var_os(var).is_some()
+        {
+            let before = self.value(var);
+            self.lock().remove(var);
+            return self.value(var) != before;
         }
-        drop(changed);
-        self.value(var) != before
+        match project.map(|values| values.get(&key)) {
+            Some(Some(value)) => {
+                env_value_round_trips(var, value) && self.set(var, Some(value.clone()))
+            }
+            None if in_project => false,
+            _ => self.set(var, None),
+        }
     }
 }
 
@@ -272,7 +292,12 @@ fn option_rows(
     let mut rows = Vec::new();
     let mut seen = Vec::new();
     let mut configured: Vec<_> = config.llm_providers.iter().collect();
-    configured.sort_by_key(|(slug, _)| slug.to_ascii_lowercase());
+    // By name in any case, then by name, as `Chat::slug_entries` orders them.
+    configured.sort_by(|(a, _), (b, _)| {
+        a.to_ascii_lowercase()
+            .cmp(&b.to_ascii_lowercase())
+            .then_with(|| a.cmp(b))
+    });
     for (slug, provider) in configured {
         let mut models = provider.models.clone();
         if let Some(model) = provider.model.as_deref().filter(|m| !m.trim().is_empty()) {
@@ -577,13 +602,14 @@ impl Chat {
     /// `reload.env`: re-reads the key variables as start-up does (`hermes_config`'s order, the
     /// managed `.env` last, names compared as [`env_name_key`]); the number changed. A key this
     /// gateway has seen in the home `.env` and now gone from it and from what a reload reads is
-    /// removed, as upstream removes a known key gone from a readable home `.env`, or goes back
-    /// to the value the shell or the project `.env` gave it at start-up (upstream drops that
-    /// too); one only the shell or the project `.env` set stays. Other variables and a value
+    /// removed, as upstream removes a known key gone from a readable home `.env`, or takes the
+    /// value a fresh start would give it from the shell or the project `.env` (upstream drops
+    /// it); one only the shell or the project `.env` set stays. Other variables and a value
     /// that would not read back as itself take effect at the next start.
     fn reload_env(&self) -> usize {
         let _write = env_write();
         let home_names = home_env_names(&self.home);
+        let project = env_file_values(Path::new(PROJECT));
         let values: HashMap<String, String> = dotenv_values_in(&self.home)
             .into_iter()
             .map(|(name, value)| (env_name_key(&name), value))
@@ -600,7 +626,7 @@ impl Chat {
                         .as_ref()
                         .is_some_and(|names| !names.contains(&env_name_key(var)))
                         && self.keys.came_from_home_file(var)
-                        && self.keys.drop_home_value(var)
+                        && self.keys.drop_home_value(var, project.as_ref())
                 }
             })
             .count();
@@ -945,25 +971,66 @@ mod tests {
     }
 
     #[test]
-    fn a_home_value_whose_line_is_gone_falls_back_to_a_start_up_value_set_elsewhere() {
-        // The shell set `PATH` at start-up; the home `.env` did not.
+    fn a_home_value_whose_line_is_gone_takes_what_a_fresh_start_would_read() {
+        let project = |line: &str| HashMap::from([("PATH".to_string(), line.to_string())]);
+        // The shell set `PATH` at start-up; neither `.env` did.
         let start_up = std::env::var("PATH").ok();
         let keys = Keys::default();
         keys.set("PATH", Some("saved-key".into()));
-        assert!(keys.drop_home_value("PATH"));
+        assert!(keys.drop_home_value("PATH", Some(&project("project-key"))));
         assert_eq!(keys.value("PATH"), start_up);
         assert!(!keys.changed("PATH"));
         // A disconnect stays.
         keys.set("PATH", None);
-        assert!(!keys.drop_home_value("PATH"));
+        assert!(!keys.drop_home_value("PATH", Some(&project("project-key"))));
         assert_eq!(keys.value("PATH"), None);
-        // A value start-up took from the home `.env` goes.
+
+        // Start-up took it from the project `.env`: its value there now, if any.
+        let keys = Keys {
+            started_in_project_file: BTreeSet::from(["PATH".to_string()]),
+            ..Keys::default()
+        };
+        keys.set("PATH", Some("saved-key".into()));
+        assert!(keys.drop_home_value("PATH", Some(&project("changed-key"))));
+        assert_eq!(keys.value("PATH").as_deref(), Some("changed-key"));
+        // A value a `.env` would not read back as itself waits for the next start.
+        assert!(!keys.drop_home_value("PATH", Some(&project("${OTHER}"))));
+        assert_eq!(keys.value("PATH").as_deref(), Some("changed-key"));
+        // A project file that cannot be read keeps it.
+        assert!(!keys.drop_home_value("PATH", None));
+        assert_eq!(keys.value("PATH").as_deref(), Some("changed-key"));
+        // Gone from the project file too: removed.
+        assert!(keys.drop_home_value("PATH", Some(&HashMap::new())));
+        assert_eq!(keys.value("PATH"), None);
+
+        // Start-up took it from the home `.env`, which shadowed the project's: the project's.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".env"), "PATH=from-home\n").unwrap();
         let keys = Keys::at_start_up(dir.path());
-        keys.set("PATH", Some("saved-key".into()));
-        assert!(keys.drop_home_value("PATH"));
+        assert!(keys.drop_home_value("PATH", Some(&project("project-key"))));
+        assert_eq!(keys.value("PATH").as_deref(), Some("project-key"));
+        // With no project value, and with no project file readable: removed.
+        let keys = Keys::at_start_up(dir.path());
+        assert!(keys.drop_home_value("PATH", None));
         assert_eq!(keys.value("PATH"), None);
+    }
+
+    #[test]
+    fn a_env_file_reads_as_start_up_reads_it() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(env_file_values(dir.path()), Some(HashMap::new()));
+        std::fs::write(
+            dir.path().join(".env"),
+            "# note\nA_KEY=\"quoted\"\nB_KEY= plain \n",
+        )
+        .unwrap();
+        let values = env_file_values(dir.path()).unwrap();
+        assert_eq!(values["A_KEY"], "quoted");
+        assert_eq!(values["B_KEY"], "plain");
+        assert_eq!(values.len(), 2);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".env")).unwrap();
+        assert_eq!(env_file_values(dir.path()), None);
     }
 
     #[test]
@@ -983,6 +1050,8 @@ mod tests {
                 ),
             )
             .unwrap();
+            // `load_config` also loads a project `.env`; there is none in a test's folder.
+            assert!(!Path::new(".env").exists());
             let config = hermes_config::load_config(dir.path().to_str()).unwrap();
             // `load_config` keeps both entries, so the picker lists both.
             assert_eq!(config.llm_providers.len(), 2);
@@ -993,6 +1062,10 @@ mod tests {
                 assert_eq!(saved["provider"]["slug"], slug, "{saved}");
                 assert_eq!(saved["provider"]["key_env"], var, "{saved}");
             }
+            // A third spelling takes the entry first by name, and answers its row.
+            assert_eq!(chat.slug_key_vars("Mimo").unwrap()[0], upper);
+            let saved = chat.save_key("Mimo", "saved-key").unwrap();
+            assert_eq!(saved["provider"]["key_env"], upper, "{saved}");
         }
     }
 
