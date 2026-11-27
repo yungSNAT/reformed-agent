@@ -90,26 +90,27 @@ impl OpenVikingRecallConfig {
     /// As the Python plugin's `_setting` (OpenViking `e855796c`, `examples/hermes-plugin`):
     /// per setting, a non-blank environment variable beats the config file; a value that
     /// does not parse gives the built-in default, not the file value; then the schema
-    /// bounds apply.
+    /// bounds apply. An invalid value is logged once per (source, value).
     fn resolve(raw: &serde_json::Map<String, Value>) -> Self {
         let setting = |key: &str, env_var: &str| match std::env::var(env_var) {
-            Ok(value) if !value.trim().is_empty() => Some(Value::String(value)),
-            _ => raw.get(key).cloned(),
+            Ok(value) if !value.trim().is_empty() => {
+                Some((Value::String(value), env_var.to_string()))
+            }
+            _ => raw
+                .get(key)
+                .map(|value| (value.clone(), format!("openviking.json {key}"))),
         };
         let number = |key: &str, env_var: &str, default: f64, min: f64, max: f64| {
-            setting(key, env_var)
-                .as_ref()
-                .and_then(setting_number)
-                .map_or(default, |value| value.clamp(min, max))
+            parse_setting(setting(key, env_var), default, |value| {
+                setting_number(value).map(|value| value.clamp(min, max))
+            })
         };
         let count = |key: &str, env_var: &str, default: usize, min: usize, max: usize| {
-            setting(key, env_var)
-                .as_ref()
-                .and_then(setting_number)
-                .filter(|value| value.fract() == 0.0)
-                .map_or(default, |value| {
-                    value.clamp(min as f64, max as f64) as usize
-                })
+            parse_setting(setting(key, env_var), default, |value| {
+                setting_number(value)
+                    .filter(|value| value.fract() == 0.0)
+                    .map(|value| value.clamp(min as f64, max as f64) as usize)
+            })
         };
         let seconds = |key: &str, env_var: &str, default: Duration| {
             Duration::from_secs_f64(number(
@@ -120,12 +121,8 @@ impl OpenVikingRecallConfig {
                 RECALL_TIMEOUT_CAP.as_secs_f64(),
             ))
         };
-        let flag = |key: &str, env_var: &str| {
-            setting(key, env_var)
-                .as_ref()
-                .and_then(json_boolish)
-                .unwrap_or(false)
-        };
+        let flag =
+            |key: &str, env_var: &str| parse_setting(setting(key, env_var), false, json_boolish);
         Self {
             limit: count(
                 "recall_limit",
@@ -212,6 +209,37 @@ fn apply_openviking_config_map(
     if let Some(agent) = raw.get("agent").and_then(Value::as_str) {
         config.agent = agent.to_string();
     }
+}
+
+/// The parsed value of a found `(value, source)`, else `default`; an unparsable value
+/// gives `default` with a warning.
+fn parse_setting<T: Copy + std::fmt::Display>(
+    found: Option<(Value, String)>,
+    default: T,
+    parse: impl FnOnce(&Value) -> Option<T>,
+) -> T {
+    let Some((value, source)) = found else {
+        return default;
+    };
+    parse(&value).unwrap_or_else(|| {
+        warn_invalid_setting(&source, &value, &default);
+        default
+    })
+}
+
+/// Warns once per (source, value), as the plugin's `_INVALID_SETTING_WARNINGS`; returns
+/// whether this call warned.
+fn warn_invalid_setting(source: &str, value: &Value, default: &dyn std::fmt::Display) -> bool {
+    static WARNED: Mutex<Option<HashSet<(String, String)>>> = Mutex::new(None);
+    let first = WARNED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get_or_insert_with(HashSet::new)
+        .insert((source.to_string(), value.to_string()));
+    if first {
+        tracing::warn!("Invalid {source} value {value}; using default {default}.");
+    }
+    first
 }
 
 /// As `_parse_setting_value` for numbers: a JSON number or numeric string that is finite;

@@ -136,3 +136,52 @@ fn recall_environment_overrides_the_config_file() {
         "an empty variable keeps the file value"
     );
 }
+
+#[test]
+fn recall_invalid_values_warn_once_per_source_and_value() {
+    if !run_isolated(
+        "recall_invalid_values_warn_once_per_source_and_value",
+        &[("OPENVIKING_RECALL_LIMIT", "lots")],
+    ) {
+        return;
+    }
+    let logs = tempfile::tempdir().unwrap();
+    let log_path = logs.path().join("warnings.log");
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(Mutex::new(std::fs::File::create(&log_path).unwrap()))
+        .finish();
+    let file = r#"{"recall_limit": 7, "recall_full_read_limit": null,
+        "recall_score_threshold": 0.4, "recall_resources": "sometimes"}"#;
+    let (first, second) = tracing::subscriber::with_default(subscriber, || {
+        (load_with_file(file), load_with_file(file))
+    });
+    for recall in [first, second] {
+        assert_eq!(recall.limit, 6, "an invalid variable gives the default");
+        assert_eq!(recall.full_read_limit, 2, "null is invalid, so the default");
+        assert_eq!(recall.score_threshold, 0.4);
+        assert!(!recall.include_resources);
+    }
+    let log = std::fs::read_to_string(&log_path).unwrap();
+    let warnings: Vec<&str> = log.lines().filter(|line| line.contains("WARN")).collect();
+    assert_eq!(
+        warnings.len(),
+        3,
+        "one warning per (source, value), not per load: {log}"
+    );
+    for expected in [
+        r#"Invalid OPENVIKING_RECALL_LIMIT value "lots"; using default 6."#,
+        "Invalid openviking.json recall_full_read_limit value null; using default 2.",
+        r#"Invalid openviking.json recall_resources value "sometimes"; using default false."#,
+    ] {
+        assert!(log.contains(expected), "missing {expected:?} in {log}");
+    }
+    assert!(
+        !log.contains("recall_score_threshold"),
+        "a valid value does not warn: {log}"
+    );
+    assert!(
+        warn_invalid_setting("openviking.json recall_resources", &json!("never"), &false),
+        "a different value from the same source warns again"
+    );
+}
