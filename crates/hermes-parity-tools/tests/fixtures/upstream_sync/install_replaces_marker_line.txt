@@ -1,0 +1,26 @@
+exit=Some(0)
+--- stdout
+Installed upstream sync cron entry:
+  5 4 * * 1 REPO_ROOT='<ROOT>/repo' SYNC_STRATEGY='cherry-pick' REPORT_DIR='<ROOT>/repo/.sync-reports' CONFLICT_LABEL='upstream-sync-conflict' CREATE_CONFLICT_ISSUE='1' STRICT_RISK_GATE='0' ALLOW_RISK_PATHS='0' RISK_PATHS_FILE='<ROOT>/repo/scripts/upstream-risk-paths.txt' /usr/bin/env bash '<ROOT>/repo/scripts/cron-upstream-sync.sh' >> '<ROOT>/home/custom/log.txt' 2>&1 # hermes-upstream-sync
+
+Inspect with: crontab -l | grep hermes-upstream-sync
+Logs: <ROOT>/home/custom/log.txt
+--- stderr
+--- calls
+crontab -l
+crontab <TMP>
+--- file home/crontab.txt
+MAILTO=x
+1 2 * * * other job
+3 3 * * * last
+5 4 * * 1 REPO_ROOT='<ROOT>/repo' SYNC_STRATEGY='cherry-pick' REPORT_DIR='<ROOT>/repo/.sync-reports' CONFLICT_LABEL='upstream-sync-conflict' CREATE_CONFLICT_ISSUE='1' STRICT_RISK_GATE='0' ALLOW_RISK_PATHS='0' RISK_PATHS_FILE='<ROOT>/repo/scripts/upstream-risk-paths.txt' /usr/bin/env bash '<ROOT>/repo/scripts/cron-upstream-sync.sh' >> '<ROOT>/home/custom/log.txt' 2>&1 # hermes-upstream-sync
+--- cron script mode 755
+--- refs remotes/origin.git
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/main <C:fork: carry>
+--- status
+## main...origin/main
+?? scripts/cron-upstream-sync.sh
