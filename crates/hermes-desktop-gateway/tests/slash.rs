@@ -168,16 +168,22 @@ async fn slash_exec_sends_what_command_dispatch_serves_there_and_names_the_rest(
             (4018, format!("use command.dispatch for /{name}").as_str())
         );
     }
-    let reply = call(
-        &mut socket,
-        "slash.exec",
-        json!({"command": "frobnicate x", "session_id": id}),
-    )
-    .await;
-    assert_eq!(
-        error(&reply),
-        (4018, "/frobnicate is not available on this backend")
-    );
+    // An exec quick command is one command.dispatch refuses, so it is named, not sent there.
+    for (command, name) in [("frobnicate x", "frobnicate"), ("up", "up")] {
+        let reply = call(
+            &mut socket,
+            "slash.exec",
+            json!({"command": command, "session_id": id}),
+        )
+        .await;
+        assert_eq!(
+            error(&reply),
+            (
+                4018,
+                format!("/{name} is not available on this backend").as_str()
+            )
+        );
+    }
 }
 
 #[tokio::test]
@@ -286,4 +292,43 @@ async fn paste_collapse_saves_each_paste_to_its_own_owner_only_file() {
     assert_ne!(again["result"]["path"], result["path"]);
     let empty = call(&mut socket, "paste.collapse", json!({"text": ""})).await;
     assert_eq!(error(&empty), (4004, "empty paste"));
+}
+
+/// Upstream's paste file takes the folder's access list; here it is owner-only even in a folder
+/// everyone may read.
+#[cfg(windows)]
+#[tokio::test]
+async fn paste_collapse_writes_an_owner_only_file_in_an_open_folder() {
+    let icacls = |path: &std::path::Path, grant: &[&str]| {
+        let out = std::process::Command::new("icacls")
+            .arg(path)
+            .args(grant)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "icacls {}", path.display());
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let (mut socket, home) = start().await;
+    let pastes = home.path().join("pastes");
+    std::fs::create_dir(&pastes).unwrap();
+    // Everyone (S-1-1-0) may read whatever the folder holds.
+    icacls(&pastes, &["/grant", "*S-1-1-0:(OI)(CI)R"]);
+    let reply = call(&mut socket, "paste.collapse", json!({"text": "secret"})).await;
+    let path = std::path::PathBuf::from(reply["result"]["path"].as_str().unwrap());
+    let acl = icacls(&path, &[]);
+    assert!(!acl.contains("Everyone") && !acl.contains("(I)"), "{acl}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "secret");
+}
+
+/// Upstream follows a link in the pastes folder's place; here the paste is refused and nothing
+/// is written where the link points.
+#[cfg(unix)]
+#[tokio::test]
+async fn paste_collapse_refuses_a_link_in_the_pastes_folders_place() {
+    let (mut socket, home) = start().await;
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), home.path().join("pastes")).unwrap();
+    let reply = call(&mut socket, "paste.collapse", json!({"text": "secret"})).await;
+    assert_eq!(reply["error"]["code"], 5021, "{reply}");
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
 }
