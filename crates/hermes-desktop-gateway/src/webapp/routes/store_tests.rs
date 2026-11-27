@@ -143,6 +143,34 @@ fn a_waiter_that_cannot_open_the_break_turn_still_breaks_a_dead_lock() {
     assert!(!target.exists(), "the turn file followed a link");
 }
 
+/// A FIFO with no reader in the break turn file's place neither hangs the waiter nor wedges the
+/// dead lock: the turn is opened without blocking, fails, and the waiter breaks as before.
+#[cfg(unix)]
+#[test]
+fn a_fifo_in_the_break_turn_place_neither_hangs_nor_wedges_the_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    dead_lock(&path);
+    let fifo = std::ffi::CString::new(
+        path.with_file_name("store.json.lock.break")
+            .into_os_string()
+            .into_encoded_bytes(),
+    )
+    .unwrap();
+    // SAFETY: `fifo` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let (done, broke) = std::sync::mpsc::channel();
+    let lock = lock_dir(&path);
+    std::thread::spawn(move || {
+        break_if_stale(&lock);
+        let _ = done.send(());
+    });
+    broke
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the waiter hung opening a FIFO turn");
+    assert!(!lock_dir(&path).exists(), "a FIFO turn wedged the lock");
+}
+
 /// What the protocol promises a writer displaced by a racing break: it no longer holds the lock,
 /// so the write answers busy, and releasing it leaves the new holder's lock alone.
 #[test]
