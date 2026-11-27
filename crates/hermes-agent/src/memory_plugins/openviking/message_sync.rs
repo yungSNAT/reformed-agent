@@ -12,8 +12,8 @@ fn openviking_sync_trace_enabled() -> bool {
 
 fn preview_sync_value(value: impl AsRef<str>) -> String {
     let mut text = value.as_ref().replace('\n', "\\n");
-    if text.len() > 160 {
-        text.truncate(160);
+    if let Some((cut, _)) = text.char_indices().nth(160) {
+        text.truncate(cut);
         text.push_str("...");
     }
     text
@@ -493,3 +493,29 @@ fn post_openviking_text_turn(
     }
 }
 
+#[cfg(test)]
+mod sync_preview_tests {
+    use super::preview_sync_value;
+
+    #[test]
+    fn preview_cuts_multibyte_text_at_160_characters() {
+        let preview = preview_sync_value("é".repeat(200));
+        assert_eq!(preview, format!("{}...", "é".repeat(160)));
+    }
+
+    #[test]
+    fn preview_keeps_short_text_and_escapes_newlines() {
+        assert_eq!(preview_sync_value("a\nb"), "a\\nb");
+        assert_eq!(preview_sync_value("é".repeat(160)), "é".repeat(160));
+        assert_eq!(
+            preview_sync_value("a".repeat(161)),
+            format!("{}...", "a".repeat(160))
+        );
+    }
+
+    #[test]
+    fn preview_cuts_when_byte_160_is_inside_a_character() {
+        let preview = preview_sync_value(format!("a{}", "é".repeat(200)));
+        assert_eq!(preview, format!("a{}...", "é".repeat(159)));
+    }
+}

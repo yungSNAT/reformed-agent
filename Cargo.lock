@@ -1851,6 +1851,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "url",
  "uuid",
  "windows-sys 0.61.2",
  "yaml_serde",
@@ -2151,6 +2152,7 @@ dependencies = [
  "hermes-tools",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 
@@ -2163,6 +2165,7 @@ dependencies = [
  "bytes",
  "dirs",
  "futures",
+ "hermes-agent",
  "hermes-config",
  "hermes-core",
  "hermes-environments",
@@ -2189,6 +2192,23 @@ dependencies = [
  "uuid",
  "wiremock",
  "yaml_serde",
+]
+
+[[package]]
+name = "hermes-upstream-sync"
+version = "0.22.0"
+dependencies = [
+ "clap",
+ "hermes-py",
+ "hmac 0.12.1",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "jiff",
+ "rusqlite",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

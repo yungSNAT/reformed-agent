@@ -159,7 +159,7 @@ impl AgentLoop {
         self.session_spent_usd.store(usd.to_bits(), Ordering::Relaxed);
     }
 
-    fn session_spent_usd(&self) -> f64 {
+    pub(crate) fn session_spent_usd(&self) -> f64 {
         f64::from_bits(self.session_spent_usd.load(Ordering::Relaxed))
     }
 

@@ -747,7 +747,7 @@ schema footprint is zero outside worker processes.
   `unblock`, `archive`, `tail`. Less common: `watch`, `stats`, `runs`,
   `log`, `dispatch`, `daemon`, `gc`.
 - **Worker toolset:** `kanban_show`, `kanban_complete`, `kanban_block`,
-  `kanban_heartbeat`, `kanban_comment`, `kanban_create`, `kanban_link`.
+  `kanban_create`, `kanban_link`, `kanban_attachments`.
 - **Dispatcher** runs inside the gateway by default
   (`kanban.dispatch_in_gateway: true`) — reclaims stale claims,
   promotes ready tasks, atomically claims, spawns assigned profiles.

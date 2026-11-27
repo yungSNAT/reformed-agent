@@ -66,7 +66,7 @@ fn tool_result_cases() -> Vec<Vec<ToolResult>> {
 fn budget_per_result_invariant() {
     for budget in budget_cases() {
         for mut results in tool_result_cases() {
-            enforce_budget(&mut results, &budget);
+            enforce_budget(&mut results, &budget, None);
 
             for result in &results {
                 let max_with_suffix = budget.max_result_size_chars + 100;
@@ -88,7 +88,7 @@ fn budget_does_not_grow_content() {
         for results in tool_result_cases() {
             let original_total: usize = results.iter().map(|r| r.content.len()).sum();
             let mut results = results;
-            enforce_budget(&mut results, &budget);
+            enforce_budget(&mut results, &budget, None);
             let after_total: usize = results.iter().map(|r| r.content.len()).sum();
             let max_suffix_overhead = results.len() * 100;
 
