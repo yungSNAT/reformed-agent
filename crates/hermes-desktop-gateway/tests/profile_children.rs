@@ -646,3 +646,59 @@ async fn on_the_default_socket_a_profile_that_is_not_a_name_is_refused() {
         .await;
     assert!(created["result"]["session_id"].is_string(), "{created}");
 }
+
+/// On a socket opened for a profile, a request with no params runs in that profile's child,
+/// and params that are neither an object nor absent are refused there.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scoped_request_without_params_runs_in_its_child_and_other_params_are_refused() {
+    let started = start(4).await;
+    let mut client = connect(started.addr, Some("inbox")).await;
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "session.create"});
+    client
+        .socket
+        .send(Message::text(request.to_string()))
+        .await
+        .unwrap();
+    let created = loop {
+        let frame = client.next_json().await;
+        if frame["id"] == 1 {
+            break frame;
+        }
+    };
+    assert!(created["result"]["session_id"].is_string(), "{created}");
+    let refused = client.call(2, "session.create", json!(["desktop"])).await;
+    assert_eq!(
+        (&refused["error"]["code"], &refused["error"]["message"]),
+        (&json!(4000), &json!("params must be an object")),
+        "{refused}"
+    );
+}
+
+/// A child gateway speaks the canonical wire to its parent's dial when the dial offers
+/// `hermes-gateway-v1` among its protocols, and the legacy wire otherwise.
+#[tokio::test]
+async fn a_child_gateway_speaks_the_canonical_wire_only_when_offered() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let home = tempfile::tempdir().unwrap();
+    let config = hermes_config::load_config(home.path().to_str()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(hermes_desktop_gateway::serve_child(
+        listener,
+        TOKEN.to_string(),
+        Chat::new(config),
+    ));
+    let url = format!("ws://{addr}/api/ws?token={TOKEN}");
+    let mut request = url.as_str().into_client_request().unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        "x-other, hermes-gateway-v1".parse().unwrap(),
+    );
+    let (_canonical, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert_eq!(
+        response.headers()["sec-websocket-protocol"],
+        "hermes-gateway-v1"
+    );
+    let (_legacy, response) = tokio_tungstenite::connect_async(url).await.unwrap();
+    assert!(response.headers().get("sec-websocket-protocol").is_none());
+}

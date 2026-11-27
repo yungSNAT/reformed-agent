@@ -3,6 +3,9 @@
 //! model is a scripted OpenAI-compatible endpoint configured the way upstream's desktop tests
 //! write `config.yaml`.
 
+#[path = "support/gateway.rs"]
+mod gateway;
+
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -117,18 +120,7 @@ async fn start_with(
         ),
     )
     .unwrap();
-    let config = hermes_config::load_config(home.path().to_str()).unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let mut chat = hermes_desktop_gateway::Chat::new(config);
-    if let Some(timeout) = write_timeout {
-        chat = chat.with_write_timeout(timeout);
-    }
-    tokio::spawn(hermes_desktop_gateway::serve(
-        listener,
-        TOKEN.to_string(),
-        chat,
-    ));
+    let addr = gateway::serve(home.path(), TOKEN, write_timeout).await;
     Started {
         addr,
         requests,
@@ -1079,6 +1071,25 @@ async fn a_large_image_is_attached() {
     assert!(params.to_string().len() > hermes_desktop_gateway::MAX_MESSAGE_BYTES);
     let reply = client.call(2, "image.attach_bytes", params).await;
     assert_eq!(reply["result"]["bytes"], image.len(), "{}", reply["error"]);
+}
+
+/// A request over the message limit keeps the profile it names: one this gateway does not serve
+/// is refused, and nothing is staged here.
+#[tokio::test]
+async fn a_large_image_for_another_profile_is_refused_and_not_staged() {
+    let started = start(vec!["x"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let mut image = png("large");
+    image.resize(13 << 20, 7);
+    let params = json!({"session_id": session, "content_base64": b64(&image), "profile": "inbox"});
+    assert!(params.to_string().len() > hermes_desktop_gateway::MAX_MESSAGE_BYTES);
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    assert_eq!(
+        reply["error"]["message"], "profile_mismatch: no such profile",
+        "{reply}"
+    );
+    assert!(staged_images(started.home.path()).is_empty());
 }
 
 /// As upstream, an empty or null `content_base64` gives way to the `data` alias, in a small

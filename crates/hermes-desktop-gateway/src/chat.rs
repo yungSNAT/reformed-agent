@@ -35,6 +35,7 @@ use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 mod canonical;
 mod history;
 mod model;
+mod oneshot;
 pub(crate) mod profiles;
 mod relay;
 mod session;
@@ -158,6 +159,7 @@ const AREAS: &[&[(&str, Handler)]] = &[
     METHODS,
     history::METHODS,
     model::METHODS,
+    oneshot::METHODS,
     profiles::METHODS,
     relay::METHODS,
     slash::METHODS,
