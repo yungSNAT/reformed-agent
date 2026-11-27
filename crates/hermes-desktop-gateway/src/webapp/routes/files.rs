@@ -331,11 +331,9 @@ fn io_refusal(err: &std::io::Error) -> Refusal {
         std::io::ErrorKind::NotFound => Refusal::NotFound,
         std::io::ErrorKind::PermissionDenied => Refusal::Denied,
         std::io::ErrorKind::NotADirectory => Refusal::NotADirectory,
-        _ => match err.raw_os_error() {
-            Some(code) if code == libc::ELOOP => Refusal::Outside,
-            Some(code) if code == libc::ENOTDIR => Refusal::NotADirectory,
-            _ => Refusal::NotFound,
-        },
+        // `O_NOFOLLOW` meeting a link; std gives ELOOP no stable kind.
+        _ if err.raw_os_error() == Some(libc::ELOOP) => Refusal::Outside,
+        _ => Refusal::NotFound,
     }
 }
 
@@ -677,12 +675,12 @@ fn untracked_lines(root: &Path, top: &Path, rel: &str, refused: &[PathBuf]) -> u
     if st.st_size as u64 > UNTRACKED_LINE_MAX_BYTES {
         return 0;
     }
-    let Ok(data) = read_capped(file, UNTRACKED_LINE_MAX_BYTES) else {
+    let Some(data) = read_capped(file, UNTRACKED_LINE_MAX_BYTES)
+        .ok()
+        .filter(|data| !data.contains(&0))
+    else {
         return 0;
     };
-    if data.contains(&0) {
-        return 0;
-    }
     let lines = data.iter().filter(|&&b| b == b'\n').count() as u64;
     if !data.is_empty() && !data.ends_with(b"\n") {
         lines + 1
@@ -782,14 +780,14 @@ pub(crate) fn repo_status(dir: &RepoDir, refused: &[PathBuf]) -> Option<Value> {
     let top = git_out(&run_in, root, GitRead::RevParse, &["--show-prefix"])
         .filter(|(ok, _)| *ok)
         .and_then(|(_, prefix)| top_of(&dir.resolved.path, prefix.trim_end_matches('\n')));
-    if let Some(top) = top {
-        added += entries
+    added += top.map_or(0, |top| {
+        entries
             .iter()
             .filter(|(t, ..)| *t == '?')
             .take(UNTRACKED_SCAN_CAP)
             .map(|(_, _, p)| untracked_lines(root, &top, p, refused))
-            .sum::<u64>();
-    }
+            .sum::<u64>()
+    });
     let count = |flag: &str| files.iter().filter(|f| f[flag] == true).count();
     Some(json!({
         "branch": branch,
@@ -908,12 +906,11 @@ fn admit(
     let real_home = user_home
         .as_deref()
         .and_then(|h| std::fs::canonicalize(h).ok());
-    if let Some(cwd) = std::fs::canonicalize(default_cwd_for(&hermes_home))
-        .ok()
-        .filter(|cwd| extra_root_allowed(cwd, real_home.as_deref()))
-    {
-        allowed.push(cwd);
-    }
+    allowed.extend(
+        std::fs::canonicalize(default_cwd_for(&hermes_home))
+            .ok()
+            .filter(|cwd| extra_root_allowed(cwd, real_home.as_deref())),
+    );
     let refused = [hermes_home.clone(), served.install_root()];
     Ok((Roots::new(&allowed, &refused), user_home))
 }
@@ -934,30 +931,32 @@ async fn fs_list(
     let (roots, home) = admit(&served, &ctx, &ext, &q)?;
     let raw = path_param(&q)?;
     blocking(move || {
-        let resolved = match resolve(&raw, &roots, home.as_deref()) {
-            Ok(r) => r,
-            Err(Refusal::NotFound) => return Ok(json!({"entries": [], "error": "ENOENT"})),
-            Err(Refusal::NotADirectory) => return Ok(json!({"entries": [], "error": "ENOTDIR"})),
-            Err(Refusal::Denied) => return Ok(json!({"entries": [], "error": "EACCES"})),
-            Err(other) => return Err(other.into()),
-        };
-        let dir = match open_resolved(&resolved) {
-            Ok(Opened::Dir(dir)) => dir,
-            Ok(Opened::File(..)) | Err(Refusal::NotADirectory | Refusal::NotAFile) => {
-                return Ok(json!({"entries": [], "error": "ENOTDIR"}))
-            }
-            Err(Refusal::NotFound) => return Ok(json!({"entries": [], "error": "ENOENT"})),
-            Err(Refusal::Denied) => return Ok(json!({"entries": [], "error": "EACCES"})),
-            Err(other) => return Err(other.into()),
-        };
-        Ok(match list_entries(dir, &resolved.path) {
-            Ok((entries, false)) => json!({"entries": entries}),
-            Ok((entries, true)) => json!({"entries": entries, "truncated": true}),
-            Err(_) => json!({"entries": [], "error": "read-error"}),
-        })
+        listing(resolve(&raw, &roots, home.as_deref()).and_then(|r| {
+            let opened = open_resolved(&r)?;
+            Ok((r, opened))
+        }))
     })
     .await
     .map(Json)
+}
+
+/// `fs/list`'s answer for a checked and opened path: a missing, unreadable or non-folder path
+/// answers as upstream's does, in the body; any other refusal is the request's error.
+pub(crate) fn listing(opened: Result<(Resolved, Opened), Refusal>) -> Result<Value, ApiError> {
+    let error = |code: &str| Ok(json!({"entries": [], "error": code}));
+    match opened {
+        Ok((resolved, Opened::Dir(dir))) => Ok(match list_entries(dir, &resolved.path) {
+            Ok((entries, false)) => json!({"entries": entries}),
+            Ok((entries, true)) => json!({"entries": entries, "truncated": true}),
+            Err(_) => json!({"entries": [], "error": "read-error"}),
+        }),
+        Ok((_, Opened::File(..))) | Err(Refusal::NotADirectory | Refusal::NotAFile) => {
+            error("ENOTDIR")
+        }
+        Err(Refusal::NotFound) => error("ENOENT"),
+        Err(Refusal::Denied) => error("EACCES"),
+        Err(other) => Err(other.into()),
+    }
 }
 
 /// `read-data-url`'s answer for a checked path: the file's ETag, and its data URL unless `wanted`
@@ -1024,9 +1023,7 @@ async fn read_data_url(
                 header::CACHE_CONTROL,
                 HeaderValue::from_static("private, no-cache"),
             );
-            if let Ok(tag) = HeaderValue::from_str(&tag) {
-                h.insert(header::ETAG, tag);
-            }
+            h.extend(HeaderValue::from_str(&tag).ok().map(|t| (header::ETAG, t)));
             response
         }
         Err(err) => err.into_response(),

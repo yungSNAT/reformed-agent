@@ -237,3 +237,53 @@ async fn a_local_caller_reads_the_working_folder_but_not_the_hermes_home() {
         "the repository's fsmonitor or external diff ran"
     );
 }
+
+/// The answers a signed-in tab gets besides a plain read: a missing `path`, an unchanged file
+/// named by its ETag, a git route on a missing or outside folder, and a named or refused ref.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_routes_answer_a_missing_path_an_unchanged_file_and_a_refused_ref() {
+    let (_dir, base, home, _marker) = work_tree();
+    let (_runtime, origin) = serving(&home);
+    work_folder(&home, &base);
+    let token = credential(&home, &origin).await;
+    let get = |route: String, extra: Option<(&'static str, String)>| {
+        let mut headers = vec![
+            ("X-Hermes-Session-Token", token.clone()),
+            ("Origin", origin.clone()),
+        ];
+        headers.extend(extra);
+        let headers: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (*n, v.as_str())).collect();
+        call(&origin, "GET", &route, &headers).send()
+    };
+
+    let bare = get("/api/fs/list".into(), None).await.unwrap();
+    assert_eq!(bare.status(), 400, "a listing without a path");
+
+    let file = at("/api/fs/read-data-url", &base.join("proj/a.txt"));
+    let first = get(file.clone(), None).await.unwrap();
+    assert_eq!(first.status(), 200);
+    let tag = first.headers()["etag"].to_str().unwrap().to_owned();
+    let again = get(file, Some(("If-None-Match", format!("W/{tag}, \"other\""))))
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 304, "a file unchanged since its ETag");
+    assert_eq!(again.headers()["etag"].to_str().unwrap(), tag);
+
+    let missing = get(at("/api/git/status", &base.join("gone")), None)
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 200, "status of a missing folder");
+    assert_eq!(missing.json::<Value>().await.unwrap(), Value::Null);
+    let outside = get(at("/api/git/status", Path::new("/")), None)
+        .await
+        .unwrap();
+    assert_eq!(outside.status(), 403, "status outside the roots");
+
+    let rev = |r: &str| format!("{}&ref={r}", at("/api/git/review/rev-parse", &base.join("proj")));
+    let named = get(rev("main"), None).await.unwrap();
+    assert_eq!(named.status(), 200, "a named ref");
+    let body: Value = named.json().await.unwrap();
+    assert!(body["sha"].as_str().is_some_and(|s| s.len() == 40), "{body}");
+    let option = get(rev("-n"), None).await.unwrap();
+    assert_eq!(option.status(), 400, "a ref that reads as an option");
+}

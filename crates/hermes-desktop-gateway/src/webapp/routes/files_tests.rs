@@ -292,7 +292,7 @@ fn status_runs_no_program_a_hostile_repository_names() {
     std::fs::write(repo.join("fresh.txt"), "a\nb\n").unwrap();
     let status = status_at(&t, "proj");
     assert!(!marker.exists(), "a configured program ran");
-    let Some(status) = status else { return }; // git older than 2.39.1 gives no command: nothing ran either
+    let status = status.expect("a status (git 2.39.1 or newer)");
     assert_eq!(status["branch"], "main");
     assert_eq!(status["untracked"], 2);
     assert!(status["added"].as_u64().unwrap() >= 2);
@@ -642,4 +642,288 @@ fn a_file_over_the_attachment_limit_answers_413_and_one_at_it_is_read() {
     assert!(body.unwrap().starts_with("data:"));
     let (_, unchanged) = data_url(&resolved, std::slice::from_ref(&tag)).unwrap();
     assert!(unchanged.is_none(), "a matching ETag read the file again");
+}
+
+#[test]
+fn each_refusal_answers_with_its_status() {
+    for (refusal, want) in [
+        (Refusal::BadPath("x"), StatusCode::BAD_REQUEST),
+        (Refusal::Outside, StatusCode::FORBIDDEN),
+        (Refusal::Sensitive, StatusCode::FORBIDDEN),
+        (Refusal::NotFound, StatusCode::NOT_FOUND),
+        (Refusal::NotADirectory, StatusCode::BAD_REQUEST),
+        (Refusal::NotAFile, StatusCode::BAD_REQUEST),
+        (Refusal::Denied, StatusCode::FORBIDDEN),
+        (Refusal::TooLarge, StatusCode::PAYLOAD_TOO_LARGE),
+    ] {
+        let name = format!("{refusal:?}");
+        let ApiError(status, text) = ApiError::from(refusal);
+        assert_eq!(status, want, "{name}");
+        assert!(!text.is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn io_errors_map_to_refusals() {
+    for (code, want) in [
+        (libc::ENOENT, Refusal::NotFound),
+        (libc::EACCES, Refusal::Denied),
+        (libc::ENOTDIR, Refusal::NotADirectory),
+        (libc::ELOOP, Refusal::Outside),
+        (libc::EISDIR, Refusal::NotFound),
+    ] {
+        let err = std::io::Error::from_raw_os_error(code);
+        assert_eq!(io_refusal(&err), want, "errno {code}");
+    }
+}
+
+#[test]
+fn a_home_relative_path_needs_a_home_folder() {
+    let t = tree();
+    for raw in ["~", "~/proj"] {
+        assert_eq!(
+            resolve(raw, &roots(&t), None).unwrap_err(),
+            Refusal::BadPath("No home folder"),
+            "{raw}"
+        );
+    }
+    assert!(resolve("~/proj", &roots(&t), Some(&t.root)).is_ok());
+}
+
+#[test]
+fn a_walk_opens_only_what_its_root_holds() {
+    let t = tree();
+    let walk = |root: &Path, path: PathBuf| {
+        open_resolved(&Resolved {
+            root: root.to_path_buf(),
+            path,
+        })
+        .err()
+    };
+    assert_eq!(walk(&t.root, t.outside.clone()), Some(Refusal::Outside));
+    assert_eq!(
+        walk(&t.root, t.root.join("../outside")),
+        Some(Refusal::Outside)
+    );
+    assert_eq!(
+        walk(&t.root.join("gone"), t.root.join("gone/x")),
+        Some(Refusal::NotFound)
+    );
+    assert_eq!(
+        walk(&t.root, t.root.join("proj/missing.rs")),
+        Some(Refusal::NotFound)
+    );
+    assert_eq!(walk(&t.root, t.root.join("proj/src/main.rs")), None);
+}
+
+#[test]
+fn a_bad_descriptor_or_a_name_with_a_nul_fails_cleanly() {
+    use std::os::unix::ffi::OsStrExt;
+    struct Closed;
+    impl std::os::fd::AsRawFd for Closed {
+        fn as_raw_fd(&self) -> std::os::fd::RawFd {
+            -1
+        }
+    }
+    assert_eq!(
+        fstat(&Closed).err().and_then(|e| e.raw_os_error()),
+        Some(libc::EBADF)
+    );
+    let named = openat(libc::AT_FDCWD, OsStr::from_bytes(b"a\0b"), libc::O_RDONLY);
+    assert_eq!(
+        named.err().and_then(|e| e.raw_os_error()),
+        Some(libc::EINVAL)
+    );
+}
+
+fn list(t: &Tree, raw: &str) -> Result<Value, ApiError> {
+    listing(resolve(raw, &roots(t), None).and_then(|r| {
+        let opened = open_resolved(&r)?;
+        Ok((r, opened))
+    }))
+}
+
+#[test]
+fn a_listing_answers_missing_unreadable_and_file_paths_in_its_body() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tree();
+    let answer = |code: &str| json!({"entries": [], "error": code});
+    assert_eq!(list(&t, &at(&t, "gone")).unwrap(), answer("ENOENT"));
+    assert_eq!(
+        list(&t, &at(&t, "proj/src/main.rs")).unwrap(),
+        answer("ENOTDIR")
+    );
+    assert_eq!(
+        list(&t, &at(&t, "proj/src/main.rs/x")).unwrap(),
+        answer("ENOTDIR")
+    );
+    let locked = t.root.join("locked");
+    std::fs::create_dir_all(locked.join("inner")).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let shut = list(&t, &at(&t, "locked")).unwrap();
+    let inner = list(&t, &at(&t, "locked/inner")).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(shut, answer("EACCES"), "a folder it may not read");
+    assert_eq!(inner, answer("EACCES"), "a path under a folder it may not search");
+    let ApiError(status, _) = list(&t, t.outside.to_str().unwrap()).unwrap_err();
+    assert_eq!(status, StatusCode::FORBIDDEN, "outside the roots");
+}
+
+#[test]
+fn a_listing_past_the_entry_limit_says_it_is_truncated() {
+    let t = tree();
+    let many = t.root.join("many");
+    std::fs::create_dir(&many).unwrap();
+    for i in 0..=LIST_MAX_ENTRIES {
+        std::fs::File::create(many.join(format!("f{i}"))).unwrap();
+    }
+    let body = list(&t, &at(&t, "many")).unwrap();
+    assert_eq!(body["truncated"], true);
+    assert_eq!(body["entries"].as_array().unwrap().len(), LIST_MAX_ENTRIES);
+}
+
+#[test]
+fn a_descriptor_that_is_not_a_folder_lists_as_a_read_error() {
+    let t = tree();
+    let file: std::os::fd::OwnedFd = std::fs::File::open(t.root.join("proj/src/main.rs"))
+        .unwrap()
+        .into();
+    let resolved = resolve(&at(&t, "proj/src"), &roots(&t), None).unwrap();
+    assert_eq!(
+        listing(Ok((resolved, Opened::Dir(file)))).unwrap(),
+        json!({"entries": [], "error": "read-error"})
+    );
+}
+
+#[test]
+fn a_folder_is_neither_read_nor_taken_as_a_file_and_a_file_is_no_repository() {
+    let t = tree();
+    let folder = std::fs::File::open(&t.root).unwrap();
+    assert_eq!(read_capped(folder, 10).unwrap_err(), Refusal::NotFound);
+    let proj = resolve(&at(&t, "proj"), &roots(&t), None).unwrap();
+    let ApiError(status, _) = data_url(&proj, &[]).unwrap_err();
+    assert_eq!(status, StatusCode::BAD_REQUEST, "read-data-url of a folder");
+    let Err(ApiError(status, _)) = repo_dir(&at(&t, "proj/src/main.rs"), &roots(&t), None) else {
+        panic!("a file opened as a repository folder");
+    };
+    assert_eq!(status, StatusCode::BAD_REQUEST, "git route on a file");
+}
+
+#[test]
+fn a_data_url_names_the_type_upstream_gives_each_extension() {
+    for (name, want) in [
+        ("a.PNG", "image/png"),
+        ("a.jpg", "image/jpeg"),
+        ("a.jpeg", "image/jpeg"),
+        ("a.gif", "image/gif"),
+        ("a.webp", "image/webp"),
+        ("a.svg", "image/svg+xml"),
+        ("a.bmp", "image/bmp"),
+        ("a.ico", "image/vnd.microsoft.icon"),
+        ("a.avif", "image/avif"),
+        ("a.heic", "image/heic"),
+        ("a.pdf", "application/pdf"),
+        ("a.json", "application/json"),
+        ("a.txt", "text/plain"),
+        ("a.log", "text/plain"),
+        ("a.md", "text/markdown"),
+        ("a.csv", "text/csv"),
+        ("a.html", "text/html"),
+        ("a.htm", "text/html"),
+        ("a.css", "text/css"),
+        ("a.js", "text/javascript"),
+        ("a.mjs", "text/javascript"),
+        ("a.mp3", "audio/mpeg"),
+        ("a.wav", "audio/wav"),
+        ("a.ogg", "audio/ogg"),
+        ("a.mp4", "video/mp4"),
+        ("a.webm", "video/webm"),
+        ("a.bin", "application/octet-stream"),
+        ("noext", "application/octet-stream"),
+    ] {
+        assert_eq!(mime_type(Path::new(name)), want, "{name}");
+    }
+}
+
+#[test]
+fn untracked_line_counts_skip_what_is_not_small_readable_text() {
+    let t = tree();
+    let top = t.root.join("proj");
+    let private = top.join("private");
+    std::fs::create_dir(&private).unwrap();
+    std::fs::write(private.join("x.txt"), "a\n").unwrap();
+    std::fs::write(top.join("short.txt"), "a\nb").unwrap();
+    std::fs::write(top.join("binary.txt"), b"a\0b\n").unwrap();
+    std::fs::write(top.join(".env"), "A=1\n").unwrap();
+    std::fs::write(
+        top.join("big.txt"),
+        vec![b'\n'; UNTRACKED_LINE_MAX_BYTES as usize + 1],
+    )
+    .unwrap();
+    let refused = [private];
+    let lines = |rel: &str| untracked_lines(&t.root, &top, rel, &refused);
+    assert_eq!(lines("short.txt"), 2, "a last line without a newline counts");
+    for rel in [
+        "binary.txt",
+        ".env",
+        "big.txt",
+        "private/x.txt",
+        "src",
+        "/etc/hostname",
+        "../outside/secret.txt",
+    ] {
+        assert_eq!(lines(rel), 0, "{rel}");
+    }
+}
+
+#[test]
+fn a_prefix_that_leaves_the_folder_gives_no_top() {
+    assert_eq!(
+        top_of(Path::new("/a/b/c"), "b/c/"),
+        Some(PathBuf::from("/a"))
+    );
+    assert_eq!(top_of(Path::new("/a/b"), "../x"), None);
+}
+
+#[test]
+fn status_names_the_remote_default_branch_and_the_distance_from_upstream() {
+    let t = tree();
+    let repo = t.root.join("proj");
+    run(&repo, &["init", "-q", "-b", "work"]);
+    commit_all(&repo);
+    run(
+        &repo,
+        &["remote", "add", "origin", "https://example.invalid/x.git"],
+    );
+    run(&repo, &["update-ref", "refs/remotes/origin/trunk", "HEAD"]);
+    run(
+        &repo,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/trunk",
+        ],
+    );
+    run(&repo, &["config", "branch.work.remote", "origin"]);
+    run(&repo, &["config", "branch.work.merge", "refs/heads/trunk"]);
+    std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+    commit_all(&repo);
+    let status = status_at(&t, "proj").expect("a status");
+    assert_eq!(status["branch"], "work");
+    assert_eq!(status["defaultBranch"], "trunk");
+    assert_eq!(status["ahead"], 1);
+    assert_eq!(status["behind"], 0);
+}
+
+#[test]
+fn status_of_a_repository_without_a_commit_counts_its_untracked_lines() {
+    let t = tree();
+    let repo = t.root.join("proj");
+    run(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "x\n").unwrap();
+    let status = status_at(&t, "proj").expect("a status");
+    assert_eq!(status["branch"], "main");
+    // `a.txt` and the folder `src/`, whose lines are not counted.
+    assert_eq!(status["untracked"], 2);
+    assert_eq!(status["added"], 1);
 }
