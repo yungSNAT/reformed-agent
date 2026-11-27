@@ -80,15 +80,18 @@ cp "$1" "$store"
 const RISK_PATHS: &str = "# comment\n  # indented comment\n\ncrates/hermes-auth/**\nscripts/setup-*.sh\ndocs/[nN]otes.md\n";
 
 /// Host tools the scripts and git need; `gh`, `cargo` and `crontab` are
-/// left out so only the fakes answer. Gate commands run through `bash -lc`,
-/// and Debian and Ubuntu's `/etc/profile` lists `/etc/profile.d` with
-/// `run-parts`: without it every login shell prints `run-parts: command not
-/// found`, so the records would depend on the host's profile, not the tools.
-const HOST_TOOLS: [&str; 29] = [
+/// left out so only the fakes answer.
+const HOST_TOOLS: [&str; 28] = [
     "bash", "sh", "env", "git", "mkdir", "mktemp", "rm", "sed", "awk", "xargs", "python3", "cat",
     "dirname", "flock", "grep", "chmod", "date", "cp", "id", "sleep", "tr", "head", "tail", "ls",
-    "uname", "basename", "readlink", "echo", "run-parts",
+    "uname", "basename", "readlink", "echo",
 ];
+
+/// Host tools the login shell needs. Gate commands run through `bash -lc`, and
+/// Ubuntu 26.04's `/etc/profile` lists `/etc/profile.d` with `run-parts`:
+/// without it every login shell prints `run-parts: command not found`, so the
+/// records would depend on the host's profile, not on the tools under test.
+const LOGIN_TOOLS: [&str; 1] = ["run-parts"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Scenario {
@@ -125,7 +128,7 @@ impl Sandbox {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
         }
         let host_path = std::env::var("PATH").unwrap_or_default();
-        for tool in HOST_TOOLS {
+        for tool in HOST_TOOLS.into_iter().chain(LOGIN_TOOLS) {
             if let Some(found) = std::env::split_paths(&host_path)
                 .map(|dir| dir.join(tool))
                 .find(|p| p.is_file())
