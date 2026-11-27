@@ -68,7 +68,6 @@ fn a_stale_break_leaves_a_lock_retaken_since_it_was_judged() {
 
 /// Waiters A, B and C over a dead lock: A judges it stale; B breaks it and takes the store; A then
 /// acts on its judgement whilst C takes any name left free. B must still hold the store.
-#[cfg(unix)]
 #[test]
 fn a_waiter_acting_on_an_old_judgement_never_displaces_a_live_lock() {
     use std::cell::RefCell;
@@ -96,7 +95,6 @@ fn a_waiter_acting_on_an_old_judgement_never_displaces_a_live_lock() {
 
 /// Whilst another waiter of this gateway holds the break turn, a waiter leaves the stale lock to
 /// it; once the turn is free, the next waiter breaks it.
-#[cfg(unix)]
 #[test]
 fn a_waiter_leaves_a_stale_lock_to_the_waiter_already_breaking_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -137,7 +135,8 @@ fn a_waiter_that_cannot_open_the_break_turn_still_breaks_a_dead_lock() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&target, link).unwrap();
     #[cfg(windows)]
-    std::os::windows::fs::symlink_file(&target, link).unwrap();
+    std::os::windows::fs::symlink_file(&target, link)
+        .expect("a symlink on Windows needs Developer Mode or an elevated shell");
     break_if_stale(&lock_dir(&path));
     assert!(!lock_dir(&path).exists(), "a linked turn wedged the lock");
     assert!(!target.exists(), "the turn file followed a link");
