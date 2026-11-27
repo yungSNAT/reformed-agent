@@ -20,18 +20,29 @@ pub const TOKEN: &str = "0123456789abcdef0123456789abcdef-test-token";
 /// What the scripted model answers.
 pub const REPLY: &str = "```\nfeat(gateway): serve one-shot requests\n```";
 
+/// What it answers a prompt containing `THINK`: its reasoning inline, as a local reasoning
+/// model sends it.
+pub const THINKING_REPLY: &str =
+    "<think>look at the diff</think>\n<Thinking>\nstill\n</Thinking>\nfeat: x\n<thought>a</thought>";
+
 pub type Requests = Arc<Mutex<Vec<Value>>>;
 
 async fn complete(State(requests): State<Requests>, Json(body): Json<Value>) -> Response {
     let stream = body["stream"] == true;
-    if body.to_string().contains("SLOW") {
+    let text = body.to_string();
+    if text.contains("SLOW") {
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
+    let reply = if text.contains("THINK") {
+        THINKING_REPLY
+    } else {
+        REPLY
+    };
     requests.lock().unwrap().push(body);
     if !stream {
         return Json(json!({
             "id": "c", "object": "chat.completion", "model": "mock-model",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": REPLY},
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": reply},
                          "finish_reason": "stop"}],
         }))
         .into_response();
@@ -42,7 +53,7 @@ async fn complete(State(requests): State<Requests>, Json(body): Json<Value>) -> 
     };
     let sse = format!(
         "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-        chunk(json!({"content": REPLY}), Value::Null),
+        chunk(json!({"content": reply}), Value::Null),
         chunk(json!({}), json!("stop"))
     );
     ([("content-type", "text/event-stream")], sse).into_response()

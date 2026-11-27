@@ -75,6 +75,16 @@ async fn instructions_and_input_go_as_they_are() {
     );
 }
 
+/// Reasoning a model puts inline in its reply is removed, as upstream's
+/// `extract_content_or_reasoning` does, so it never reaches the commit message box.
+#[tokio::test]
+async fn inline_reasoning_is_removed_from_the_reply() {
+    let (addr, _requests, _home) = start(true).await;
+    let mut socket = connect(addr).await;
+    let reply = call(&mut socket, 2, json!({"input": "THINK"})).await;
+    assert_eq!(reply["result"]["text"], "feat: x", "{reply}");
+}
+
 /// Upstream's refusals, none of which reaches the model.
 #[tokio::test]
 async fn llm_oneshot_refuses_bad_requests() {
