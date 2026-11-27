@@ -493,7 +493,6 @@ fn post_openviking_text_turn(
     }
 }
 
-
 #[cfg(test)]
 mod sync_preview_tests {
     use super::preview_sync_value;
@@ -506,8 +505,17 @@ mod sync_preview_tests {
 
     #[test]
     fn preview_keeps_short_text_and_escapes_newlines() {
-        assert_eq!(preview_sync_value("a\nb"), "a\nb");
+        assert_eq!(preview_sync_value("a\nb"), "a\\nb");
         assert_eq!(preview_sync_value("é".repeat(160)), "é".repeat(160));
-        assert_eq!(preview_sync_value("a".repeat(161)), format!("{}...", "a".repeat(160)));
+        assert_eq!(
+            preview_sync_value("a".repeat(161)),
+            format!("{}...", "a".repeat(160))
+        );
+    }
+
+    #[test]
+    fn preview_cuts_when_byte_160_is_inside_a_character() {
+        let preview = preview_sync_value(format!("a{}", "é".repeat(200)));
+        assert_eq!(preview, format!("a{}...", "é".repeat(159)));
     }
 }
