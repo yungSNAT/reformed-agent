@@ -49,14 +49,13 @@ fn session_id(params: &Map<String, Value>) -> Result<String, RpcError> {
 
 /// Session `id`'s saved user and assistant messages, read on the blocking pool.
 async fn saved_rows(chat: &Arc<Chat>, id: &str) -> Result<Vec<Value>, RpcError> {
-    let chat = Arc::clone(chat);
-    let lookup = id.to_string();
+    let (reader, lookup) = (Arc::clone(chat), id.to_string());
     // A read that panics is a storage failure, as a store error is.
-    let read = tokio::task::spawn_blocking(move || chat.history(&lookup))
-        .await
-        .map_err(|e| (RESUME_STORAGE, e.to_string()))?;
-    let found = read.ok_or_else(|| (RESUME_NOT_FOUND, "session not found".to_string()))?;
-    found.map_err(|e| (RESUME_STORAGE, e))
+    match chat.with_store(move |_| reader.history(&lookup)).await {
+        Ok(None) => Err((RESUME_NOT_FOUND, "session not found".into())),
+        Ok(Some(Ok(rows))) => Ok(rows),
+        Ok(Some(Err(e))) | Err(e) => Err((RESUME_STORAGE, e)),
+    }
 }
 
 /// Attaches the connection to a live session, or to one saved earlier, and answers with its
