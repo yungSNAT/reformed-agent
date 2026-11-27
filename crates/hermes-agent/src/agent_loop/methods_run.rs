@@ -1263,7 +1263,11 @@ impl AgentLoop {
 
             // Enforce budget on tool results
             let mut results = results;
-            budget::enforce_budget(&mut results, &self.config.budget);
+            budget::enforce_budget(
+                &mut results,
+                &self.config.budget,
+                self.config.session_id.as_deref(),
+            );
 
             if !results.is_empty() {
                 let w = budget_pressure_text(
