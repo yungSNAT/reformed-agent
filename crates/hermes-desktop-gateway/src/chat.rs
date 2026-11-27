@@ -1247,6 +1247,47 @@ mod tests {
         assert_eq!(read["title"], "", "{read}");
     }
 
+    /// A `session.resume` that its connection answers busy (polled once, then dropped) leaves
+    /// that connection unsubscribed: the session's later events do not reach it.
+    #[tokio::test]
+    async fn a_resume_dropped_at_its_first_poll_subscribes_nothing() {
+        use futures::FutureExt as _;
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "model:\n  default: m\n  provider: local\nproviders:\n  local:\n    \
+             api: http://127.0.0.1:9/v1\n    name: Local\n    api_mode: chat_completions\n",
+        )
+        .unwrap();
+        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+        let chat = Arc::new(Chat::new(config));
+        let (outbox, mut owner_events) = tokio::sync::mpsc::unbounded_channel();
+        let owner = Conn::new(1, outbox, false);
+        let (outbox, mut other_events) = tokio::sync::mpsc::unbounded_channel();
+        let other = Conn::new(2, outbox, false);
+        let id = chat.create(&owner)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let resume = chat.call(&other, "session.resume", json!({"session_id": id}));
+        assert!(resume.now_or_never().is_none(), "a resume waits");
+        assert!(matches!(
+            chat.start_turn(&id, "hi".into(), &owner, None),
+            Ok(Taken::Started { .. })
+        ));
+        let first = tokio::time::timeout(Duration::from_secs(10), owner_events.recv())
+            .await
+            .expect("the turn starts")
+            .unwrap();
+        assert!(first.text.contains("message.start"), "{}", first.text);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            other_events.try_recv().is_err(),
+            "nothing reached the other connection"
+        );
+    }
+
     #[test]
     fn a_connection_whose_listener_sets_no_origin_is_remote() {
         let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
