@@ -1065,3 +1065,268 @@ fn add_resource_payload_zips_directory_and_skips_symlinks() {
 
     std::fs::remove_file(zip_path).expect("cleanup zip");
 }
+
+fn prefetch_for(
+    endpoint: String,
+    query: &str,
+    recall: OpenVikingRecallConfig,
+) -> OpenVikingPrefetch {
+    let st = plugin_with_endpoint(endpoint)
+        .state
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("state");
+    OpenVikingPrefetch {
+        st,
+        q: query.to_string(),
+        session_id: String::new(),
+        recall,
+    }
+}
+
+const RANKED_SEARCH: &str = r#"{"result":{
+    "memories":[
+        {"abstract":"An item without a URI is skipped","score":0.99},
+        {"uri":"viking://user/usr/memories/low.md","abstract":"Below the threshold","score":0.05},
+        {"uri":"viking://user/usr/memories/plain.md","abstract":"Plain note","score":0.5},
+        {"uri":"viking://user/usr/memories/rust-port.md","summary":"Rust port plan","score":0.46}
+    ],
+    "resources":[{"uri":"viking://resources/spec.md","text":"Spec resource","score":0.9}]
+}}"#;
+
+#[test]
+fn recall_ranks_by_score_and_query_overlap_and_drops_low_scores() {
+    let (endpoint, rx) = openviking_server(vec![(200, RANKED_SEARCH)]);
+
+    let out = prefetch_for(endpoint, "rust port", OpenVikingRecallConfig::default())
+        .run()
+        .expect("recall text");
+
+    assert_eq!(
+        out,
+        "- [0.46] Rust port plan (viking://user/usr/memories/rust-port.md)\n\
+         - [0.50] Plain note (viking://user/usr/memories/plain.md)",
+        "query overlap lifts the lower-scored match; resources are off by default"
+    );
+    let request = rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+    assert!(request.contains("\"context_type\":\"memory\""));
+    assert!(
+        !request.contains("session_id"),
+        "a blank session id is not sent"
+    );
+}
+
+#[test]
+fn recall_includes_resources_when_enabled() {
+    let (endpoint, rx) = openviking_server(vec![(200, RANKED_SEARCH)]);
+    let recall = OpenVikingRecallConfig {
+        include_resources: true,
+        ..OpenVikingRecallConfig::default()
+    };
+
+    let out = prefetch_for(endpoint, "unrelated words", recall)
+        .run()
+        .expect("recall text");
+
+    assert_eq!(
+        out.lines().next(),
+        Some("- [0.90] Spec resource (viking://resources/spec.md)")
+    );
+    assert_eq!(out.lines().count(), 3);
+    let request = rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+    assert!(request.contains("\"context_type\":[\"memory\",\"resource\"]"));
+}
+
+#[test]
+fn recall_skips_items_whose_full_read_fails_and_stops_at_the_char_budget() {
+    let search = r#"{"results":[
+        {"uri":"viking://user/usr/memories/empty.md","abstract":"","score":0.95},
+        {"uri":"viking://user/usr/memories/first.md","abstract":"First kept line","score":0.8},
+        {"uri":"viking://user/usr/memories/second.md","abstract":"Second line over budget","score":0.7}
+    ]}"#;
+    let first = "- [0.80] First kept line (viking://user/usr/memories/first.md)";
+    let (endpoint, rx) = openviking_server(vec![(200, search), (404, r#"{"error":"gone"}"#)]);
+    let recall = OpenVikingRecallConfig {
+        max_injected_chars: first.chars().count() + 1,
+        ..OpenVikingRecallConfig::default()
+    };
+
+    let out = prefetch_for(endpoint, "", recall)
+        .run()
+        .expect("recall text");
+
+    assert_eq!(out, first);
+    rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+    let read = rx.recv_timeout(StdDuration::from_secs(2)).expect("read");
+    assert!(read.starts_with("GET /api/v1/content/read?"));
+    assert!(read.contains("empty.md"));
+}
+
+#[test]
+fn recall_prefers_abstracts_without_full_reads_when_configured() {
+    let search = r#"{"results":[
+        {"uri":"viking://user/usr/memories/deep.md","abstract":"Deep abstract","score":0.6,"content_level":2}
+    ]}"#;
+    let (endpoint, rx) = openviking_server(vec![(200, search)]);
+    let recall = OpenVikingRecallConfig {
+        prefer_abstract: true,
+        ..OpenVikingRecallConfig::default()
+    };
+
+    let out = prefetch_for(endpoint, "", recall)
+        .run()
+        .expect("recall text");
+
+    assert_eq!(
+        out,
+        "- [0.60] Deep abstract (viking://user/usr/memories/deep.md)"
+    );
+    rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+    assert!(
+        rx.recv_timeout(StdDuration::from_millis(300)).is_err(),
+        "no content read is made"
+    );
+}
+
+#[test]
+fn recall_fails_when_nothing_usable_comes_back() {
+    let blank =
+        r#"{"result":{"memories":[{"uri":"viking://user/usr/memories/x.md","abstract":"   "}]}}"#;
+    let cases: [Vec<(u16, &'static str)>; 3] = [
+        // Search and find both fail.
+        vec![(500, "{}"), (503, "{}")],
+        // Search returns a body that is not JSON; find returns no items.
+        vec![(200, "not json"), (200, r#"{"result":{}}"#)],
+        // The only item has a blank abstract and its full read fails.
+        vec![(200, blank), (500, "{}")],
+    ];
+    for responses in cases {
+        let (endpoint, rx) = openviking_server(responses);
+        let result = prefetch_for(endpoint, "anything", OpenVikingRecallConfig::default()).run();
+        assert!(result.is_err());
+        for _ in 0..2 {
+            rx.recv_timeout(StdDuration::from_secs(2)).expect("request");
+        }
+    }
+}
+
+#[test]
+fn recall_sends_nothing_when_the_time_budget_is_already_spent() {
+    let (endpoint, rx) = openviking_server(vec![(200, RANKED_SEARCH)]);
+    let recall = OpenVikingRecallConfig {
+        timeout: Duration::from_millis(10),
+        ..OpenVikingRecallConfig::default()
+    };
+
+    assert!(prefetch_for(endpoint, "rust", recall).run().is_err());
+    assert!(
+        rx.recv_timeout(StdDuration::from_millis(300)).is_err(),
+        "a budget under the minimum request timeout sends no request"
+    );
+}
+
+#[test]
+fn file_uris_decode_to_local_paths_or_explain_the_rejection() {
+    assert_eq!(
+        file_uri_to_path("file://localhost/srv/a%20b.md").unwrap(),
+        PathBuf::from("/srv/a b.md")
+    );
+    assert_eq!(
+        file_uri_to_path("file:///srv/plain.md").unwrap(),
+        PathBuf::from("/srv/plain.md")
+    );
+    for (uri, error) in [
+        (
+            "https://example.com/a.md",
+            "Unsupported file URI: https://example.com/a.md",
+        ),
+        (
+            "file://server/share/a.md",
+            "Unsupported non-local file URI: file://server/share/a.md",
+        ),
+        (
+            "file:///srv/a%2",
+            "Invalid percent escape in path: /srv/a%2",
+        ),
+        (
+            "file:///srv/a%zz.md",
+            "Invalid percent escape in path: /srv/a%zz.md",
+        ),
+        (
+            "file:///srv/%ff.md",
+            "Invalid UTF-8 in path URI: /srv/%ff.md",
+        ),
+    ] {
+        assert_eq!(file_uri_to_path(uri).unwrap_err(), error, "{uri}");
+    }
+}
+
+#[test]
+fn local_path_references_are_told_apart_from_names_and_urls() {
+    for value in [
+        "C:\\docs\\a.md",
+        "d:/docs/a.md",
+        "/abs/a.md",
+        "./a.md",
+        "../a.md",
+        "~/a.md",
+        ".\\a.md",
+        "..\\a.md",
+        "~\\a.md",
+        "docs/a.md",
+        "docs\\a.md",
+    ] {
+        assert!(is_local_path_reference(value), "{value}");
+    }
+    for value in [
+        "",
+        "a.md",
+        "two\nlines/a",
+        "carriage\r/a",
+        "https://example.com/a/b",
+    ] {
+        assert!(!is_local_path_reference(value), "{value:?}");
+    }
+    assert!(!is_windows_absolute_path("C:"));
+    assert!(!is_windows_absolute_path("1:/a"));
+}
+
+#[test]
+fn add_resource_payload_passes_through_unknown_sources_and_rejects_missing_local_paths() {
+    let args = json!({});
+    for source in ["s3://bucket/key.md", "resource-name-only"] {
+        let (body, upload) = add_resource_payload_for_source(source, &args).expect(source);
+        assert_eq!(body["path"], source);
+        assert!(upload.is_none());
+    }
+    for source in ["./no-such-dir-7f3a/a.md", "C:/no-such-dir-7f3a/a.md"] {
+        assert_eq!(
+            add_resource_payload_for_source(source, &args).unwrap_err(),
+            format!("Local resource path does not exist: {source}")
+        );
+    }
+    assert_eq!(
+        add_resource_payload_for_source("file://server/a.md", &args).unwrap_err(),
+        "Unsupported non-local file URI: file://server/a.md"
+    );
+    assert_eq!(
+        add_resource_payload_for_source("a.md", &json!({"to": "x", "parent": "y"})).unwrap_err(),
+        "Cannot specify both 'to' and 'parent'"
+    );
+}
+
+#[test]
+fn expanduser_resolves_the_home_directory_prefix() {
+    let home = dirs::home_dir().expect("home directory");
+    assert_eq!(PathBuf::from("~").expanduser(), home);
+    assert_eq!(
+        PathBuf::from("~/notes/a.md").expanduser(),
+        home.join("notes/a.md")
+    );
+    assert_eq!(PathBuf::from("~\\notes").expanduser(), home.join("notes"));
+    assert_eq!(
+        PathBuf::from("~other/a").expanduser(),
+        PathBuf::from("~other/a")
+    );
+}
