@@ -235,7 +235,9 @@ impl McpServer {
             .cloned()
             .unwrap_or(Value::Object(serde_json::Map::new()));
         let schema = self.tool_schema_for_name(tool_name);
-        let arguments = coerce_mcp_tool_arguments_for_schema(arguments, schema.as_ref());
+        let mut arguments = coerce_mcp_tool_arguments_for_schema(arguments, schema.as_ref());
+        // A client may not pick the session or call the file tools track.
+        hermes_core::file_edit::strip_reserved_params(&mut arguments);
 
         debug!("MCP tools/call: {} with args: {}", tool_name, arguments);
 
@@ -738,6 +740,25 @@ mod tests {
         let text = result["content"][0]["text"].as_str().expect("text");
         let payload: Value = serde_json::from_str(text).expect("tool json");
         assert_eq!(payload["kind"], "object");
+        assert_eq!(payload["params"], json!({"path":"Cargo.toml"}));
+    }
+
+    #[tokio::test]
+    async fn tools_call_drops_the_parameters_only_the_agent_loop_sets() {
+        let server = McpServer::new(registry_with_echo_args());
+        let mut arguments = json!({"path": "Cargo.toml"});
+        arguments[hermes_core::file_edit::SESSION_PARAM] = json!("another-session");
+        arguments[hermes_core::file_edit::CALL_PARAM] = json!("another-call");
+        let result = server
+            .handle_request(
+                "tools/call",
+                json!({ "name": "echo_args", "arguments": arguments }),
+            )
+            .await
+            .expect("tools/call");
+
+        let text = result["content"][0]["text"].as_str().expect("text");
+        let payload: Value = serde_json::from_str(text).expect("tool json");
         assert_eq!(payload["params"], json!({"path":"Cargo.toml"}));
     }
 
