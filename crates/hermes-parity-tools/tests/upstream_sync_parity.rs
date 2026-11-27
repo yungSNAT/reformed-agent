@@ -179,6 +179,7 @@ impl Sandbox {
         self.git_in("seed", &["init", "-q", "-b", "main"]);
         self.write("seed/README.md", "base\n");
         self.write("seed/.gitignore", ".sync-reports/\n");
+        self.write("seed/docs/parity/PARITY_DASHBOARD.md", "dashboard\n");
         self.write("seed/scripts/upstream-risk-paths.txt", RISK_PATHS);
         if with_scripts {
             for name in ["sync-upstream.sh", "cron-upstream-sync.sh"] {
