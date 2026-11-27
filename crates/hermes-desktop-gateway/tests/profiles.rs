@@ -382,4 +382,91 @@ async fn roster_sync_reads_numbers_as_upstreams_str_does() {
     let stored: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(stored["agents"][0]["connection_id"], "7");
     assert_eq!(stored["agents"][0]["title"], "12");
+
+    // `true` is `True`, a number past i64 keeps all its digits and a fraction prints as one.
+    let agents = json!([{"profile": "inbox", "connection_id": true,
+                         "title": 18_446_744_073_709_551_615_u64, "description": 1.5}]);
+    let reply = call(
+        &mut socket,
+        2,
+        "bot_relay.roster.sync",
+        json!({"agents": agents}),
+    )
+    .await;
+    assert_eq!(reply["result"], json!({"count": 1}));
+    let stored: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let row = &stored["agents"][0];
+    assert_eq!(row["connection_id"], "True");
+    assert_eq!(row["title"], "18446744073709551615");
+    assert_eq!(row["description"], "1.5");
+}
+
+/// As upstream reads a profile's config: a model given as an object falls back from an empty
+/// `default` to `model`, an empty provider is none, and a model that is neither text nor an
+/// object is none; a `profile.yaml` that is not a mapping is no description.
+#[tokio::test]
+async fn profiles_route_reads_each_model_shape_and_meta_as_upstream_does() {
+    let root = tempfile::tempdir().unwrap();
+    write(&root.path().join("config.yaml"), "model: root-model\n");
+    write(
+        &root.path().join("profiles/alpha/config.yaml"),
+        "model:\n  default: ''\n  model: alpha-model\n  provider: ''\n",
+    );
+    write(
+        &root.path().join("profiles/beta/config.yaml"),
+        "model: 42\n",
+    );
+    write(
+        &root.path().join("profiles/beta/profile.yaml"),
+        "- not\n- a mapping\n",
+    );
+    let addr = start(root.path()).await;
+    let reply = get_profiles(addr, &[("x-hermes-session-token", TOKEN)]).await;
+    let body: Value = reply.json().await.unwrap();
+    let rows = &body["profiles"];
+    assert_eq!(names(rows), ["default", "alpha", "beta"]);
+    assert_eq!(rows[1]["model"], "alpha-model");
+    assert_eq!(rows[1]["provider"], Value::Null);
+    assert_eq!(rows[2]["model"], Value::Null);
+    assert_eq!(rows[2]["provider"], Value::Null);
+    assert_eq!(rows[2]["description"], "");
+    assert_eq!(rows[2]["display_name"], "");
+}
+
+/// The skill count walks at most 10,000 folders, so a huge skills tree cannot stall the list.
+#[tokio::test]
+async fn profiles_route_stops_counting_skills_after_ten_thousand_folders() {
+    let root = tempfile::tempdir().unwrap();
+    write(&root.path().join("config.yaml"), "");
+    write(&root.path().join("profiles/wide/config.yaml"), "");
+    let skills = root.path().join("profiles/wide/skills");
+    for n in 0..10_050 {
+        write(
+            &skills.join(format!("s{n}/SKILL.md")),
+            "---\nname: s\n---\n",
+        );
+    }
+    let addr = start(root.path()).await;
+    let reply = get_profiles(addr, &[("x-hermes-session-token", TOKEN)]).await;
+    let body: Value = reply.json().await.unwrap();
+    // The skills folder itself is the first of the 10,000.
+    assert_eq!(body["profiles"][1]["skill_count"], 9_999);
+}
+
+/// A folder whose name is not Unicode is not walked, as upstream's walk cannot name it.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn profiles_route_skips_a_skill_folder_whose_name_is_not_unicode() {
+    use std::os::unix::ffi::OsStrExt;
+    let root = tempfile::tempdir().unwrap();
+    write(&root.path().join("config.yaml"), "");
+    write(&root.path().join("profiles/odd/config.yaml"), "");
+    let skills = root.path().join("profiles/odd/skills");
+    write(&skills.join("named/SKILL.md"), "---\nname: named\n---\n");
+    let odd = skills.join(std::ffi::OsStr::from_bytes(b"\xff\xfe"));
+    write(&odd.join("SKILL.md"), "---\nname: odd\n---\n");
+    let addr = start(root.path()).await;
+    let reply = get_profiles(addr, &[("x-hermes-session-token", TOKEN)]).await;
+    let body: Value = reply.json().await.unwrap();
+    assert_eq!(body["profiles"][1]["skill_count"], 1);
 }
