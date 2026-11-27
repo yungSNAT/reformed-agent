@@ -1288,6 +1288,119 @@ mod tests {
         );
     }
 
+    /// A gateway over `home` whose model is a closed local port: a turn fails fast.
+    fn chat_in(home: &std::path::Path) -> Arc<Chat> {
+        std::fs::write(
+            home.join("config.yaml"),
+            "model:\n  default: m\n  provider: local\nproviders:\n  local:\n    \
+             api: http://127.0.0.1:9/v1\n    name: Local\n    api_mode: chat_completions\n",
+        )
+        .unwrap();
+        Arc::new(Chat::new(
+            hermes_config::load_config(home.to_str()).unwrap(),
+        ))
+    }
+
+    /// A session saved by an earlier gateway, live nowhere, resumes with its rows and is live
+    /// again.
+    #[tokio::test]
+    async fn a_session_saved_earlier_resumes_and_is_live_again() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "20261127_080000_a1b2c3";
+        hermes_agent::SessionPersistence::new(home.path())
+            .persist_session(
+                id,
+                &[Message::user("question"), Message::assistant("answer")],
+                Some("m"),
+                Some("desktop"),
+                None,
+                None,
+            )
+            .unwrap();
+        let chat = chat_in(home.path());
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        assert!(!chat.lock_sessions().contains_key(id));
+        let reply = chat
+            .call(&conn, "session.resume", json!({"session_id": id}))
+            .await
+            .unwrap();
+        assert_eq!(reply["message_count"], 2, "{reply}");
+        assert_eq!(reply["messages"][1]["text"], "answer", "{reply}");
+        assert_eq!(reply["running"], false, "{reply}");
+        assert!(chat.lock_sessions().contains_key(id), "live again");
+    }
+
+    /// A sessions database that cannot be opened fails a resume with 5000.
+    #[tokio::test]
+    async fn a_resume_whose_sessions_database_cannot_be_read_is_5000() {
+        let home = tempfile::tempdir().unwrap();
+        let chat = chat_in(home.path());
+        std::fs::create_dir(home.path().join("sessions.db")).unwrap();
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let refused = chat
+            .call(
+                &conn,
+                "session.resume",
+                json!({"session_id": "20261127_080000_a1b2c3"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(refused.0, 5000, "{}", refused.1);
+    }
+
+    /// A hold that ends with nothing waiting leaves the session idle: a prompt starts at once.
+    #[tokio::test]
+    async fn a_hold_with_nothing_waiting_leaves_the_session_idle() {
+        let home = tempfile::tempdir().unwrap();
+        let chat = chat_in(home.path());
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let id = chat.create(&conn)["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let session = chat.lock_sessions().get(&id).cloned().unwrap();
+        drop(chat.hold(&id, &session).expect("an idle session"));
+        assert!(matches!(
+            chat.start_turn(&id, "hi".into(), &conn, None),
+            Ok(Taken::Started { .. })
+        ));
+    }
+
+    /// A hold dropped where no runtime can run its waiting prompts drops them, so the session
+    /// is not left busy.
+    #[test]
+    fn a_hold_dropped_without_a_runtime_drops_its_waiting_prompts() {
+        let home = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let conn = Conn::new(1, outbox, false);
+        let (chat, id, session, hold) = runtime.block_on(async {
+            let chat = chat_in(home.path());
+            let id = chat.create(&conn)["session_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let session = chat.lock_sessions().get(&id).cloned().unwrap();
+            let hold = chat.hold(&id, &session).expect("an idle session");
+            assert!(matches!(
+                chat.start_turn(&id, "hi".into(), &conn, None),
+                Ok(Taken::Queued { .. })
+            ));
+            (chat, id, session, hold)
+        });
+        drop(hold);
+        assert!(
+            chat.hold(&id, &session).is_some(),
+            "idle, its waiting prompt dropped"
+        );
+    }
+
     #[test]
     fn a_connection_whose_listener_sets_no_origin_is_remote() {
         let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();

@@ -1276,7 +1276,7 @@ async fn a_session_title_is_set_read_and_kept() {
         .call(
             7,
             "session.title",
-            json!({"session_id": session, "title": "a\u{202e}b \u{200b}\t c\u{7}"}),
+            json!({"session_id": session, "title": "a\u{202e}b \u{200b}\t c\u{7}\u{feff}\u{fffc}"}),
         )
         .await;
     assert_eq!(cleaned["result"]["title"], "ab c", "{cleaned}");
@@ -1303,6 +1303,7 @@ async fn a_session_title_is_set_read_and_kept() {
             4021,
         ),
         (json!({"session_id": session, "title": "   "}), 4021),
+        (json!({"session_id": session, "title": null}), 4021),
         (json!({"title": "x"}), 4006),
         (json!({"session_id": "no-such-session", "title": "x"}), 4001),
         (json!({"session_id": session, "title": 7}), 4000),
@@ -1357,6 +1358,8 @@ async fn a_legacy_resume_returns_the_messages_and_streams_later_turns() {
     for (n, (params, code)) in [
         (json!({}), 4006),
         (json!({"session_id": "no-such-session"}), 4007),
+        (json!({"session_id": "../state"}), 4007),
+        (json!({"session_id": 5}), 4000),
     ]
     .into_iter()
     .enumerate()
