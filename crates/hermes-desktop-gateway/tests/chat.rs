@@ -3,6 +3,9 @@
 //! model is a scripted OpenAI-compatible endpoint configured the way upstream's desktop tests
 //! write `config.yaml`.
 
+#[path = "support/gateway.rs"]
+mod gateway;
+
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -108,18 +111,7 @@ async fn start_with(
         ),
     )
     .unwrap();
-    let config = hermes_config::load_config(home.path().to_str()).unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let mut chat = hermes_desktop_gateway::Chat::new(config);
-    if let Some(timeout) = write_timeout {
-        chat = chat.with_write_timeout(timeout);
-    }
-    tokio::spawn(hermes_desktop_gateway::serve(
-        listener,
-        TOKEN.to_string(),
-        chat,
-    ));
+    let addr = gateway::serve(home.path(), TOKEN, write_timeout).await;
     Started {
         addr,
         requests,

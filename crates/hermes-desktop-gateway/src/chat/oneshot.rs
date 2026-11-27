@@ -134,7 +134,7 @@ fn without_reasoning(text: &str) -> String {
 /// them: a temperature or limit that is not a number falls back to its default rather than
 /// refusing, and one out of range is brought within it. A decimal number sent as a string
 /// (`"0.8"`, `"50"`) is read as upstream's `float()` and `int()` read it; a boolean, digits with
-/// underscores and an integer past `i64` take the default, where upstream reads them.
+/// underscores and an integer string past `i64` take the default, where upstream reads them.
 fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), RpcError> {
     let text = |key: &str| match params.get(key) {
         None | Some(Value::Null) => Ok(""),
@@ -240,8 +240,8 @@ mod tests {
         );
     }
 
-    /// A model that never answers is given up on after 60 seconds (5030), and the call's
-    /// permit is returned. The clock is paused, so the 60 seconds pass at once.
+    /// A model that never answers is given up on after 60 seconds (5030); the call holds a
+    /// permit whilst it waits and returns it. The clock is paused, so the 60 seconds pass at once.
     #[tokio::test(start_paused = true)]
     async fn a_model_that_never_answers_times_out() {
         // The kernel completes connections to it; nothing reads them or answers.
@@ -264,7 +264,10 @@ mod tests {
             conn: super::super::Conn::new(1, outbox, false),
             params: json!({"input": "hello"}).as_object().unwrap().clone(),
         };
-        let refused = oneshot(request).await.unwrap_err();
+        let mut call = oneshot(request);
+        assert!(futures::poll!(&mut call).is_pending());
+        assert_eq!(RUNNING.available_permits(), MAX_RUNNING - 1);
+        let refused = call.await.unwrap_err();
         assert_eq!(
             refused,
             (
