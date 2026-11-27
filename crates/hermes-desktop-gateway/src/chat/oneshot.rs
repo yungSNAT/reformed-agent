@@ -103,7 +103,8 @@ const THINK_TAGS: &[&str] = &[
 
 /// `text` without its closed reasoning blocks, trimmed, as upstream's
 /// `extract_content_or_reasoning` cleans `content` (`_REASONING_BLOCK_PATTERNS`: each tag in
-/// turn, case-insensitive, the shortest block from each opening tag).
+/// turn, case-insensitive, the shortest block from each opening tag). Like upstream's, it does
+/// not tell Markdown code from prose, so a closed tag pair quoted in code goes too.
 fn without_reasoning(text: &str) -> String {
     let mut text = text.trim().to_string();
     for tag in THINK_TAGS {
@@ -131,8 +132,8 @@ fn without_reasoning(text: &str) -> String {
 
 /// The system and user text, temperature and token limit `params` ask for, as upstream reads
 /// them: a temperature or limit that is not a number falls back to its default rather than
-/// refusing, and one out of range is brought within it. Upstream also reads a number sent as
-/// a string (`"0.8"`, `"50"`); this takes only JSON numbers, which the desktop sends.
+/// refusing, and one out of range is brought within it. A number sent as a string (`"0.8"`,
+/// `"50"`) is read as upstream's `float()` and `int()` read it.
 fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), RpcError> {
     let text = |key: &str| match params.get(key) {
         None | Some(Value::Null) => Ok(""),
@@ -146,12 +147,13 @@ fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), Rpc
             text("input")?.to_string(),
         )
     } else {
+        let none = Map::new();
         let variables = match params.get("variables") {
-            Some(Value::Object(variables)) => variables.clone(),
-            _ => Map::new(),
+            Some(Value::Object(variables)) => variables,
+            _ => &none,
         };
         // Its only error is an unknown template, whose message names it.
-        render_oneshot_template(template, &variables)
+        render_oneshot_template(template, variables)
             .map_err(|e| (UNKNOWN_TEMPLATE, e.to_string()))?
     };
     for (key, text) in [("instructions", &instructions), ("input", &input)] {
@@ -168,16 +170,21 @@ fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), Rpc
             "llm.oneshot requires a template or instructions/input".into(),
         ));
     }
-    let temperature = params
-        .get("temperature")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.3)
-        .clamp(0.0, 2.0);
-    let max_tokens = params
-        .get("max_tokens")
-        .and_then(Value::as_u64)
-        .filter(|n| *n > 0)
-        .map_or(1024, |n| n.min(MAX_TOKENS) as u32);
+    let temperature = match params.get("temperature") {
+        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        Some(value) => value.as_f64(),
+        None => None,
+    }
+    .filter(|t| t.is_finite())
+    .unwrap_or(0.3)
+    .clamp(0.0, 2.0);
+    let max_tokens = match params.get("max_tokens") {
+        Some(Value::String(text)) => text.trim().parse::<i64>().ok(),
+        Some(value) => value.as_f64().map(|n| n.trunc() as i64),
+        None => None,
+    }
+    .filter(|n| *n > 0)
+    .map_or(1024, |n| n.min(MAX_TOKENS as i64) as u32);
     Ok((instructions, input, temperature, max_tokens))
 }
 
