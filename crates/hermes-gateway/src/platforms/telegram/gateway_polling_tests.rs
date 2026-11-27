@@ -358,6 +358,7 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
 
     let mut dm = DmManager::with_ignore_behavior();
     dm.authorize_user_for_platform("telegram", "42");
+    dm.authorize_user_for_platform("telegram", "7");
     let gateway = Gateway::new(
         Arc::new(SessionManager::new(SessionConfig::default())),
         dm,
