@@ -801,6 +801,14 @@ async fn e2e_cli_memory_setup_previews_and_saves_self_hosted_configuration() {
     let home = profile.path();
     let server = MockServer::start().await;
     let host = server.uri();
+    let profile_path = std::env::var_os("LLVM_PROFILE_FILE").map(|pattern| {
+        let path = std::path::PathBuf::from(pattern);
+        if path.starts_with("%t") {
+            path
+        } else {
+            std::path::absolute(path).expect("absolute coverage profile path")
+        }
+    });
     let setup = |args: &[&str]| {
         let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_hermes-agent-ultra"));
         child
@@ -809,8 +817,13 @@ async fn e2e_cli_memory_setup_previews_and_saves_self_hosted_configuration() {
             .env("USERPROFILE", home)
             .env("HERMES_HOME", home)
             .env("HERMES_MANAGED_DIR", home.join("managed"))
-            .envs(Some("SystemRoot").zip(std::env::var_os("SystemRoot")))
-            .envs(Some("LLVM_PROFILE_FILE").zip(std::env::var_os("LLVM_PROFILE_FILE")))
+            .envs(
+                ["SystemRoot", "TMPDIR", "TEMP", "TMP"]
+                    .into_iter()
+                    .filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
+            )
+            .envs(Some("LLVM_PROFILE_FILE").zip(profile_path.as_ref()))
+            .current_dir(home)
             .kill_on_drop(true)
             .args(["memory", "setup"])
             .args(args)
