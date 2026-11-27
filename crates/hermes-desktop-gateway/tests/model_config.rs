@@ -335,7 +335,8 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join(".env"), "XIAOMI_API_KEY=project-key\n").unwrap();
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_hermes-desktop-gateway"))
-        .args(["--port", "0"])
+        // A failed assertion drops stdin, so the gateway stops with the test.
+        .args(["--port", "0", "--exit-when-stdin-closes"])
         .current_dir(project.path())
         .env("HERMES_HOME", home.path())
         .env("HERMES_DASHBOARD_SESSION_TOKEN", TOKEN)
