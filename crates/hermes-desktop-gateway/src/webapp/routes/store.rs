@@ -143,7 +143,9 @@ impl Drop for StoreLock {
 /// which the OS frees if it dies, and judges the lock again under it. So a lock another waiter
 /// broke and took since the first judgement is fresh by then and is left alone. Upstream's and
 /// native Desktop's writers do not take that OS lock; a break by one of them is the limit
-/// [`break_stale`] states.
+/// [`break_stale`] states. Only a turn another waiter holds stops a break: when the file cannot
+/// be opened or locked (a link in its place, a file system without locks), the waiter breaks as
+/// before, so a dead lock never wedges writes.
 fn break_if_stale(dir: &Path) {
     if !is_stale(dir) {
         return;
@@ -151,16 +153,19 @@ fn break_if_stale(dir: &Path) {
     seam("judged");
     let mut name = dir.file_name().unwrap_or_default().to_os_string();
     name.push(".break");
-    let Ok(turn) = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.with_file_name(name))
-    else {
-        return;
-    };
+    let mut open = std::fs::OpenOptions::new();
+    open.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let turn = open.open(dir.with_file_name(name)).ok();
     // Another waiter is breaking it: poll again.
-    if turn.try_lock().is_err() {
+    if let Some(turn) = &turn
+        && let Err(std::fs::TryLockError::WouldBlock) = turn.try_lock()
+    {
         return;
     }
     if let Some(seen) = stale_owner(dir) {

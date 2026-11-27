@@ -111,19 +111,29 @@ fn a_waiter_leaves_a_stale_lock_to_the_waiter_already_breaking_it() {
     assert!(!lock_dir(&path).exists(), "the free turn broke nothing");
 }
 
-/// A waiter that cannot open the break turn file breaks nothing.
+/// A break turn file that cannot be opened (here a folder, or a link) never wedges writes: the
+/// waiter breaks the dead lock as before, and a link is not followed.
 #[cfg(unix)]
 #[test]
-fn a_waiter_that_cannot_open_the_break_turn_breaks_nothing() {
+fn a_waiter_that_cannot_open_the_break_turn_still_breaks_a_dead_lock() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.json");
     dead_lock(&path);
     std::fs::create_dir(path.with_file_name("store.json.lock.break")).unwrap();
     break_if_stale(&lock_dir(&path));
-    assert_eq!(
-        std::fs::read(lock_dir(&path).join("owner")).unwrap(),
-        b"dead"
+    assert!(
+        !lock_dir(&path).exists(),
+        "an unopenable turn wedged the lock"
     );
+
+    let linked = tempfile::tempdir().unwrap();
+    let path = linked.path().join("store.json");
+    dead_lock(&path);
+    let target = linked.path().join("elsewhere");
+    std::os::unix::fs::symlink(&target, path.with_file_name("store.json.lock.break")).unwrap();
+    break_if_stale(&lock_dir(&path));
+    assert!(!lock_dir(&path).exists(), "a linked turn wedged the lock");
+    assert!(!target.exists(), "the turn file followed a link");
 }
 
 /// What the protocol promises a writer displaced by a racing break: it no longer holds the lock,
