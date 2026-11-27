@@ -176,7 +176,11 @@ async fn write_file_requires_full_unredacted_read_of_existing_file() {
     let secret = format!("ghp_{}", "A".repeat(40));
     std::fs::write(&path, format!("token={secret}\n")).unwrap();
     let shown = read(&tools, "t2", &path).await;
-    assert!(!shown.to_string().contains(&secret), "{shown}");
+    // The failure message names no output: a leak would print the token.
+    assert!(
+        !shown.to_string().contains(&secret),
+        "read_file output kept a token unredacted"
+    );
     refused(&write(&tools, "t2", &path, "token=changed\n").await);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
