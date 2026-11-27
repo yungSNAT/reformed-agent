@@ -144,8 +144,9 @@ impl Drop for StoreLock {
 /// broke and took since the first judgement is fresh by then and is left alone. Upstream's and
 /// native Desktop's writers do not take that OS lock; a break by one of them is the limit
 /// [`break_stale`] states. Only a turn another waiter holds stops a break: when the file cannot
-/// be opened or locked (a link in its place, a file system without locks), the waiter breaks as
-/// before, so a dead lock never wedges writes.
+/// be opened or locked (on Unix a link in its place, which is never followed; a file system
+/// without locks), the waiter breaks as before, so a dead lock never wedges writes. On Windows
+/// the file is opened with default permissions and a link in its place is followed.
 fn break_if_stale(dir: &Path) {
     if !is_stale(dir) {
         return;
