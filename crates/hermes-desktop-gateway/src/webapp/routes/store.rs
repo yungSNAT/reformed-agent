@@ -4,11 +4,12 @@
 //! `_store_lock`, which `hermes_cli/gateway_connections.py` reuses).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::http::StatusCode;
 
-use crate::webapp::api::{ApiError, Caller, Ctx};
+use crate::webapp::api::{Api, ApiError, Caller, Ctx};
 
 const LOCK_WAIT: Duration = Duration::from_secs(3);
 const LOCK_STALE: Duration = Duration::from_secs(10);
@@ -26,20 +27,33 @@ pub(crate) fn webapp_only(ctx: &Ctx) -> Result<(), ApiError> {
     }
 }
 
-/// The Hermes home this gateway serves.
-pub(crate) fn home(ctx: &Ctx) -> PathBuf {
-    ctx.api
-        .home
-        .clone()
-        .unwrap_or_else(hermes_config::hermes_home)
-}
+/// The Hermes home this gateway serves, fixed when the routes are built. A route takes it from
+/// the router, never from the request ([`Ctx`] says only who called), so no request value can
+/// name the folder its files live in.
+#[derive(Clone, Debug)]
+pub struct Served(Arc<PathBuf>);
 
-/// The install root of the served home, where machine-level stores live (UI preferences, saved
-/// gateways), resolved through links as upstream resolves it (`Path.resolve`, which keeps a
-/// missing path as given).
-pub(crate) fn install_root(ctx: &Ctx) -> PathBuf {
-    let root = install_root_of(&home(ctx));
-    std::fs::canonicalize(&root).unwrap_or(root)
+impl Served {
+    pub(crate) fn new(home: PathBuf) -> Self {
+        Served(Arc::new(home))
+    }
+
+    pub(crate) fn of(api: &Api) -> Self {
+        Served::new(api.home.clone().unwrap_or_else(hermes_config::hermes_home))
+    }
+
+    /// The Hermes home this gateway serves.
+    pub(crate) fn home(&self) -> &Path {
+        &self.0
+    }
+
+    /// The install root of the served home, where machine-level stores live (UI preferences,
+    /// saved gateways), resolved through links as upstream resolves it (`Path.resolve`, which
+    /// keeps a missing path as given).
+    pub(crate) fn install_root(&self) -> PathBuf {
+        let root = install_root_of(self.home());
+        std::fs::canonicalize(&root).unwrap_or(root)
+    }
 }
 
 /// The home itself, or its grandparent when the home is a profile's folder `<root>/profiles/<name>`.
