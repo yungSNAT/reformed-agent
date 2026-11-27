@@ -138,26 +138,35 @@ fn write_roster(root: &Path, agents: Option<&Value>) -> Result<usize, String> {
     if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
-    create_private(&path).map_err(|e| e.to_string())?;
     // Owner-only on every write, as upstream writes it, before the content goes in: the atomic
     // write keeps the mode it finds.
-    #[cfg(unix)]
-    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
-        .map_err(|e| e.to_string())?;
+    create_private(&path).map_err(|e| e.to_string())?;
     hermes_config::atomic_json_write(&path, &roster).map_err(|e| e.to_string())?;
     Ok(count)
 }
 
-/// Creates `path` empty with owner-only access unless it exists; the atomic write keeps the
-/// mode it finds.
+/// Makes `path` owner-only, creating it empty if absent. An existing one is opened without
+/// following a link (nor waiting on a pipe) and its mode set on that descriptor, so a link made
+/// in its place since the check above is refused, never followed.
 fn create_private(path: &Path) -> std::io::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     match options.open(path) {
-        Err(err) if err.kind() != std::io::ErrorKind::AlreadyExists => Err(err),
-        _ => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                    .open(path)?
+                    .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            }
+            Ok(())
+        }
+        other => other.map(drop),
     }
 }
 

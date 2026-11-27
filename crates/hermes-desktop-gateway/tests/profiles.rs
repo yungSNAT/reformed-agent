@@ -325,6 +325,38 @@ async fn roster_sync_makes_an_existing_roster_owner_only_again() {
     assert_eq!(mode & 0o777, 0o600);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn roster_sync_does_not_wait_on_a_pipe_in_the_rosters_place() {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    let root = tempfile::tempdir().unwrap();
+    seed_root(root.path());
+    let dir = root.path().join("bot_relay");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("roster.json");
+    let name = std::ffi::CString::new(file.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o644) }, 0);
+    let addr = start(root.path()).await;
+    let mut socket = connect(addr).await;
+
+    let agents = json!([{"profile": "inbox", "connection_id": "laptop"}]);
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        call(
+            &mut socket,
+            1,
+            "bot_relay.roster.sync",
+            json!({"agents": agents}),
+        ),
+    )
+    .await
+    .expect("answered within 10 s");
+    assert_eq!(reply["result"], json!({"count": 1}));
+    let meta = std::fs::symlink_metadata(&file).unwrap();
+    assert!(!meta.file_type().is_fifo() && meta.is_file());
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+}
+
 #[tokio::test]
 async fn roster_sync_reads_numbers_as_upstreams_str_does() {
     let root = tempfile::tempdir().unwrap();

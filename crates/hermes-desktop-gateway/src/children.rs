@@ -763,10 +763,15 @@ mod tests {
     #[tokio::test]
     async fn concurrent_requests_on_one_link_each_get_their_own_reply() {
         let (link, pending) = scripted_link().await;
-        let (first, second) = tokio::join!(
-            link.call("first.method", Map::new()),
-            link.call("second.method", Map::new()),
-        );
+        // Bounded, so a reply lost without dropping its sender fails the test, not hangs it.
+        let (first, second) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                link.call("first.method", Map::new()),
+                link.call("second.method", Map::new()),
+            )
+        })
+        .await
+        .expect("both replies within 10 s");
         assert_eq!(first.unwrap(), json!({"method": "first.method"}));
         assert_eq!(second.unwrap(), json!({"method": "second.method"}));
         assert!(Pending::lock(&pending).waiting.is_empty());
