@@ -610,7 +610,12 @@ pub async fn handle_cli_memory(
                 .or_else(|| options.has_mem0_specific_options().then_some("mem0"));
             if let Some(provider) = provider
             {
-                let result = setup_memory_provider_target(provider, &options)?;
+                let target = provider.to_owned();
+                let result = tokio::task::spawn_blocking(move || {
+                    setup_memory_provider_target(&target, &options)
+                })
+                .await
+                .map_err(|error| AgentError::Io(format!("memory setup task failed: {error}")))??;
                 if result.dry_run {
                     println!("Dry run complete; memory provider '{}' was not written.", provider);
                     println!("  Config: {}", result.config_path.display());
