@@ -529,7 +529,12 @@ mod tests {
 
         let secret = format!("ghp_{}", "A".repeat(40));
         let shown = engine.filter_output("read_file", &params, &format!("token={secret}\n"));
-        assert!(!shown.contains(&secret), "{shown}");
+        // The failure message names no output: a leak would print the token.
+        assert!(
+            !shown.contains(&secret),
+            "read_file output kept a token unredacted"
+        );
+        assert!(shown.contains("token=<redacted>"));
     }
 
     #[test]
