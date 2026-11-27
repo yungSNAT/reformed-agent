@@ -912,6 +912,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn entries_whose_names_differ_only_in_case_each_save_to_their_own_variable() {
+        let (lower, upper) = (
+            "DESKTOP_MODEL_UNIT_TEST_LOWER_KEY",
+            "DESKTOP_MODEL_UNIT_TEST_UPPER_KEY",
+        );
+        // `llm_providers` is a `HashMap`: each load iterates in its own order.
+        for _ in 0..8 {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("config.yaml"),
+                format!(
+                    "llm_providers:\n  mimo:\n    api_key_env: {lower}\n  MIMO:\n    \
+                     api_key_env: {upper}\n"
+                ),
+            )
+            .unwrap();
+            let config = hermes_config::load_config(dir.path().to_str()).unwrap();
+            // `load_config` keeps both entries, so the picker lists both.
+            assert_eq!(config.llm_providers.len(), 2);
+            let chat = Chat::new(config);
+            for (slug, var) in [("mimo", lower), ("MIMO", upper)] {
+                assert_eq!(chat.slug_key_vars(slug).unwrap()[0], var, "{slug}");
+                let saved = chat.save_key(slug, "saved-key").unwrap();
+                assert_eq!(saved["provider"]["slug"], slug, "{saved}");
+                assert_eq!(saved["provider"]["key_env"], var, "{saved}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn the_key_methods_serve_only_clients_on_this_machine() {
         let dir = tempfile::tempdir().unwrap();
