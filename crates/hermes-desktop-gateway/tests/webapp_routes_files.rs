@@ -12,12 +12,13 @@ use std::process::Command;
 use serde_json::Value;
 use webapp_support::*;
 
-/// Every route in the group; all answer GET only.
-const ROUTES: [&str; 4] = [
-    "/api/fs/list",
-    "/api/fs/read-data-url",
-    "/api/git/status",
-    "/api/git/review/rev-parse",
+/// Every route in the group (all answer GET only), with the path under `work_tree`'s base that
+/// it serves to an admitted caller.
+const ROUTES: [(&str, &str); 4] = [
+    ("/api/fs/list", ""),
+    ("/api/fs/read-data-url", "proj/a.txt"),
+    ("/api/git/status", "proj"),
+    ("/api/git/review/rev-parse", "proj"),
 ];
 
 fn at(route: &str, path: &Path) -> String {
@@ -84,11 +85,29 @@ fn work_folder(home: &Path, base: &Path) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_route_refuses_a_caller_without_the_credential_or_from_another_origin() {
-    let (_dir, home) = private_home();
+    let (_dir, base, home, _marker) = work_tree();
     let (_runtime, origin) = serving(&home);
+    work_folder(&home, &base);
     let token = credential(&home, &origin).await;
-    for route in ROUTES {
-        let route = &at(route, &home);
+    for (route, path) in ROUTES {
+        let target = if path.is_empty() {
+            base.clone()
+        } else {
+            base.join(path)
+        };
+        let route = &at(route, &target);
+        // The route serves this path to the credential from the page's own origin, so a 403
+        // below is the guard's, not the route's.
+        let own = call(
+            &origin,
+            "GET",
+            route,
+            &[("X-Hermes-Session-Token", &token), ("Origin", &origin)],
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(own.status(), 200, "{route} from its own origin");
         let none = call(&origin, "GET", route, &[]).send().await.unwrap();
         assert_eq!(none.status(), 401, "{route} without a credential");
         let wrong = call(
