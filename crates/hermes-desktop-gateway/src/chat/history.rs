@@ -51,12 +51,12 @@ fn session_id(params: &Map<String, Value>) -> Result<String, RpcError> {
 async fn saved_rows(chat: &Arc<Chat>, id: &str) -> Result<Vec<Value>, RpcError> {
     let chat = Arc::clone(chat);
     let lookup = id.to_string();
-    match tokio::task::spawn_blocking(move || chat.history(&lookup)).await {
-        Err(e) => Err((RESUME_STORAGE, e.to_string())),
-        Ok(None) => Err((RESUME_NOT_FOUND, "session not found".into())),
-        Ok(Some(Err(e))) => Err((RESUME_STORAGE, e)),
-        Ok(Some(Ok(rows))) => Ok(rows),
-    }
+    // A read that panics is a storage failure, as a store error is.
+    let read = tokio::task::spawn_blocking(move || chat.history(&lookup))
+        .await
+        .map_err(|e| (RESUME_STORAGE, e.to_string()))?;
+    let found = read.ok_or_else(|| (RESUME_NOT_FOUND, "session not found".to_string()))?;
+    found.map_err(|e| (RESUME_STORAGE, e))
 }
 
 /// Attaches the connection to a live session, or to one saved earlier, and answers with its
@@ -73,18 +73,16 @@ fn resume(req: Request) -> Reply {
             None => {
                 // Not live: its saved rows decide whether it can be resumed.
                 let rows = saved_rows(&req.chat, &id).await?;
+                // One made live during the read is taken as it is.
                 let mut sessions = req.chat.lock_sessions();
-                match sessions.get(&id) {
-                    Some(session) => Arc::clone(session),
-                    None if rows.is_empty() => {
-                        return Err((RESUME_NOT_FOUND, "session not found".into()))
-                    }
-                    None => Arc::clone(
-                        sessions
-                            .entry(id.clone())
-                            .or_insert_with(|| req.chat.new_session()),
-                    ),
+                if rows.is_empty() && !sessions.contains_key(&id) {
+                    return Err((RESUME_NOT_FOUND, "session not found".into()));
                 }
+                Arc::clone(
+                    sessions
+                        .entry(id.clone())
+                        .or_insert_with(|| req.chat.new_session()),
+                )
             }
         };
         // The session streams to this connection before the rows that answer are read, so a
