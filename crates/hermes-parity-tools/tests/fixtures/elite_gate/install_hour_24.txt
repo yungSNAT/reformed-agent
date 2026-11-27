@@ -1,0 +1,5 @@
+exit=Some(2)
+--- stdout
+--- stderr
+Invalid --hour: 24
+--- calls

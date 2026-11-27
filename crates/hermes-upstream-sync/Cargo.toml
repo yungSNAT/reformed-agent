@@ -1,0 +1,23 @@
+[package]
+name = "hermes-upstream-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GitHub webhook listener and queue worker for unattended upstream syncs"
+publish = false
+
+[dependencies]
+clap = { workspace = true }
+hermes-py = { workspace = true }
+hmac = "0.12"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+jiff = { workspace = true }
+rusqlite = { workspace = true }
+sha2 = "0.10"
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

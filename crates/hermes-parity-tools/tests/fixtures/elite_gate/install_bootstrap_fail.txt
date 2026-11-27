@@ -1,0 +1,47 @@
+exit=Some(5)
+--- stdout
+bootstrap says hi
+--- stderr
+--- calls
+launchctl bootout gui/<UID> <ROOT>/home/Library/LaunchAgents/com.hermes_agent_ultra.nightly_elite_gate.plist
+launchctl bootstrap gui/<UID> <ROOT>/home/Library/LaunchAgents/com.hermes_agent_ultra.nightly_elite_gate.plist
+--- file home/Library/LaunchAgents/com.hermes_agent_ultra.nightly_elite_gate.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hermes_agent_ultra.nightly_elite_gate</string>
+  <PROGRAM>
+  <key>WorkingDirectory</key>
+  <string><ROOT>/repo</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AUTOMATION_SUMMARY_SINK_ORDER</key>
+    <string>contextlattice,github,local</string>
+    <key>AUTOMATION_SUMMARY_CONTEXT_PROJECT</key>
+    <string>repo</string>
+    <key>AUTOMATION_SUMMARY_CONTEXT_TOPIC_PATH</key>
+    <string>ops/nightly-elite-gate</string>
+    <key>AUTOMATION_SUMMARY_CONTEXT_FILE_NAME</key>
+    <string>ops/nightly-elite-gate.md</string>
+    <key>AUTOMATION_SUMMARY_GITHUB_ISSUE</key>
+    <string>0</string>
+    <key>AUTOMATION_SUMMARY_LOCAL_PATH</key>
+    <string><ROOT>/home/.hermes-agent-ultra/logs/elite-gate/nightly-elite-gate-fallback.log</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string><ROOT>/home/.hermes-agent-ultra/logs/elite-gate-launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string><ROOT>/home/.hermes-agent-ultra/logs/elite-gate-launchd.err.log</string>
+</dict>
+</plist>

@@ -2271,3 +2271,38 @@ fn a_failed_repair_of_a_store_missing_a_trigger_changes_none_of_its_triggers() {
     fts_index_check(&conn).expect("the index is rebuilt");
     assert_eq!(fts_delete_triggers(&conn).len(), 2);
 }
+
+/// Messages saved whilst the insert trigger was missing are indexed once an open restores it.
+#[test]
+fn messages_saved_without_the_insert_trigger_are_indexed_when_it_returns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    sp.persist_session(
+        "before",
+        &[Message::user("india kiwi")],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let conn = open_db(&sp);
+    conn.execute_batch("DROP TRIGGER messages_ai").unwrap();
+    // Written directly: each store call opens through the schema check, which restores it.
+    conn.execute(
+        "INSERT INTO messages (session_id, role, content, created_at)
+         VALUES ('before', 'user', 'juliet mango', '2026-11-26T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    assert_eq!(fts_hits(&conn, "mango"), 0, "indexed without the trigger");
+
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    assert_eq!(
+        fts_hits(&conn, "mango"),
+        1,
+        "the missed message is not indexed"
+    );
+    assert_eq!(fts_hits(&conn, "kiwi"), 1);
+    fts_index_check(&conn).expect("the index matches messages");
+}

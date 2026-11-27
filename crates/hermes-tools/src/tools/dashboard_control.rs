@@ -238,6 +238,88 @@ impl ToolHandler for DashboardControlHandler {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn tool_actions_save_dashboard_settings_and_reject_invalid_ports() {
+        const CHILD: &str = "REFORMED_DASHBOARD_TOOL_ACTIONS_TEST";
+        let profile = tempfile::tempdir().expect("temporary dashboard profile");
+        let home = profile.path();
+        if std::env::var(CHILD).as_deref() != Ok("1") {
+            let binary = std::env::current_exe().expect("test executable");
+            let (_, module) = module_path!().split_once("::").unwrap();
+            let test =
+                format!("{module}::tool_actions_save_dashboard_settings_and_reject_invalid_ports");
+            let mut command = std::process::Command::new(binary);
+            command
+                .env_clear()
+                .env(CHILD, "1")
+                .env("HOME", home)
+                .env("USERPROFILE", home)
+                .current_dir(home)
+                .args(["--exact", &test, "--color", "never"]);
+            if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+                command.env(
+                    "LLVM_PROFILE_FILE",
+                    std::path::absolute(profile).expect("resolve coverage output path"),
+                );
+            }
+            #[cfg(windows)]
+            if let Some(system_root) = std::env::var_os("SystemRoot") {
+                command.env("SystemRoot", system_root);
+            }
+            let result = command.output().expect("run isolated dashboard fixture");
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            assert!(
+                result.status.success() && stdout.contains(&format!("test {test} ... ok")),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&result.stderr),
+            );
+            return;
+        }
+
+        std::env::set_var("HERMES_HOME", home);
+        let config = home.join("config.yaml");
+        let existing = "streaming:\n  enabled: true\n";
+        std::fs::write(&config, existing).unwrap();
+        let tool = DashboardControlHandler;
+        for (params, enabled, port) in [
+            (json!({}), false, 8080),
+            (json!({"action":"  ON ","port":" 9191 "}), true, 9191),
+            (json!({"action":"url"}), true, 9191),
+        ] {
+            let output = tool.execute(params).await.unwrap();
+            let result: Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(
+                result,
+                json!({
+                    "status": "ok", "enabled": enabled, "host": "127.0.0.1", "port": port,
+                    "url": format!("http://127.0.0.1:{port}/"), "config_path": config.display().to_string(),
+                })
+            );
+        }
+
+        let before = std::fs::read(&config).unwrap();
+        for (port, expected) in [
+            (json!(65536), "port out of range"),
+            (json!("-1"), "port must be a valid integer"),
+            (json!(true), "port must be an integer or numeric string"),
+        ] {
+            let result = tool.execute(json!({"action":"enable","port":port})).await;
+            assert!(
+                matches!(result, Err(ToolError::InvalidParams(message)) if message == expected)
+            );
+        }
+        assert_eq!(std::fs::read(&config).unwrap(), before);
+
+        let output = tool.execute(json!({"action":"off"})).await.unwrap();
+        let disabled: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(disabled["enabled"], false);
+        assert_eq!(disabled["url"], "http://127.0.0.1:9191/");
+        let saved = load_user_config_file(&config).unwrap();
+        assert!(saved.streaming.enabled);
+        assert!(!saved.platforms["api_server"].enabled);
+        assert_eq!(saved.platforms["api_server"].extra["port"], 9191);
+    }
+
     #[test]
     fn enable_status_disable_roundtrip() {
         let temp = tempfile::tempdir().expect("tempdir");

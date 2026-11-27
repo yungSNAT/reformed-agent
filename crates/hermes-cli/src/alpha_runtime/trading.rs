@@ -659,9 +659,15 @@ fn write_trading_drift_baseline(baseline: &TradingDriftBaseline) {
 /// The trimmed output of a git command that the repository's own
 /// configuration cannot use to run a program, or `None` when git cannot run
 /// safely, fails, times out or prints nothing.
-fn read_only_git_output(root: &Path, args: &[&str]) -> Option<String> {
+fn read_only_git_output(
+    root: &Path,
+    read: hermes_core::git::GitRead,
+    args: &[&str],
+) -> Option<String> {
     let output = hermes_core::git::output_within_timeout(
-        hermes_core::git::read_only_git(root)?.args(args),
+        hermes_core::git::read_only_git(root)?
+            .command(read)
+            .args(args),
         hermes_core::git::GIT_SNAPSHOT_TIMEOUT,
     )?;
     if !output.status.success() {
@@ -688,13 +694,14 @@ fn collect_repo_drift(
         };
     }
 
-    let git_head =
-        read_only_git_output(&root, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
-    // A submodule has its own config and filter drivers, which the overrides
-    // do not reach: never run status inside its dirty worktree.
-    let dirty_output =
-        read_only_git_output(&root, &["status", "--short", "--ignore-submodules=dirty"])
-            .unwrap_or_default();
+    let git_head = read_only_git_output(
+        &root,
+        hermes_core::git::GitRead::RevParse,
+        &["--short", "HEAD"],
+    )
+    .unwrap_or_default();
+    let dirty_output = read_only_git_output(&root, hermes_core::git::GitRead::Status, &["--short"])
+        .unwrap_or_default();
     let dirty_files = dirty_output
         .lines()
         .filter(|l| !l.trim().is_empty())

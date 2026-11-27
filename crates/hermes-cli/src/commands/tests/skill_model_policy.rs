@@ -3,6 +3,103 @@ use hermes_config::LlmProviderConfig;
 
 #[cfg(unix)]
 #[tokio::test]
+async fn reasoning_commands_update_display_and_rebuild_the_active_model_config() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::skill_model_policy::reasoning_commands_update_display_and_rebuild_the_active_model_config",
+    ) {
+        return;
+    }
+    const MODEL: &str = "openai:fixture-model";
+    let home = hermes_config::hermes_home();
+    std::env::set_var("HERMES_SKIP_MEMORY", "1");
+    std::env::set_var("HERMES_HF_CATALOG_DISABLE_LIVE", "1");
+    std::env::set_var(
+        "AWS_SHARED_CREDENTIALS_FILE",
+        home.join("unused-credentials"),
+    );
+    std::env::set_var("AWS_CONFIG_FILE", home.join("unused-aws-config"));
+    std::env::set_var("HTTP_PROXY", "http://127.0.0.1:9");
+    std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:9");
+    hermes_intelligence::models_dev::default_client().seed_cache(serde_json::json!({
+        "fixture": {"models": {}}
+    }));
+
+    let mut app = build_test_app_with_stream(&home).await;
+    let unrelated = serde_json::json!({"reasoning":{"summary":"brief"},"temperature":0.25});
+    let mut legacy = unrelated.clone();
+    legacy["reasoning_effort"] = serde_json::json!("low");
+    Arc::make_mut(&mut app.config).llm_providers.insert(
+        "openai".into(),
+        LlmProviderConfig {
+            base_url: Some("http://127.0.0.1:9/v1".into()),
+            api_key: Some("reasoning-fixture".into()),
+            extra_body: Some(legacy),
+            ..Default::default()
+        },
+    );
+    app.try_switch_model(MODEL).expect("select fixture model");
+    let status = command_output(&mut app, "/reasoning", &["status"]).await;
+    assert_eq!(
+        status,
+        "Reasoning status\n- display: OFF\n- mode: clamp\n- effort: low\n- provider: openai"
+    );
+    for (args, expected) in [
+        (&[][..], "ON"),
+        (&[][..], "OFF"),
+        (&["show"][..], "ON"),
+        (&["hide"][..], "OFF"),
+        (&["toggle"][..], "ON"),
+        (&["toggle"][..], "OFF"),
+    ] {
+        let output = command_output(&mut app, "/reasoning", args).await;
+        assert!(output.starts_with(&format!("Reasoning display: {expected}")));
+        assert_eq!(reasoning_display_enabled(), expected == "ON");
+    }
+    let usage = command_output(&mut app, "/reasoning", &["set"]).await;
+    assert!(usage.starts_with("Usage: /reasoning set"));
+
+    let previous = app.agent.clone();
+    let previous_config = app.config.clone();
+    let err = handle_slash_command(&mut app, "/reasoning", &["set", "comet"])
+        .await
+        .expect_err("invalid effort");
+    assert!(
+        matches!(err, AgentError::Config(message) if message.contains("Unknown reasoning effort 'comet'"))
+    );
+    assert!(Arc::ptr_eq(&previous, &app.agent));
+    assert!(Arc::ptr_eq(&previous_config, &app.config));
+
+    for (args, selected, wire_effort) in [
+        (&["set", "max"][..], "xhigh", Some("high")),
+        (&["min"][..], "minimal", Some("low")),
+        (&["set", "auto"][..], "auto", None),
+    ] {
+        let previous = app.agent.clone();
+        let output = command_output(&mut app, "/reasoning", args).await;
+        assert!(output.contains(&format!("effort set to `{selected}`")));
+        assert!(!Arc::ptr_eq(&previous, &app.agent), "rebuild for {args:?}");
+        assert_eq!(app.current_model, MODEL);
+        let mut expected_body = unrelated.clone();
+        if let Some(effort) = wire_effort {
+            expected_body["reasoning"]["effort"] = serde_json::json!(effort);
+        }
+        let payload = app
+            .agent
+            .config
+            .extra_body
+            .as_ref()
+            .expect("request payload");
+        assert_eq!(payload["reasoning"], expected_body["reasoning"]);
+        assert_eq!(payload["temperature"], expected_body["temperature"]);
+        assert!(payload.get("reasoning_effort").is_none());
+        let status = command_output(&mut app, "/reasoning", &["status"]).await;
+        let effort_line = format!("- effort: {}", wire_effort.unwrap_or("auto"));
+        assert!(status.lines().any(|line| line == effort_line));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn skills_slash_lists_local_catalogue_and_explains_empty_states() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::skill_model_policy::skills_slash_lists_local_catalogue_and_explains_empty_states",

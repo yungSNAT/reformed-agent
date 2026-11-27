@@ -297,6 +297,38 @@ fn a_run_signalled_once_its_pid_file_appears_still_shuts_down() {
     assert!(!home.join("gateway_state.json").exists());
 }
 
+/// The first `gateway stop` removes the pid file, so a run whose shutdown hangs is found only by
+/// the gateway.lock it still holds: a second stop must say it is still stopping, not that nothing
+/// runs.
+#[test]
+fn stop_reports_a_run_still_holding_the_lock_as_stopping() {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let (_dir, home) = private_root();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(home.join("gateway.lock"))
+        .unwrap();
+    // SAFETY: flock on a descriptor `lock` keeps open; LOCK_NB makes it return at once.
+    assert_eq!(
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    let stop = hermes(&home, &["gateway", "stop"]);
+    let stdout = String::from_utf8_lossy(&stop.stdout);
+    assert!(stop.status.success(), "{stop:?}");
+    assert!(stdout.contains("still stopping"), "{stdout}");
+
+    drop(lock);
+    let stop = hermes(&home, &["gateway", "stop"]);
+    let stdout = String::from_utf8_lossy(&stop.stdout);
+    assert!(stdout.contains("nothing to stop"), "{stdout}");
+}
+
 /// A run that cannot own the home must leave the owner's pid file alone, even when the file names
 /// a dead pid: removing it would leave a ready owner that `gateway stop` cannot find.
 #[test]
