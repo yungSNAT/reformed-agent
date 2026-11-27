@@ -242,6 +242,9 @@ impl ToolHandler for ReadFileHandler {
             )));
         }
 
+        if let Some(file) = crate::file_state::tracked_file(path).await {
+            crate::file_state::note_read(&params, &file, offset, limit, &content).await;
+        }
         Ok(content)
     }
 
@@ -313,10 +316,29 @@ impl ToolHandler for WriteFileHandler {
 
         CredentialGuard::new().check_write_access(Path::new(path), content)?;
 
-        self.backend
-            .write_file_for_tool(path, content)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let failed = |e: hermes_core::AgentError| ToolError::ExecutionFailed(e.to_string());
+        match crate::file_state::tracked_file(path).await {
+            // The check and the write share the file's edit lock, so no other
+            // tool's edit lands between them.
+            Some(file) => {
+                let edit_lock = file_edit_lock(&file).await;
+                let _turn = edit_lock.lock().await;
+                if let Some(refusal) = crate::file_state::write_refusal(&params, path, &file).await
+                {
+                    return Err(ToolError::ExecutionFailed(refusal));
+                }
+                self.backend
+                    .write_file(path, content)
+                    .await
+                    .map_err(failed)?;
+                crate::file_state::note_write(&params, &file, content).await;
+            }
+            None => self
+                .backend
+                .write_file_for_tool(path, content)
+                .await
+                .map_err(failed)?,
+        }
 
         Ok(format!(
             "Successfully wrote {} bytes to {}",
@@ -413,9 +435,22 @@ impl ToolHandler for PatchHandler {
             )));
         };
 
-        self.backend
+        let file = crate::file_state::tracked_file(absolute).await;
+        let warning = match &file {
+            Some(file) => crate::file_state::patch_warning(&params, path, file).await,
+            None => None,
+        };
+        let reply = self
+            .backend
             .patch_file(absolute, old_string, new_string, replace_all)
-            .await
+            .await?;
+        if let Some(file) = &file {
+            crate::file_state::note_patch(&params, file).await;
+        }
+        Ok(match warning {
+            Some(warning) => format!("{reply}\n\n{warning}"),
+            None => reply,
+        })
     }
 
     fn schema(&self) -> ToolSchema {
@@ -934,6 +969,18 @@ mod tests {
         }
     }
 
+    /// Reads `path` whole through `backend` and settles the read as the
+    /// registry does for a view shown unaltered, so `write_file` may replace it.
+    async fn read_whole(backend: Arc<dyn TerminalBackend>, path: &str) {
+        let mut params = json!({ "path": path });
+        crate::file_state::prepare_call("read_file", &mut params);
+        let content = ReadFileHandler::new(backend)
+            .execute(params.clone())
+            .await
+            .unwrap();
+        crate::file_state::delivered("read_file", &params, true, &content, false);
+    }
+
     /// Counts its calls and keeps the last path it was given.
     #[derive(Default)]
     struct CountingPatch(
@@ -1137,28 +1184,44 @@ mod tests {
             let path = tmp.path().join(format!("{i}.txt"));
             std::fs::write(&path, "old line;\nkeep A\n").unwrap();
             let path = path.to_str().unwrap().to_owned();
+            read_whole(Arc::new(DiskBackend), &path).await;
             let params = json!({"path": path, "old_string": "old line;", "new_string": "patched;"});
             let patch = patch.clone();
             calls.spawn(async move {
                 patch.execute(params).await.unwrap();
+                None
             });
-            // The write keeps the patched line, so in either order the patch
-            // applies and the write's second line survives.
+            // The write keeps the patched line, so a write that lands first
+            // keeps its second line under the patch; one the patch beats is
+            // refused as stale, leaving the patched file.
             let params = json!({"path": path, "content": "old line;\nkeep B\n"});
             let write = write.clone();
             calls.spawn(async move {
-                write.execute(params).await.unwrap();
+                match write.execute(params).await {
+                    Ok(_) => Some((i, true)),
+                    Err(e) => {
+                        assert!(e.to_string().contains("Refusing to overwrite"), "{e}");
+                        Some((i, false))
+                    }
+                }
             });
         }
+        let mut landed = std::collections::HashMap::new();
         while let Some(result) = calls.join_next().await {
-            result.unwrap();
+            if let Some((i, wrote)) = result.unwrap() {
+                landed.insert(i, wrote);
+            }
         }
 
         let lost: Vec<usize> = (0..FILES)
             .filter(|i| {
-                !std::fs::read_to_string(tmp.path().join(format!("{i}.txt")))
-                    .unwrap()
-                    .ends_with("keep B\n")
+                let text = std::fs::read_to_string(tmp.path().join(format!("{i}.txt"))).unwrap();
+                let expected = if landed[i] {
+                    "patched;\nkeep B\n"
+                } else {
+                    "patched;\nkeep A\n"
+                };
+                text != expected
             })
             .collect();
         assert!(lost.is_empty(), "writes lost to a parallel patch: {lost:?}");
@@ -1172,6 +1235,7 @@ mod tests {
         let path = tmp.path().join("f.txt");
         std::fs::write(&path, "before\n").unwrap();
         let write = WriteFileHandler::new(Arc::new(DiskBackend));
+        read_whole(Arc::new(DiskBackend), path.to_str().unwrap()).await;
         let params = json!({"path": path.to_str().unwrap(), "content": "after\n"});
         let edit_lock = file_edit_lock(&path).await;
         let turn = edit_lock.lock().await;
@@ -1213,6 +1277,7 @@ mod tests {
                         ("~/lock-fixture.txt", home.join("lock-fixture.txt")),
                     ] {
                         tokio::fs::write(&path, "before\n").await.unwrap();
+                        read_whole(backend.clone(), input).await;
                         let edit_lock = file_edit_lock(&path).await;
                         let turn = edit_lock.lock().await;
                         let params = json!({"path": input, "content": "after\n"});

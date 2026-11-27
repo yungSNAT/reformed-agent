@@ -176,3 +176,61 @@ async fn a_browser_lists_the_saved_gateways_and_reaches_the_relay() {
     let body: Value = relay.json().await.unwrap();
     assert_eq!(body, json!({"detail": "No such connection"}));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_saves_uses_and_removes_a_gateway() {
+    let (_dir, home) = private_home();
+    let (_runtime, origin) = serving(&home);
+    let token = credential(&home, &origin).await;
+    let signed_in = [
+        ("X-Hermes-Session-Token", token.as_str()),
+        ("Origin", origin.as_str()),
+    ];
+    let send = |method: &str, route: &str, body: Value| {
+        call(&origin, method, route, &signed_in).json(&body).send()
+    };
+    let gateway =
+        json!({"label": "Work", "url": "https://gw.example", "token": "secret-token-123456"});
+    let saved = send("POST", "/api/gateway-connections", gateway)
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), 200);
+    let body: Value = saved.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{body}");
+    assert_eq!(body["connection"]["id"], "work", "{body}");
+    assert_eq!(body["connection"]["tokenPreview"], "set", "{body}");
+    assert!(!body.to_string().contains("secret-token-123456"), "{body}");
+    assert!(home.join(STORE).exists());
+
+    let used = send(
+        "POST",
+        "/api/gateway-connections/last-used",
+        json!({"id": "work"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(used.status(), 200);
+    let body: Value = used.json().await.unwrap();
+    assert_eq!(body["registry"]["lastUsed"], "work", "{body}");
+
+    let not_an_object = send("POST", "/api/gateway-connections", json!(["work"]))
+        .await
+        .unwrap();
+    assert_eq!(not_an_object.status(), 400);
+    let body: Value = not_an_object.json().await.unwrap();
+    assert_eq!(
+        body,
+        json!({"detail": "A connection save needs a JSON object."})
+    );
+
+    let removed = send("DELETE", "/api/gateway-connections/work", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), 200);
+    let body: Value = removed.json().await.unwrap();
+    assert_eq!(body["registry"]["lastUsed"], "local", "{body}");
+    assert_eq!(
+        body["registry"]["connections"].as_array().map(Vec::len),
+        Some(1)
+    );
+}

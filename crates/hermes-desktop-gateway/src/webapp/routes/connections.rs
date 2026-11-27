@@ -8,7 +8,10 @@
 //!
 //! Stricter than upstream, each on purpose:
 //! - this gateway saves and relays only `remote` entries with a session token; `ssh`, `cloud`,
-//!   `local` and `oauth` entries are listed and kept as they are, never rewritten or dialled;
+//!   `local` and `oauth` entries are listed and never rewritten or dialled (any but `local` may
+//!   be removed, as upstream allows);
+//! - a store whose list holds an entry that is not an object is copied aside, as a corrupt one
+//!   is, before a write drops that entry;
 //! - a saved URL may not carry a user name or password (the URL is in the public view), and a
 //!   target address must not be link-local, cloud metadata, unspecified, multicast, broadcast,
 //!   IPv4-mapped, zoned or this listener itself; a private or ULA address needs the entry's
@@ -27,10 +30,10 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path as UrlPath, Request};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -42,27 +45,30 @@ use serde_json::{json, Map, Value};
 use super::store::{blocking, webapp_only, Served, StoreLock};
 use crate::webapp::api::{ApiError, ApiResult, Ctx};
 
-/// Each handler gets the store's path from the served home, fixed when the router is built; no
-/// request value builds a path.
+/// Each handler gets `served` from the route, not from the request; no request value builds a
+/// path.
 pub fn router(served: &Served) -> Router {
-    let store = Arc::new(served.install_root().join(STORE_NAME));
     let (list, save, last, remove, relay) = (
-        store.clone(),
-        store.clone(),
-        store.clone(),
-        store.clone(),
-        store,
+        served.clone(),
+        served.clone(),
+        served.clone(),
+        served.clone(),
+        served.clone(),
     );
     Router::new()
         .route(
             "/api/gateway-connections",
             get(move |ctx: Ctx| list_connections(list.clone(), ctx)).post(
-                move |ctx: Ctx, body: axum::body::Bytes| save_connection(save.clone(), ctx, body),
+                move |ctx: Ctx, body: Result<Json<Value>, JsonRejection>| {
+                    save_connection(save.clone(), ctx, body)
+                },
             ),
         )
         .route(
             "/api/gateway-connections/last-used",
-            post(move |ctx: Ctx, body: axum::body::Bytes| set_last_used(last.clone(), ctx, body)),
+            post(move |ctx: Ctx, body: Result<Json<Value>, JsonRejection>| {
+                set_last_used(last.clone(), ctx, body)
+            }),
         )
         .route(
             "/api/gateway-connections/{id}",
@@ -122,7 +128,7 @@ const FORBIDDEN_SAVED_HEADERS: [&str; 16] = [
     "proxy-connection",
 ];
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum StoreError {
     /// 400: the save or change is refused.
     Refused(String),
@@ -154,11 +160,7 @@ pub(crate) fn read_doc(path: &Path) -> Result<(Option<Map<String, Value>>, bool)
     let raw = match std::fs::read(path) {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok((None, false)),
-        Err(_) => {
-            return Err(StoreError::Busy(
-                "gateway connections store is unreadable".into(),
-            ))
-        }
+        Err(err) => return Err(unreadable(err)),
     };
     guard_permissions(path)?;
     let text = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&raw);
@@ -168,10 +170,13 @@ pub(crate) fn read_doc(path: &Path) -> Result<(Option<Map<String, Value>>, bool)
     }
 }
 
+fn unreadable(_: std::io::Error) -> StoreError {
+    StoreError::Busy("gateway connections store is unreadable".into())
+}
+
 fn guard_permissions(path: &Path) -> Result<(), StoreError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let meta = std::fs::symlink_metadata(path)
-        .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
+    let meta = std::fs::symlink_metadata(path).map_err(unreadable)?;
     // SAFETY: getuid has no preconditions and cannot fail.
     if !meta.file_type().is_file() || meta.uid() != unsafe { libc::getuid() } {
         return Err(StoreError::Busy(
@@ -179,8 +184,8 @@ fn guard_permissions(path: &Path) -> Result<(), StoreError> {
         ));
     }
     if meta.mode() & 0o077 != 0 {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
+        let owner_only = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(path, owner_only).map_err(unreadable)?;
     }
     Ok(())
 }
@@ -211,11 +216,11 @@ fn connections(doc: Option<&Map<String, Value>>) -> Vec<Map<String, Value>> {
 }
 
 fn local_entry() -> Map<String, Value> {
-    let Value::Object(entry) = json!({"id": LOCAL_ID, "kind": "local", "label": "This device"})
-    else {
-        unreachable!("a JSON object literal");
-    };
-    entry
+    Map::from_iter([
+        ("id".to_owned(), json!(LOCAL_ID)),
+        ("kind".to_owned(), json!("local")),
+        ("label".to_owned(), json!("This device")),
+    ])
 }
 
 fn str_field<'a>(entry: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -360,12 +365,15 @@ pub(crate) fn mutate<T>(
     path: &Path,
     change: impl FnOnce(&mut Map<String, Value>, &mut Vec<Map<String, Value>>) -> Result<T, StoreError>,
 ) -> Result<(Map<String, Value>, T), StoreError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
-    }
+    let parent = path.parent().map_or(Ok(()), std::fs::create_dir_all);
+    parent.map_err(unreadable)?;
     let lock = StoreLock::take(path, "gateway connections store").map_err(StoreError::Busy)?;
     let (doc, corrupt) = read_doc(path)?;
+    // The rewritten list holds only entries that are objects; any other is kept in a copy.
+    let unreadable_entry = doc
+        .as_ref()
+        .and_then(|d| d.get("connections"))
+        .is_some_and(|c| !c.as_array().is_some_and(|l| l.iter().all(Value::is_object)));
     let mut list = connections(doc.as_ref());
     let mut next = doc.clone().unwrap_or_default();
     let answer = change(&mut next, &mut list)?;
@@ -386,7 +394,7 @@ pub(crate) fn mutate<T>(
                 "gateway connections store lock was taken over".into(),
             ));
         }
-        write_doc(path, &next, corrupt)?;
+        write_doc(path, &next, corrupt || unreadable_entry)?;
     }
     Ok((next, answer))
 }
@@ -428,16 +436,13 @@ pub(crate) fn normalize_url(raw: &str) -> Result<url::Url, StoreError> {
             url.scheme()
         )));
     }
-    if url.host().is_none() {
-        return Err(refused("Remote gateway URL is not valid: Invalid URL"));
-    }
+    // An `http` or `https` URL always has a host: the parser refuses one without.
     if !url.username().is_empty() || url.password().is_some() {
         return Err(refused(
             "Remote gateway URL must not hold a user name or password; save the session token instead.",
         ));
     }
-    if let Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) = url.host() {
-        let ip = literal_ip(&url).expect("an IP host");
+    if let Some(ip) = literal_ip(&url) {
         if let Err(reason) = judge_address(ip, true) {
             return Err(refused(format!("Remote gateway URL is refused: {reason}.")));
         }
@@ -607,7 +612,7 @@ fn incoming_headers(
             _ => {
                 return Err(refused(format!(
                     "Header \"{name}\" must be a string or null."
-                )))
+                )));
             }
         }
     }
@@ -782,6 +787,12 @@ pub(crate) fn last_used(path: &Path, id: &str) -> Result<Map<String, Value>, Sto
 
 // ---- Registry routes ------------------------------------------------------------------------
 
+/// Resolved per request, as the start-up routes resolve theirs, so both stores follow the same
+/// install root.
+fn store_path(served: &Served) -> PathBuf {
+    served.install_root().join(STORE_NAME)
+}
+
 fn answer(doc: &Map<String, Value>, extra: Option<(&str, Value)>) -> Value {
     let mut out = json!({"ok": true, "registry": public_registry(Some(doc))});
     if let Some((key, value)) = extra {
@@ -790,22 +801,27 @@ fn answer(doc: &Map<String, Value>, extra: Option<(&str, Value)>) -> Value {
     out
 }
 
-async fn list_connections(store: Arc<PathBuf>, ctx: Ctx) -> ApiResult {
+async fn list_connections(served: Served, ctx: Ctx) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let doc = blocking(move || read_doc(&path).map(|(doc, _)| doc).map_err(ApiError::from)).await?;
     Ok(Json(public_registry(doc.as_ref())))
 }
 
-async fn save_connection(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+/// The body is parsed by axum's JSON extractor; any rejection is this route's own 400.
+async fn save_connection(
+    served: Served,
+    ctx: Ctx,
+    body: Result<Json<Value>, JsonRejection>,
+) -> ApiResult {
     webapp_only(&ctx)?;
-    let Ok(Value::Object(payload)) = serde_json::from_slice::<Value>(&body) else {
+    let Ok(Json(Value::Object(payload))) = body else {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "A connection save needs a JSON object.".into(),
         ));
     };
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let (doc, entry) = blocking(move || save(&path, &payload).map_err(ApiError::from)).await?;
     Ok(Json(answer(
         &doc,
@@ -813,24 +829,24 @@ async fn save_connection(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes)
     )))
 }
 
-async fn remove_connection(
-    store: Arc<PathBuf>,
-    ctx: Ctx,
-    UrlPath(id): UrlPath<String>,
-) -> ApiResult {
+async fn remove_connection(served: Served, ctx: Ctx, UrlPath(id): UrlPath<String>) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let doc = blocking(move || remove(&path, &id).map_err(ApiError::from)).await?;
     Ok(Json(answer(&doc, None)))
 }
 
-async fn set_last_used(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+async fn set_last_used(
+    served: Served,
+    ctx: Ctx,
+    body: Result<Json<Value>, JsonRejection>,
+) -> ApiResult {
     webapp_only(&ctx)?;
-    let id = serde_json::from_slice::<Value>(&body)
+    let id = body
         .ok()
-        .and_then(|b| b.get("id").and_then(Value::as_str).map(str::to_owned))
+        .and_then(|Json(b)| b.get("id").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let doc = blocking(move || last_used(&path, &id).map_err(ApiError::from)).await?;
     Ok(Json(answer(&doc, None)))
 }
@@ -840,6 +856,8 @@ async fn set_last_used(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes) -
 const PREFIX: &str = "/api/relay/";
 /// The most a relayed request body may carry: the largest frame upstream's gateway accepts.
 pub(crate) const MAX_BODY: usize = 384 * 1024 * 1024;
+/// The request body cap the relay applies (small in tests, so a test can pass it).
+const MAX_REQUEST: usize = if cfg!(test) { 64 * 1024 } else { MAX_BODY };
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// From the request's start until the gateway's headers arrive, the request body's upload
 /// included: an upload slower than this fails with 502.
@@ -1010,18 +1028,30 @@ pub(crate) async fn checked_addresses(
     own: Option<SocketAddr>,
 ) -> Result<Vec<SocketAddr>, &'static str> {
     let port = url.port_or_known_default().ok_or("no port")?;
-    let addrs: Vec<SocketAddr> = match url.host() {
-        Some(url::Host::Ipv4(ip)) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
-        Some(url::Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
-        Some(url::Host::Domain(name)) => {
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::lookup_host((name, port)))
+    let addrs: Vec<SocketAddr> = match literal_ip(url) {
+        Some(ip) => vec![SocketAddr::new(ip, port)],
+        None => {
+            let name = url.host_str().ok_or("no host")?;
+            let lookup = tokio::net::lookup_host((name, port));
+            // A name that fails to resolve, or not in time, is refused alike.
+            tokio::time::timeout(CONNECT_TIMEOUT, lookup)
                 .await
-                .map_err(|_| "the name does not resolve in time")?
-                .map_err(|_| "the name does not resolve")?
+                .ok()
+                .and_then(Result::ok)
+                .ok_or("the name does not resolve")?
                 .collect()
         }
-        None => return Err("no host"),
     };
+    judged(addrs, allow_private, own)
+}
+
+/// `addrs` when every one may be dialled: refused when the list is empty, or any address is zoned,
+/// refused by [`judge_address`] or this listener itself.
+pub(crate) fn judged(
+    addrs: Vec<SocketAddr>,
+    allow_private: bool,
+    own: Option<SocketAddr>,
+) -> Result<Vec<SocketAddr>, &'static str> {
     if addrs.is_empty() {
         return Err("the name does not resolve");
     }
@@ -1101,7 +1131,7 @@ pub(crate) fn dial_of(path: &Path, id: &str) -> Result<Dial, DialError> {
             None => {
                 return Err(DialError::NotRelayable(format!(
                     "{label} has a saved header this gateway will not send. Edit it in Settings → Gateways."
-                )))
+                )));
             }
         }
     }
@@ -1180,16 +1210,21 @@ pub(crate) async fn relay(
     }
     let dial = {
         let (store, id) = (store.to_owned(), id.to_owned());
-        tokio::task::spawn_blocking(move || dial_of(&store, &id)).await
+        // A read that never finished answers as an unreadable store.
+        let lost = Err(DialError::Store(unreadable(
+            std::io::ErrorKind::Interrupted.into(),
+        )));
+        tokio::task::spawn_blocking(move || dial_of(&store, &id))
+            .await
+            .unwrap_or(lost)
     };
     let dial = match dial {
-        Ok(Ok(dial)) => dial,
-        Ok(Err(DialError::Missing)) => return detail(StatusCode::NOT_FOUND, "No such connection"),
-        Ok(Err(DialError::NotRelayable(why))) => {
-            return refusal("relay_reconnect", id, &why, StatusCode::CONFLICT)
+        Ok(dial) => dial,
+        Err(DialError::Missing) => return detail(StatusCode::NOT_FOUND, "No such connection"),
+        Err(DialError::NotRelayable(why)) => {
+            return refusal("relay_reconnect", id, &why, StatusCode::CONFLICT);
         }
-        Ok(Err(DialError::Store(err))) => return ApiError::from(err).into_response(),
-        Err(_) => return detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
+        Err(DialError::Store(err)) => return ApiError::from(err).into_response(),
     };
     let Some(target) = relay_target(request.uri().path(), request.uri().query(), id) else {
         return detail(StatusCode::BAD_REQUEST, "Not a route this relay carries");
@@ -1202,7 +1237,7 @@ pub(crate) async fn relay(
                 id,
                 &format!("{} is refused: {why}.", dial.label),
                 StatusCode::FORBIDDEN,
-            )
+            );
         }
     };
     let mut builder = reqwest::Client::builder()
@@ -1214,9 +1249,6 @@ pub(crate) async fn relay(
     if let Some(name) = dial.base.domain() {
         builder = builder.resolve_to_addrs(name, &addrs);
     }
-    let Ok(client) = builder.build() else {
-        return detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error");
-    };
     let base = stored_url(&dial.base);
     let method = request.method().clone();
     let headers = forwarded_headers(request.headers(), &dial);
@@ -1225,33 +1257,40 @@ pub(crate) async fn relay(
             .headers()
             .get(header::CONTENT_LENGTH)
             .is_some_and(|v| v.as_bytes() != b"0");
-    let mut outbound = client
-        .request(method, format!("{base}{target}"))
-        .headers(headers);
-    if has_body {
+    let body = has_body.then(|| {
         let mut seen = 0usize;
         let limited = request.into_body().into_data_stream().map(move |chunk| {
             let chunk = chunk.map_err(std::io::Error::other)?;
             seen += chunk.len();
-            if seen > MAX_BODY {
-                return Err(std::io::Error::other("relayed body too large"));
-            }
-            Ok::<_, std::io::Error>(chunk)
+            (seen <= MAX_REQUEST)
+                .then_some(chunk)
+                .ok_or_else(|| std::io::Error::other("relayed body too large"))
         });
-        outbound = outbound.body(reqwest::Body::wrap_stream(limited));
-    }
-    let sent = tokio::time::timeout(HEADERS_TIMEOUT, outbound.send()).await;
-    let response = match sent {
-        Ok(Ok(response)) => response,
-        Ok(Err(_)) | Err(_) => {
-            tracing::info!(connection = %id, "gateway relay failed");
-            return refusal(
-                "relay_unreachable",
-                id,
-                &format!("{} is not reachable from this gateway.", dial.label),
-                StatusCode::BAD_GATEWAY,
-            );
-        }
+        reqwest::Body::wrap_stream(limited)
+    });
+    // A client that cannot be built, a refused or failed send and a gateway that sends no headers
+    // in time all answer as an unreachable gateway.
+    let sent = async {
+        let outbound = builder
+            .build()
+            .ok()?
+            .request(method, format!("{base}{target}"))
+            .headers(headers);
+        let outbound = match body {
+            Some(body) => outbound.body(body),
+            None => outbound,
+        };
+        let sent = tokio::time::timeout(HEADERS_TIMEOUT, outbound.send()).await;
+        sent.ok().and_then(Result::ok)
+    };
+    let Some(response) = sent.await else {
+        tracing::info!(connection = %id, "gateway relay failed");
+        return refusal(
+            "relay_unreachable",
+            id,
+            &format!("{} is not reachable from this gateway.", dial.label),
+            StatusCode::BAD_GATEWAY,
+        );
     };
     if response.status() == StatusCode::UNAUTHORIZED {
         return refusal(
@@ -1286,7 +1325,7 @@ pub(crate) async fn relay(
                     id,
                     &format!("{} redirected outside itself.", dial.label),
                     StatusCode::BAD_GATEWAY,
-                )
+                );
             }
         }
     }
@@ -1324,7 +1363,7 @@ fn own_address(headers: &HeaderMap) -> Option<SocketAddr> {
 }
 
 async fn relay_http(
-    store: Arc<PathBuf>,
+    served: Served,
     ctx: Ctx,
     UrlPath((id, _path)): UrlPath<(String, String)>,
     request: Request,
@@ -1333,7 +1372,7 @@ async fn relay_http(
         return err.into_response();
     }
     let own = own_address(request.headers());
-    relay(&store, &id, own, request).await
+    relay(&store_path(&served), &id, own, request).await
 }
 
 #[cfg(test)]

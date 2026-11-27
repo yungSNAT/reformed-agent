@@ -262,6 +262,30 @@ fn an_unchanged_write_keeps_the_revision_and_a_corrupt_store_is_kept_aside() {
 }
 
 #[test]
+fn a_store_holding_an_entry_that_is_not_an_object_is_kept_aside_before_a_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    save_remote(&path, "Work", "https://gw.example");
+    let mut doc = read_doc(&path).unwrap().0.unwrap();
+    let list = doc.get_mut("connections").unwrap().as_array_mut().unwrap();
+    list.push(json!("an entry native Desktop wrote"));
+    let bytes = serde_json::to_vec(&doc).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    last_used(&path, "work").unwrap();
+    let kept: Vec<Vec<u8>> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("gateway-connections.json.corrupt-")
+        })
+        .map(|e| std::fs::read(e.path()).unwrap())
+        .collect();
+    assert_eq!(kept, vec![bytes], "the dropped entry was not kept");
+}
+
+#[test]
 fn remove_and_last_used_name_an_entry_and_the_local_one_stays() {
     let dir = tempfile::tempdir().unwrap();
     let path = store(&dir);
@@ -355,6 +379,13 @@ async fn gateway() -> (SocketAddr, Seen) {
             log.lock()
                 .unwrap()
                 .push((request.uri().to_string(), request.headers().clone()));
+            // The body's length, once it has all arrived.
+            if path == "/echo" {
+                let body = axum::body::to_bytes(request.into_body(), usize::MAX).await;
+                return body.map_or(StatusCode::BAD_REQUEST.into_response(), |b| {
+                    b.len().to_string().into_response()
+                });
+            }
             let mut response = match path.as_str() {
                 "/unauth" => StatusCode::UNAUTHORIZED.into_response(),
                 "/out" => (
@@ -880,4 +911,334 @@ fn a_move_carries_only_what_the_edit_sends() {
         ]
     );
     assert_eq!(moved["label"], "Gw 2");
+}
+
+// ---- Failures and edge shapes ----------------------------------------------------------------
+
+fn busy(text: &str) -> StoreError {
+    StoreError::Busy(text.into())
+}
+
+/// A store document written as native Desktop might, owner-only.
+fn written(dir: &tempfile::TempDir, doc: Value) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = store(dir);
+    std::fs::write(&path, doc.to_string()).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    path
+}
+
+#[test]
+fn store_errors_answer_400_404_and_503() {
+    for (err, status) in [
+        (StoreError::Refused("r".into()), StatusCode::BAD_REQUEST),
+        (StoreError::Missing("m".into()), StatusCode::NOT_FOUND),
+        (busy("b"), StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        assert_eq!(ApiError::from(err).0, status);
+    }
+}
+
+#[test]
+fn a_store_that_cannot_be_read_inspected_or_placed_answers_busy() {
+    let dir = tempfile::tempdir().unwrap();
+    let unreadable = busy("gateway connections store is unreadable");
+    let folder = store(&dir);
+    std::fs::create_dir(&folder).unwrap();
+    assert_eq!(read_doc(&folder), Err(unreadable.clone()));
+    assert_eq!(
+        guard_permissions(&dir.path().join("gone")),
+        Err(unreadable.clone())
+    );
+    let file = dir.path().join("file");
+    std::fs::write(&file, "x").unwrap();
+    assert_eq!(last_used(&file.join(STORE_NAME), "local"), Err(unreadable));
+}
+
+#[test]
+fn a_write_that_cannot_land_answers_busy_and_leaves_no_temporary_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    // A folder in the store's place, not empty, so the rename onto it fails.
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(path.join("inside"), "x").unwrap();
+    let failed = busy("gateway connections store could not be written");
+    assert_eq!(write_doc(&path, &Map::new(), false), Err(failed.clone()));
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+        .collect();
+    assert!(left.is_empty(), "a temporary file was left");
+    let missing = dir.path().join("missing").join(STORE_NAME);
+    assert_eq!(write_doc(&missing, &Map::new(), true), Err(failed));
+}
+
+#[test]
+fn a_change_whose_lock_was_taken_over_meanwhile_is_not_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    let lock = dir.path().join(format!("{STORE_NAME}.lock"));
+    let result = mutate(&path, |_, list| {
+        // Another writer breaks this lock whilst the change is made.
+        std::fs::rename(&lock, dir.path().join("moved")).unwrap();
+        list.push(obj(json!({"id": "x", "kind": "ssh"})));
+        Ok(())
+    });
+    assert_eq!(
+        result.map(|_| ()),
+        Err(busy("gateway connections store lock was taken over"))
+    );
+    assert!(!path.exists(), "the store was written without the lock");
+}
+
+#[test]
+fn the_registry_names_a_saved_primary_launch_mode_and_quarantined_entries() {
+    let doc = obj(json!({
+        "primary": "work",
+        "launchMode": "last-used",
+        "lastUsed": "gone",
+        "connections": [{"id": "work", "kind": "remote", "label": "Work",
+                         "url": "https://gw.example", "token": "bare-secret"}],
+        "quarantined": [{"reason": "bad", "entry": {"label": "Old"}}, {"entry": 5}, 7],
+    }));
+    let registry = public_registry(Some(&doc));
+    assert_eq!(registry["primary"], "work");
+    assert_eq!(registry["launchMode"], "last-used");
+    assert_eq!(
+        registry["lastUsed"], "work",
+        "an unknown last-used id names the primary"
+    );
+    assert_eq!(
+        registry["quarantined"],
+        json!([{"reason": "bad", "label": "Old"}, {"reason": "unknown", "label": ""}])
+    );
+    // A token stored as a bare string counts as set, and is never shown.
+    assert_eq!(registry["connections"][1]["tokenSet"], true);
+    assert!(!registry.to_string().contains("bare-secret"));
+}
+
+#[test]
+fn urls_that_do_not_parse_are_refused_and_ip_literals_are_judged() {
+    assert_eq!(
+        normalize_url("http://[::1").map(|u| u.to_string()),
+        Err(refused("Remote gateway URL is not valid: Invalid URL"))
+    );
+    assert_eq!(
+        normalize_url("http://[::1]:9").map(|u| u.to_string()),
+        Ok("http://[::1]:9/".into())
+    );
+    assert!(normalize_url("http://[fe80::1]").is_err());
+}
+
+#[test]
+fn ids_come_from_the_label_and_never_take_a_used_or_the_local_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    assert_eq!(
+        save_remote(&path, "Work Box!", "https://a.example")["id"],
+        "work-box"
+    );
+    assert_eq!(
+        save_remote(&path, "!!!", "https://b.example")["id"],
+        "connection"
+    );
+    assert_eq!(
+        save_remote(&path, "Local", "https://c.example")["id"],
+        "local-2"
+    );
+    let unnamed = save(
+        &path,
+        &obj(json!({"url": "https://d.example", "token": "secret-token-123456"})),
+    )
+    .unwrap()
+    .1;
+    assert_eq!(
+        unnamed["label"], "d.example",
+        "an unnamed gateway takes its host"
+    );
+}
+
+#[test]
+fn bad_names_headers_and_consent_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    let attempt = |extra: Value| {
+        let mut payload = obj(
+            json!({"label": "Gw", "url": "https://gw.example", "token": "secret-token-123456"}),
+        );
+        payload.extend(obj(extra));
+        save(&path, &payload).map(|_| ())
+    };
+    assert_eq!(
+        attempt(json!({"label": "x".repeat(LABEL_MAX + 1)})),
+        Err(refused(format!(
+            "A gateway name is at most {LABEL_MAX} characters."
+        )))
+    );
+    assert_eq!(
+        attempt(json!({"headers": {"X-Count": 5}})),
+        Err(refused("Header \"X-Count\" must be a string or null."))
+    );
+    assert_eq!(
+        attempt(json!({"headers": "X-A: 1"})),
+        Err(refused("Gateway headers must be an object."))
+    );
+    assert_eq!(
+        attempt(json!({"allowPrivateNetwork": "yes"})),
+        Err(refused("allowPrivateNetwork must be true or false."))
+    );
+    // A blank header name is skipped, not refused.
+    assert_eq!(attempt(json!({"headers": {" ": "v"}})), Ok(()));
+    let doc = read_doc(&path).unwrap().0;
+    let entry = find(&connections(doc.as_ref()), "gw").cloned().unwrap();
+    assert!(!entry.contains_key("headers"));
+}
+
+#[test]
+fn the_relay_refuses_a_second_hop_in_any_case_and_a_control_character_in_the_query() {
+    assert_eq!(relay_target("/api/relay/w/API/Relay/x", None, "w"), None);
+    assert_eq!(relay_target("/api/relay/w/api/relay", None, "w"), None);
+    assert_eq!(relay_target("/api/relay/w/x", Some("a=\u{1}"), "w"), None);
+    assert_eq!(
+        relay_target("/api/relay/w/x", Some("a=1"), "w"),
+        Some("/x?a=1".into())
+    );
+}
+
+#[test]
+fn a_redirect_to_the_gateway_root_or_a_trailing_dot_segment_stays_a_folder() {
+    let (gw, base) = ("https://gw.example", "/api/relay/w");
+    assert_eq!(relayed_location(gw, gw, base), Some("/api/relay/w/".into()));
+    assert_eq!(
+        relayed_location("/a/b/..", gw, base),
+        Some("/api/relay/w/a/".into())
+    );
+    assert_eq!(
+        relayed_location("/a/.", gw, base),
+        Some("/api/relay/w/a/".into())
+    );
+}
+
+#[tokio::test]
+async fn names_are_resolved_and_judged_and_empty_or_zoned_answers_are_refused() {
+    let url = |u: &str| url::Url::parse(u).unwrap();
+    let local = checked_addresses(&url("http://localhost:9"), false, None)
+        .await
+        .unwrap();
+    assert!(local.iter().all(|a| a.ip().is_loopback()), "{local:?}");
+    assert!(checked_addresses(&url("http://[::1]:9"), false, None)
+        .await
+        .is_ok());
+    assert_eq!(
+        checked_addresses(&url("http://gw.invalid"), false, None).await,
+        Err("the name does not resolve")
+    );
+    assert_eq!(
+        judged(vec![], false, None),
+        Err("the name does not resolve")
+    );
+    let zoned = std::net::SocketAddrV6::new("2001:db8::1".parse().unwrap(), 80, 0, 3);
+    assert_eq!(
+        judged(vec![SocketAddr::V6(zoned)], true, None),
+        Err("a zoned IPv6 address")
+    );
+}
+
+#[test]
+fn a_saved_entry_without_an_address_or_credential_is_not_dialled() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = written(
+        &dir,
+        json!({"connections": [
+            {"id": "nourl", "kind": "remote", "label": "NoUrl", "url": "not a url::", "token": "t"},
+            {"id": "notoken", "kind": "remote", "label": "NoToken", "url": "https://a.example"},
+            {"id": "blank", "kind": "remote", "url": "https://b.example", "token": "bad\ntoken",
+             "headers": {"X-Empty": ""}},
+        ]}),
+    );
+    let why = |id: &str| match dial_of(&path, id) {
+        Err(DialError::NotRelayable(why)) => why,
+        _ => panic!("{id} was dialled"),
+    };
+    assert_eq!(
+        why("nourl"),
+        "NoUrl has no valid address. Edit it in Settings → Gateways."
+    );
+    assert_eq!(
+        why("notoken"),
+        "NoToken has no saved credential. Edit it in Settings → Gateways."
+    );
+    let Ok(blank) = dial_of(&path, "blank") else {
+        panic!("blank was not dialled");
+    };
+    assert!(blank.headers.is_empty(), "an empty header value was sent");
+    assert_eq!(blank.label, "blank", "an unnamed entry is named by its id");
+    let sent = forwarded_headers(&HeaderMap::new(), &blank);
+    assert!(
+        !sent.contains_key(SESSION_TOKEN_HEADER),
+        "a token that is no header value was sent"
+    );
+}
+
+#[tokio::test]
+async fn the_relay_carries_a_body_and_refuses_one_past_the_cap() {
+    let (addr, seen) = gateway().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = saved(&dir, addr).await;
+    let post = |body: Vec<u8>| {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/relay/work/echo")
+            .header("sec-fetch-site", "same-origin")
+            .body(Body::from(body))
+            .unwrap()
+    };
+    let response = relay(&path, "work", None, post(b"hello".to_vec())).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(&body[..], b"5");
+    let response = relay(&path, "work", None, post(vec![b'x'; MAX_REQUEST + 1])).await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    // A GET that names an empty body is carried without one.
+    let get = Request::builder()
+        .uri("/api/relay/work/plain")
+        .header(header::CONTENT_LENGTH, "0")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        relay(&path, "work", None, get).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(seen.lock().unwrap().last().unwrap().0, "/plain");
+}
+
+#[tokio::test]
+async fn the_relay_dials_a_saved_name_and_answers_an_unreachable_gateway_or_store() {
+    let (addr, _) = gateway().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir);
+    let named = format!("http://localhost:{}", addr.port());
+    save_remote(&path, "Named", &named);
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gone = closed.local_addr().unwrap();
+    drop(closed);
+    save_remote(&path, "Gone", &format!("http://{gone}"));
+    let get = |uri: &str| Request::builder().uri(uri).body(Body::empty()).unwrap();
+    let response = relay(&path, "named", None, get("/api/relay/named/x")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = relay(&path, "gone", None, get("/api/relay/gone/x")).await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"], "relay_unreachable");
+    assert_eq!(body["detail"], "Gone is not reachable from this gateway.");
+    let folder = tempfile::tempdir().unwrap();
+    std::fs::create_dir(store(&folder)).unwrap();
+    let response = relay(&store(&folder), "x", None, get("/api/relay/x/y")).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
