@@ -71,8 +71,6 @@ use hermes_config::{
 };
 use hermes_core::AgentError;
 use hermes_core::ParseMode;
-#[cfg(feature = "gateway-telegram")]
-use hermes_core::PlatformAdapter;
 use hermes_core::{MessageRole, StreamChunk};
 use hermes_cron::{
     cron_scheduler_for_data_dir, CronCompletionEvent, CronError, CronScheduler, DeliverTarget,
