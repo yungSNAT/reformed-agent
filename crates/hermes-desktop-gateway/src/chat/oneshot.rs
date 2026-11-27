@@ -3,7 +3,8 @@
 //!
 //! As upstream (`llm.oneshot`, tui_gateway/methods_session.py, and agent/oneshot.py), a
 //! registered `template` with `variables`, or raw `instructions` and `input`, make the prompt,
-//! and the reply's text comes back without a wrapping code fence. The call runs on this
+//! and the reply's text comes back without inline reasoning blocks or a wrapping code fence
+//! (a reply that is only reasoning falls back to `reasoning_content`). The call runs on this
 //! gateway's configured model, the one its turns use; upstream's `task` routing to a separate
 //! auxiliary model is not served, so `task` and `session_id` are accepted and unused.
 //!
@@ -78,16 +79,60 @@ fn oneshot(req: Request) -> Reply {
         let message = response.message;
         let text = message
             .content
-            .filter(|text| !text.trim().is_empty())
+            .map(|text| without_reasoning(&text))
+            .filter(|text| !text.is_empty())
             .or(message.reasoning_content)
             .unwrap_or_default();
         Ok(json!({"text": strip_wrapping_code_fence(&text)}))
     })
 }
 
+/// Upstream's reasoning tag names (agent/think_scrubber.py `THINK_TAG_NAMES` at `ae2a81cc`).
+const THINK_TAGS: &[&str] = &[
+    "think",
+    "thinking",
+    "reasoning",
+    "thought",
+    "REASONING_SCRATCHPAD",
+    "思考",
+    "反思",
+    "推理",
+    "推敲",
+    "mm:think",
+];
+
+/// `text` without its closed reasoning blocks, trimmed, as upstream's
+/// `extract_content_or_reasoning` cleans `content` (`_REASONING_BLOCK_PATTERNS`: each tag in
+/// turn, case-insensitive, the shortest block from each opening tag).
+fn without_reasoning(text: &str) -> String {
+    let mut text = text.trim().to_string();
+    for tag in THINK_TAGS {
+        let (open, close) = (
+            format!("<{}>", tag.to_ascii_lowercase()),
+            format!("</{}>", tag.to_ascii_lowercase()),
+        );
+        // ASCII lowercasing keeps every byte offset, so positions in `lower` index `text`.
+        let lower = text.to_ascii_lowercase();
+        let mut kept = String::with_capacity(text.len());
+        let mut at = 0;
+        while let Some(start) = lower[at..].find(&open).map(|i| at + i) {
+            let body = start + open.len();
+            let Some(len) = lower[body..].find(&close) else {
+                break;
+            };
+            kept.push_str(&text[at..start]);
+            at = body + len + close.len();
+        }
+        kept.push_str(&text[at..]);
+        text = kept;
+    }
+    text.trim().to_string()
+}
+
 /// The system and user text, temperature and token limit `params` ask for, as upstream reads
 /// them: a temperature or limit that is not a number falls back to its default rather than
-/// refusing, and one out of range is brought within it.
+/// refusing, and one out of range is brought within it. Upstream also reads a number sent as
+/// a string (`"0.8"`, `"50"`); this takes only JSON numbers, which the desktop sends.
 fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), RpcError> {
     let text = |key: &str| match params.get(key) {
         None | Some(Value::Null) => Ok(""),
