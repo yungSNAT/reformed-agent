@@ -33,6 +33,7 @@ use tokio::time::Instant;
 use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
+mod images;
 mod session;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
@@ -148,7 +149,7 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 }
 
 /// Every area's methods; a new area adds its table here.
-const AREAS: &[&[(&str, Handler)]] = &[METHODS];
+const AREAS: &[&[(&str, Handler)]] = &[METHODS, images::METHODS];
 
 /// The methods served on both wires.
 const METHODS: &[(&str, Handler)] = &[
