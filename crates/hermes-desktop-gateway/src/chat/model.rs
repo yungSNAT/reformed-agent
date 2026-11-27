@@ -980,6 +980,41 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_never_takes_the_key_variable_of_one_named_so_in_another_case() {
+        let upper = "DESKTOP_MODEL_UNIT_TEST_SIBLING_KEY";
+        // `llm_providers` is a `HashMap`: each new map iterates in its own order.
+        for _ in 0..32 {
+            let mut config = GatewayConfig::default();
+            for (name, entry) in [
+                ("mimo", json!({ "base_url": "http://127.0.0.1:9/v1" })),
+                ("MIMO", json!({ "api_key_env": upper })),
+                ("XIAOMI", json!({ "api_key_env": "UPPER_CANONICAL_KEY" })),
+                ("xiaomi", json!({ "api_key_env": "CANONICAL_KEY" })),
+            ] {
+                let provider: LlmProviderConfig = serde_json::from_value(entry).unwrap();
+                config.llm_providers.insert(name.into(), provider);
+            }
+            let chat = Chat::new(config);
+            // `mimo` names no variable: the canonical entry named exactly, then the registry's,
+            // never `MIMO`'s, so a save and a disconnect of `mimo` leave `MIMO`'s key alone.
+            let registry = key_vars("xiaomi").unwrap();
+            let expected = |first: &'static str| {
+                let mut vars = vec![first];
+                vars.extend(registry.iter().copied().filter(|var| *var != first));
+                vars
+            };
+            assert_eq!(chat.slug_key_vars("mimo").unwrap(), expected("CANONICAL_KEY"));
+            let mut sibling = vec![upper];
+            sibling.extend(expected("CANONICAL_KEY"));
+            assert_eq!(chat.slug_key_vars("MIMO").unwrap(), sibling);
+            assert_eq!(
+                chat.slug_key_vars("XIAOMI").unwrap(),
+                expected("UPPER_CANONICAL_KEY")
+            );
+        }
+    }
+
+    #[test]
     fn a_home_value_whose_line_is_gone_takes_what_a_fresh_start_would_read() {
         let project = |line: &str| HashMap::from([("PATH".to_string(), line.to_string())]);
         // The shell set `PATH` at start-up; neither `.env` did.

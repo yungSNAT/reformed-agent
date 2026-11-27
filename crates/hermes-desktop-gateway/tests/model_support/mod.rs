@@ -51,6 +51,18 @@ pub async fn complete(
     ([("content-type", "text/event-stream")], sse)
 }
 
+/// A scripted model answering chat completions at `http://<address>/v1`, and what it saw.
+pub async fn model_server() -> (SocketAddr, Seen) {
+    let seen: Seen = Arc::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route("/v1/chat/completions", post(complete))
+        .with_state(Arc::clone(&seen));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    (addr, seen)
+}
+
 pub struct Started {
     pub addr: SocketAddr,
     pub home: tempfile::TempDir,
@@ -69,13 +81,7 @@ pub async fn start_with(key_env: &str) -> Started {
 
 /// As [`start_with`], with `extra` (indented lines, such as an `api_key`) after `key_env`.
 pub async fn start_from(key_env: &str, extra: &str) -> Started {
-    let seen: Seen = Arc::default();
-    let model_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let model_addr = model_listener.local_addr().unwrap();
-    let app = Router::new()
-        .route("/v1/chat/completions", post(complete))
-        .with_state(Arc::clone(&seen));
-    tokio::spawn(async move { axum::serve(model_listener, app).await });
+    let (model_addr, seen) = model_server().await;
 
     let home = tempfile::tempdir().unwrap();
     std::fs::write(

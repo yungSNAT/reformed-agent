@@ -348,6 +348,16 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     let home = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join(".env"), "XIAOMI_API_KEY=project-key\n").unwrap();
+    // Turns go to the scripted model, which records the key each one sends.
+    let (model_addr, seen) = model_server().await;
+    std::fs::write(
+        home.path().join("config.yaml"),
+        format!(
+            "model:\n  default: mock-model\n  provider: {SAVED}\nllm_providers:\n  {SAVED}:\n    \
+             base_url: http://{model_addr}/v1\n"
+        ),
+    )
+    .unwrap();
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_hermes-desktop-gateway"))
         // A failed assertion drops the child: it is killed and its stdin closes.
         .args(["--port", "0", "--exit-when-stdin-closes"])
@@ -358,6 +368,7 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
         .env_remove("HERMES_MANAGED_DIR")
         .env_remove("XIAOMI_API_KEY")
         .env_remove("OPENAI_API_KEY")
+        .env_remove("HERMES_OPENAI_API_KEY")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -375,6 +386,7 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
         .parse()
         .unwrap();
     let mut client = connect(std::net::SocketAddr::from(([127, 0, 0, 1], port))).await;
+    let session = client.create().await;
     // A reload that changes nothing first: it must not mark the project key as the home file's.
     client.call(4, "reload.env", json!({})).await;
     let reply = client
@@ -385,6 +397,10 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
         )
         .await;
     assert!(reply.get("error").is_none(), "{reply}");
+    let openai_var = reply["result"]["provider"]["key_env"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .to_string();
     client.call(2, "reload.env", json!({})).await;
     let reply = client.call(3, "model.options", json!({})).await;
     // A key saved over the project's, whose home line is then deleted by hand, falls back to
@@ -398,6 +414,7 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
         .await;
     let lines = env_lines(home.path());
     assert!(lines.contains("XIAOMI_API_KEY"), "{saved}");
+    client.turn(&session).await;
     // Every other line stays: the openai key saved above.
     let kept: String = lines
         .lines()
@@ -408,26 +425,44 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     std::fs::write(home.path().join(".env"), kept).unwrap();
     let reloaded = client.call(6, "reload.env", json!({})).await;
     let after = client.call(7, "model.options", json!({})).await;
+    client.turn(&session).await;
     // Then deleted from the project `.env` too: gone.
     std::fs::write(project.path().join(".env"), "OTHER_KEY=keep-me\n").unwrap();
     let gone = client.call(8, "reload.env", json!({})).await;
     let removed = client.call(9, "model.options", json!({})).await;
+    // A saved key whose home line is deleted whilst the project `.env` holds only a value that
+    // would not read back as itself (start-up had none for it): removed, not kept.
+    std::fs::write(
+        project.path().join(".env"),
+        format!("OTHER_KEY=keep-me\n{openai_var}=${{OTHER}}\n"),
+    )
+    .unwrap();
+    std::fs::write(home.path().join(".env"), "").unwrap();
+    let unusable = client.call(10, "reload.env", json!({})).await;
+    let openai_after = client.call(11, "model.options", json!({})).await;
     // Closing stdin ends the gateway normally, so a coverage run keeps its counts.
     drop(child.stdin.take());
     let exit = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await;
     assert!(exit.unwrap().unwrap().success());
     drop(stdout);
-    let authenticated = |reply: &Value| {
+    let signed_in = |reply: &Value, slug: &str| {
         reply["result"]["providers"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|row| row["slug"] == SAVED && row["authenticated"] == true)
+            .any(|row| row["slug"] == slug && row["authenticated"] == true)
     };
+    let authenticated = |reply: &Value| signed_in(reply, SAVED);
     assert!(authenticated(&reply), "{reply}");
     assert!(authenticated(&after), "{after}");
     assert!(!authenticated(&removed), "{removed}");
+    assert!(signed_in(&removed, "openai"), "{removed}");
+    assert!(!signed_in(&openai_after, "openai"), "{openai_after}");
     // The saved key went back to the project's, then that went with its line.
     assert_eq!(reloaded["result"]["updated"], 1, "{reloaded}");
     assert_eq!(gone["result"]["updated"], 1, "{gone}");
+    assert_eq!(unusable["result"]["updated"], 1, "{unusable}");
+    // The turn after the save sent the saved key; the one after the reload, the project's.
+    let keys: Vec<String> = seen.lock().unwrap().iter().map(|(_, auth)| auth.clone()).collect();
+    assert_eq!(keys, ["Bearer saved-key", "Bearer project-key"]);
 }
