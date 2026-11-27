@@ -104,6 +104,27 @@ fn extract_last_assistant_reply_defaults_when_empty() {
 }
 
 #[test]
+fn a_run_refused_at_the_spend_cap_replies_with_the_guards_note() {
+    let note = "Cost guard tripped: session spend $0.5000 reached max_cost_usd $0.5000 before this run. Not starting.";
+    let messages = [
+        hermes_core::Message::user("hi"),
+        hermes_core::Message::system(note),
+    ];
+    assert_eq!(extract_last_assistant_reply(&messages), note);
+    let later = [
+        hermes_core::Message::user("one"),
+        hermes_core::Message::assistant("first reply"),
+        hermes_core::Message::user("two"),
+        hermes_core::Message::system(note),
+    ];
+    assert_eq!(extract_last_assistant_reply(&later), note);
+    assert_eq!(
+        extract_last_assistant_reply(&[hermes_core::Message::system("other")]),
+        "(no assistant reply)"
+    );
+}
+
+#[test]
 fn truncate_hook_tool_result_trims_and_truncates() {
     assert_eq!(truncate_hook_tool_result("  short  "), "short");
     let long = "x".repeat(300);

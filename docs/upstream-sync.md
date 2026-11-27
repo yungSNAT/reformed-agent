@@ -90,9 +90,13 @@ audit reports live upstream drift separately from the checks against this pin.
 - `run-self-evolution-loop` (`crates/hermes-parity-tools`)
   - Runs a unified intelligence loop across golden parity + eval trend + elite sync gates
   - Emits recommendations and intelligence index under `.sync-reports/self-evolution-loop-<timestamp>.json`
-- `scripts/run-nightly-elite-gate.sh`
+- `run-nightly-elite-gate` (`crates/hermes-parity-tools`)
   - Nightly local validation gate (`cargo test -p hermes-cli` + deterministic replay + security gate v2 + performance autopilot + queue audit)
   - Auto-publishes run summary via `contextlattice -> github -> local` sink chain
+  - Run it from the repository root: `cargo run --locked -q -p hermes-parity-tools -- run-nightly-elite-gate`
+- `install-elite-gate-launchd`, `status-elite-gate-launchd`, `uninstall-elite-gate-launchd` (`crates/hermes-parity-tools`)
+  - Schedule the nightly gate as a macOS launchd user agent (default 03:30 local time), show its state and log tails, or remove it
+  - `cargo run --locked -q -p hermes-parity-tools -- install-elite-gate-launchd --repo-root "$PWD"`
 - `scripts/publish_automation_summary.py`
   - Publishes automation summaries with sink priority:
     - `contextlattice` (default)

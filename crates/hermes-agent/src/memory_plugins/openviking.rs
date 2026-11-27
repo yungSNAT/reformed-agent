@@ -28,6 +28,8 @@ const DEFAULT_RECALL_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_RECALL_FULL_READ_LIMIT: usize = 2;
 const RECALL_QUERY_MIN_CHARS: usize = 5;
 const RECALL_MIN_TIMEOUT: Duration = Duration::from_millis(50);
+const RECALL_TIMEOUT_FLOOR: Duration = Duration::from_millis(250);
+const RECALL_TIMEOUT_CAP: Duration = Duration::from_secs(60);
 const READ_BATCH_LIMIT: usize = 3;
 const READ_BATCH_FULL_LIMIT: usize = 2500;
 const REMOTE_RESOURCE_PREFIXES: &[&str] = &["http://", "https://", "git@", "ssh://", "git://"];
@@ -971,5 +973,11 @@ include!("openviking/recall.rs");
 mod tests;
 
 #[cfg(test)]
+mod recall_config_tests;
+
+#[cfg(test)]
 #[path = "openviking_coverage_gen.rs"]
 mod coverage_gen;
+
+#[cfg(test)]
+mod message_sync_tests;

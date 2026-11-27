@@ -13,6 +13,7 @@ pub mod ansi_strip;
 pub mod approval;
 pub mod backends;
 pub mod dispatch;
+mod file_state;
 pub mod gateway_approval;
 pub mod mcp_gateway;
 pub mod register_builtins;

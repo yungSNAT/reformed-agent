@@ -26,7 +26,7 @@
             "review canary 7f3a: {}",
             "the conversation so far ".repeat(50_000)
         );
-        let child = spawn_background_child(&exe, &task).expect("spawn");
+        let child = spawn_background_child(&exe, &task, None).expect("spawn");
         let output = child.wait_with_output().await.expect("wait");
         assert!(output.status.success(), "{output:?}");
 
@@ -126,4 +126,79 @@
         );
         assert_eq!(read(None, "ignored").unwrap(), None);
         assert!(read(Some("-"), " \n").is_err());
+    }
+
+    /// What `background_child_command` does to the 3 binding variables:
+    /// `None` is a removal, `Some` a value set for the child.
+    fn kanban_env_of(
+        kanban: Option<&crate::kanban::KanbanWorkerBinding>,
+    ) -> Vec<(String, Option<String>)> {
+        let cmd = background_child_command(std::path::Path::new("hermes"), kanban);
+        let mut envs: Vec<(String, Option<String>)> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(key, value)| {
+                let key = key.to_str()?.to_string();
+                key.starts_with("HERMES_KANBAN_").then(|| {
+                    (key, value.map(|v| v.to_string_lossy().into_owned()))
+                })
+            })
+            .collect();
+        envs.sort();
+        envs
+    }
+
+    #[test]
+    fn only_a_kanban_job_child_gets_a_binding() {
+        let removed: Vec<(String, Option<String>)> = [
+            "HERMES_KANBAN_BOARD",
+            "HERMES_KANBAN_RUN_ID",
+            "HERMES_KANBAN_TASK",
+        ]
+        .into_iter()
+        .map(|key| (key.to_string(), None))
+        .collect();
+        // Removed even when this process is itself a bound worker.
+        assert_eq!(kanban_env_of(None), removed);
+        let binding = crate::kanban::KanbanWorkerBinding {
+            board: "main".to_string(),
+            task: "K-0001".to_string(),
+            run: "bg_1".to_string(),
+        };
+        assert_eq!(
+            kanban_env_of(Some(&binding)),
+            vec![
+                ("HERMES_KANBAN_BOARD".to_string(), Some("main".to_string())),
+                ("HERMES_KANBAN_RUN_ID".to_string(), Some("bg_1".to_string())),
+                ("HERMES_KANBAN_TASK".to_string(), Some("K-0001".to_string())),
+                (
+                    "HERMES_KANBAN_WORKER_SCOPE".to_string(),
+                    Some("main/K-0001".to_string())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_recovered_job_takes_its_run_from_its_own_id() {
+        let status = |value: serde_json::Value| value.as_object().unwrap().clone();
+        let bound = kanban_binding_from_status(&status(serde_json::json!({
+            "id": "bg_7",
+            "kanban": {"board": "main", "task": "K-0002", "run": "bg_other"}
+        })))
+        .unwrap()
+        .unwrap();
+        assert_eq!(bound.run, "bg_7");
+        assert_eq!(bound.task, "K-0002");
+        assert_eq!(
+            kanban_binding_from_status(&status(serde_json::json!({"id": "bg_8"}))).unwrap(),
+            None
+        );
+        for broken in [
+            serde_json::json!({"id": "bg_9", "kanban": {"task": "K-0002"}}),
+            serde_json::json!({"id": "bg_9", "kanban": {"board": "main", "task": " "}}),
+            serde_json::json!({"kanban": {"board": "main", "task": "K-0002"}}),
+        ] {
+            assert!(kanban_binding_from_status(&status(broken)).is_err());
+        }
     }

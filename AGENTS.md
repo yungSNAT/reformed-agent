@@ -9,7 +9,7 @@
 3. 错误类型优先使用各 crate 内已有的 `AgentError` / `ToolError`，避免随意新建平行错误体系。
 4. 日志使用 `tracing::{debug,info,warn,error}`，避免无门控的 `println!`（CLI 用户输出除外）。
 5. 异步代码使用 **tokio**，不要使用 async-std。
-6. 可对照的行为应通过 `crates/hermes-parity-tests/fixtures/<module>/*.json` 提供 golden；新增用例时同步更新 `scripts/record_fixtures.py`（若适用）。
+6. 可对照的行为应通过 `crates/hermes-parity-tests/fixtures/<module>/*.json` 提供 golden；新增用例时同步更新 `crates/hermes-parity-tests/src/recorder.rs`（若适用）。
 7. 单个 PR 尽量只移植一个模块；commit message 建议：`parity(<module>): port from python …`
 
 ## Rust 模块规模策略
@@ -40,10 +40,10 @@ cargo test -p hermes-parity-tests
 Python 侧对照录制：
 
 ```bash
-python3 scripts/record_fixtures.py
+cargo run -p hermes-parity-tests --bin record_fixtures
 ```
 
-无 Python 仓库时仍会输出 **checkpoint 目录哈希**（与 `checkpoint_manager`  shadow 目录命名算法一致）。
+需要本仓库旁的 `../hermes-agent` Python 检出；Anthropic adapter 用例通过 `PARITY_PYTHON`（默认 `python3`）调用上游模块。无 Python 仓库时仍会输出 **checkpoint 目录哈希**（与 `checkpoint_manager`  shadow 目录命名算法一致）。
 
 ## 评测结果落盘
 
