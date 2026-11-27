@@ -321,7 +321,7 @@ async fn a_model_switch_changes_only_that_sessions_next_turns() {
         .await;
     assert_eq!(code(&reply), 4002);
     first.turn(&switched).await;
-    // A switch that names no provider keeps the session's provider.
+    // A switch that names no provider takes the configuration's provider.
     let reply = first
         .call(
             5,

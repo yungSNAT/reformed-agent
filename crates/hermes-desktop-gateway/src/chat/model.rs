@@ -499,11 +499,15 @@ impl Chat {
         self.keys.set(var, Some(key.to_string()));
         self.keys.saw_in_home_file([env_name_key(var)]);
         drop(_write);
-        let canonical = canonical_provider_id(slug);
+        // The picker's row for the slug it sent, as upstream answers.
         let mut row = option_rows(&self.config, &self.keys, "", false)
             .into_iter()
-            .find(|row| row["slug"] == canonical.as_str())
-            .unwrap_or_else(|| Value::Object(row(&canonical, false, Vec::new(), "env")));
+            .find(|row| {
+                row["slug"]
+                    .as_str()
+                    .is_some_and(|s| s.eq_ignore_ascii_case(slug))
+            })
+            .unwrap_or_else(|| Value::Object(row(slug, false, Vec::new(), "env")));
         row["authenticated"] = true.into();
         Ok(json!({ "provider": row }))
     }
@@ -1001,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn a_key_saved_through_an_alias_entry_answers_with_the_canonical_provider() {
+    fn a_saved_key_answers_the_picker_row_of_the_slug_sent() {
         let dir = tempfile::tempdir().unwrap();
         let var = "DESKTOP_MODEL_UNIT_TEST_ALIAS_KEY";
         let provider: LlmProviderConfig =
@@ -1012,14 +1016,26 @@ mod tests {
         };
         config.llm_providers.insert("mimo".into(), provider);
         let chat = Chat::new(config);
-        // The picker lists the entry as `mimo`, so the reply names its canonical provider.
-        let saved = chat.save_key("mimo", "saved-key").unwrap();
+        // The picker lists the alias entry as `mimo`: the reply is that row.
+        let saved = chat.save_key("MiMo", "saved-key").unwrap();
+        assert_eq!(saved["provider"]["slug"], "mimo", "{saved}");
+        assert_eq!(saved["provider"]["source"], "configured", "{saved}");
+        assert_eq!(saved["provider"]["key_env"], var, "{saved}");
+        assert_eq!(saved["provider"]["authenticated"], true, "{saved}");
+        assert_eq!(chat.keys.value(var).as_deref(), Some("saved-key"));
+
+        // With no entry, the picker lists the key as `xiaomi`; the reply still names `mimo`.
+        let dir = tempfile::tempdir().unwrap();
+        let config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
+            ..GatewayConfig::default()
+        };
+        let saved = Chat::new(config).save_key("mimo", "saved-key").unwrap();
         assert_eq!(
             saved["provider"],
-            json!({"slug": "xiaomi", "name": "xiaomi", "total_models": 0, "models": [],
+            json!({"slug": "mimo", "name": "mimo", "total_models": 0, "models": [],
                    "is_current": false, "source": "env", "authenticated": true})
         );
-        assert_eq!(chat.keys.value(var).as_deref(), Some("saved-key"));
     }
 
     #[test]
@@ -1027,7 +1043,9 @@ mod tests {
         // Start-up read `PATH` from the environment; the gateway has since removed it.
         let provider: LlmProviderConfig =
             serde_json::from_value(json!({ "api_key_env": "PATH" })).unwrap();
+        let dir = tempfile::tempdir().unwrap();
         let mut config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
             model: Some("envkey:m".into()),
             ..GatewayConfig::default()
         };
