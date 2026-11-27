@@ -115,7 +115,7 @@ pub fn this_process() -> String {
     .clone()
 }
 
-/// A writer's start and the Linux time namespace it was read in.
+/// A writer's start and the Linux time and PID namespaces it was read in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessStart {
     /// As [`process_started`] reads it.
@@ -123,6 +123,9 @@ pub struct ProcessStart {
     /// The reader's [`time_namespace`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_namespace: Option<u64>,
+    /// The reader's [`pid_namespace`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid_namespace: Option<u64>,
 }
 
 /// This process's start, as [`process_started`] reads it.
@@ -132,6 +135,7 @@ pub fn this_process_started() -> Option<ProcessStart> {
         Some(ProcessStart {
             at: process_started(std::process::id())?,
             time_namespace: time_namespace(),
+            pid_namespace: pid_namespace(),
         })
     })
 }
@@ -141,7 +145,12 @@ pub fn this_process_started() -> Option<ProcessStart> {
 pub fn time_namespace() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
-        namespace_inode(&std::fs::read_link("/proc/self/ns/time").ok()?.to_string_lossy())
+        namespace_inode(
+            "time",
+            &std::fs::read_link("/proc/self/ns/time")
+                .ok()?
+                .to_string_lossy(),
+        )
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -149,10 +158,32 @@ pub fn time_namespace() -> Option<u64> {
     }
 }
 
-/// The inode in a `time:[<inode>]` namespace link.
+/// This process's Linux PID namespace: the inode `/proc/self/ns/pid` names.
+/// A pid means another process in another PID namespace. `None` elsewhere.
+pub fn pid_namespace() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        namespace_inode(
+            "pid",
+            &std::fs::read_link("/proc/self/ns/pid")
+                .ok()?
+                .to_string_lossy(),
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// The inode in a `<kind>:[<inode>]` namespace link.
 #[cfg(any(target_os = "linux", test))]
-fn namespace_inode(link: &str) -> Option<u64> {
-    link.strip_prefix("time:[")?.strip_suffix(']')?.parse().ok()
+fn namespace_inode(kind: &str, link: &str) -> Option<u64> {
+    link.strip_prefix(kind)?
+        .strip_prefix(":[")?
+        .strip_suffix(']')?
+        .parse()
+        .ok()
 }
 
 /// When process `pid` started, as its kernel keeps it: fixed for the

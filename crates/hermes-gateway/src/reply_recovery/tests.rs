@@ -134,12 +134,13 @@ impl Drop for Sleeper {
 }
 
 /// Write a record for `pid`, stamped now, whose writer started at `started`
-/// as read in this time namespace.
+/// as read in this time and PID namespace.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_started(dir: &Path, session: &str, pid: u32, started: Option<u64>) {
     let start = started.map(|at| ProcessStart {
         at,
         time_namespace: time_namespace(),
+        pid_namespace: pid_namespace(),
     });
     write_start(dir, session, pid, start);
 }
@@ -166,17 +167,56 @@ fn a_start_read_in_another_time_namespace_leaves_the_record_to_its_live_writer()
     let start = ProcessStart {
         at: 1,
         time_namespace: Some(other),
+        pid_namespace: pid_namespace(),
     };
     write_start(&dir, "other namespace", child.0.id(), Some(start));
-    assert_eq!(take_over(&dir, |_| true), 0, "a live writer kept its record");
+    assert_eq!(
+        take_over(&dir, |_| true),
+        0,
+        "a live writer kept its record"
+    );
+    assert_eq!(json_files(&dir).len(), 1);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_pid_from_another_pid_namespace_leaves_the_record_to_its_live_writer() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let child = Sleeper::spawn();
+    // The writer's pid names another process here, so its differing start
+    // proves nothing about the writer.
+    let other = pid_namespace().map_or(1, |ns| ns.wrapping_add(1));
+    let start = ProcessStart {
+        at: 1,
+        time_namespace: time_namespace(),
+        pid_namespace: Some(other),
+    };
+    write_start(&dir, "other pid namespace", child.0.id(), Some(start));
+    assert_eq!(
+        take_over(&dir, |_| true),
+        0,
+        "a live writer kept its record"
+    );
     assert_eq!(json_files(&dir).len(), 1);
 }
 
 #[test]
-fn the_time_namespace_is_the_inode_its_link_names() {
-    assert_eq!(namespace_inode("time:[4026531834]"), Some(4_026_531_834));
-    assert_eq!(namespace_inode("mnt:[4026531834]"), None);
-    assert_eq!(namespace_inode("time:[]"), None);
+fn a_namespace_is_the_inode_its_link_names() {
+    assert_eq!(
+        namespace_inode("time", "time:[4026531834]"),
+        Some(4_026_531_834)
+    );
+    assert_eq!(
+        namespace_inode("pid", "pid:[4026531836]"),
+        Some(4_026_531_836)
+    );
+    assert_eq!(namespace_inode("time", "mnt:[4026531834]"), None);
+    assert_eq!(
+        namespace_inode("time", "time_for_children:[4026531834]"),
+        None
+    );
+    assert_eq!(namespace_inode("time", "time:[]"), None);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -212,6 +252,7 @@ fn a_live_writer_with_its_own_start_or_an_unknown_one_holds_its_record() {
 fn this_process_records_its_start_and_a_later_child_starts_no_earlier() {
     let mine = this_process_started().expect("own start on Linux and macOS");
     assert_eq!(mine.time_namespace, time_namespace());
+    assert_eq!(mine.pid_namespace, pid_namespace());
     let mine = mine.at;
     assert_eq!(Some(mine), process_started(std::process::id()));
     let child = Sleeper::spawn();
