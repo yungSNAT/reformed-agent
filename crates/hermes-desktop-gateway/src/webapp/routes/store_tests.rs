@@ -93,6 +93,31 @@ fn a_waiter_acting_on_an_old_judgement_never_displaces_a_live_lock() {
     assert!(c.borrow().is_none(), "C took the store whilst B held it");
 }
 
+/// The lock changed owner since it was judged, so it would go back, but writer D took the free
+/// name whilst it was aside: the moved lock is removed and D keeps the store.
+#[test]
+fn a_moved_lock_that_cannot_go_back_is_removed_and_the_new_holder_kept() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    dead_lock(&path);
+    let d = Rc::new(RefCell::new(None));
+    let (d_path, d_slot) = (path.clone(), d.clone());
+    let d_takes = move || *d_slot.borrow_mut() = Some(StoreLock::take(&d_path, "store").unwrap());
+    SEAMS.with(|s| s.borrow_mut().push(("aside", Box::new(d_takes))));
+    // Judged stale whilst it named `earlier`; it now names `dead`.
+    break_stale(&lock_dir(&path), b"earlier");
+    let d = d.borrow_mut().take().expect("D took the store");
+    assert!(d.held(), "the new holder was displaced");
+    let left: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".stale-"))
+        .collect();
+    assert!(left.is_empty(), "the moved lock was left behind: {left:?}");
+}
+
 /// Whilst another waiter of this gateway holds the break turn, a waiter leaves the stale lock to
 /// it; once the turn is free, the next waiter breaks it.
 #[test]

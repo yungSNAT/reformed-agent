@@ -241,6 +241,7 @@ thread_local! {
 }
 
 /// Runs the step a test armed for `at`; a no-op outside tests.
+#[cfg_attr(not(test), allow(unused_variables))]
 fn seam(at: &str) {
     #[cfg(test)]
     {
@@ -253,8 +254,6 @@ fn seam(at: &str) {
             step();
         }
     }
-    #[cfg(not(test))]
-    let _ = at;
 }
 
 /// Replaces `path` whole. A new file is made owner-only before any bytes land; the atomic writer
