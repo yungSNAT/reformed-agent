@@ -34,6 +34,8 @@ use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
 mod oneshot;
+pub(crate) mod profiles;
+mod relay;
 mod session;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
@@ -149,7 +151,8 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 }
 
 /// Every area's methods; a new area adds its table here.
-const AREAS: &[&[(&str, Handler)]] = &[METHODS, oneshot::METHODS];
+const AREAS: &[&[(&str, Handler)]] =
+    &[METHODS, oneshot::METHODS, profiles::METHODS, relay::METHODS];
 
 /// The methods served on both wires.
 const METHODS: &[(&str, Handler)] = &[
