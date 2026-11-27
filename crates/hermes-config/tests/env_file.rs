@@ -83,3 +83,15 @@ fn the_values_start_up_loads_put_the_managed_env_last() {
     assert_eq!(values["ENV_FILE_TEST_OWN"], "quoted");
     assert!(std::env::var_os("ENV_FILE_TEST_PINNED").is_none());
 }
+
+#[test]
+fn a_env_file_that_cannot_be_read_is_left_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    // One byte that is not UTF-8, in a comment, beside other keys.
+    let original = b"# caf\xe9\nOTHER_KEY=keep-me\n".to_vec();
+    std::fs::write(&path, &original).unwrap();
+    assert!(set_env_file_value(&path, "A", Some("k")).is_err());
+    assert!(set_env_file_value(&path, "OTHER_KEY", None).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}

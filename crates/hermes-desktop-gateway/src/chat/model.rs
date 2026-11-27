@@ -476,6 +476,48 @@ mod tests {
         assert!(keys.changed(var));
     }
 
+    /// A gateway whose one provider, `envkey`, has `api_key` (and `key_env` when given) in
+    /// `config.yaml`.
+    fn chat_with_key(api_key: &str, key_env: Option<&str>) -> Chat {
+        let provider: LlmProviderConfig =
+            serde_json::from_value(json!({"api_key": api_key, "api_key_env": key_env})).unwrap();
+        let mut config = GatewayConfig::default();
+        config.llm_providers.insert("envkey".into(), provider);
+        Chat::new(config)
+    }
+
+    fn turn_key(chat: &Chat) -> Result<Option<String>, String> {
+        let config = chat.turn_config("envkey:m")?;
+        Ok(config.llm_providers["envkey"].api_key.clone())
+    }
+
+    #[test]
+    fn a_config_key_from_the_environment_follows_later_key_changes() {
+        // Start-up expanded `${PATH}`: the key is the variable's start-up value.
+        let start_up = std::env::var("PATH").unwrap();
+        let chat = chat_with_key(&start_up, Some("PATH"));
+        assert_eq!(turn_key(&chat).unwrap().as_deref(), Some(start_up.as_str()));
+        let (_, authenticated) = configured_key(&chat.config.llm_providers["envkey"], &chat.keys);
+        assert!(authenticated);
+        chat.keys.set("PATH", Some("saved-key".into()));
+        assert_eq!(turn_key(&chat).unwrap().as_deref(), Some("saved-key"));
+        chat.keys.set("PATH", None);
+        assert!(turn_key(&chat).unwrap_err().contains("disconnected"));
+        let (_, authenticated) = configured_key(&chat.config.llm_providers["envkey"], &chat.keys);
+        assert!(!authenticated, "a removed key is not configured");
+
+        // A reference start-up could not expand stays `${VAR}`; a key saved since is used.
+        let var = "DESKTOP_MODEL_UNIT_TEST_REFERENCE_KEY";
+        let chat = chat_with_key(&format!("${{{var}}}"), None);
+        chat.keys.set(var, Some("saved-key".into()));
+        assert_eq!(turn_key(&chat).unwrap().as_deref(), Some("saved-key"));
+
+        // A key written out in `config.yaml` comes first.
+        let chat = chat_with_key("written-key", Some("PATH"));
+        chat.keys.set("PATH", Some("saved-key".into()));
+        assert_eq!(turn_key(&chat).unwrap().as_deref(), Some("written-key"));
+    }
+
     #[tokio::test]
     async fn the_key_methods_serve_only_clients_on_this_machine() {
         let dir = tempfile::tempdir().unwrap();

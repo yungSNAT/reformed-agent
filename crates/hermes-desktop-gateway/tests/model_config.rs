@@ -265,6 +265,30 @@ async fn reload_env_makes_the_next_turn_use_the_new_key() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn reload_env_reaches_a_key_config_yaml_takes_from_the_environment() {
+    // Start-up expands `${VAR}` in `config.yaml`, so the provider's key arrives as the value.
+    let started = start_from(
+        REFERENCE_KEY_ENV,
+        &format!("    api_key: ${{{REFERENCE_KEY_ENV}}}\n"),
+    )
+    .await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    client.turn(&session).await;
+    std::fs::write(
+        started.home.path().join(".env"),
+        format!("{REFERENCE_KEY_ENV}=second-key\n"),
+    )
+    .unwrap();
+    let reply = client.call(3, "reload.env", json!({})).await;
+    assert_eq!(reply["result"], json!({"updated": 1}), "{reply}");
+    client.turn(&session).await;
+    let seen = started.seen.lock().unwrap().clone();
+    let keys: Vec<&str> = seen.iter().map(|(_, auth)| auth.as_str()).collect();
+    assert_eq!(keys, ["Bearer first-key", "Bearer second-key"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_model_switch_changes_only_that_sessions_next_turns() {
     let started = start().await;
     let mut first = connect(started.addr).await;

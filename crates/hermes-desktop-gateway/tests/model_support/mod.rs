@@ -21,6 +21,7 @@ pub const TOKEN: &str = "0123456789abcdef0123456789abcdef-model-config-token";
 /// home's `.env`, so a test that changes the key uses a variable of its own.
 pub const KEY_ENV: &str = "DESKTOP_MODEL_CONFIG_TEST_KEY";
 pub const RELOAD_KEY_ENV: &str = "DESKTOP_MODEL_CONFIG_RELOAD_TEST_KEY";
+pub const REFERENCE_KEY_ENV: &str = "DESKTOP_MODEL_CONFIG_REFERENCE_TEST_KEY";
 /// A known provider whose key these tests save and remove (`XIAOMI_API_KEY`).
 pub const SAVED: &str = "xiaomi";
 
@@ -63,6 +64,11 @@ pub async fn start() -> Started {
 /// A gateway whose home configures the scripted provider `mock` with 2 models and its key,
 /// read from `key_env`, in `.env`.
 pub async fn start_with(key_env: &str) -> Started {
+    start_from(key_env, "").await
+}
+
+/// As [`start_with`], with `extra` (indented lines, such as an `api_key`) after `key_env`.
+pub async fn start_from(key_env: &str, extra: &str) -> Started {
     let seen: Seen = Arc::default();
     let model_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let model_addr = model_listener.local_addr().unwrap();
@@ -77,7 +83,7 @@ pub async fn start_with(key_env: &str) -> Started {
         format!(
             "model:\n  default: mock-model\n  provider: mock\nproviders:\n  mock:\n    \
              api: http://{model_addr}/v1\n    name: Mock\n    api_mode: chat_completions\n    \
-             key_env: {key_env}\n    models:\n      mock-model: {{}}\n      other-model: {{}}\n"
+             key_env: {key_env}\n{extra}    models:\n      mock-model: {{}}\n      other-model: {{}}\n"
         ),
     )
     .unwrap();
