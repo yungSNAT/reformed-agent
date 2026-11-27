@@ -45,7 +45,11 @@ pub(crate) fn install_root(ctx: &Ctx) -> PathBuf {
 /// The home itself, or its grandparent when the home is a profile's folder `<root>/profiles/<name>`.
 pub(crate) fn install_root_of(home: &Path) -> PathBuf {
     match home.parent() {
-        Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
+        Some(parent)
+            if parent
+                .file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case("profiles")) =>
+        {
             parent.parent().unwrap_or(parent).to_path_buf()
         }
         _ => home.to_path_buf(),
