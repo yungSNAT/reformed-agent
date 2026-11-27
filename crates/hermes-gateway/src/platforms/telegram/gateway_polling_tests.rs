@@ -323,22 +323,23 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
     Mock::given(method("POST"))
         .and(path("/answerCallbackQuery"))
         .and(body_partial_json(
-            json!({"callback_query_id": "expired-card"}),
+            json!({"callback_query_id": "expired-card", "text": "Approval already resolved"}),
         ))
-        .respond_with(unavailable)
+        .respond_with(unavailable.clone())
         .expect(1)
         .mount(&server)
         .await;
-    for reply in [
-        "Received [photo message]",
-        "Received First update\nSecond update",
+    let delivered = ResponseTemplate::new(200).set_body_json(json!({
+        "ok": true, "result": {"message_id": 99}
+    }));
+    for (reply, response) in [
+        ("Received [photo message]", unavailable),
+        ("Received First update\nSecond update", delivered),
     ] {
         Mock::given(method("POST"))
             .and(path("/sendMessage"))
             .and(body_partial_json(json!({"chat_id": "42", "text": reply})))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "ok": true, "result": {"message_id": 99}
-            })))
+            .respond_with(response)
             .expect(1)
             .mount(&server)
             .await;
@@ -346,7 +347,7 @@ async fn gateway_polling_batches_updates_and_pauses_after_repeated_failures() {
 
     let config: TelegramConfig = serde_json::from_value(json!({
         "token": "fixture", "allowed_users": ["42"], "text_batch_delay_ms": 10,
-        "command_menu_enabled": false, "polling": false
+        "command_menu_enabled": false, "polling": false, "webhook_secret": "fixture"
     }))
     .expect("fixture bot config");
     let mut adapter = TelegramAdapter::new(config).expect("fixture bot");
