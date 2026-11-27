@@ -1098,7 +1098,7 @@ mod unix {
         }
 
         /// An executable `sh` script at `dir/name`.
-        fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        fn named_script(dir: &Path, name: &str, body: &str) -> PathBuf {
             let path = dir.join(name);
             std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1108,7 +1108,7 @@ mod unix {
         #[tokio::test]
         async fn a_cli_run_that_prints_nothing_says_so_with_its_code() {
             let dir = tempfile::tempdir().unwrap();
-            let program = script(dir.path(), "quiet", "exit 3");
+            let program = named_script(dir.path(), "quiet", "exit 3");
             let chat = chat_at(dir.path());
             let reply = run_cli(
                 &program,
@@ -1128,7 +1128,7 @@ mod unix {
         #[tokio::test]
         async fn a_cli_run_past_its_limit_times_out() {
             let dir = tempfile::tempdir().unwrap();
-            let program = script(dir.path(), "slow", "sleep 20");
+            let program = named_script(dir.path(), "slow", "sleep 20");
             let chat = chat_at(dir.path());
             let reply = run_cli(
                 &program,
