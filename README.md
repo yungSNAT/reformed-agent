@@ -549,7 +549,7 @@ Ultra uses controlled sync workflows, not blind merges.
 
 - Upstream source of truth: `NousResearch/hermes-agent`
 - Fetch/sync tooling:
-  - `scripts/sync-upstream.sh` (runs `hermes-parity-tools sync-upstream`)
+  - `scripts/sync-upstream.sh`
   - `scripts/upstream_webhook_sync.py`
 - Parity artifacts:
   - `docs/parity/`
