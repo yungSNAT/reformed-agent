@@ -548,3 +548,42 @@ async fn a_turn_sends_the_key_saved_for_its_provider_whichever_entry_spelling_it
         assert_eq!(sent, ("Bearer saved-key".into(), json!("MIMO")));
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
+    let (model_addr, seen) = model_server().await;
+    let home = tempfile::tempdir().unwrap();
+    let mut config = hermes_config::GatewayConfig {
+        model: Some("xiaomi:m".into()),
+        home_dir: Some(home.path().to_string_lossy().into_owned()),
+        ..hermes_config::GatewayConfig::default()
+    };
+    let entry = json!({"base_url": format!("http://{model_addr}/v1"),
+        "api_key_env": "DESKTOP_MODEL_CONFIG_ONESHOT_KEY"});
+    config
+        .llm_providers
+        .insert("xiaomi".into(), serde_json::from_value(entry).unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(hermes_desktop_gateway::serve(
+        listener,
+        TOKEN.to_string(),
+        hermes_desktop_gateway::Chat::new(config),
+    ));
+    let mut client = connect(addr).await;
+    let oneshot = json!({"input": "hello"});
+
+    let reply = client
+        .call(1, "model.save_key", json!({"slug": "xiaomi", "api_key": "saved-key"}))
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    client.call(2, "llm.oneshot", oneshot.clone()).await;
+    let reply = client
+        .call(3, "model.disconnect", json!({"slug": "xiaomi"}))
+        .await;
+    assert_eq!(reply["result"]["disconnected"], true, "{reply}");
+    client.call(4, "llm.oneshot", oneshot).await;
+    // As a turn's: the key just saved, then none once it is removed.
+    let sent: Vec<String> = seen.lock().unwrap().iter().map(|(_, auth)| auth.clone()).collect();
+    assert_eq!(sent, ["Bearer saved-key", ""]);
+}
