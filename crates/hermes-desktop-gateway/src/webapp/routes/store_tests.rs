@@ -62,6 +62,24 @@ fn a_stale_break_leaves_a_lock_retaken_since_it_was_judged() {
     assert!(StoreLock::take(&path, "store").is_err());
 }
 
+/// What the protocol promises a writer displaced by a racing break: it no longer holds the lock,
+/// so the write answers busy, and releasing it leaves the new holder's lock alone.
+#[test]
+fn a_displaced_writer_no_longer_holds_and_leaves_the_new_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    let displaced = StoreLock::take(&path, "store").unwrap();
+    // A racing break moved this lock aside and another writer took the name.
+    let owner = path.with_file_name("store.json.lock").join("owner");
+    std::fs::write(&owner, "newer").unwrap();
+    assert!(
+        !displaced.held(),
+        "a displaced writer still thinks it holds"
+    );
+    drop(displaced);
+    assert_eq!(std::fs::read(&owner).unwrap(), b"newer");
+}
+
 #[test]
 fn a_lock_error_names_the_store_without_os_text() {
     let dir = tempfile::tempdir().unwrap();

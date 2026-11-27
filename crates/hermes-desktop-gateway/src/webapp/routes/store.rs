@@ -160,6 +160,12 @@ fn stale_owner(dir: &Path) -> Option<Vec<u8>> {
 /// Removes the lock judged stale with owner `seen`. It is first moved aside under a name of its
 /// own, which only one waiter's rename can do, then removed only if it still names the stale owner;
 /// a lock another writer re-took since the judgement goes back untouched.
+///
+/// The protocol is upstream's and native Desktop's, and it is not airtight: when several writers
+/// race over a dead lock, a waiter acting on its earlier judgement can move a live lock aside
+/// whilst a third writer takes the free name. The moved holder then answers busy, but one that
+/// passed its `held()` check just before can still overwrite the newer write. No 10 s stall is
+/// needed.
 fn break_stale(dir: &Path, seen: &[u8]) {
     let mut name = dir.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".stale-{}", uuid::Uuid::new_v4().simple()));
