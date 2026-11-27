@@ -103,6 +103,8 @@ pub(super) struct Keys {
     /// as [`env_name_key`] gives them. Not the project `.env`: a reload reads that one only to
     /// fill gaps, so a key it holds may be missing from what a reload reads.
     from_file: Mutex<BTreeSet<String>>,
+    /// The names in the home `.env` at start-up, as [`env_name_key`] gives them.
+    started_in_home_file: BTreeSet<String>,
 }
 
 /// The names in `home`'s `.env` as [`env_name_key`] gives them: none for a missing file,
@@ -124,9 +126,11 @@ fn home_env_names(home: &Path) -> Option<BTreeSet<String>> {
 impl Keys {
     /// No changes yet; the names in `home`'s `.env` as it stands.
     pub(super) fn at_start_up(home: &Path) -> Self {
+        let names = home_env_names(home).unwrap_or_default();
         Self {
             changed: Mutex::default(),
-            from_file: Mutex::new(home_env_names(home).unwrap_or_default()),
+            from_file: Mutex::new(names.clone()),
+            started_in_home_file: names,
         }
     }
 
@@ -169,6 +173,24 @@ impl Keys {
         let changed = self.value(var) != value;
         self.lock().insert(var.to_string(), value);
         changed
+    }
+
+    /// Drops `var`'s value from the home `.env`, whose line is gone: back to its start-up value
+    /// when the shell or the project `.env` set that, else removed. A disconnect stays. Whether
+    /// its value changed.
+    fn drop_home_value(&self, var: &str) -> bool {
+        let set_elsewhere = !self.started_in_home_file.contains(&env_name_key(var))
+            && std::env::var_os(var).is_some();
+        if !set_elsewhere {
+            return self.set(var, None);
+        }
+        let before = self.value(var);
+        let mut changed = self.lock();
+        if matches!(changed.get(var), Some(Some(_))) {
+            changed.remove(var);
+        }
+        drop(changed);
+        self.value(var) != before
     }
 }
 
@@ -404,7 +426,8 @@ impl Chat {
         json!({"providers": providers, "model": model, "provider": current})
     }
 
-    /// The `config.yaml` entries for `slug`: the one named as the slug first, then by name.
+    /// The `config.yaml` entries for `slug`: the one named exactly as the slug first, then one
+    /// named so in another case, then by name.
     fn slug_entries(&self, slug: &str) -> Vec<(&String, &LlmProviderConfig)> {
         let slug = slug.trim();
         let canonical = canonical_provider_id(&slug.to_ascii_lowercase());
@@ -416,7 +439,13 @@ impl Chat {
                 name.eq_ignore_ascii_case(slug) || name.eq_ignore_ascii_case(&canonical)
             })
             .collect();
-        entries.sort_by_key(|(name, _)| (!name.eq_ignore_ascii_case(slug), name.as_str()));
+        entries.sort_by_key(|(name, _)| {
+            (
+                name.as_str() != slug,
+                !name.eq_ignore_ascii_case(slug),
+                name.as_str(),
+            )
+        });
         entries
     }
 
@@ -499,8 +528,10 @@ impl Chat {
         self.keys.set(var, Some(key.to_string()));
         self.keys.saw_in_home_file([env_name_key(var)]);
         drop(_write);
-        // The picker's row for the slug it sent, as upstream answers.
-        let mut row = option_rows(&self.config, &self.keys, "", false)
+        // The picker's row for the slug it sent, as upstream answers; one named exactly first.
+        let mut rows = option_rows(&self.config, &self.keys, "", false);
+        rows.sort_by_key(|row| row["slug"] != slug);
+        let mut row = rows
             .into_iter()
             .find(|row| {
                 row["slug"]
@@ -546,9 +577,10 @@ impl Chat {
     /// `reload.env`: re-reads the key variables as start-up does (`hermes_config`'s order, the
     /// managed `.env` last, names compared as [`env_name_key`]); the number changed. A key this
     /// gateway has seen in the home `.env` and now gone from it and from what a reload reads is
-    /// removed, as upstream removes a known key gone from a readable home `.env`; one only the
-    /// shell or the project `.env` set stays. Other variables and a value that would not read
-    /// back as itself take effect at the next start.
+    /// removed, as upstream removes a known key gone from a readable home `.env`, or goes back
+    /// to the value the shell or the project `.env` gave it at start-up (upstream drops that
+    /// too); one only the shell or the project `.env` set stays. Other variables and a value
+    /// that would not read back as itself take effect at the next start.
     fn reload_env(&self) -> usize {
         let _write = env_write();
         let home_names = home_env_names(&self.home);
@@ -568,7 +600,7 @@ impl Chat {
                         .as_ref()
                         .is_some_and(|names| !names.contains(&env_name_key(var)))
                         && self.keys.came_from_home_file(var)
-                        && self.keys.set(var, None)
+                        && self.keys.drop_home_value(var)
                 }
             })
             .count();
@@ -910,6 +942,28 @@ mod tests {
                 ["EXACT_KEY", "CANONICAL_KEY"]
             );
         }
+    }
+
+    #[test]
+    fn a_home_value_whose_line_is_gone_falls_back_to_a_start_up_value_set_elsewhere() {
+        // The shell set `PATH` at start-up; the home `.env` did not.
+        let start_up = std::env::var("PATH").ok();
+        let keys = Keys::default();
+        keys.set("PATH", Some("saved-key".into()));
+        assert!(keys.drop_home_value("PATH"));
+        assert_eq!(keys.value("PATH"), start_up);
+        assert!(!keys.changed("PATH"));
+        // A disconnect stays.
+        keys.set("PATH", None);
+        assert!(!keys.drop_home_value("PATH"));
+        assert_eq!(keys.value("PATH"), None);
+        // A value start-up took from the home `.env` goes.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "PATH=from-home\n").unwrap();
+        let keys = Keys::at_start_up(dir.path());
+        keys.set("PATH", Some("saved-key".into()));
+        assert!(keys.drop_home_value("PATH"));
+        assert_eq!(keys.value("PATH"), None);
     }
 
     #[test]
