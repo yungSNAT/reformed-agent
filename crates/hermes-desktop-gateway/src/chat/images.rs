@@ -131,12 +131,8 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     if !session.has_room_for_image(0) {
         return Err(full());
     }
-    let data = match read_image(&source) {
-        Ok(Some(data)) if data.len() > MAX_IMAGE_BYTES => return Err(too_large()),
-        Ok(Some(data)) => data,
-        Ok(None) => return Err((IMAGE_UNSUPPORTED, format!("image not found: {name}"))),
-        Err(e) => return Err((IMAGE_WRITE_FAILED, format!("cannot read {name}: {e}"))),
-    };
+    let data = read_image(&source)
+        .map_err(|e| (IMAGE_WRITE_FAILED, format!("cannot read {name}: {e}")))?;
     let staged = stage_image_bytes(&chat.home.join("images"), &data).map_err(|e| match e {
         ImageError::Unsupported => unsupported(),
         ImageError::TooLarge => too_large(),
@@ -166,21 +162,22 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
 }
 
 /// The bytes of the regular file at `path`, read through one handle and at most one byte past
-/// [`MAX_IMAGE_BYTES`] (a file may report a smaller size than it reads). `None` when the handle
-/// is not a regular file; a FIFO is opened without waiting for a writer.
-fn read_image(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+/// [`MAX_IMAGE_BYTES`] (a file may report a smaller size than it reads), so staging refuses one
+/// too large. An error when the handle is not a regular file (one swapped in after [`resolve`]
+/// checked the path); a FIFO is opened without waiting for a writer.
+fn read_image(path: &Path) -> std::io::Result<Vec<u8>> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
     let file = options.open(path)?;
     if !file.metadata()?.is_file() {
-        return Ok(None);
+        return Err(std::io::Error::other("not a regular file"));
     }
     let mut data = Vec::new();
     file.take(MAX_IMAGE_BYTES as u64 + 1)
         .read_to_end(&mut data)?;
-    Ok(Some(data))
+    Ok(data)
 }
 
 fn detach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcError> {
@@ -318,14 +315,13 @@ fn resolve(raw: &str, cwd: &Path) -> Result<Option<PathBuf>, Refused> {
                 .unwrap_or_else(|()| PathBuf::from(&token)),
             Err(_) => PathBuf::from(&token),
         }
-    } else if let Some(rest) = token
+    } else if let Some(expanded) = token
         .strip_prefix('~')
         .filter(|rest| rest.is_empty() || rest.starts_with(['/', '\\']))
+        .and_then(|rest| Some(home()?.join(rest.trim_start_matches(['/', '\\']))))
     {
-        let Some(home) = home() else {
-            return Ok(None);
-        };
-        home.join(rest.trim_start_matches(['/', '\\']))
+        // With no home folder `~` stays as written, as upstream's `expanduser` leaves it.
+        expanded
     } else {
         PathBuf::from(&token)
     };
@@ -401,6 +397,71 @@ mod tests {
         }
         assert!(local_only(Origin::Local).is_ok());
     }
+
+    /// An unclosed quote takes the rest as the path; a quoted path that names no file is not
+    /// walked back to a shorter one, as an unquoted one is; a quoted name resolves, and an empty
+    /// or unparsable `file://` token names nothing (and is not refused).
+    #[test]
+    fn path_spellings() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::write(cwd.join("a"), b"x").unwrap();
+        std::fs::write(cwd.join("shot.png"), b"x").unwrap();
+
+        assert_eq!(split_path_input("'a b c"), ("a b c".into(), String::new()));
+        assert_eq!(dropped("'./a b' c", cwd).ok().flatten(), None);
+        assert_eq!(
+            dropped("./a b c", cwd).ok().flatten(),
+            Some((cwd.join("./a"), "b c".into()))
+        );
+        assert_eq!(
+            resolve("'shot.png'", cwd).ok().flatten(),
+            Some(cwd.join("shot.png"))
+        );
+        for nothing in ["''", "file://["] {
+            assert!(matches!(resolve(nothing, cwd), Ok(None)), "{nothing}");
+        }
+    }
+
+    /// `~/` names the home folder.
+    #[test]
+    fn a_tilde_path_is_taken_from_home() {
+        let home = home().expect("a home folder");
+        let file = tempfile::Builder::new()
+            .suffix(".png")
+            .tempfile_in(&home)
+            .unwrap();
+        let name = file.path().file_name().unwrap().to_string_lossy();
+        let cwd = tempfile::tempdir().unwrap();
+        assert_eq!(
+            resolve(&format!("~/{name}"), cwd.path()).ok().flatten(),
+            Some(home.join(&*name))
+        );
+    }
+
+    /// A drive-prefixed drop is a path; on Unix `C:` is an ordinary folder name.
+    #[cfg(unix)]
+    #[test]
+    fn a_drive_prefix_starts_a_dropped_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("C:")).unwrap();
+        std::fs::write(dir.path().join("C:/d.png"), b"x").unwrap();
+        assert_eq!(
+            dropped("C:/d.png later", dir.path()).ok().flatten(),
+            Some((dir.path().join("C:/d.png"), "later".into()))
+        );
+    }
+
+    /// A handle that is not a regular file is not read.
+    #[test]
+    fn a_folder_is_not_read_as_an_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = read_image(dir.path()).unwrap_err().to_string();
+        // Windows refuses to open a folder as a file; Unix opens it, and the handle is checked.
+        if cfg!(unix) {
+            assert_eq!(refused, "not a regular file");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -408,21 +469,14 @@ mod answers_at_once {
     use std::sync::Arc;
 
     use futures::FutureExt as _;
-    use serde_json::{json, Value};
+    use serde_json::json;
 
     use super::super::{Chat, Conn, Origin, Request};
 
-    /// `image.attach` stages the image before it returns, so a `prompt.submit` the connection
-    /// reads next takes it.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn image_attach_answers_in_its_first_poll() {
-        let home = tempfile::tempdir().unwrap();
-        std::fs::write(
-            home.path().join("config.yaml"),
-            "model:\n  default: mock-model\n",
-        )
-        .unwrap();
-        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+    /// An `image.attach` request from a local client for a PNG at `<home>/shot.png`.
+    fn local_attach(home: &std::path::Path) -> Request {
+        std::fs::write(home.join("config.yaml"), "model:\n  default: mock-model\n").unwrap();
+        let config = hermes_config::load_config(home.to_str()).unwrap();
         let chat = Arc::new(Chat::new(config));
         let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
         let mut conn = Conn::new(1, outbox, false);
@@ -431,24 +485,45 @@ mod answers_at_once {
             .as_str()
             .unwrap()
             .to_string();
-        let image = home.path().join("shot.png");
+        let image = home.join("shot.png");
         std::fs::write(
             &image,
             [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'x'],
         )
         .unwrap();
-        let Value::Object(params) = json!({"session_id": id, "path": image.display().to_string()})
-        else {
-            unreachable!()
-        };
-        let request = Request {
-            chat: Arc::clone(&chat),
-            conn,
-            params,
-        };
-        let reply = super::attach(request)
+        let params = json!({"session_id": id, "path": image.display().to_string()})
+            .as_object()
+            .unwrap()
+            .clone();
+        Request { chat, conn, params }
+    }
+
+    /// `image.attach` stages the image before it returns, so a `prompt.submit` the connection
+    /// reads next takes it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn image_attach_answers_in_its_first_poll() {
+        let home = tempfile::tempdir().unwrap();
+        let reply = super::attach(local_attach(home.path()))
             .now_or_never()
             .expect("answered at once");
         assert_eq!(reply.unwrap()["count"], 1);
+    }
+
+    /// A staging folder that cannot be made is a write failure (5027), and nothing is staged.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unwritable_staging_folder_is_5027() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("images"), b"not a folder").unwrap();
+        let request = local_attach(home.path());
+        let chat = Arc::clone(&request.chat);
+        let refused = super::attach(request)
+            .now_or_never()
+            .expect("answered at once")
+            .unwrap_err();
+        assert_eq!(refused.0, super::super::IMAGE_WRITE_FAILED, "{}", refused.1);
+        assert!(chat
+            .lock_sessions()
+            .values()
+            .all(|session| session.images().is_empty()));
     }
 }
