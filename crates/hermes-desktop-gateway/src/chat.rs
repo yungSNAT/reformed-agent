@@ -37,6 +37,7 @@ mod oneshot;
 pub(crate) mod profiles;
 mod relay;
 mod session;
+mod slash;
 use canonical::Admission;
 pub(crate) use session::LiveSession;
 use session::{Admitted, Budget, Next, Queued, Refused, MAX_STAGED_BYTES, MAX_STAGED_IMAGES};
@@ -151,8 +152,13 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 }
 
 /// Every area's methods; a new area adds its table here.
-const AREAS: &[&[(&str, Handler)]] =
-    &[METHODS, oneshot::METHODS, profiles::METHODS, relay::METHODS];
+const AREAS: &[&[(&str, Handler)]] = &[
+    METHODS,
+    oneshot::METHODS,
+    profiles::METHODS,
+    relay::METHODS,
+    slash::METHODS,
+];
 
 /// The methods served on both wires.
 const METHODS: &[(&str, Handler)] = &[
@@ -293,6 +299,13 @@ impl Drop for DrainGuard {
 }
 
 impl Chat {
+    /// The skills this gateway's profile offers: `<home>/skills`, the folder the tool-running
+    /// turns read too (`hermes_tools::register_builtins::skills_root` once that lands, which
+    /// this then calls).
+    pub(crate) fn skills_root(&self) -> PathBuf {
+        self.home.join("skills")
+    }
+
     /// Chat with `config`'s model; sessions are saved under `config`'s home.
     pub fn new(config: GatewayConfig) -> Self {
         let home = config
