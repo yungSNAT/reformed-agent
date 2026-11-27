@@ -46,8 +46,10 @@ mod skill_docs;
 mod skills_index;
 mod slash_gate;
 mod surface_gate;
+mod sync_upstream;
 mod test_intent_mapping;
 mod upstream_queue;
+mod upstream_sync_cron;
 mod website;
 mod workstream_status;
 
@@ -215,6 +217,15 @@ enum Command {
     /// Golden parity harness for CLI command surface and key TUI flow contracts.
     #[command(name = "run-golden-parity-harness")]
     RunGoldenParityHarness(golden_parity::GoldenParityArgs),
+    /// Sync upstream changes into this fork (port of `scripts/sync-upstream.sh`).
+    #[command(name = "sync-upstream")]
+    SyncUpstream(sync_upstream::SyncUpstreamArgs),
+    /// Cron entry point: take the lock and run `sync-upstream` with the cron settings.
+    #[command(name = "run-upstream-sync-cron")]
+    RunUpstreamSyncCron(upstream_sync_cron::CronArgs),
+    /// Install or replace the upstream sync crontab entry.
+    #[command(name = "install-upstream-sync-cron")]
+    InstallUpstreamSyncCron(upstream_sync_cron::InstallArgs),
     /// Run the nightly elite validation gate on local main.
     #[command(name = "run-nightly-elite-gate")]
     RunNightlyEliteGate(nightly_elite_gate::NightlyEliteGateArgs),
@@ -282,6 +293,9 @@ fn main() {
         Command::RunEliteSyncGate(args) => elite_sync_gate::run(args),
         Command::PublishAutomationSummary(args) => automation_summary::run(args),
         Command::RunGoldenParityHarness(args) => golden_parity::run(args),
+        Command::SyncUpstream(args) => sync_upstream::run(args),
+        Command::RunUpstreamSyncCron(args) => upstream_sync_cron::run_cron(args),
+        Command::InstallUpstreamSyncCron(args) => upstream_sync_cron::run_install(args),
         Command::RunNightlyEliteGate(args) => nightly_elite_gate::run(args),
         Command::InstallEliteGateLaunchd(args) => elite_gate_launchd::run_install(args),
         Command::StatusEliteGateLaunchd(args) => elite_gate_launchd::run_status(args),

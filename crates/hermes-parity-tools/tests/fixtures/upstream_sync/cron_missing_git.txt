@@ -1,0 +1,14 @@
+exit=Some(1)
+--- stdout
+[cron-upstream-sync] repository not found at <ROOT>/nowhere
+--- stderr
+--- calls
+--- file home/.hermes/locks/upstream-sync.lock
+--- refs remotes/origin.git
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/main <C:fork: carry>
+--- status
+## main...origin/main

@@ -963,7 +963,7 @@ impl SessionPersistence {
 
     /// Serialise capped runs and explicit resets for this session. The OS
     /// releases the lock when a process exits; keep the lock file's inode stable.
-    pub(crate) fn lock_session_budget(&self, id: &str) -> Result<std::fs::File, AgentError> {
+    pub(crate) fn lock_session_budget(&self, id: &str) -> Result<BudgetLock, AgentError> {
         use sha2::{Digest, Sha256};
         let dir = self.db_path.with_file_name("session-budget-locks");
         std::fs::create_dir_all(&dir)
@@ -981,7 +981,7 @@ impl SessionPersistence {
                 "Cannot lock session budget for this run or reset: {e}"
             ))
         })?;
-        Ok(file)
+        Ok(BudgetLock(file))
     }
 
     fn budget_connection(&self) -> Result<rusqlite::Connection, AgentError> {
@@ -1366,6 +1366,18 @@ impl SessionPersistence {
     }
 }
 
+/// A held session budget lock. A `flock` belongs to the open file description, which a
+/// fork child on another thread shares until it execs, so merely closing our descriptor
+/// would leave the lock held; an explicit unlock releases it for every holder.
+#[derive(Debug)]
+pub(crate) struct BudgetLock(std::fs::File);
+
+impl Drop for BudgetLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 include!("session_persistence/session_io.rs");
 
 #[cfg(test)]
@@ -1375,6 +1387,10 @@ mod empty_snapshot_tests;
 #[cfg(test)]
 #[path = "session_persistence/metadata_tests.rs"]
 mod metadata_tests;
+
+#[cfg(test)]
+#[path = "session_persistence/budget_lock_tests.rs"]
+mod budget_lock_tests;
 
 #[cfg(test)]
 mod tests;
