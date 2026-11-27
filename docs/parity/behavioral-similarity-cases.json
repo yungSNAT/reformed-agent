@@ -275,7 +275,7 @@
       ],
       "rust_tests": [
         {
-          "file": "crates/hermes-cli/src/main/tests.rs",
+          "file": "crates/hermes-gateway/src/platforms/telegram/gateway_polling_tests.rs",
           "name": "telegram_gateway_message_preserves_group_topic_in_chat_id"
         },
         {
