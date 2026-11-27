@@ -28,7 +28,12 @@ struct Model {
     pieces: Vec<&'static str>,
     delay: Duration,
     requests: Arc<Mutex<Vec<Value>>>,
+    /// Each answer waits for a permit; a test holding them all holds the model.
+    gate: Arc<tokio::sync::Semaphore>,
 }
+
+/// Permits in [`Model::gate`].
+const GATE_PERMITS: u32 = 1000;
 
 async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Response {
     let stream = body["stream"] == true;
@@ -38,6 +43,7 @@ async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Respon
         .and_then(|m| m["content"].as_str().or(m["content"][0]["text"].as_str()))
         .is_some_and(|text| text.contains("FAIL"));
     model.requests.lock().unwrap().push(body);
+    let _permit = model.gate.acquire().await.unwrap();
     tokio::time::sleep(model.delay).await;
     if fail {
         let error =
@@ -68,6 +74,7 @@ async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Respon
 struct Started {
     addr: SocketAddr,
     requests: Arc<Mutex<Vec<Value>>>,
+    gate: Arc<tokio::sync::Semaphore>,
     home: tempfile::TempDir,
 }
 
@@ -86,10 +93,12 @@ async fn start_with(
     extra_config: &str,
 ) -> Started {
     let requests = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(tokio::sync::Semaphore::new(GATE_PERMITS as usize));
     let model = Model {
         pieces,
         delay,
         requests: Arc::clone(&requests),
+        gate: Arc::clone(&gate),
     };
     let model_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let model_addr = model_listener.local_addr().unwrap();
@@ -123,6 +132,7 @@ async fn start_with(
     Started {
         addr,
         requests,
+        gate,
         home,
     }
 }
@@ -1376,9 +1386,9 @@ async fn a_legacy_resume_returns_the_messages_and_streams_later_turns() {
 /// turn the owner saw, in order, none lost.
 #[tokio::test]
 async fn a_resume_during_a_turn_recovers_its_earlier_events_by_seq() {
-    // The model answers after 1.5 s, so the resume lands after the turn's first event and
-    // before its reply streams.
-    let started = start(vec!["one ", "two"], Duration::from_millis(1500)).await;
+    let started = start(vec!["one ", "two"], Duration::ZERO).await;
+    // The model is held, so the turn still runs when the second connection resumes.
+    let held = started.gate.acquire_many(GATE_PERMITS).await.unwrap();
     let mut owner = connect(started.addr).await;
     let session = owner.create().await;
     owner.submit(2, &session, "question").await;
@@ -1401,6 +1411,8 @@ async fn a_resume_during_a_turn_recovers_its_earlier_events_by_seq() {
             json!({"session_id": session, "last_seen": 0}),
         )
         .await;
+    assert_eq!(replay["result"]["truncated"], false, "{replay}");
+    drop(held);
     let streamed = other.turn_events(&session).await;
     let owned = owner.turn_events(&session).await;
     assert!(
