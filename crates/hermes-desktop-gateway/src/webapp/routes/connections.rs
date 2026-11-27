@@ -128,7 +128,7 @@ const FORBIDDEN_SAVED_HEADERS: [&str; 16] = [
     "proxy-connection",
 ];
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum StoreError {
     /// 400: the save or change is refused.
     Refused(String),
@@ -160,11 +160,7 @@ pub(crate) fn read_doc(path: &Path) -> Result<(Option<Map<String, Value>>, bool)
     let raw = match std::fs::read(path) {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok((None, false)),
-        Err(_) => {
-            return Err(StoreError::Busy(
-                "gateway connections store is unreadable".into(),
-            ))
-        }
+        Err(err) => return Err(unreadable(err)),
     };
     guard_permissions(path)?;
     let text = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&raw);
@@ -174,10 +170,13 @@ pub(crate) fn read_doc(path: &Path) -> Result<(Option<Map<String, Value>>, bool)
     }
 }
 
+fn unreadable(_: std::io::Error) -> StoreError {
+    StoreError::Busy("gateway connections store is unreadable".into())
+}
+
 fn guard_permissions(path: &Path) -> Result<(), StoreError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let meta = std::fs::symlink_metadata(path)
-        .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
+    let meta = std::fs::symlink_metadata(path).map_err(unreadable)?;
     // SAFETY: getuid has no preconditions and cannot fail.
     if !meta.file_type().is_file() || meta.uid() != unsafe { libc::getuid() } {
         return Err(StoreError::Busy(
@@ -185,8 +184,8 @@ fn guard_permissions(path: &Path) -> Result<(), StoreError> {
         ));
     }
     if meta.mode() & 0o077 != 0 {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
+        let owner_only = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(path, owner_only).map_err(unreadable)?;
     }
     Ok(())
 }
@@ -217,11 +216,11 @@ fn connections(doc: Option<&Map<String, Value>>) -> Vec<Map<String, Value>> {
 }
 
 fn local_entry() -> Map<String, Value> {
-    let Value::Object(entry) = json!({"id": LOCAL_ID, "kind": "local", "label": "This device"})
-    else {
-        unreachable!("a JSON object literal");
-    };
-    entry
+    Map::from_iter([
+        ("id".to_owned(), json!(LOCAL_ID)),
+        ("kind".to_owned(), json!("local")),
+        ("label".to_owned(), json!("This device")),
+    ])
 }
 
 fn str_field<'a>(entry: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -367,8 +366,7 @@ pub(crate) fn mutate<T>(
     change: impl FnOnce(&mut Map<String, Value>, &mut Vec<Map<String, Value>>) -> Result<T, StoreError>,
 ) -> Result<(Map<String, Value>, T), StoreError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|_| StoreError::Busy("gateway connections store is unreadable".into()))?;
+        std::fs::create_dir_all(parent).map_err(unreadable)?;
     }
     let lock = StoreLock::take(path, "gateway connections store").map_err(StoreError::Busy)?;
     let (doc, corrupt) = read_doc(path)?;
@@ -439,16 +437,13 @@ pub(crate) fn normalize_url(raw: &str) -> Result<url::Url, StoreError> {
             url.scheme()
         )));
     }
-    if url.host().is_none() {
-        return Err(refused("Remote gateway URL is not valid: Invalid URL"));
-    }
+    // An `http` or `https` URL always has a host: the parser refuses one without.
     if !url.username().is_empty() || url.password().is_some() {
         return Err(refused(
             "Remote gateway URL must not hold a user name or password; save the session token instead.",
         ));
     }
-    if let Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) = url.host() {
-        let ip = literal_ip(&url).expect("an IP host");
+    if let Some(ip) = literal_ip(&url) {
         if let Err(reason) = judge_address(ip, true) {
             return Err(refused(format!("Remote gateway URL is refused: {reason}.")));
         }
@@ -618,7 +613,7 @@ fn incoming_headers(
             _ => {
                 return Err(refused(format!(
                     "Header \"{name}\" must be a string or null."
-                )))
+                )));
             }
         }
     }
@@ -862,6 +857,8 @@ async fn set_last_used(
 const PREFIX: &str = "/api/relay/";
 /// The most a relayed request body may carry: the largest frame upstream's gateway accepts.
 pub(crate) const MAX_BODY: usize = 384 * 1024 * 1024;
+/// The request body cap the relay applies (small in tests, so a test can pass it).
+const MAX_REQUEST: usize = if cfg!(test) { 64 * 1024 } else { MAX_BODY };
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// From the request's start until the gateway's headers arrive, the request body's upload
 /// included: an upload slower than this fails with 502.
@@ -1032,18 +1029,30 @@ pub(crate) async fn checked_addresses(
     own: Option<SocketAddr>,
 ) -> Result<Vec<SocketAddr>, &'static str> {
     let port = url.port_or_known_default().ok_or("no port")?;
-    let addrs: Vec<SocketAddr> = match url.host() {
-        Some(url::Host::Ipv4(ip)) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
-        Some(url::Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
-        Some(url::Host::Domain(name)) => {
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::lookup_host((name, port)))
+    let addrs: Vec<SocketAddr> = match literal_ip(url) {
+        Some(ip) => vec![SocketAddr::new(ip, port)],
+        None => {
+            let name = url.host_str().ok_or("no host")?;
+            let lookup = tokio::net::lookup_host((name, port));
+            // A name that fails to resolve, or not in time, is refused alike.
+            tokio::time::timeout(CONNECT_TIMEOUT, lookup)
                 .await
-                .map_err(|_| "the name does not resolve in time")?
-                .map_err(|_| "the name does not resolve")?
+                .ok()
+                .and_then(Result::ok)
+                .ok_or("the name does not resolve")?
                 .collect()
         }
-        None => return Err("no host"),
     };
+    judged(addrs, allow_private, own)
+}
+
+/// `addrs` when every one may be dialled: refused when the list is empty, or any address is zoned,
+/// refused by [`judge_address`] or this listener itself.
+pub(crate) fn judged(
+    addrs: Vec<SocketAddr>,
+    allow_private: bool,
+    own: Option<SocketAddr>,
+) -> Result<Vec<SocketAddr>, &'static str> {
     if addrs.is_empty() {
         return Err("the name does not resolve");
     }
@@ -1123,7 +1132,7 @@ pub(crate) fn dial_of(path: &Path, id: &str) -> Result<Dial, DialError> {
             None => {
                 return Err(DialError::NotRelayable(format!(
                     "{label} has a saved header this gateway will not send. Edit it in Settings → Gateways."
-                )))
+                )));
             }
         }
     }
@@ -1202,16 +1211,21 @@ pub(crate) async fn relay(
     }
     let dial = {
         let (store, id) = (store.to_owned(), id.to_owned());
-        tokio::task::spawn_blocking(move || dial_of(&store, &id)).await
+        // A read that never finished answers as an unreadable store.
+        let lost = Err(DialError::Store(unreadable(
+            std::io::ErrorKind::Interrupted.into(),
+        )));
+        tokio::task::spawn_blocking(move || dial_of(&store, &id))
+            .await
+            .unwrap_or(lost)
     };
     let dial = match dial {
-        Ok(Ok(dial)) => dial,
-        Ok(Err(DialError::Missing)) => return detail(StatusCode::NOT_FOUND, "No such connection"),
-        Ok(Err(DialError::NotRelayable(why))) => {
-            return refusal("relay_reconnect", id, &why, StatusCode::CONFLICT)
+        Ok(dial) => dial,
+        Err(DialError::Missing) => return detail(StatusCode::NOT_FOUND, "No such connection"),
+        Err(DialError::NotRelayable(why)) => {
+            return refusal("relay_reconnect", id, &why, StatusCode::CONFLICT);
         }
-        Ok(Err(DialError::Store(err))) => return ApiError::from(err).into_response(),
-        Err(_) => return detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
+        Err(DialError::Store(err)) => return ApiError::from(err).into_response(),
     };
     let Some(target) = relay_target(request.uri().path(), request.uri().query(), id) else {
         return detail(StatusCode::BAD_REQUEST, "Not a route this relay carries");
@@ -1224,7 +1238,7 @@ pub(crate) async fn relay(
                 id,
                 &format!("{} is refused: {why}.", dial.label),
                 StatusCode::FORBIDDEN,
-            )
+            );
         }
     };
     let mut builder = reqwest::Client::builder()
@@ -1236,9 +1250,6 @@ pub(crate) async fn relay(
     if let Some(name) = dial.base.domain() {
         builder = builder.resolve_to_addrs(name, &addrs);
     }
-    let Ok(client) = builder.build() else {
-        return detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error");
-    };
     let base = stored_url(&dial.base);
     let method = request.method().clone();
     let headers = forwarded_headers(request.headers(), &dial);
@@ -1247,33 +1258,42 @@ pub(crate) async fn relay(
             .headers()
             .get(header::CONTENT_LENGTH)
             .is_some_and(|v| v.as_bytes() != b"0");
-    let mut outbound = client
-        .request(method, format!("{base}{target}"))
-        .headers(headers);
-    if has_body {
+    let body = has_body.then(|| {
         let mut seen = 0usize;
         let limited = request.into_body().into_data_stream().map(move |chunk| {
             let chunk = chunk.map_err(std::io::Error::other)?;
             seen += chunk.len();
-            if seen > MAX_BODY {
-                return Err(std::io::Error::other("relayed body too large"));
-            }
-            Ok::<_, std::io::Error>(chunk)
+            (seen <= MAX_REQUEST)
+                .then_some(chunk)
+                .ok_or_else(|| std::io::Error::other("relayed body too large"))
         });
-        outbound = outbound.body(reqwest::Body::wrap_stream(limited));
-    }
-    let sent = tokio::time::timeout(HEADERS_TIMEOUT, outbound.send()).await;
-    let response = match sent {
-        Ok(Ok(response)) => response,
-        Ok(Err(_)) | Err(_) => {
-            tracing::info!(connection = %id, "gateway relay failed");
-            return refusal(
-                "relay_unreachable",
-                id,
-                &format!("{} is not reachable from this gateway.", dial.label),
-                StatusCode::BAD_GATEWAY,
-            );
-        }
+        reqwest::Body::wrap_stream(limited)
+    });
+    // A client that cannot be built, a refused or failed send and a gateway that sends no headers
+    // in time all answer as an unreachable gateway.
+    let sent = async {
+        let outbound = builder
+            .build()
+            .ok()?
+            .request(method, format!("{base}{target}"))
+            .headers(headers);
+        let outbound = match body {
+            Some(body) => outbound.body(body),
+            None => outbound,
+        };
+        tokio::time::timeout(HEADERS_TIMEOUT, outbound.send())
+            .await
+            .ok()?
+            .ok()
+    };
+    let Some(response) = sent.await else {
+        tracing::info!(connection = %id, "gateway relay failed");
+        return refusal(
+            "relay_unreachable",
+            id,
+            &format!("{} is not reachable from this gateway.", dial.label),
+            StatusCode::BAD_GATEWAY,
+        );
     };
     if response.status() == StatusCode::UNAUTHORIZED {
         return refusal(
@@ -1308,7 +1328,7 @@ pub(crate) async fn relay(
                     id,
                     &format!("{} redirected outside itself.", dial.label),
                     StatusCode::BAD_GATEWAY,
-                )
+                );
             }
         }
     }
