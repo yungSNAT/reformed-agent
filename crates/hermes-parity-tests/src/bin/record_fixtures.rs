@@ -17,7 +17,15 @@ fn main() {
         .and_then(Path::parent)
         .expect("crate sits two levels below the repository root");
     let py_root = recorder::python_checkout_beside(repo_root);
-    let recorded = recorder::record(&py_root, &recorder::python_from_env());
+    let consoles: Vec<&str> = [
+        ("stdout", std::io::stdout().is_terminal()),
+        ("stderr", std::io::stderr().is_terminal()),
+    ]
+    .into_iter()
+    .filter(|&(_, terminal)| cfg!(windows) && terminal)
+    .map(|(name, _)| name)
+    .collect();
+    let recorded = recorder::record_for_consoles(&py_root, &recorder::python_from_env(), &consoles);
     // A closed pipe (`| head`) ends the run with 1, as the script's BrokenPipeError did;
     // the adapter's stderr is still written.
     let out = write(std::io::stdout(), &recorded.stdout);

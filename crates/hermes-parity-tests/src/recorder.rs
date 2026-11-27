@@ -194,9 +194,14 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
         .map_or_else(|| path.clone(), PathBuf::from)
 }
 
-fn shim_command(python: &str, py_root: &Path) -> Command {
+/// `consoles` names the shim's streams (`stdout`, `stderr`) that reach a Windows console.
+fn shim_command(python: &str, py_root: &Path, consoles: &[&str]) -> Command {
     let mut command = Command::new(python);
-    command.arg("-c").arg(ANTHROPIC_SHIM).arg(py_root);
+    command
+        .arg("-c")
+        .arg(ANTHROPIC_SHIM)
+        .arg(py_root)
+        .args(consoles);
     command
 }
 
@@ -222,8 +227,8 @@ fn split_results(stdout: &[u8]) -> Option<(&[u8], Vec<Value>, &[u8])> {
     Some((printed, results, &rest[values.byte_offset()..]))
 }
 
-fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> {
-    let output = shim_command(python, py_root)
+fn upstream_results(python: &str, py_root: &Path, consoles: &[&str]) -> Result<Upstream, Recorded> {
+    let output = shim_command(python, py_root, consoles)
         .output()
         .map_err(|error| failure(format!("cannot run {python}: {error}\n")))?;
     let code = output.status.code().unwrap_or(1);
@@ -270,6 +275,12 @@ pub fn for_stream(bytes: &[u8], windows_console: bool) -> Cow<'_, [u8]> {
 /// Record the cases against the Python checkout at `py_root`, running `python` for the
 /// Anthropic adapter cases when `agent/anthropic_adapter.py` exists there.
 pub fn record(py_root: &Path, python: &str) -> Recorded {
+    record_for_consoles(py_root, python, &[])
+}
+
+/// As [`record`], for output whose `consoles` streams (`stdout`, `stderr`) reach a Windows
+/// console: the shim writes those in UTF-8, as the script's console writer showed any text.
+pub fn record_for_consoles(py_root: &Path, python: &str, consoles: &[&str]) -> Recorded {
     let mut cases = checkpoint_cases();
     let source = py_root.display().to_string();
     let (printed, after, stderr, code) = if py_root
@@ -277,7 +288,7 @@ pub fn record(py_root: &Path, python: &str) -> Recorded {
         .join("anthropic_adapter.py")
         .is_file()
     {
-        let upstream = match upstream_results(python, py_root) {
+        let upstream = match upstream_results(python, py_root, consoles) {
             Ok(upstream) => upstream,
             Err(failed) => return failed,
         };
@@ -332,13 +343,45 @@ mod tests {
             "raise ImportError('reached the adapter')\n",
         )
         .unwrap();
-        let output = shim_command(&python_from_env(), &py_root)
+        let output = shim_command(&python_from_env(), &py_root, &[])
             .current_dir(&cwd)
             .output()
             .expect("run Python 3 (set PARITY_PYTHON if `python3` is not it)");
         let _ = std::fs::remove_dir_all(&scratch);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("reached the adapter"), "{stderr}");
+    }
+
+    /// With UTF-8 mode off, Python encodes a pipe in the locale's code page (`PYTHONIOENCODING`
+    /// stands in for it here); the script's console writer showed any text, so a stream bound
+    /// for a console is written in UTF-8, and one bound for a pipe keeps the script's bytes.
+    #[test]
+    fn adapter_text_bound_for_a_console_is_written_in_utf8() {
+        let scratch = std::env::temp_dir().join(format!("recorder-utf8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("agent")).unwrap();
+        std::fs::write(scratch.join("agent").join("__init__.py"), "").unwrap();
+        std::fs::write(
+            scratch.join("agent").join("anthropic_adapter.py"),
+            r"import sys; print('caf\u00e9'); sys.stderr.write('caf\u00e9\n')",
+        )
+        .unwrap();
+        let run = |consoles: &[&str]| {
+            shim_command(&python_from_env(), &scratch, consoles)
+                .env("PYTHONUTF8", "0")
+                .env("PYTHONIOENCODING", "cp1252")
+                .output()
+                .expect("run Python 3 (set PARITY_PYTHON if `python3` is not it)")
+        };
+        let (both, stdout_only, none) = (run(&["stdout", "stderr"]), run(&["stdout"]), run(&[]));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let has = |bytes: &[u8], text: &[u8]| bytes.windows(text.len()).any(|w| w == text);
+        let (utf8, cp1252) = (b"caf\xc3\xa9".as_slice(), b"caf\xe9".as_slice());
+        assert!(has(&both.stdout, utf8), "{:?}", both.stdout);
+        assert!(has(&both.stderr, utf8), "{:?}", both.stderr);
+        assert!(has(&stdout_only.stdout, utf8), "{:?}", stdout_only.stdout);
+        assert!(has(&stdout_only.stderr, cp1252), "{:?}", stdout_only.stderr);
+        assert!(has(&none.stdout, cp1252), "{:?}", none.stdout);
     }
 
     #[test]
