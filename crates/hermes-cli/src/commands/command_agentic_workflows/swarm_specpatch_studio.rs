@@ -328,7 +328,7 @@ async fn count_git_tracked_files(repo_root: &Path) -> Result<usize, AgentError> 
     let root = repo_root.to_path_buf();
     let output = tokio::task::spawn_blocking(move || {
         hermes_core::git::output_within_timeout(
-            hermes_core::git::read_only_git(&root)?
+            &mut hermes_core::git::read_only_git(&root)?
                 .command(hermes_core::git::GitRead::LsFiles),
             hermes_core::git::GIT_SNAPSHOT_TIMEOUT,
         )
