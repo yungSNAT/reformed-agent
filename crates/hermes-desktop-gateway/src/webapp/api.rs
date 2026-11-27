@@ -96,10 +96,17 @@ pub struct Group {
 
 /// Every group, merged once behind the credential guard. One entry per group, such as
 /// `Group { audience: Audience::Browser, routes: routes::config::router }`.
-pub const GROUPS: &[Group] = &[Group {
-    audience: Audience::Browser,
-    routes: super::routes::startup::router,
-}];
+pub const GROUPS: &[Group] = &[
+    Group {
+        audience: Audience::Browser,
+        routes: super::routes::startup::router,
+    },
+    #[cfg(unix)]
+    Group {
+        audience: Audience::Browser,
+        routes: super::routes::connections::router,
+    },
+];
 
 /// Checks the profile a request names (`?profile=`) against the one this gateway serves: absent
 /// or equal is Ok; any other name is 404, as this gateway serves one profile.
