@@ -261,8 +261,10 @@ fn upstream_results(python: &str, py_root: &Path) -> Result<Upstream, Recorded> 
 /// where Python's console writer replaced them with U+FFFD, so `windows_console` gets
 /// them replaced the same way; pipes and files get the bytes unchanged.
 pub fn for_stream(bytes: &[u8], windows_console: bool) -> Cow<'_, [u8]> {
-    let _ = windows_console;
-    Cow::Borrowed(bytes)
+    match String::from_utf8_lossy(bytes) {
+        Cow::Owned(text) if windows_console => Cow::Owned(text.into_bytes()),
+        _ => Cow::Borrowed(bytes),
+    }
 }
 
 /// Record the cases against the Python checkout at `py_root`, running `python` for the
