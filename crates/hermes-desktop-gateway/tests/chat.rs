@@ -1371,6 +1371,56 @@ async fn a_legacy_resume_returns_the_messages_and_streams_later_turns() {
     }
 }
 
+/// A resume during a turn streams that turn from its subscription on; the client recovers the
+/// turn's earlier events with `session.events.since`, so by `seq` it holds every event of the
+/// turn the owner saw, in order, none lost.
+#[tokio::test]
+async fn a_resume_during_a_turn_recovers_its_earlier_events_by_seq() {
+    // The model answers after 1.5 s, so the resume lands after the turn's first event and
+    // before its reply streams.
+    let started = start(vec!["one ", "two"], Duration::from_millis(1500)).await;
+    let mut owner = connect(started.addr).await;
+    let session = owner.create().await;
+    owner.submit(2, &session, "question").await;
+    let first = match owner.events.pop_front() {
+        Some(frame) => frame,
+        None => owner.next_json().await,
+    };
+    assert_eq!(first["method"], "event", "{first}");
+    owner.events.push_front(first);
+
+    let mut other = connect(started.addr).await;
+    let resumed = other
+        .call(1, "session.resume", json!({"session_id": session}))
+        .await;
+    assert_eq!(resumed["result"]["running"], true, "{resumed}");
+    let replay = other
+        .call(
+            2,
+            "session.events.since",
+            json!({"session_id": session, "last_seen": 0}),
+        )
+        .await;
+    let streamed = other.turn_events(&session).await;
+    let owned = owner.turn_events(&session).await;
+    assert!(
+        streamed[0].2 > owned[0].2,
+        "the resume came after the turn's first event: {streamed:?}"
+    );
+
+    let mut by_seq = std::collections::BTreeMap::new();
+    for event in replay["result"]["events"].as_array().unwrap() {
+        let seq = event["seq"].as_u64().unwrap();
+        let kind = event["type"].as_str().unwrap().to_string();
+        by_seq.insert(seq, (kind, event["payload"].clone(), seq));
+    }
+    for event in streamed {
+        by_seq.insert(event.2, event);
+    }
+    let recovered: Vec<_> = by_seq.into_values().collect();
+    assert_eq!(recovered, owned);
+}
+
 /// A session stages at most 16 images: the 17th is refused, and its file is not kept.
 #[tokio::test]
 async fn a_seventeenth_staged_image_is_refused() {
