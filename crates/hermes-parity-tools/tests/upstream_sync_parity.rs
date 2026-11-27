@@ -80,11 +80,14 @@ cp "$1" "$store"
 const RISK_PATHS: &str = "# comment\n  # indented comment\n\ncrates/hermes-auth/**\nscripts/setup-*.sh\ndocs/[nN]otes.md\n";
 
 /// Host tools the scripts and git need; `gh`, `cargo` and `crontab` are
-/// left out so only the fakes answer.
-const HOST_TOOLS: [&str; 28] = [
+/// left out so only the fakes answer. Gate commands run through `bash -lc`,
+/// and Debian and Ubuntu's `/etc/profile` lists `/etc/profile.d` with
+/// `run-parts`: without it every login shell prints `run-parts: command not
+/// found`, so the records would depend on the host's profile, not the tools.
+const HOST_TOOLS: [&str; 29] = [
     "bash", "sh", "env", "git", "mkdir", "mktemp", "rm", "sed", "awk", "xargs", "python3", "cat",
     "dirname", "flock", "grep", "chmod", "date", "cp", "id", "sleep", "tr", "head", "tail", "ls",
-    "uname", "basename", "readlink", "echo",
+    "uname", "basename", "readlink", "echo", "run-parts",
 ];
 
 #[derive(Clone, Copy, PartialEq)]
