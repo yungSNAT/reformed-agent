@@ -132,8 +132,9 @@ fn without_reasoning(text: &str) -> String {
 
 /// The system and user text, temperature and token limit `params` ask for, as upstream reads
 /// them: a temperature or limit that is not a number falls back to its default rather than
-/// refusing, and one out of range is brought within it. A number sent as a string (`"0.8"`,
-/// `"50"`) is read as upstream's `float()` and `int()` read it.
+/// refusing, and one out of range is brought within it. A decimal number sent as a string
+/// (`"0.8"`, `"50"`) is read as upstream's `float()` and `int()` read it; a boolean, digits with
+/// underscores and an integer past `i64` take the default, where upstream reads them.
 fn prompt(params: &Map<String, Value>) -> Result<(String, String, f64, u32), RpcError> {
     let text = |key: &str| match params.get(key) {
         None | Some(Value::Null) => Ok(""),
@@ -237,5 +238,40 @@ mod tests {
                 "unknown one-shot template: limerick".into()
             )
         );
+    }
+
+    /// A model that never answers is given up on after 60 seconds (5030), and the call's
+    /// permit is returned. The clock is paused, so the 60 seconds pass at once.
+    #[tokio::test(start_paused = true)]
+    async fn a_model_that_never_answers_times_out() {
+        // The kernel completes connections to it; nothing reads them or answers.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            format!(
+                "model:\n  default: mock-model\n  provider: mock\nproviders:\n  mock:\n    \
+                 api: http://{}/v1\n    name: Mock\n    api_mode: chat_completions\n    \
+                 models:\n      mock-model: {{}}\n",
+                silent.local_addr().unwrap()
+            ),
+        )
+        .unwrap();
+        let config = hermes_config::load_config(home.path().to_str()).unwrap();
+        let (outbox, _events) = tokio::sync::mpsc::unbounded_channel();
+        let request = Request {
+            chat: std::sync::Arc::new(super::super::Chat::new(config)),
+            conn: super::super::Conn::new(1, outbox, false),
+            params: json!({"input": "hello"}).as_object().unwrap().clone(),
+        };
+        let refused = oneshot(request).await.unwrap_err();
+        assert_eq!(
+            refused,
+            (
+                FAILED,
+                "one-shot generation failed: no reply within 60 seconds".into()
+            )
+        );
+        assert_eq!(RUNNING.available_permits(), MAX_RUNNING);
     }
 }
