@@ -354,11 +354,22 @@ llm_providers:
 async fn native_tui_streams_a_loopback_turn_and_persists_the_full_reply() {
     let provider = MockServer::start().await;
     let prompt = "Read back the synthetic fixture";
-    let reply = "QuartzEcho from the loopback fixture.";
+    let mut first_delta = String::from("```\n");
+    for row in 1..=40 {
+        let label = if (10..=20).contains(&row) {
+            "AsterHistory"
+        } else {
+            "Fixture row"
+        };
+        first_delta.push_str(&format!("{label} {row:02}\n"));
+    }
+    first_delta.push_str("```\nQuartzEcho");
+    let final_delta = " from the loopback fixture.";
+    let reply = format!("{first_delta}{final_delta}");
     let mut stream = String::new();
     for choice in [
-        json!({"index": 0, "delta": {"role": "assistant", "content": "QuartzEcho"}}),
-        json!({"index": 0, "delta": {"content": " from the loopback fixture."}}),
+        json!({"index": 0, "delta": {"role": "assistant", "content": first_delta}}),
+        json!({"index": 0, "delta": {"content": final_delta}}),
         json!({"index": 0, "delta": {}, "finish_reason": "stop"}),
     ] {
         let chunk = json!({
@@ -425,7 +436,7 @@ streaming:
                             let content = message["content"].as_str()?;
                             matches!(role, "User" | "Assistant").then_some((role, content))
                         });
-                        conversation.eq([("User", prompt), ("Assistant", reply)])
+                        conversation.eq([("User", prompt), ("Assistant", reply.as_str())])
                     })
                 });
             if saved {
@@ -436,6 +447,27 @@ streaming:
     })
     .await
     .expect("completed provider turn is saved in the isolated session");
+
+    let dimensions = libc::winsize {
+        ws_row: 16,
+        ws_col: 100,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // The child owns the slave as its controlling terminal, so this sends SIGWINCH.
+    assert_eq!(
+        unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSWINSZ, &dimensions) },
+        0,
+        "{}",
+        io::Error::last_os_error()
+    );
+    read_until(&mut terminal, b"\x1b[2J").await;
+
+    // Send SGR wheel events through the same PTY as keyboard input.
+    terminal.write_all(&b"\x1b[<64;5;6M".repeat(22)).unwrap();
+    read_until(&mut terminal, b"AsterHistory").await;
+    terminal.write_all(&b"\x1b[<65;5;6M".repeat(22)).unwrap();
+    read_until(&mut terminal, b"from the loopback fixture.").await;
 
     terminal.write_all(b"\x1b[200~/undo\x1b[201~\r!").unwrap();
     let edited = format!("{prompt}!");
