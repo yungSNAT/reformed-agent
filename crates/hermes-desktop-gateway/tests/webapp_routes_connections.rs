@@ -4,6 +4,10 @@
 
 mod webapp_support;
 
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+
+use serde_json::{json, Value};
 use webapp_support::*;
 
 /// Every route in the group, with a method the page uses.
@@ -15,6 +19,39 @@ const ROUTES: [(&str, &str); 6] = [
     ("GET", "/api/relay/remote-1/api/status"),
     ("POST", "/api/relay/remote-1/api/sessions"),
 ];
+
+const STORE: &str = "gateway-connections.json";
+
+/// Neither the store nor its lock exists: no route wrote or locked it.
+fn untouched(home: &Path) {
+    assert!(!home.join(STORE).exists(), "the store was written");
+    assert!(
+        !home.join(format!("{STORE}.lock")).exists(),
+        "the store was locked"
+    );
+}
+
+/// An owner-only store holding the saved gateway `remote-1`, last used, so each route without its
+/// guard would answer otherwise: list it, remove it, relay to it. Returns the bytes written.
+fn saved_gateway(home: &Path) -> String {
+    let doc = json!({
+        "version": 2,
+        "revision": 1,
+        "lastUsed": "remote-1",
+        "connections": [{
+            "id": "remote-1",
+            "kind": "remote",
+            "label": "Remote",
+            "url": "https://remote.invalid",
+            "token": "secret-token-123456",
+        }],
+    })
+    .to_string();
+    let path = home.join(STORE);
+    std::fs::write(&path, &doc).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    doc
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_route_refuses_a_caller_without_the_credential_or_from_another_origin() {
@@ -74,12 +111,16 @@ async fn every_route_refuses_a_caller_without_the_credential_or_from_another_ori
             "{method} {route} under another host name"
         );
     }
-    assert!(!home.join("gateway-connections.json").exists());
+    untouched(&home);
 }
 
+/// Each reply is the router's own 404 body, which none of the handlers gives when it runs: with
+/// `remote-1` saved, an unguarded list answers 200, save 400, last-used 404 with another text,
+/// remove 200 and the relay a dial failure.
 #[tokio::test(flavor = "multi_thread")]
 async fn no_route_exists_for_a_native_client() {
     let (_dir, home) = private_home();
+    let saved = saved_gateway(&home);
     let (_runtime, origin) = serving(&home);
     for (method, route) in ROUTES {
         let ticket = native_ticket(&home);
@@ -93,8 +134,11 @@ async fn no_route_exists_for_a_native_client() {
         .await
         .unwrap();
         assert_eq!(reply.status(), 404, "{method} {route} for a native client");
+        let body: Value = reply.json().await.unwrap();
+        assert_eq!(body, json!({"detail": "Not Found"}), "{method} {route}");
     }
-    assert!(!home.join("gateway-connections.json").exists());
+    assert_eq!(std::fs::read_to_string(home.join(STORE)).unwrap(), saved);
+    assert!(!home.join(format!("{STORE}.lock")).exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -129,4 +173,6 @@ async fn a_browser_lists_the_saved_gateways_and_reaches_the_relay() {
     .await
     .unwrap();
     assert_eq!(relay.status(), 404, "an unsaved gateway is not relayed");
+    let body: Value = relay.json().await.unwrap();
+    assert_eq!(body, json!({"detail": "No such connection"}));
 }
