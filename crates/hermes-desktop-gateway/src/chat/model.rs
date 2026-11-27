@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use hermes_config::loader::{
-    dotenv_assignment, dotenv_values_in, env_name_writable, env_value_round_trips,
+    dotenv_assignment, dotenv_values_in, env_name_key, env_name_writable, env_value_round_trips,
     set_env_file_value,
 };
 use hermes_config::{GatewayConfig, LlmProviderConfig};
@@ -90,12 +90,7 @@ fn local(
             "model keys are managed only from this machine".into(),
         )));
     }
-    let chat = r.chat;
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || work(&chat))
-            .await
-            .unwrap_or_else(|e| Err((code, e.to_string())))
-    })
+    Box::pin(super::profiles::off_thread(r.chat, code, work))
 }
 
 /// Key variables changed since start-up by `model.save_key`, `model.disconnect` or
@@ -105,29 +100,20 @@ fn local(
 pub(super) struct Keys {
     changed: Mutex<HashMap<String, Option<String>>>,
     /// The names this gateway has seen in the home `.env` (at start-up, on a save or a reload),
-    /// as [`env_key`] gives them. Not the project `.env`: a reload reads that one only to fill
-    /// gaps, so a key it holds may be missing from what a reload reads.
+    /// as [`env_name_key`] gives them. Not the project `.env`: a reload reads that one only to
+    /// fill gaps, so a key it holds may be missing from what a reload reads.
     from_file: Mutex<BTreeSet<String>>,
 }
 
-/// `name` as the environment compares it: upper-cased on Windows, whose names ignore case.
-fn env_key(name: &str) -> String {
-    if cfg!(windows) {
-        name.to_ascii_uppercase()
-    } else {
-        name.to_string()
-    }
-}
-
-/// The names in `home`'s `.env` as [`env_key`] gives them: none for a missing file, `None` for
-/// one that cannot be read.
+/// The names in `home`'s `.env` as [`env_name_key`] gives them: none for a missing file,
+/// `None` for one that cannot be read.
 fn home_env_names(home: &Path) -> Option<BTreeSet<String>> {
     match std::fs::read_to_string(home.join(".env")) {
         Ok(contents) => Some(
             contents
                 .lines()
                 .filter_map(dotenv_assignment)
-                .map(|(name, _)| env_key(name))
+                .map(|(name, _)| env_name_key(name))
                 .collect(),
         ),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(BTreeSet::new()),
@@ -160,7 +146,7 @@ impl Keys {
 
     /// Whether this gateway has seen `var` in the home `.env`.
     fn came_from_home_file(&self, var: &str) -> bool {
-        self.names_from_file().contains(&env_key(var))
+        self.names_from_file().contains(&env_name_key(var))
     }
 
     /// `var`'s value now, if set and not blank: a change since start-up, else the environment's.
@@ -511,7 +497,7 @@ impl Chat {
             )
         })?;
         self.keys.set(var, Some(key.to_string()));
-        self.keys.saw_in_home_file([env_key(var)]);
+        self.keys.saw_in_home_file([env_name_key(var)]);
         drop(_write);
         let canonical = canonical_provider_id(slug);
         let mut row = option_rows(&self.config, &self.keys, "", false)
@@ -554,7 +540,7 @@ impl Chat {
     }
 
     /// `reload.env`: re-reads the key variables as start-up does (`hermes_config`'s order, the
-    /// managed `.env` last, names compared as [`env_key`]); the number changed. A key this
+    /// managed `.env` last, names compared as [`env_name_key`]); the number changed. A key this
     /// gateway has seen in the home `.env` and now gone from it and from what a reload reads is
     /// removed, as upstream removes a known key gone from a readable home `.env`; one only the
     /// shell or the project `.env` set stays. Other variables and a value that would not read
@@ -564,19 +550,19 @@ impl Chat {
         let home_names = home_env_names(&self.home);
         let values: HashMap<String, String> = dotenv_values_in(&self.home)
             .into_iter()
-            .map(|(name, value)| (env_key(&name), value))
+            .map(|(name, value)| (env_name_key(&name), value))
             .collect();
         let changed = self
             .key_variables()
             .iter()
-            .filter(|var| match values.get(&env_key(var)) {
+            .filter(|var| match values.get(&env_name_key(var)) {
                 Some(value) => {
                     env_value_round_trips(var, value) && self.keys.set(var, Some(value.clone()))
                 }
                 None => {
                     home_names
                         .as_ref()
-                        .is_some_and(|names| !names.contains(&env_key(var)))
+                        .is_some_and(|names| !names.contains(&env_name_key(var)))
                         && self.keys.came_from_home_file(var)
                         && self.keys.set(var, None)
                 }
@@ -963,5 +949,103 @@ mod tests {
         assert!(call(Origin::Local, "model.options", json!({}))
             .await
             .is_ok());
+    }
+
+    #[test]
+    fn a_env_file_that_cannot_be_written_fails_the_save_and_the_disconnect() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".env")).unwrap();
+        let config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
+            ..GatewayConfig::default()
+        };
+        let chat = Chat::new(config);
+        let failed = (
+            SAVE_FAILED,
+            "could not write this profile's .env".to_string(),
+        );
+        assert_eq!(chat.save_key("xiaomi", "saved-key").unwrap_err(), failed);
+        assert!(
+            !chat.keys.changed("XIAOMI_API_KEY"),
+            "a failed save is not used"
+        );
+        let failed = (DISCONNECT_FAILED, failed.1);
+        assert_eq!(chat.disconnect_provider("xiaomi").unwrap_err(), failed);
+    }
+
+    #[test]
+    fn a_key_saved_for_a_provider_config_yaml_does_not_list_passes_the_set_up_check() {
+        assert!(
+            std::env::var_os("XIAOMI_API_KEY").is_none(),
+            "this test needs XIAOMI_API_KEY unset"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let config = GatewayConfig {
+            home_dir: Some(dir.path().to_string_lossy().into_owned()),
+            model: Some("xiaomi:mimo-test".into()),
+            ..GatewayConfig::default()
+        };
+        let chat = Chat::new(config);
+        let before = chat.runtime_check();
+        assert_eq!(before["ok"], false, "{before}");
+
+        let saved = chat.save_key("xiaomi", "saved-key").unwrap();
+        assert_eq!(saved["provider"]["slug"], "xiaomi", "{saved}");
+        assert_eq!(saved["provider"]["authenticated"], true, "{saved}");
+        let check = chat.runtime_check();
+        assert_eq!(check["ok"], true, "{check}");
+
+        // Disconnected, the provider is as it was before the save: start-up never had its key.
+        chat.disconnect_provider("xiaomi").unwrap();
+        assert_eq!(chat.runtime_check(), before);
+    }
+
+    #[test]
+    fn the_set_up_check_reports_a_disconnected_start_up_key() {
+        // Start-up read `PATH` from the environment; the gateway has since removed it.
+        let provider: LlmProviderConfig =
+            serde_json::from_value(json!({ "api_key_env": "PATH" })).unwrap();
+        let mut config = GatewayConfig {
+            model: Some("envkey:m".into()),
+            ..GatewayConfig::default()
+        };
+        config.llm_providers.insert("envkey".into(), provider);
+        let chat = Chat::new(config);
+        chat.keys.set("PATH", None);
+        let check = chat.runtime_check();
+        assert_eq!(check["ok"], false, "{check}");
+        let error = check["error"].as_str().unwrap();
+        assert!(error.contains("it was disconnected"), "{check}");
+    }
+
+    #[test]
+    fn a_providers_own_model_lists_first_among_its_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = xiaomi_chat(
+            dir.path(),
+            json!({ "model": "mimo-own", "models": ["mimo-a", "mimo-b"] }),
+        );
+        let options = chat.model_options(false);
+        let row = options["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["slug"] == "xiaomi")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            row["models"],
+            json!(["mimo-own", "mimo-a", "mimo-b"]),
+            "{row}"
+        );
+        let listed = xiaomi_chat(
+            dir.path(),
+            json!({ "model": "mimo-b", "models": ["mimo-a", "mimo-b"] }),
+        )
+        .model_options(false);
+        assert_eq!(
+            listed["providers"][0]["models"],
+            json!(["mimo-a", "mimo-b"])
+        );
     }
 }

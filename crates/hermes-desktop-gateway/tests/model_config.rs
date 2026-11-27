@@ -321,9 +321,22 @@ async fn a_model_switch_changes_only_that_sessions_next_turns() {
         .await;
     assert_eq!(code(&reply), 4002);
     first.turn(&switched).await;
+    // A switch that names no provider keeps the session's provider.
+    let reply = first
+        .call(
+            5,
+            "config.set",
+            json!({"session_id": switched, "key": "model", "value": "mock-model"}),
+        )
+        .await;
+    assert_eq!(reply["result"]["value"], "mock-model", "{reply}");
+    first.turn(&switched).await;
     let seen = started.seen.lock().unwrap().clone();
     let models: Vec<&str> = seen.iter().map(|(model, _)| model.as_str()).collect();
-    assert_eq!(models, ["other-model", "mock-model", "other-model"]);
+    assert_eq!(
+        models,
+        ["other-model", "mock-model", "other-model", "mock-model"]
+    );
 }
 
 /// `reload.env` keeps a key that start-up read from the project `.env` (the working folder's)
@@ -373,7 +386,10 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
     assert!(reply.get("error").is_none(), "{reply}");
     client.call(2, "reload.env", json!({})).await;
     let reply = client.call(3, "model.options", json!({})).await;
-    child.kill().await.unwrap();
+    // Closing stdin ends the gateway normally, so a coverage run keeps its counts.
+    drop(child.stdin.take());
+    let exit = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await;
+    assert!(exit.unwrap().unwrap().success());
     drop(stdout);
     let rows = reply["result"]["providers"].as_array().unwrap();
     assert!(
