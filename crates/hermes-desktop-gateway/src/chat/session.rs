@@ -419,6 +419,31 @@ impl LiveSession {
         Next::Run(prompt, permit)
     }
 
+    /// Marks the idle session busy with nothing queued, so a change to its saved rows can run
+    /// with no turn's save between its check and its write; false whilst a turn runs or a
+    /// prompt waits. Prompts sent during the hold queue as behind a turn.
+    #[allow(dead_code, reason = "for session.undo and session.compress")]
+    pub(super) fn try_hold(&self) -> bool {
+        let mut hub = self.hub();
+        if hub.busy || !hub.queue.is_empty() {
+            return false;
+        }
+        hub.busy = true;
+        true
+    }
+
+    /// Ends a hold: true when prompts queued during it wait for a runner (the session stays
+    /// busy for it), else the session is idle again.
+    #[allow(dead_code, reason = "for session.undo and session.compress")]
+    pub(super) fn release_hold(&self) -> bool {
+        let mut hub = self.hub();
+        if hub.queue.is_empty() {
+            hub.busy = false;
+            return false;
+        }
+        true
+    }
+
     /// Leaves the session idle and drops its waiting prompts, for a turn task that ends
     /// without draining them (a panic, or the runtime shutting down).
     pub(super) fn abandon(&self) {
@@ -685,6 +710,32 @@ mod tests {
             Err((Refused::NoSlot, _))
         ));
         assert_eq!(live.state(), (false, 0, 0));
+    }
+
+    #[test]
+    fn a_hold_waits_for_an_idle_session_and_queues_prompts_until_it_ends() {
+        let live = session();
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slot = || Arc::clone(&slots).try_acquire_owned().ok();
+        assert!(matches!(
+            live.admit(slot, prompt("a")),
+            Ok(Admitted::Start { .. })
+        ));
+        assert!(!live.try_hold(), "a turn runs");
+        assert!(matches!(live.next(&mut None), Next::Idle));
+        assert!(live.try_hold());
+        assert!(!live.try_hold(), "already held");
+        assert!(matches!(
+            live.admit(slot, prompt("b")),
+            Ok(Admitted::Queued { .. })
+        ));
+        assert!(live.release_hold(), "a prompt waits for a runner");
+        let mut given = slot();
+        assert!(matches!(live.next(&mut given), Next::Run(..)));
+        assert!(matches!(live.next(&mut None), Next::Idle));
+        assert!(live.try_hold());
+        assert!(!live.release_hold(), "nothing waits");
+        assert!(!live.state().0);
     }
 
     #[test]

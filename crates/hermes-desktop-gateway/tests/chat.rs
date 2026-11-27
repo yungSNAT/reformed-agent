@@ -1235,6 +1235,105 @@ async fn events_since_replays_what_a_client_missed() {
     assert_eq!(bad["error"]["code"], -32602, "{bad}");
 }
 
+/// `session.title` reads and sets a live session's title, which a later turn keeps; it refuses
+/// an empty title, a missing id and an unknown session.
+#[tokio::test]
+async fn a_session_title_is_set_read_and_kept() {
+    let started = start(vec!["ok"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let read = client
+        .call(2, "session.title", json!({"session_id": session}))
+        .await;
+    assert_eq!(read["result"]["title"], "", "{read}");
+    let set = client
+        .call(
+            3,
+            "session.title",
+            json!({"session_id": session, "title": "  Trip plans "}),
+        )
+        .await;
+    assert_eq!(set["result"]["title"], "Trip plans", "{set}");
+    assert_eq!(set["result"]["pending"], false, "{set}");
+    client.submit(4, &session, "hello").await;
+    client.turn_events(&session).await;
+    let read = client
+        .call(5, "session.title", json!({"session_id": session}))
+        .await;
+    assert_eq!(read["result"]["title"], "Trip plans", "{read}");
+    assert_eq!(read["result"]["session_key"], session.as_str(), "{read}");
+    let renamed = client
+        .call(
+            6,
+            "session.title",
+            json!({"session_id": session, "title": "Trip"}),
+        )
+        .await;
+    assert_eq!(renamed["result"]["title"], "Trip", "{renamed}");
+    let cases = [
+        (json!({"session_id": session, "title": "   "}), 4021),
+        (json!({"title": "x"}), 4006),
+        (json!({"session_id": "no-such-session", "title": "x"}), 4001),
+        (json!({"session_id": session, "title": 7}), 4000),
+    ];
+    for (n, (params, code)) in cases.into_iter().enumerate() {
+        let reply = client
+            .call(10 + n as u64, "session.title", params.clone())
+            .await;
+        assert_eq!(reply["error"]["code"], code, "{params}: {reply}");
+    }
+}
+
+/// The terminal UI's `session.resume` on another connection: the saved messages with `text`,
+/// and the turns started on the first connection from then on.
+#[tokio::test]
+async fn a_legacy_resume_returns_the_messages_and_streams_later_turns() {
+    let started = start(vec!["answer"], Duration::ZERO).await;
+    let mut owner = connect(started.addr).await;
+    let session = owner.create().await;
+    owner.submit(2, &session, "question").await;
+    owner.turn_events(&session).await;
+
+    let mut other = connect(started.addr).await;
+    let resumed = other
+        .call(
+            1,
+            "session.resume",
+            json!({"session_id": session, "cols": 80}),
+        )
+        .await;
+    let result = &resumed["result"];
+    assert_eq!(result["session_id"], session.as_str(), "{resumed}");
+    assert_eq!(result["resumed"], session.as_str(), "{resumed}");
+    assert_eq!(result["message_count"], 2, "{resumed}");
+    let rows: Vec<(&str, &str)> = result["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["role"].as_str().unwrap(), r["text"].as_str().unwrap()))
+        .collect();
+    assert_eq!(rows, [("user", "question"), ("assistant", "answer")]);
+    assert!(result["info"]["model"].is_string(), "{resumed}");
+
+    owner.submit(3, &session, "again").await;
+    let seen = other.turn_events(&session).await;
+    assert_eq!(seen[0].0, "message.start");
+    assert_eq!(seen.last().unwrap().1["text"], "answer");
+
+    for (n, (params, code)) in [
+        (json!({}), 4006),
+        (json!({"session_id": "no-such-session"}), 4001),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let reply = other
+            .call(10 + n as u64, "session.resume", params.clone())
+            .await;
+        assert_eq!(reply["error"]["code"], code, "{params}: {reply}");
+    }
+}
+
 /// A session stages at most 16 images: the 17th is refused, and its file is not kept.
 #[tokio::test]
 async fn a_seventeenth_staged_image_is_refused() {
