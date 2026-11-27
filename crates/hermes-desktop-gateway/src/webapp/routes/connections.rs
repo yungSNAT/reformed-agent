@@ -27,6 +27,7 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -38,18 +39,43 @@ use axum::{Json, Router};
 use futures::StreamExt;
 use serde_json::{json, Map, Value};
 
-use super::store::{blocking, install_root, webapp_only, StoreLock};
+use super::store::{blocking, webapp_only, Served, StoreLock};
 use crate::webapp::api::{ApiError, ApiResult, Ctx};
 
-pub fn router() -> Router {
+/// Each handler gets the store's path from the served home, fixed when the router is built; no
+/// request value builds a path.
+pub fn router(served: &Served) -> Router {
+    let store = Arc::new(served.install_root().join(STORE_NAME));
+    let (list, save, last, remove, relay) = (
+        store.clone(),
+        store.clone(),
+        store.clone(),
+        store.clone(),
+        store,
+    );
     Router::new()
         .route(
             "/api/gateway-connections",
-            get(list_connections).post(save_connection),
+            get(move |ctx: Ctx| list_connections(list.clone(), ctx)).post(
+                move |ctx: Ctx, body: axum::body::Bytes| save_connection(save.clone(), ctx, body),
+            ),
         )
-        .route("/api/gateway-connections/last-used", post(set_last_used))
-        .route("/api/gateway-connections/{id}", delete(remove_connection))
-        .route("/api/relay/{id}/{*path}", any(relay_http))
+        .route(
+            "/api/gateway-connections/last-used",
+            post(move |ctx: Ctx, body: axum::body::Bytes| set_last_used(last.clone(), ctx, body)),
+        )
+        .route(
+            "/api/gateway-connections/{id}",
+            delete(move |ctx: Ctx, id: UrlPath<String>| remove_connection(remove.clone(), ctx, id)),
+        )
+        .route(
+            "/api/relay/{id}/{*path}",
+            any(
+                move |ctx: Ctx, id: UrlPath<(String, String)>, request: Request| {
+                    relay_http(relay.clone(), ctx, id, request)
+                },
+            ),
+        )
 }
 
 // ---- Store ----------------------------------------------------------------------------------
@@ -756,10 +782,6 @@ pub(crate) fn last_used(path: &Path, id: &str) -> Result<Map<String, Value>, Sto
 
 // ---- Registry routes ------------------------------------------------------------------------
 
-fn store_path(ctx: &Ctx) -> PathBuf {
-    install_root(ctx).join(STORE_NAME)
-}
-
 fn answer(doc: &Map<String, Value>, extra: Option<(&str, Value)>) -> Value {
     let mut out = json!({"ok": true, "registry": public_registry(Some(doc))});
     if let Some((key, value)) = extra {
@@ -768,14 +790,14 @@ fn answer(doc: &Map<String, Value>, extra: Option<(&str, Value)>) -> Value {
     out
 }
 
-async fn list_connections(ctx: Ctx) -> ApiResult {
+async fn list_connections(store: Arc<PathBuf>, ctx: Ctx) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = store_path(&ctx);
+    let path = PathBuf::clone(&store);
     let doc = blocking(move || read_doc(&path).map(|(doc, _)| doc).map_err(ApiError::from)).await?;
     Ok(Json(public_registry(doc.as_ref())))
 }
 
-async fn save_connection(ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+async fn save_connection(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
     webapp_only(&ctx)?;
     let Ok(Value::Object(payload)) = serde_json::from_slice::<Value>(&body) else {
         return Err(ApiError(
@@ -783,7 +805,7 @@ async fn save_connection(ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
             "A connection save needs a JSON object.".into(),
         ));
     };
-    let path = store_path(&ctx);
+    let path = PathBuf::clone(&store);
     let (doc, entry) = blocking(move || save(&path, &payload).map_err(ApiError::from)).await?;
     Ok(Json(answer(
         &doc,
@@ -791,20 +813,24 @@ async fn save_connection(ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
     )))
 }
 
-async fn remove_connection(ctx: Ctx, UrlPath(id): UrlPath<String>) -> ApiResult {
+async fn remove_connection(
+    store: Arc<PathBuf>,
+    ctx: Ctx,
+    UrlPath(id): UrlPath<String>,
+) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = store_path(&ctx);
+    let path = PathBuf::clone(&store);
     let doc = blocking(move || remove(&path, &id).map_err(ApiError::from)).await?;
     Ok(Json(answer(&doc, None)))
 }
 
-async fn set_last_used(ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+async fn set_last_used(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
     webapp_only(&ctx)?;
     let id = serde_json::from_slice::<Value>(&body)
         .ok()
         .and_then(|b| b.get("id").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
-    let path = store_path(&ctx);
+    let path = PathBuf::clone(&store);
     let doc = blocking(move || last_used(&path, &id).map_err(ApiError::from)).await?;
     Ok(Json(answer(&doc, None)))
 }
@@ -1298,6 +1324,7 @@ fn own_address(headers: &HeaderMap) -> Option<SocketAddr> {
 }
 
 async fn relay_http(
+    store: Arc<PathBuf>,
     ctx: Ctx,
     UrlPath((id, _path)): UrlPath<(String, String)>,
     request: Request,
@@ -1306,7 +1333,7 @@ async fn relay_http(
         return err.into_response();
     }
     let own = own_address(request.headers());
-    relay(&store_path(&ctx), &id, own, request).await
+    relay(&store, &id, own, request).await
 }
 
 #[cfg(test)]

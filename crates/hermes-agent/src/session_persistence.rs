@@ -391,6 +391,50 @@ impl SessionPersistence {
     }
 
     fn ensure_fts_schema(conn: &rusqlite::Connection, db_path: &Path) -> Result<bool, AgentError> {
+        // Rows saved whilst the insert trigger was missing are not in the index: once it is
+        // back, rebuild the index from `messages`.
+        let insert_trigger_missing = Self::fts_table_exists(conn)?
+            && conn
+                .query_row(
+                    "SELECT COUNT(*) = 0 FROM sqlite_master WHERE type = 'trigger' AND name = 'messages_ai'",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|e| {
+                    AgentError::Io(format!("Failed to inspect the sessions FTS triggers: {e}"))
+                })?;
+        if insert_trigger_missing {
+            // One transaction: if the rebuild fails, the trigger stays missing and the next open
+            // tries again.
+            let restored = rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )
+            .and_then(|tx| {
+                tx.execute_batch(Self::FTS_INSERT_TRIGGER_SQL)?;
+                tx.execute(
+                    "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')",
+                    [],
+                )?;
+                tx.commit()
+            });
+            restored.map_err(|e| {
+                AgentError::Io(format!(
+                    "Failed to restore the sessions FTS insert trigger and rebuild the index: {e}"
+                ))
+            })?;
+            tracing::info!(
+                "rebuilt the sessions FTS index after restoring its insert trigger ({})",
+                db_path.display()
+            );
+        }
+        Self::ensure_fts_tables_and_triggers(conn, db_path)
+    }
+
+    fn ensure_fts_tables_and_triggers(
+        conn: &rusqlite::Connection,
+        db_path: &Path,
+    ) -> Result<bool, AgentError> {
         match conn.execute_batch(&format!(
             "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                 content,

@@ -47,6 +47,7 @@ use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
+pub mod approval;
 mod attach;
 pub mod chat;
 #[cfg(unix)]
@@ -188,7 +189,7 @@ fn router(auth: Auth, port: u16, chat: Chat, extras: Extras) -> Router {
     let mut private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
         .route("/api/hermes/update/check", get(update_check))
-        .merge(webapp::api::groups());
+        .merge(webapp::api::groups(&gateway.api));
     #[allow(unused_mut)]
     let mut public = Router::new()
         .route("/api/health", get(health))
