@@ -574,7 +574,11 @@ async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
     let oneshot = json!({"input": "hello"});
 
     let reply = client
-        .call(1, "model.save_key", json!({"slug": "xiaomi", "api_key": "saved-key"}))
+        .call(
+            1,
+            "model.save_key",
+            json!({"slug": "xiaomi", "api_key": "saved-key"}),
+        )
         .await;
     assert!(reply.get("error").is_none(), "{reply}");
     client.call(2, "llm.oneshot", oneshot.clone()).await;
@@ -584,6 +588,11 @@ async fn llm_oneshot_sends_the_key_a_turn_would_and_none_once_disconnected() {
     assert_eq!(reply["result"]["disconnected"], true, "{reply}");
     client.call(4, "llm.oneshot", oneshot).await;
     // As a turn's: the key just saved, then none once it is removed.
-    let sent: Vec<String> = seen.lock().unwrap().iter().map(|(_, auth)| auth.clone()).collect();
+    let sent: Vec<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, auth)| auth.clone())
+        .collect();
     assert_eq!(sent, ["Bearer saved-key", ""]);
 }
