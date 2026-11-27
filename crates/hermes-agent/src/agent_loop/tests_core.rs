@@ -1173,11 +1173,14 @@
         };
         let _home = isolate_route_learning_home(&mut config);
         let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), Arc::new(DummyProvider));
+        let interruption = Arc::new(InterruptBeforeModel(agent.interrupt.clone()));
         let mut plugins = PluginManager::new();
-        plugins.register(Arc::new(InterruptBeforeModel(agent.interrupt.clone())));
+        plugins.register(interruption.clone());
+        plugins.initialize_all().await.unwrap();
         let agent = agent.with_plugins(Arc::new(Mutex::new(plugins)));
         let user = Message::user("Summarise the field notes");
         let result = agent.run(vec![user.clone()], None).await.unwrap();
+        interruption.shutdown().await.unwrap();
 
         assert!(result.interrupted);
         assert!(!result.finished_naturally);
