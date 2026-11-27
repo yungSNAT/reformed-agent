@@ -1,0 +1,104 @@
+exit=Some(0)
+--- stdout
+[sync-upstream] Fetching origin/main and upstream/main...
+[sync-upstream] Checking out main and updating from origin...
+[sync-upstream] Creating sync branch chore/upstream-sync-<TS>...
+[sync-upstream] Merging refs/remotes/upstream/main into chore/upstream-sync-<TS>...
+[sync-upstream] Pushing chore/upstream-sync-<TS> to origin...
+[sync-upstream] PR created successfully: https://example.invalid/pull/8
+[sync-upstream] Sync branch prepared: chore/upstream-sync-<TS>
+[sync-upstream] Report: <ROOT>/reports/upstream-sync-<TS>.txt
+--- stderr
+--- calls
+gh [pr] [create] [--base] [main] [--head] [chore/upstream-sync-<TS>] [--title] [chore: sync upstream main (<TS>)] --body-file <BODY>
+  | Automated upstream sync.
+  | 
+  | - strategy: `merge`
+  | - upstream ref: `refs/remotes/upstream/main`
+  | - upstream sha: `<C:upstream: add tool>`
+  | - origin sha before sync: `<C:fork: carry>`
+  | - verification: `<ROOT>/bin/cargo test -p hermes-gateway`
+  | - report: `<ROOT>/reports/upstream-sync-<TS>.txt`
+  | - parity queue summary: `unavailable`
+  | 
+  | Drift artifacts:
+  | - `docs/parity/upstream-missing-queue.json`
+  | - `docs/parity/upstream-missing-queue.md`
+  | - `docs/parity/global-parity-proof.json`
+  | - `<ROOT>/reports/upstream-sync-<TS>.txt`
+  | 
+  | Test guidance:
+  | - Run `cargo test -p hermes-gateway` (or the configured `--test-cmd`) at minimum.
+  | - Run `cargo run --locked -q -p hermes-parity-tools -- check-fork-carry` to verify the required fork behaviour contracts.
+  | - If parity drift is detected, regenerate queue/proof artifacts before merge.
+  | 
+  | Commits pending from upstream at sync start:
+  | ```
+  | <C:upstream: add tool> upstream: add tool
+  | <C:upstream: add guide> upstream: add guide
+  | ```
+gh [label] [create] [upstream-sync] [--color] [1D76DB] [--description] [Automated upstream sync metadata]
+gh [pr] [edit] [https://example.invalid/pull/8] [--add-label] [upstream-sync]
+gh [label] [create] [parity-sync] [--color] [1D76DB] [--description] [Automated upstream sync metadata]
+gh [pr] [edit] [https://example.invalid/pull/8] [--add-label] [parity-sync]
+--- file reports/upstream-sync-<TS>.txt
+# Upstream Sync Report
+
+timestamp_utc: <TS>
+repo_root: <ROOT>/repo
+mode: branch-pr
+strategy: merge
+strict_risk_gate: 0
+run_redteam_gate: 0
+redteam_cmd: <ROOT>/bin/cargo redteam
+run_elite_gate: 0
+elite_cmd: <ROOT>/bin/cargo elite
+elite_rollback_cmd: 
+draft_pr: 0
+allow_risk_paths: 0
+pr_labels: upstream-sync,parity-sync
+risk_paths_file: <ROOT>/repo/scripts/upstream-risk-paths.txt
+upstream_url: <ROOT>/remotes/NousResearch/hermes-agent.git
+expected_upstream_repo: NousResearch/hermes-agent
+allow_non_official_upstream: 0
+origin_ref: refs/remotes/origin/main
+upstream_ref: refs/remotes/upstream/main
+origin_sha: <C:fork: carry>
+upstream_sha: <C:upstream: add tool>
+
+## Pending Upstream Commits
+```
+<C:upstream: add tool> upstream: add tool
+<C:upstream: add guide> upstream: add guide
+```
+
+## Diff Stat
+```
+ docs/guide.md | 1 +
+ fork.txt      | 1 -
+ tools/a.txt   | 1 +
+ 3 files changed, 2 insertions(+), 1 deletion(-)
+```
+
+## Files
+```
+A	docs/guide.md
+D	fork.txt
+A	tools/a.txt
+```
+
+fork_carry: skipped
+status: synced-branch-pr
+sync_branch: chore/upstream-sync-<TS>
+--- refs remotes/origin.git
+refs/heads/chore/upstream-sync-<TS> <C:Merge remote-tracking branch 'refs/remotes/upstream/main' into chore/upstream-sync-<TS>>
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/chore/upstream-sync-<TS> <C:Merge remote-tracking branch 'refs/remotes/upstream/main' into chore/upstream-sync-<TS>>
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/chore/upstream-sync-<TS> <C:Merge remote-tracking branch 'refs/remotes/upstream/main' into chore/upstream-sync-<TS>>
+refs/remotes/origin/main <C:fork: carry>
+refs/remotes/upstream/main <C:upstream: add tool>
+--- status
+## chore/upstream-sync-<TS>...origin/chore/upstream-sync-<TS>
