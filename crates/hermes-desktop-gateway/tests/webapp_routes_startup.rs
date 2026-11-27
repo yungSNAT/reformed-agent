@@ -4,6 +4,7 @@
 
 mod webapp_support;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use serde_json::{json, Value};

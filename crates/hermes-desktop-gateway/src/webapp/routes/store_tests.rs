@@ -1,8 +1,11 @@
+#[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(unix)]
 use std::sync::{Arc, Barrier};
 
 use super::*;
 
+#[cfg(unix)]
 fn lock_dir(path: &Path) -> PathBuf {
     path.with_file_name("store.json.lock")
 }
