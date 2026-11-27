@@ -993,12 +993,14 @@ mod tests {
         keys.set("PATH", Some("saved-key".into()));
         assert!(keys.drop_home_value("PATH", Some(&project("changed-key"))));
         assert_eq!(keys.value("PATH").as_deref(), Some("changed-key"));
-        // A value a `.env` would not read back as itself waits for the next start.
-        assert!(!keys.drop_home_value("PATH", Some(&project("${OTHER}"))));
-        assert_eq!(keys.value("PATH").as_deref(), Some("changed-key"));
-        // A project file that cannot be read keeps it.
-        assert!(!keys.drop_home_value("PATH", None));
-        assert_eq!(keys.value("PATH").as_deref(), Some("changed-key"));
+        // A value a `.env` would not read back as itself, or a project file that cannot be
+        // read: start-up's project value.
+        let start_up = std::env::var("PATH").ok();
+        assert!(keys.drop_home_value("PATH", Some(&project("${OTHER}"))));
+        assert_eq!(keys.value("PATH"), start_up);
+        keys.set("PATH", Some("saved-key".into()));
+        assert!(keys.drop_home_value("PATH", None));
+        assert_eq!(keys.value("PATH"), start_up);
         // Gone from the project file too: removed.
         assert!(keys.drop_home_value("PATH", Some(&HashMap::new())));
         assert_eq!(keys.value("PATH"), None);
@@ -1009,9 +1011,19 @@ mod tests {
         let keys = Keys::at_start_up(dir.path());
         assert!(keys.drop_home_value("PATH", Some(&project("project-key"))));
         assert_eq!(keys.value("PATH").as_deref(), Some("project-key"));
-        // With no project value, and with no project file readable: removed.
+        // With no project file readable or no usable value there: removed, even where start-up
+        // also read the project file.
         let keys = Keys::at_start_up(dir.path());
         assert!(keys.drop_home_value("PATH", None));
+        assert_eq!(keys.value("PATH"), None);
+        let keys = Keys {
+            started_in_project_file: BTreeSet::from(["PATH".to_string()]),
+            ..Keys::at_start_up(dir.path())
+        };
+        assert!(keys.drop_home_value("PATH", None));
+        assert_eq!(keys.value("PATH"), None);
+        let keys = Keys::at_start_up(dir.path());
+        assert!(keys.drop_home_value("PATH", Some(&project("${OTHER}"))));
         assert_eq!(keys.value("PATH"), None);
     }
 
@@ -1021,10 +1033,11 @@ mod tests {
         assert_eq!(env_file_values(dir.path()), Some(HashMap::new()));
         std::fs::write(
             dir.path().join(".env"),
-            "# note\nA_KEY=\"quoted\"\nB_KEY= plain \n",
+            "# note\nA_KEY=\"quoted\"\nB_KEY= plain \nA_KEY=later\n",
         )
         .unwrap();
         let values = env_file_values(dir.path()).unwrap();
+        // The first of 2 lines, as start-up's fill-only project read keeps it.
         assert_eq!(values["A_KEY"], "quoted");
         assert_eq!(values["B_KEY"], "plain");
         assert_eq!(values.len(), 2);
