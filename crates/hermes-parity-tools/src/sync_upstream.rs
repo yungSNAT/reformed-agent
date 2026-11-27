@@ -668,15 +668,24 @@ impl Report {
     }
 }
 
-/// A temporary file under `TMPDIR`, removed when dropped.
-struct TempFile(PathBuf);
+/// A temporary file under `TMPDIR`, as `mktemp` made it: a new file (an
+/// existing name, symlinks included, is skipped, never followed), readable
+/// by its owner only, removed when dropped.
+pub(crate) struct TempFile(PathBuf);
 
 impl TempFile {
     fn new(text: &str) -> Step<Self> {
-        let dir = std::env::temp_dir();
+        Self::new_in(&std::env::temp_dir(), "sync-upstream", text)
+    }
+
+    pub(crate) fn new_in(dir: &Path, prefix: &str, text: &str) -> Step<Self> {
         for n in 0..1000u32 {
-            let path = dir.join(format!("sync-upstream.{}.{n}", std::process::id()));
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            let path = dir.join(format!("{prefix}.{}.{n}", std::process::id()));
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            match options.open(&path) {
                 Ok(mut f) => {
                     return match f.write_all(text.as_bytes()) {
                         Ok(()) => Ok(Self(path)),
@@ -698,7 +707,7 @@ impl TempFile {
         Err(1)
     }
 
-    fn path(&self) -> String {
+    pub(crate) fn path(&self) -> String {
         self.0.to_string_lossy().into_owned()
     }
 }
@@ -807,7 +816,7 @@ impl Sync {
                 c.upstream
             )));
         }
-        if !git_value(&["status", "--porcelain"])?.is_empty() {
+        if !git_capture(&["status", "--porcelain"]).1.is_empty() {
             return Err(die(
                 "Working tree is not clean. Commit/stash changes before syncing.",
             ));
@@ -1457,6 +1466,29 @@ mod tests {
             queue_summary(&dir.path().join("missing.json")),
             "unavailable"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_files_skip_planted_symlinks_and_are_private() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("target.txt");
+        fs::write(&target, "keep\n").expect("write");
+        let planted = dir.path().join(format!("t.{}.0", std::process::id()));
+        std::os::unix::fs::symlink(&target, &planted).expect("symlink");
+        let file = TempFile::new_in(dir.path(), "t", "secret\n").expect("temp file");
+        assert_ne!(Path::new(&file.path()), planted);
+        assert_eq!(fs::read_to_string(&target).expect("read"), "keep\n");
+        assert_eq!(fs::read_to_string(file.path()).expect("read"), "secret\n");
+        let mode = fs::metadata(file.path())
+            .expect("meta")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let path = file.path();
+        drop(file);
+        assert!(!Path::new(&path).exists());
     }
 
     #[test]
