@@ -104,6 +104,11 @@ pub const GROUPS: &[Group] = &[
         audience: Audience::Browser,
         routes: super::routes::connections::router,
     },
+    #[cfg(unix)]
+    Group {
+        audience: Audience::Browser,
+        routes: super::routes::files::router,
+    },
 ];
 
 /// Checks the profile a request names (`?profile=`) against the one this gateway serves: absent

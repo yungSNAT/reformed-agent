@@ -37,7 +37,10 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::startup::{blocking, default_cwd_for, machine_root};
+use hermes_core::git::GitRead;
+
+use super::startup::default_cwd_for;
+use super::store::{blocking, home, install_root};
 use crate::webapp::api::{served_profile, ApiError, ApiResult, Caller, Ctx};
 
 pub fn router() -> Router {
@@ -508,33 +511,30 @@ pub(crate) fn valid_ref(r: &str) -> bool {
 
 /// A git command for the folder `dir` under `root`: the repository's configuration cannot run
 /// a program, discovery stops at the root, and no hook, external diff or submodule diff runs.
-fn git(dir: &Path, root: &Path) -> Option<Command> {
-    let mut cmd = hermes_core::git::read_only_git(dir)?;
+fn git(dir: &Path, root: &Path, read: GitRead) -> Option<Command> {
+    let mut cmd = hermes_core::git::read_only_git(dir)?
+        .config("core.hooksPath", "/dev/null")
+        .config("diff.external", "")
+        .config("diff.submodule", "short")
+        .config("status.submoduleSummary", "false")
+        .command(read);
     let ceiling = root.parent().unwrap_or(root);
     cmd.env("GIT_CEILING_DIRECTORIES", ceiling)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(["-c", "core.hooksPath=/dev/null", "-c", "diff.external="])
-        .args([
-            "-c",
-            "diff.submodule=short",
-            "-c",
-            "status.submoduleSummary=false",
-        ]);
+        .env("GIT_TERMINAL_PROMPT", "0");
     Some(cmd)
 }
 
-/// `status` as `git/status` runs it. A submodule has its own configuration, which the overrides
-/// do not reach, so status never looks inside one.
-pub(crate) const STATUS_ARGS: [&str; 5] = [
-    "status",
+/// `status` options as `git/status` runs it. A submodule has its own configuration, which the
+/// overrides do not reach, so status never looks inside one: `=all` follows and outranks the
+/// `=dirty` guard [`GitRead::Status`] puts first.
+pub(crate) const STATUS_ARGS: [&str; 4] = [
     "--porcelain=v2",
     "--branch",
     "-z",
     "--ignore-submodules=all",
 ];
 /// The line counts of tracked changes, never inside a submodule.
-pub(crate) const DIFF_ARGS: [&str; 7] = [
-    "diff",
+pub(crate) const DIFF_ARGS: [&str; 6] = [
     "--no-ext-diff",
     "--no-textconv",
     "--numstat",
@@ -543,13 +543,13 @@ pub(crate) const DIFF_ARGS: [&str; 7] = [
     "HEAD",
 ];
 
-/// `rev-parse` for a ref `valid_ref` passed, after `--end-of-options` all the same.
-pub(crate) fn rev_parse_args(wanted: &str) -> [&str; 4] {
-    ["rev-parse", "--verify", "--end-of-options", wanted]
+/// `rev-parse` options for a ref `valid_ref` passed, after `--end-of-options` all the same.
+pub(crate) fn rev_parse_args(wanted: &str) -> [&str; 3] {
+    ["--verify", "--end-of-options", wanted]
 }
 
-fn git_out(dir: &Path, root: &Path, args: &[&str]) -> Option<(bool, String)> {
-    let mut cmd = git(dir, root)?;
+fn git_out(dir: &Path, root: &Path, read: GitRead, args: &[&str]) -> Option<(bool, String)> {
+    let mut cmd = git(dir, root, read)?;
     cmd.args(args);
     let out = hermes_core::git::output_within_timeout(&mut cmd, GIT_TIMEOUT)?;
     Some((
@@ -558,8 +558,8 @@ fn git_out(dir: &Path, root: &Path, args: &[&str]) -> Option<(bool, String)> {
     ))
 }
 
-fn git_line(dir: &Path, root: &Path, args: &[&str]) -> Option<String> {
-    match git_out(dir, root, args)? {
+fn git_line(dir: &Path, root: &Path, read: GitRead, args: &[&str]) -> Option<String> {
+    match git_out(dir, root, read, args)? {
         (true, out) => out
             .lines()
             .next()
@@ -669,7 +669,12 @@ fn top_of(dir: &Path, prefix: &str) -> Option<PathBuf> {
 }
 
 fn default_branch(dir: &Path, root: &Path) -> Option<String> {
-    if let Some(head) = git_line(dir, root, &["rev-parse", "--abbrev-ref", "origin/HEAD"]) {
+    if let Some(head) = git_line(
+        dir,
+        root,
+        GitRead::RevParse,
+        &["--abbrev-ref", "origin/HEAD"],
+    ) {
         if head != "origin/HEAD" {
             return head
                 .split_once('/')
@@ -685,7 +690,8 @@ fn default_branch(dir: &Path, root: &Path) -> Option<String> {
     ]
     .into_iter()
     .find(|r| {
-        git_out(dir, root, &["rev-parse", "--verify", "--quiet", *r]).is_some_and(|(ok, _)| ok)
+        git_out(dir, root, GitRead::RevParse, &["--verify", "--quiet", *r])
+            .is_some_and(|(ok, _)| ok)
     })
     .map(|r| r.rsplit('/').next().unwrap_or(r).to_owned())
 }
@@ -695,7 +701,7 @@ fn default_branch(dir: &Path, root: &Path) -> Option<String> {
 pub(crate) fn repo_status(dir: &RepoDir, refused: &[PathBuf]) -> Option<Value> {
     let run_in = dir.git_path();
     let root = dir.resolved.root.as_path();
-    let (ok, raw) = git_out(&run_in, root, &STATUS_ARGS)?;
+    let (ok, raw) = git_out(&run_in, root, GitRead::Status, &STATUS_ARGS)?;
     if !ok {
         return None;
     }
@@ -720,7 +726,7 @@ pub(crate) fn repo_status(dir: &RepoDir, refused: &[PathBuf]) -> Option<Value> {
         .map(|(t, xy, p)| classify(*t, xy, p))
         .collect();
     let (mut added, mut removed) = (0u64, 0u64);
-    if let Some((true, numstat)) = git_out(&run_in, root, &DIFF_ARGS) {
+    if let Some((true, numstat)) = git_out(&run_in, root, GitRead::Diff, &DIFF_ARGS) {
         // `-z`: `added<TAB>removed<TAB>path` records; a rename's 2 paths follow as records
         // without a tab, which count nothing.
         for record in numstat.split('\0') {
@@ -736,7 +742,7 @@ pub(crate) fn repo_status(dir: &RepoDir, refused: &[PathBuf]) -> Option<Value> {
         }
     }
     // Porcelain paths are relative to the repository's top, not to the folder asked about.
-    let top = git_out(&run_in, root, &["rev-parse", "--show-prefix"])
+    let top = git_out(&run_in, root, GitRead::RevParse, &["--show-prefix"])
         .filter(|(ok, _)| *ok)
         .and_then(|(_, prefix)| top_of(&dir.resolved.path, prefix.trim_end_matches('\n')));
     if let Some(top) = top {
@@ -856,11 +862,7 @@ fn admit(
 ) -> Result<(Roots, Option<PathBuf>), ApiError> {
     local_only(ctx.caller, peer(ext))?;
     served_profile(&ctx.api, q.get("profile").map(String::as_str))?;
-    let hermes_home = ctx
-        .api
-        .home
-        .clone()
-        .unwrap_or_else(hermes_config::hermes_home);
+    let hermes_home = home(ctx);
     let user_home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from);
@@ -874,7 +876,7 @@ fn admit(
     {
         allowed.push(cwd);
     }
-    let refused = [hermes_home.clone(), machine_root(ctx)];
+    let refused = [hermes_home.clone(), install_root(ctx)];
     Ok((Roots::new(&allowed, &refused), user_home))
 }
 
@@ -1067,6 +1069,7 @@ async fn rev_parse(
         let sha = git_line(
             &dir.git_path(),
             &dir.resolved.root,
+            GitRead::RevParse,
             &rev_parse_args(&wanted),
         );
         Ok(json!({"sha": sha}))

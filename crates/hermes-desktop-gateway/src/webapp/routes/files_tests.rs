@@ -451,9 +451,7 @@ fn git_runs_in_the_folder_that_was_checked() {
     let dir = repo_dir(&at(&t, "proj"), &roots(&t), Some(&t.root)).unwrap();
     std::fs::rename(&repo, t.root.join("proj.old")).unwrap();
     symlink(&other, &repo).unwrap();
-    let Some(status) = repo_status(&dir, &[]) else {
-        return; // git older than 2.39.1 gives no command
-    };
+    let status = repo_status(&dir, &[]).expect("a status for the folder checked");
     assert_eq!(status["branch"], "main", "git followed a link swapped in");
 }
 
@@ -465,9 +463,7 @@ fn untracked_lines_are_counted_from_the_repository_top() {
     commit_all(&repo);
     std::fs::write(repo.join("top.txt"), "a\nb\nc\n").unwrap();
     std::fs::write(repo.join("src/new.txt"), "x\ny\n").unwrap();
-    let Some(status) = status_at(&t, "proj/src") else {
-        return;
-    };
+    let status = status_at(&t, "proj/src").expect("a status for the folder");
     assert_eq!(status["untracked"], 2);
     assert_eq!(status["added"], 5);
 }
@@ -584,13 +580,21 @@ fn every_git_call_carries_the_overrides_no_behaviour_test_can_see() {
     // Status runs no hook, and diff already passes --no-ext-diff, so these keys cannot fail a
     // behaviour test; this test fails if one is dropped.
     let t = tree();
-    let Some(cmd) = git(&t.root, &t.root) else {
-        return;
-    };
+    let mut cmd = git(&t.root, &t.root, GitRead::Status).expect("git 2.39.1 or later");
+    cmd.args(STATUS_ARGS);
     let args: Vec<String> = cmd
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    let submodules: Vec<&String> = args
+        .iter()
+        .filter(|a| a.starts_with("--ignore-submodules="))
+        .collect();
+    assert_eq!(
+        submodules.last().map(|a| a.as_str()),
+        Some("--ignore-submodules=all"),
+        "status's own `=all` must come last and outrank the guard: {args:?}"
+    );
     for want in [
         "core.hooksPath=/dev/null",
         "diff.external=",
