@@ -480,6 +480,148 @@
         }
     }
 
+    #[tokio::test]
+    async fn rejected_tools_try_a_compatible_model_then_retry_the_original_without_tools() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        if run_isolated_agent_test(
+            "agent_loop::tests::rejected_tools_try_a_compatible_model_then_retry_the_original_without_tools",
+        ) {
+            return;
+        }
+
+        const PRIMARY: &str = "openai/fixture-primary";
+        const ROUTED: &str = "openai/fixture-routed";
+        const FALLBACK: &str = "fixture/compatible-model";
+        const TOOL: &str = "lookup_weekly_summary";
+        let _fallback = EnvVarGuard::set("HERMES_TOOL_PAYLOAD_FALLBACK_MODEL", FALLBACK);
+
+        let home = tempfile::tempdir().unwrap();
+        let default_server = MockServer::start().await;
+        let routed_server = MockServer::start().await;
+        let default_url = format!("{}/v1", default_server.uri());
+        let routed_url = format!("{}/v1", routed_server.uri());
+        let primary = Arc::new(
+            NousProvider::new("fixture-only")
+                .with_base_url(&default_url)
+                .with_optional_request_timeout_seconds(Some(5.0)),
+        );
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: format!("nous:{PRIMARY}"),
+                provider: Some("nous".into()),
+                hermes_home: Some(home.path().to_str().unwrap().into()),
+                isolated: true,
+                code_index_enabled: false,
+                runtime_providers: HashMap::from([(
+                    "nous".into(),
+                    RuntimeProviderConfig {
+                        api_key: Some("fixture-only".into()),
+                        base_url: Some(default_url),
+                        request_timeout_seconds: Some(5.0),
+                        ..RuntimeProviderConfig::default()
+                    },
+                )]),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            primary,
+        );
+        let mut route = agent.turn_route_reliability_guard(format!("nous:{ROUTED}"));
+        route.provider = Some("nous".into());
+        route.base_url = Some(routed_url);
+        let mut ctx = ContextManager::new(1_000);
+        ctx.add_message(Message::user("Find the weekly summary."));
+        let schemas = [ToolSchema::new(
+            TOOL,
+            "Look up the weekly summary",
+            hermes_core::JsonSchema::new("object"),
+        )];
+
+        for (use_route, accept_fallback, accept_without_tools) in [
+            (false, true, false),
+            (true, false, true),
+            (false, false, false),
+        ] {
+            let (server, unused) = if use_route {
+                (&routed_server, &default_server)
+            } else {
+                (&default_server, &routed_server)
+            };
+            let requested = if use_route { ROUTED } else { PRIMARY };
+            let count = if accept_fallback { 2 } else { 3 };
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .respond_with(move |request: &wiremock::Request| {
+                    let body: Value = request.body_json().unwrap();
+                    let model = body["model"].as_str().unwrap();
+                    let has_tools = body["tools"].as_array().is_some_and(|tools| !tools.is_empty());
+                    let (status, text) = match (model, has_tools) {
+                        (model, true) if model == requested => (400, "Invalid tools payload"),
+                        (FALLBACK, true) if accept_fallback => (200, "Compatible model handled the tools"),
+                        (FALLBACK, true) => (400, "Compatible model refused the tools"),
+                        (model, false) if model == requested && accept_without_tools => {
+                            (200, "Original model replied without tools")
+                        }
+                        (model, false) if model == requested => {
+                            (503, "Original model unavailable without tools")
+                        }
+                        _ => (422, "Unexpected model or tools"),
+                    };
+                    if status == 200 {
+                        ResponseTemplate::new(status).set_body_json(json!({
+                            "id": "fixture-completion",
+                            "model": model,
+                            "choices": [{
+                                "message": {"role": "assistant", "content": text},
+                                "finish_reason": "stop"
+                            }]
+                        }))
+                    } else {
+                        ResponseTemplate::new(status).set_body_json(json!({"error": {"message": text}}))
+                    }
+                })
+                .expect(count as u64)
+                .mount(server)
+                .await;
+
+            let result = agent
+                .call_llm_with_retry_inner(&ctx, &schemas, use_route.then_some(&route), None)
+                .await;
+            if accept_fallback || accept_without_tools {
+                let expected = if accept_fallback {
+                    "Compatible model handled the tools"
+                } else {
+                    "Original model replied without tools"
+                };
+                assert_eq!(result.unwrap().message.content.as_deref(), Some(expected));
+            } else {
+                let error = result.unwrap_err();
+                assert!(matches!(&error, AgentError::LlmApi(message) if message.contains("503") && message.contains("Original model unavailable without tools")), "{error}");
+            }
+
+            let requests = server.received_requests().await.unwrap();
+            assert_eq!(requests.len(), count);
+            assert!(unused.received_requests().await.unwrap().is_empty());
+            let bodies: Vec<Value> = requests
+                .iter()
+                .map(|request| request.body_json().unwrap())
+                .collect();
+            assert_eq!(bodies[0]["model"], requested);
+            assert_eq!(bodies[1]["model"], FALLBACK);
+            for body in &bodies[..2] {
+                assert_eq!(body["tools"].as_array().map(Vec::len), Some(1));
+                assert_eq!(body["tools"][0]["function"]["name"], TOOL);
+            }
+            if let Some(last) = bodies.get(2) {
+                assert_eq!(last["model"], requested);
+                assert!(last["tools"].is_null() || last["tools"].as_array().is_some_and(Vec::is_empty));
+            }
+            server.reset().await;
+        }
+    }
+
     #[test]
     fn chaos_harness_fixture_is_seeded_and_unique() {
         let fixture = load_chaos_harness_fixture();
@@ -865,6 +1007,7 @@
         CostLimit,
         UnknownTool,
         SemanticRetry,
+        SemanticRetryFailure { retryable: bool },
         FinalizerRewrite,
         EmptyStop,
         PartialInterrupt,
@@ -906,6 +1049,38 @@
                 ..Default::default()
             }
         }
+
+        fn invalid_argument_batch(attempt: u32) -> Message {
+            let tool_call = |id: String, name: &str, arguments: &str| ToolCall {
+                id,
+                function: hermes_core::FunctionCall {
+                    name: name.into(),
+                    arguments: arguments.into(),
+                },
+                extra_content: None,
+            };
+            let calls = match attempt {
+                1..=2 => vec![
+                    tool_call(
+                        format!("invalid-fixture-{attempt}"),
+                        "fixture_invalid",
+                        STREAM_UNREPRESENTABLE_ARGUMENT,
+                    ),
+                    tool_call(
+                        format!("skipped-fixture-{attempt}"),
+                        "fixture_valid",
+                        r#"{"value":"skipped"}"#,
+                    ),
+                ],
+                3 => vec![tool_call(
+                    "valid-fixture-3".into(),
+                    "fixture_valid",
+                    r#"{"value":"recovered"}"#,
+                )],
+                _ => return Message::assistant("Recovered after the tool result"),
+            };
+            Message::assistant_with_tool_calls(None, calls)
+        }
     }
 
     #[async_trait::async_trait]
@@ -928,7 +1103,26 @@
                     finish_reason: Some("stop".into()),
                 });
             }
-            if !matches!(self.scenario, StreamRetryScenario::SemanticRetry) {
+            if matches!(self.scenario, StreamRetryScenario::InvalidArgumentBatch) {
+                let mut calls = self.calls.lock().expect("calls lock");
+                *calls += 1;
+                let message = Self::invalid_argument_batch(*calls);
+                let finish_reason = if message.tool_calls.is_some() {
+                    "tool_calls"
+                } else {
+                    "stop"
+                };
+                return Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "fixture-model".into(),
+                    finish_reason: Some(finish_reason.into()),
+                });
+            }
+            if !matches!(
+                self.scenario,
+                StreamRetryScenario::SemanticRetry | StreamRetryScenario::SemanticRetryFailure { .. }
+            ) {
                 return Err(AgentError::LlmApi("unused".to_string()));
             }
             assert!(messages.iter().any(|message| {
@@ -937,6 +1131,14 @@
             }));
             let mut retries = self.semantic_retries.lock().unwrap();
             *retries += 1;
+            if let StreamRetryScenario::SemanticRetryFailure { retryable } = self.scenario {
+                let message = if retryable {
+                    "HTTP 503 during fixture semantic recovery"
+                } else {
+                    "invalid request during fixture semantic recovery"
+                };
+                return Err(AgentError::LlmApi(message.into()));
+            }
             let (text, finish_reason, prompt_tokens, completion_tokens) = if *retries == 1 {
                 ("", "length", 4, 2)
             } else {
@@ -985,7 +1187,7 @@
                     Ok(stream_chunk_tool_args(0, "{}")),
                     Ok(stream_chunk_finish("tool_calls")),
                 ],
-                StreamRetryScenario::SemanticRetry => vec![
+                StreamRetryScenario::SemanticRetry | StreamRetryScenario::SemanticRetryFailure { .. } => vec![
                     Ok(StreamChunk {
                         delta: Some(hermes_core::StreamDelta {
                             content: None,
@@ -1125,30 +1327,27 @@
                     Ok(stream_chunk_content("Recorded the complete fixture.")),
                     Ok(stream_chunk_finish("stop")),
                 ],
-                StreamRetryScenario::InvalidArgumentBatch if attempt <= 2 => vec![
-                    Ok(stream_chunk_tool_name(
-                        0,
-                        &format!("invalid-fixture-{attempt}"),
-                        "fixture_invalid",
-                    )),
-                    Ok(stream_chunk_tool_args(0, STREAM_UNREPRESENTABLE_ARGUMENT)),
-                    Ok(stream_chunk_tool_name(
-                        1,
-                        &format!("skipped-fixture-{attempt}"),
-                        "fixture_valid",
-                    )),
-                    Ok(stream_chunk_tool_args(1, r#"{"value":"skipped"}"#)),
-                    Ok(stream_chunk_finish("tool_calls")),
-                ],
-                StreamRetryScenario::InvalidArgumentBatch if attempt == 3 => vec![
-                    Ok(stream_chunk_tool_name(0, "valid-fixture-3", "fixture_valid")),
-                    Ok(stream_chunk_tool_args(0, r#"{"value":"recovered"}"#)),
-                    Ok(stream_chunk_finish("tool_calls")),
-                ],
-                StreamRetryScenario::InvalidArgumentBatch => vec![
-                    Ok(stream_chunk_content("Recovered after the tool result")),
-                    Ok(stream_chunk_finish("stop")),
-                ],
+                StreamRetryScenario::InvalidArgumentBatch => {
+                    let message = Self::invalid_argument_batch(attempt);
+                    if let Some(calls) = message.tool_calls {
+                        let mut chunks = Vec::new();
+                        for (index, call) in (0..).zip(calls) {
+                            chunks.push(Ok(stream_chunk_tool_name(
+                                index,
+                                &call.id,
+                                &call.function.name,
+                            )));
+                            chunks.push(Ok(stream_chunk_tool_args(index, &call.function.arguments)));
+                        }
+                        chunks.push(Ok(stream_chunk_finish("tool_calls")));
+                        chunks
+                    } else {
+                        vec![
+                            Ok(stream_chunk_content(message.content.as_deref().unwrap())),
+                            Ok(stream_chunk_finish("stop")),
+                        ]
+                    }
+                }
             };
 
             let events = futures::stream::iter(events);
@@ -1214,6 +1413,58 @@
         assert_eq!(notices.len(), 2);
         assert!(notices[0].starts_with("Reasoning-only response"));
         assert!(notices[1].starts_with("Empty assistant response"));
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_recovery_propagates_failure_or_interrupts_during_backoff() {
+        for retryable in [false, true] {
+            let mut config = AgentConfig {
+                model: "openai:fixture-model".into(),
+                thinking_prefill_max_retries: 1,
+                empty_content_max_retries: 1,
+                skip_memory: true,
+                skip_context_files: true,
+                ..AgentConfig::default()
+            };
+            config.retry.max_retries = 1;
+            config.retry.base_delay_ms = 1;
+            let _home = isolate_route_learning_home(&mut config);
+            let provider = Arc::new(StreamRetryProvider::new(
+                StreamRetryScenario::SemanticRetryFailure { retryable },
+            ));
+            let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+            let interrupt = agent.interrupt.clone();
+            let agent = agent.with_callbacks(AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle" && message.starts_with("LLM API retry in ") {
+                        interrupt.interrupt(None);
+                    }
+                })),
+                ..Default::default()
+            });
+            let result = agent
+                .run_stream(
+                    vec![Message::user("Show the answer")],
+                    None,
+                    Some(Box::new(|_| {})),
+                )
+                .await;
+
+            if retryable {
+                let result = result.expect("transport retry interruption is graceful");
+                assert!(result.interrupted);
+                assert!(!result.finished_naturally);
+                assert_eq!(result.total_turns, 1);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(AgentError::LlmApi(message))
+                        if message.contains("invalid request during fixture semantic recovery")
+                ));
+            }
+            assert_eq!(*provider.calls.lock().unwrap(), 1);
+            assert_eq!(*provider.semantic_retries.lock().unwrap(), 1);
+        }
     }
 
     #[tokio::test]
@@ -1730,6 +1981,15 @@
 
     #[tokio::test]
     async fn streamed_tool_batches_retry_invalid_arguments_before_executing_siblings() {
+        assert_invalid_tool_batch_retries(true).await;
+    }
+
+    #[tokio::test]
+    async fn plain_tool_batches_retry_invalid_arguments_before_executing_siblings() {
+        assert_invalid_tool_batch_retries(false).await;
+    }
+
+    async fn assert_invalid_tool_batch_retries(streaming: bool) {
         assert!(serde_json::from_str::<serde::de::IgnoredAny>(STREAM_UNREPRESENTABLE_ARGUMENT)
             .is_ok());
         assert!(serde_json::from_str::<Value>(STREAM_UNREPRESENTABLE_ARGUMENT).is_err());
@@ -1772,14 +2032,13 @@
                 })),
                 ..AgentCallbacks::default()
             });
-        let result = agent
-            .run_stream(
-                vec![Message::user("Use the local fixture tool")],
-                None,
-                Some(Box::new(|_| {})),
-            )
-            .await
-            .unwrap();
+        let messages = vec![Message::user("Use the local fixture tool")];
+        let outcome = if streaming {
+            agent.run_stream(messages, None, Some(Box::new(|_| {}))).await
+        } else {
+            agent.run(messages, None).await
+        };
+        let result = outcome.unwrap();
         assert!(result.finished_naturally && !result.interrupted);
         assert_eq!(*provider.calls.lock().unwrap(), 4);
         assert_eq!(

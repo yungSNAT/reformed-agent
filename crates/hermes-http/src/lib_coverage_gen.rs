@@ -54,6 +54,32 @@ fn command_request(command: &str) -> CommandRequest {
     }
 }
 
+#[test]
+fn gateway_model_selection_preserves_explicit_routes_and_combines_unqualified_names() {
+    let mut context = GatewayRuntimeContext {
+        provider: Some("fixture-provider".into()),
+        ..GatewayRuntimeContext::default()
+    };
+    assert_eq!(
+        resolve_model_for_gateway("default-model", &context),
+        "fixture-provider:default-model"
+    );
+    assert_eq!(
+        resolve_model_for_gateway("default-provider:default-model", &context),
+        "fixture-provider:default-model"
+    );
+    context.model = Some("other-provider:chosen-model".into());
+    assert_eq!(
+        resolve_model_for_gateway("default-model", &context),
+        "other-provider:chosen-model"
+    );
+    context.model = Some("chosen-model".into());
+    assert_eq!(
+        resolve_model_for_gateway("default-model", &context),
+        "fixture-provider:chosen-model"
+    );
+}
+
 #[tokio::test]
 async fn server_startup_prunes_only_expired_sessions_when_enabled() {
     let home = TempDir::new().unwrap();

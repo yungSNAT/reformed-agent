@@ -1671,27 +1671,60 @@ mod tests {
         assert!(adapter.drain_outbound().await.is_empty());
     }
 
-    #[test]
-    fn deliver_only_route_renders_target_chat() {
-        let payload = serde_json::json!({"payload":{"user":"a","other":"b"}});
-        let route = WebhookRouteConfig {
-            prompt: Some("{payload.user} matched {payload.other}".into()),
-            deliver: Some("telegram".into()),
-            deliver_only: true,
-            deliver_extra: BTreeMap::from([(
-                "chat_id".to_string(),
-                serde_json::Value::String("chat-{payload.user}".to_string()),
-            )]),
-            ..WebhookRouteConfig::default()
-        };
-        let text = render_prompt(route.prompt.as_deref(), &payload, "match", "match-alert");
-        let chat = route
-            .deliver_extra
-            .get("chat_id")
-            .and_then(|v| render_value(v, &payload, "match", "match-alert"))
-            .unwrap();
-        assert_eq!(text, "a matched b");
-        assert_eq!(chat, "chat-a");
+    #[tokio::test]
+    async fn signed_delivery_routes_queue_only_events_with_a_resolved_chat() {
+        let cases = [
+            (
+                "configured",
+                serde_json::json!("chat-{payload.user}"),
+                Some("unused-fallback"),
+                Some("chat-a"),
+            ),
+            (
+                "fallback",
+                serde_json::Value::Null,
+                Some("fallback-{payload.user}"),
+                Some("fallback-a"),
+            ),
+            ("missing", serde_json::json!("  "), None, None),
+        ];
+        let mut config = config_with_route_secret("127.0.0.1", "route-secret");
+        let mut route = config.routes.remove("open").unwrap();
+        route.prompt = Some("{payload.user} matched {payload.other}".into());
+        route.deliver = Some("fixture-platform".into());
+        route.deliver_only = true;
+        for (name, extra, fallback, _) in &cases {
+            route.chat_id = fallback.map(str::to_string);
+            route.deliver_extra.insert("chat_id".into(), extra.clone());
+            config.routes.insert((*name).into(), route.clone());
+        }
+        let adapter = WebhookAdapter::new(config);
+        let (sender, mut received) = tokio::sync::mpsc::channel(4);
+        adapter.set_inbound_sender(sender).await;
+
+        let body = r#"{"payload":{"user":"a","other":"b"}}"#;
+        for (name, _, _, expected_chat) in cases {
+            let request = signed_post(&format!("/webhook/{name}"), "route-secret", body, "");
+            let reply = request_reply(&adapter, &request).await;
+            let (status, answer) = reply.split_once("\r\n\r\n").unwrap();
+            let outbound = adapter.drain_outbound().await;
+            if let Some(chat) = expected_chat {
+                assert!(status.starts_with("HTTP/1.1 200 "), "{reply}");
+                assert_eq!(answer, r#"{"status":"delivered"}"#);
+                assert_eq!(outbound.len(), 1);
+                assert_eq!(outbound[0].platform.as_deref(), Some("fixture-platform"));
+                assert_eq!(outbound[0].chat_id, chat);
+                assert_eq!(outbound[0].text, "a matched b");
+            } else {
+                assert!(status.starts_with("HTTP/1.1 502 "), "{reply}");
+                assert_eq!(answer, r#"{"error":"missing delivery chat_id"}"#);
+                assert!(outbound.is_empty());
+            }
+        }
+        assert!(matches!(
+            received.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
     }
 
     #[test]

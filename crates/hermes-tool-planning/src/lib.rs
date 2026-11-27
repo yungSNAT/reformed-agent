@@ -27,13 +27,12 @@ pub fn default_platform_toolsets() -> HashMap<String, Vec<String>> {
     map
 }
 
-/// Configured toolset tokens for a platform, with default fallback.
+/// Configured toolset tokens for a platform: its entry, even an empty one,
+/// else the platform default.
 pub fn configured_platform_toolsets(config: &GatewayConfig, platform: &str) -> Vec<String> {
     let key = normalize_platform_key(platform);
     if let Some(custom) = config.platform_toolsets.get(&key) {
-        if !custom.is_empty() {
-            return custom.clone();
-        }
+        return custom.clone();
     }
     default_platform_toolsets()
         .remove(&key)
@@ -72,16 +71,7 @@ fn canonical_toolset_token(token: &str) -> String {
 }
 
 fn platform_has_custom_toolsets(config: &GatewayConfig, key: &str) -> bool {
-    let Some(configured) = config.platform_toolsets.get(key) else {
-        return false;
-    };
-    if configured.is_empty() {
-        return false;
-    }
-    match default_platform_toolsets().get(key) {
-        Some(defaults) => configured != defaults,
-        None => true,
-    }
+    config.platform_toolsets.contains_key(key)
 }
 
 fn append_live_mcp_toolsets(requested: &mut Vec<String>, manager: &ToolsetManager) {
@@ -297,9 +287,14 @@ fn requested_tool_names(
     }
 
     // Merge explicit tool toggles from config:
-    // - `enabled` acts as additive allow-list entries.
+    // - `enabled` acts as additive allow-list entries, except on a platform
+    //   whose saved list is empty, which offers no tool.
     // - `disabled` always removes entries.
-    for tool_name in &config.tools_config.enabled {
+    let enabled: &[String] = match config.platform_toolsets.get(&key) {
+        Some(saved) if saved.is_empty() => &[],
+        _ => &config.tools_config.enabled,
+    };
+    for tool_name in enabled {
         let trimmed = tool_name.trim();
         if trimmed.is_empty() {
             continue;
@@ -1110,6 +1105,22 @@ mod tests {
         }
     }
 
+    fn register_live_mcp_tool(reg: &Arc<ToolRegistry>) {
+        let schema = tool_schema("mcp_lattice_search", "search", JsonSchema::new("object"));
+        reg.register(
+            "mcp_lattice_search",
+            "mcp-lattice",
+            schema.clone(),
+            Arc::new(NoopTool { schema }),
+            Arc::new(|| true),
+            Vec::new(),
+            true,
+            "search",
+            "x",
+            None,
+        );
+    }
+
     #[test]
     fn platform_toolsets_ignore_blanks_and_unregistered_entries() {
         let mut config = GatewayConfig::default();
@@ -1130,18 +1141,56 @@ mod tests {
             configured_platform_toolsets(&config, "custom-case"),
             [" ", "web", "missing-toolset"]
         );
-        let default_tools = resolve_platform_tool_names(&config, "telegram", &registry);
+        // A saved empty list is the user's choice of no toolset.
         config
             .platform_toolsets
             .insert("telegram".into(), Vec::new());
         assert_eq!(
             resolve_platform_tool_names(&config, "telegram", &registry),
-            default_tools
+            Vec::<String>::new()
         );
         assert_eq!(
             configured_platform_toolsets(&config, "telegram"),
-            ["hermes-telegram"]
+            Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn an_explicit_empty_list_offers_no_tool() {
+        let reg = registry_with_minimal_tools();
+        register_live_mcp_tool(&reg);
+        let mut cfg = GatewayConfig::default();
+        cfg.platform_toolsets.insert("cli".to_string(), Vec::new());
+        // The platform's own empty list outranks the global allow-list.
+        cfg.tools_config.enabled = vec!["terminal".to_string()];
+
+        assert_eq!(
+            configured_platform_toolsets(&cfg, "cli"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            resolve_platform_tool_names(&cfg, "cli", &reg),
+            Vec::<String>::new()
+        );
+        assert_eq!(schema_names(&cfg, &reg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_explicit_list_equal_to_the_default_is_the_users_choice() {
+        let reg = registry_with_minimal_tools();
+        register_live_mcp_tool(&reg);
+        let mut cfg = GatewayConfig::default();
+        assert_eq!(configured_platform_toolsets(&cfg, "cli"), ["hermes-cli"]);
+        // With no entry, live MCP tools join the default toolset.
+        assert!(resolve_platform_tool_names(&cfg, "cli", &reg)
+            .contains(&"mcp_lattice_search".to_string()));
+
+        cfg.platform_toolsets
+            .insert("cli".to_string(), vec!["hermes-cli".to_string()]);
+        let names = resolve_platform_tool_names(&cfg, "cli", &reg);
+        assert!(names.contains(&"terminal".to_string()));
+        // A saved list names its MCP tools, as any other saved list does.
+        assert!(!names.contains(&"mcp_lattice_search".to_string()));
     }
 
     #[test]
