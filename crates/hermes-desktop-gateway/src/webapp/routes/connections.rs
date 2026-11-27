@@ -27,7 +27,6 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -42,16 +41,15 @@ use serde_json::{json, Map, Value};
 use super::store::{blocking, webapp_only, Served, StoreLock};
 use crate::webapp::api::{ApiError, ApiResult, Ctx};
 
-/// Each handler gets the store's path from the served home, fixed when the router is built; no
-/// request value builds a path.
+/// Each handler gets `served` from the route, not from the request; no request value builds a
+/// path.
 pub fn router(served: &Served) -> Router {
-    let store = Arc::new(served.install_root().join(STORE_NAME));
     let (list, save, last, remove, relay) = (
-        store.clone(),
-        store.clone(),
-        store.clone(),
-        store.clone(),
-        store,
+        served.clone(),
+        served.clone(),
+        served.clone(),
+        served.clone(),
+        served.clone(),
     );
     Router::new()
         .route(
@@ -782,6 +780,12 @@ pub(crate) fn last_used(path: &Path, id: &str) -> Result<Map<String, Value>, Sto
 
 // ---- Registry routes ------------------------------------------------------------------------
 
+/// Resolved per request, as the start-up routes resolve theirs, so both stores follow the same
+/// install root.
+fn store_path(served: &Served) -> PathBuf {
+    served.install_root().join(STORE_NAME)
+}
+
 fn answer(doc: &Map<String, Value>, extra: Option<(&str, Value)>) -> Value {
     let mut out = json!({"ok": true, "registry": public_registry(Some(doc))});
     if let Some((key, value)) = extra {
@@ -790,14 +794,14 @@ fn answer(doc: &Map<String, Value>, extra: Option<(&str, Value)>) -> Value {
     out
 }
 
-async fn list_connections(store: Arc<PathBuf>, ctx: Ctx) -> ApiResult {
+async fn list_connections(served: Served, ctx: Ctx) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let doc = blocking(move || read_doc(&path).map(|(doc, _)| doc).map_err(ApiError::from)).await?;
     Ok(Json(public_registry(doc.as_ref())))
 }
 
-async fn save_connection(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+async fn save_connection(served: Served, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
     webapp_only(&ctx)?;
     let Ok(Value::Object(payload)) = serde_json::from_slice::<Value>(&body) else {
         return Err(ApiError(
@@ -805,7 +809,7 @@ async fn save_connection(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes)
             "A connection save needs a JSON object.".into(),
         ));
     };
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let (doc, entry) = blocking(move || save(&path, &payload).map_err(ApiError::from)).await?;
     Ok(Json(answer(
         &doc,
@@ -813,24 +817,20 @@ async fn save_connection(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes)
     )))
 }
 
-async fn remove_connection(
-    store: Arc<PathBuf>,
-    ctx: Ctx,
-    UrlPath(id): UrlPath<String>,
-) -> ApiResult {
+async fn remove_connection(served: Served, ctx: Ctx, UrlPath(id): UrlPath<String>) -> ApiResult {
     webapp_only(&ctx)?;
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let doc = blocking(move || remove(&path, &id).map_err(ApiError::from)).await?;
     Ok(Json(answer(&doc, None)))
 }
 
-async fn set_last_used(store: Arc<PathBuf>, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
+async fn set_last_used(served: Served, ctx: Ctx, body: axum::body::Bytes) -> ApiResult {
     webapp_only(&ctx)?;
     let id = serde_json::from_slice::<Value>(&body)
         .ok()
         .and_then(|b| b.get("id").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
-    let path = PathBuf::clone(&store);
+    let path = store_path(&served);
     let doc = blocking(move || last_used(&path, &id).map_err(ApiError::from)).await?;
     Ok(Json(answer(&doc, None)))
 }
@@ -1324,7 +1324,7 @@ fn own_address(headers: &HeaderMap) -> Option<SocketAddr> {
 }
 
 async fn relay_http(
-    store: Arc<PathBuf>,
+    served: Served,
     ctx: Ctx,
     UrlPath((id, _path)): UrlPath<(String, String)>,
     request: Request,
@@ -1333,7 +1333,7 @@ async fn relay_http(
         return err.into_response();
     }
     let own = own_address(request.headers());
-    relay(&store, &id, own, request).await
+    relay(&store_path(&served), &id, own, request).await
 }
 
 #[cfg(test)]
