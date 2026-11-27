@@ -300,11 +300,12 @@ async fn paste_collapse_takes_the_next_number_when_a_file_already_has_it() {
     let (mut socket, home) = start().await;
     let first = call(&mut socket, "paste.collapse", json!({"text": "first"})).await;
     let (number, second) = paste_number_and_second(&first);
-    // Files an earlier run left for the next 20 numbers, at this second and the 10 after it.
+    // Files an earlier run left for the next 20 numbers, at this second and the 30 after it
+    // (a loaded host can stall the second paste for some seconds); file names use UTC.
     let pastes = home.path().join("pastes");
     let mut left = Vec::new();
     for taken in number + 1..=number + 20 {
-        for later in second..=second + 10 {
+        for later in second..=second + 30 {
             let s = later % 86_400;
             let name = format!(
                 "paste_{taken}_{:02}{:02}{:02}.txt",
@@ -408,7 +409,7 @@ async fn paste_collapse_refuses_a_link_in_the_pastes_folders_place() {
 }
 
 /// A pastes folder the gateway may not write to fails the paste with the reason, and leaves
-/// nothing in it.
+/// nothing in it. Needs a non-root runner: root may write to a 0500 folder.
 #[cfg(unix)]
 #[tokio::test]
 async fn paste_collapse_reports_a_paste_it_cannot_save() {
