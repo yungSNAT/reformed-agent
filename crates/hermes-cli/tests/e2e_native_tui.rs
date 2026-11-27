@@ -475,9 +475,10 @@ streaming:
 
     // Send SGR wheel events through the same PTY as keyboard input.
     terminal.write_all(&b"\x1b[<64;5;6M".repeat(22)).unwrap();
-    read_until(&mut terminal, b"AsterHistory").await;
+    // The terminal diff can split a line with cursor moves between changed spans.
+    read_until(&mut terminal, b"AsterHist").await;
     terminal.write_all(&b"\x1b[<65;5;6M".repeat(22)).unwrap();
-    read_until(&mut terminal, b"from the loopback fixture.").await;
+    read_until(&mut terminal, b"Quartz").await;
 
     terminal.write_all(b"\x1b[200~/undo\x1b[201~\r!").unwrap();
     let edited = format!("{prompt}!");
