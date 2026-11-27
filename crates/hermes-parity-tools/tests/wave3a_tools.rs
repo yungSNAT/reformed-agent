@@ -91,6 +91,86 @@ fn publish_automation_summary_keeps_empty_env_defaults_empty() {
     assert_eq!(parsed["metadata"]["summary_kind"], "");
 }
 
+#[cfg(unix)]
+#[test]
+fn publish_automation_summary_only_falls_back_when_github_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let fixture_bin = root.join("bin");
+    let empty_bin = root.join("empty-bin");
+    fs::create_dir(&fixture_bin).unwrap();
+    fs::create_dir(&empty_bin).unwrap();
+    let gh = fixture_bin.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+set -eu
+[ "$#" = 5 ] && [ "$1 $2 $3 $4 $5" = 'issue comment 42 --body-file -' ] || exit 70
+case "$FIXTURE_GH_MODE" in
+    success) /bin/cat > comment.md ;;
+    rejected) printf '%s\n' 'fixture comment rejected' >&2; exit 1 ;;
+    silent) exit 17 ;;
+    *) exit 71 ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+    let markdown = "## Sync result\n\nFixtures reconciled.\n";
+
+    for (mode, expected) in [
+        ("success", "commented"),
+        ("rejected", "fixture comment rejected"),
+        ("silent", "gh_exit_17"),
+        ("missing", "gh_cli_missing"),
+    ] {
+        let repo = root.join(mode);
+        fs::create_dir(&repo).unwrap();
+        let bin_dir = if mode == "missing" {
+            &empty_bin
+        } else {
+            &fixture_bin
+        };
+        let fallback = repo.join("fallback.md");
+        let out = Command::new(bin())
+            .env_clear()
+            .env("PATH", bin_dir)
+            .env("FIXTURE_GH_MODE", mode)
+            .envs(Some("LLVM_PROFILE_FILE").zip(std::env::var_os("LLVM_PROFILE_FILE")))
+            .args(["publish-automation-summary", "--repo-root"])
+            .arg(&repo)
+            .args(["--sink-order", "github,local", "--github-issue", "42"])
+            .arg("--local-path")
+            .arg(&fallback)
+            .args(["--preformatted-markdown", markdown, "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{mode}: {out:?}");
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["ok"], true, "{mode}");
+        let attempts = report["attempts"].as_array().unwrap();
+        assert_eq!(attempts[0]["sink"], "github", "{mode}");
+        assert_eq!(attempts[0]["detail"], expected, "{mode}");
+        if mode == "success" {
+            assert_eq!(report["primary_sink"], "github");
+            assert_eq!(attempts.len(), 1);
+            assert_eq!(
+                fs::read_to_string(repo.join("comment.md")).unwrap(),
+                markdown
+            );
+            assert!(!fallback.exists());
+        } else {
+            assert_eq!(report["primary_sink"], "local", "{mode}");
+            assert_eq!(attempts.len(), 2, "{mode}");
+            assert!(fs::read_to_string(&fallback)
+                .unwrap()
+                .contains(markdown.trim_end()));
+        }
+    }
+}
+
 #[test]
 fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata() {
     let tmp = tempfile::tempdir().expect("tempdir");
