@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use hermes_core::git::{output_within_timeout, read_only_git, GIT_SNAPSHOT_TIMEOUT};
+use hermes_core::git::{output_within_timeout, read_only_git, GitRead, GIT_SNAPSHOT_TIMEOUT};
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use indexmap::IndexMap;
 use serde_json::{json, Value};
@@ -400,15 +400,10 @@ fn git_snapshot(root: &Path) -> Value {
         return json!({"present": false});
     };
     let branch =
-        git_output(&git_root, &["branch", "--show-current"]).filter(|text| !text.is_empty());
-    let head =
-        git_output(&git_root, &["rev-parse", "--short", "HEAD"]).filter(|text| !text.is_empty());
-    // A submodule has its own config and filter drivers, which the overrides
-    // do not reach: never run status inside its dirty worktree.
-    let status = git_output(
-        &git_root,
-        &["status", "--short", "--ignore-submodules=dirty"],
-    );
+        git_output(&git_root, GitRead::Branch, &["--show-current"]).filter(|text| !text.is_empty());
+    let head = git_output(&git_root, GitRead::RevParse, &["--short", "HEAD"])
+        .filter(|text| !text.is_empty());
+    let status = git_output(&git_root, GitRead::Status, &["--short"]);
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     if let Some(status) = status.as_deref() {
         for line in status.lines() {
@@ -439,8 +434,11 @@ fn git_snapshot(root: &Path) -> Value {
 /// The trimmed output of a git command that the repository's own
 /// configuration cannot use to run a program, or `None` when git cannot run
 /// safely, fails or times out.
-fn git_output(root: &Path, args: &[&str]) -> Option<String> {
-    let output = output_within_timeout(read_only_git(root)?.args(args), GIT_SNAPSHOT_TIMEOUT)?;
+fn git_output(root: &Path, read: GitRead, args: &[&str]) -> Option<String> {
+    let output = output_within_timeout(
+        read_only_git(root)?.command(read).args(args),
+        GIT_SNAPSHOT_TIMEOUT,
+    )?;
     output
         .status
         .success()

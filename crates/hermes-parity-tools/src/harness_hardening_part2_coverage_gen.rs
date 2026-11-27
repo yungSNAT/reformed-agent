@@ -103,6 +103,7 @@ fn snapshot_fixture(root: &Path) -> Result<Py, String> {
         &json(PROOF_INPUT),
         &json(QUEUE_INPUT),
         &json(SOTA_INPUT),
+        14,
     )
 }
 
@@ -151,7 +152,7 @@ fn assert_fixture_snapshot(root: &Path, head: &str, upstream: &str) {
 
     let bad_queue = json(r#"{"summary":{"by_disposition":[]}}"#);
     assert_eq!(
-        snapshot(root, &Py::Null, &Py::Null, &bad_queue, &Py::Null)
+        snapshot(root, &Py::Null, &Py::Null, &bad_queue, &Py::Null, 0)
             .err()
             .as_deref(),
         Some("queue dispositions must be an object")

@@ -295,8 +295,33 @@ pub(crate) fn try_sinks(
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded_timeout_secs, curl_config, follows_redirect};
+    use super::{append_local_log, bounded_timeout_secs, curl_config, follows_redirect, fs, py};
     use std::time::Duration;
+
+    #[test]
+    fn local_summary_append_keeps_previous_entries_and_reports_obstructed_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join("reports").join("automation.log");
+        let first = append_local_log(&log, "First summary\n");
+        assert_eq!(first, (true, py::path_str(&log)));
+        let second = append_local_log(&log, "Second summary");
+        assert_eq!(second, (true, py::path_str(&log)));
+        let contents = fs::read_to_string(&log).unwrap();
+        let lines: Vec<_> = contents.lines().filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].starts_with("===== "));
+        assert_eq!(lines[1], "First summary");
+        assert!(lines[2].starts_with("===== "));
+        assert_eq!(lines[3], "Second summary");
+        assert!(contents.ends_with("Second summary\n"));
+
+        for path in [log.join("another.log"), log.parent().unwrap().to_path_buf()] {
+            let (ok, detail) = append_local_log(&path, "Unwritten summary");
+            assert!(!ok, "{path:?}");
+            assert!(detail.starts_with("error=OSError:"), "{detail}");
+        }
+        assert_eq!(fs::read_to_string(&log).unwrap(), contents);
+    }
 
     #[test]
     fn api_key_travels_only_in_the_stdin_config() {
