@@ -844,6 +844,7 @@ impl AgentLoop {
             let raw_args = tc.function.arguments.clone();
             let registry = self.tool_registry.clone();
             let plugin_manager = self.plugin_manager.clone();
+            let session_id = self.config.session_id.clone();
 
             join_set.spawn(async move {
                 let params: Value = match serde_json::from_str(&raw_args) {
@@ -864,7 +865,13 @@ impl AgentLoop {
                     original_args: params.clone(),
                     turn,
                 };
-                let terminal = |next_params: Value| {
+                let terminal = |mut next_params: Value| {
+                    hermes_core::file_edit::scope_file_tool_params(
+                        &tool_name,
+                        &mut next_params,
+                        session_id.as_deref(),
+                        &tool_call_id,
+                    );
                     Self::execute_tool_call_terminal(
                         &registry,
                         &tool_call_id,
