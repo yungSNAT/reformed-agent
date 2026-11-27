@@ -180,7 +180,8 @@ fn a_listing_hides_build_and_credential_entries_and_lists_folders_first() {
     let Ok(Opened::Dir(dir)) = open_resolved(&resolved) else {
         panic!("not a folder")
     };
-    let (entries, truncated) = list_entries(dir, &resolved.path, &[t.hermes.clone()]).unwrap();
+    let (entries, truncated) =
+        list_entries(dir, &resolved.path, std::slice::from_ref(&t.hermes)).unwrap();
     let names: Vec<(&str, bool)> = entries
         .iter()
         .map(|e| {
