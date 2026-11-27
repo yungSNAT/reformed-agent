@@ -1016,8 +1016,9 @@ mod tests {
     #[tokio::test]
     async fn background_request_dispatches_handle_and_emits_completion_callback() {
         let tmp = tempfile::tempdir().unwrap();
-        let completions = Arc::new(Mutex::new(Vec::<String>::new()));
-        let completions_cb = completions.clone();
+        let (completed, mut completions) = tokio::sync::mpsc::unbounded_channel::<String>();
+        // Bounds only a hang: a loaded host may take seconds to run the child.
+        let hang = Duration::from_secs(60);
         let orch = Arc::new(SubAgentOrchestrator::new(SubAgentOrchestratorConfig {
             parent_config: AgentConfig {
                 max_turns: 2,
@@ -1029,12 +1030,9 @@ mod tests {
             parent_interrupt: InterruptController::new(),
             hermes_home: tmp.path().to_path_buf(),
             parent_session_id: Some("parent".into()),
-            timeout: Duration::from_secs(2),
+            timeout: hang,
             background_delegation_callback: Some(Arc::new(move |text: &str| {
-                completions_cb
-                    .lock()
-                    .expect("completion lock")
-                    .push(text.to_string());
+                let _ = completed.send(text.to_string());
             })),
             code_index: None,
         }));
@@ -1053,17 +1051,10 @@ mod tests {
         assert_eq!(parsed["background"], true);
         let sub_agent_id = parsed["sub_agent_id"].as_str().unwrap().to_string();
 
-        for _ in 0..50 {
-            if !completions.lock().expect("completion lock").is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        let completion = completions
-            .lock()
-            .expect("completion lock")
-            .pop()
-            .expect("background completion callback");
+        let completion = tokio::time::timeout(hang, completions.recv())
+            .await
+            .expect("background completion callback")
+            .expect("callback kept");
         assert!(completion.contains("ASYNC DELEGATION COMPLETE"));
         assert!(completion.contains("background task"));
         assert!(completion.contains("Result:\ndone"));

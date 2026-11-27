@@ -1613,4 +1613,37 @@ mod tests {
             "slack:D123ABC"
         );
     }
+
+    #[tokio::test]
+    async fn a_conversation_keeps_its_spend_until_new_starts_another() {
+        let manager = SessionManager::new(SessionConfig::default());
+        let admit = || manager.admit_session("telegram", "spend", "user1", None);
+        admit().await.unwrap().generation.add_spent_usd(0.4);
+        assert_eq!(admit().await.unwrap().generation.spent_usd(), 0.4);
+
+        manager
+            .reset_session_for_command("telegram", "spend", "user1", None)
+            .await
+            .unwrap();
+
+        assert_eq!(admit().await.unwrap().generation.spent_usd(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn an_idle_reset_starts_the_spend_again() {
+        let manager = SessionManager::new(SessionConfig {
+            reset_policy: SessionResetPolicy::Idle { timeout_minutes: 0 },
+            ..SessionConfig::default()
+        });
+        let admit = || manager.admit_session("telegram", "idle-spend", "user1", None);
+        admit().await.unwrap().generation.add_spent_usd(0.4);
+
+        let reset = admit().await.unwrap();
+
+        assert!(matches!(
+            reset.transition,
+            SessionTransition::PolicyReset(_)
+        ));
+        assert_eq!(reset.generation.spent_usd(), 0.0);
+    }
 }
