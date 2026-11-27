@@ -358,10 +358,11 @@ fn split_alternatives(chars: &[char]) -> Vec<Vec<char>> {
         let c = chars[i];
         match c {
             '\\' => {
-                parts.last_mut().expect("part").push(c);
-                if let Some(&n) = chars.get(i + 1) {
-                    parts.last_mut().expect("part").push(n);
-                }
+                // The escape and the character it escapes stay together.
+                parts
+                    .last_mut()
+                    .expect("part")
+                    .extend(chars.iter().skip(i).take(2));
                 i += 2;
                 continue;
             }
@@ -1439,6 +1440,8 @@ mod tests {
             ("a[[:b]", "a[", true),
             ("a[\\]]", "a]", true),
             ("a[\\]]", "a\\", false),
+            ("a[\\", "a[\\", true),
+            ("a[\\", "a[", false),
         ] {
             assert_eq!(pattern_matches(pattern, path), want, "{pattern} vs {path}");
         }
