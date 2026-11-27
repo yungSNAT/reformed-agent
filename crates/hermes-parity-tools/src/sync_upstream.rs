@@ -1021,13 +1021,11 @@ impl Sync {
             self.report.line("risk_gate_status: pass")?;
             return Ok(0);
         }
-        self.report.write(
-            &format!(
-                "## Strict Risk Gate Matches\n```\n{}\n```\n\n",
-                matches.join("\n")
-            ),
-            true,
-        )?;
+        let section = format!(
+            "## Strict Risk Gate Matches\n```\n{}\n```\n\n",
+            matches.join("\n")
+        );
+        self.report.write(&section, true)?;
         if c.allow_risk_paths {
             self.report.line("risk_gate_status: bypassed")?;
             self.report.line("risk_gate_bypass: --allow-risk-paths")?;

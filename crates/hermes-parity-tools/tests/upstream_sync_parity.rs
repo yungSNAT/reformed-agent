@@ -1423,6 +1423,40 @@ fn install_reports_a_log_dir_it_cannot_create() {
     assert_eq!(out.stdout, "");
 }
 
+/// An issue body that cannot be written stops the run with `mktemp`'s
+/// report and exit 1, before the gate's own message, as the script's
+/// `$(mktemp)` under `set -e` did.
+fn assert_issue_body_unwritable(out: &Outcome) {
+    assert_eq!(out.code, Some(1));
+    assert!(
+        out.stderr
+            .ends_with("mktemp: No such file or directory (os error 2)\n"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn sync_strict_gate_stops_when_the_issue_body_cannot_be_written() {
+    let out = outcome(
+        sync("risk-no-tmp", Scenario::Risk, &["--strict-risk-gate"]).env("TMPDIR", "<ROOT>/absent"),
+    );
+    assert_issue_body_unwritable(&out);
+    assert!(
+        out.report.ends_with("risk_gate_status: blocked\n"),
+        "{}",
+        out.report
+    );
+}
+
+#[test]
+fn sync_conflict_stops_when_the_issue_body_cannot_be_written() {
+    let out =
+        outcome(sync("conflict-no-tmp", Scenario::Conflict, &[]).env("TMPDIR", "<ROOT>/absent"));
+    assert_issue_body_unwritable(&out);
+    assert!(out.report.contains("status: conflict\n"), "{}", out.report);
+}
+
 #[test]
 fn install_stops_when_the_new_crontab_cannot_be_written() {
     let out = outcome(install("no-tmp", &[]).env("TMPDIR", "<ROOT>/absent"));
