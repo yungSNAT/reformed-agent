@@ -256,8 +256,8 @@ pub(crate) fn shell_quote(text: &str) -> String {
     let mut prev: Option<char> = None;
     for c in text.chars() {
         let escape = match c {
-            ' ' | '\'' | '"' | '\\' | '|' | '&' | ';' | '(' | ')' | '<' | '>' | '!' | '{'
-            | '}' | '*' | '[' | '?' | ']' | '^' | '$' | '`' | ',' => true,
+            ' ' | '\'' | '"' | '\\' | '|' | '&' | ';' | '(' | ')' | '<' | '>' | '!' | '{' | '}'
+            | '*' | '[' | '?' | ']' | '^' | '$' | '`' | ',' => true,
             '#' => prev.is_none(),
             '~' => matches!(prev, None | Some('=') | Some(':')),
             _ => false,
@@ -277,7 +277,10 @@ pub(crate) fn shell_quote(text: &str) -> String {
 /// `?(...)`, `*(...)`, `+(...)` and `@(...)`. `!(...)` is not supported and
 /// matches literally.
 pub(crate) fn pattern_matches(pattern: &str, path: &str) -> bool {
-    let regex = format!("^(?s:{})$", glob_regex(&pattern.chars().collect::<Vec<_>>()));
+    let regex = format!(
+        "^(?s:{})$",
+        glob_regex(&pattern.chars().collect::<Vec<_>>())
+    );
     regex::Regex::new(&regex).is_ok_and(|re| re.is_match(path))
 }
 
@@ -398,10 +401,7 @@ fn bracket(chars: &[char], start: usize) -> Option<(String, usize)> {
             return Some((class, i));
         }
         if c == '[' && chars.get(i + 1) == Some(&':') {
-            if let Some(len) = chars[i + 2..]
-                .windows(2)
-                .position(|w| w == [':', ']'])
-            {
+            if let Some(len) = chars[i + 2..].windows(2).position(|w| w == [':', ']']) {
                 let name: String = chars[i + 2..i + 2 + len].iter().collect();
                 class.push_str(&format!("[:{name}:]"));
                 i += len + 4;
@@ -822,9 +822,7 @@ impl Sync {
         let upstream_ref = format!("refs/remotes/{}/{}", c.upstream, c.base_branch);
         let origin_sha = git_value(&["rev-parse", &origin_ref])?;
         let upstream_sha = git_value(&["rev-parse", &upstream_ref])?;
-        let timestamp = jiff::Timestamp::now()
-            .strftime("%Y%m%d-%H%M%S")
-            .to_string();
+        let timestamp = jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S").to_string();
         let report = Report {
             path: format!("{}/upstream-sync-{timestamp}.txt", c.report_dir),
         };
@@ -919,10 +917,7 @@ impl Sync {
         }
         self.gates()?;
 
-        log(&format!(
-            "Pushing {} to {}...",
-            self.sync_branch, c.origin
-        ));
+        log(&format!("Pushing {} to {}...", self.sync_branch, c.origin));
         git(&["push", "-u", &c.origin, &self.sync_branch])?;
         if c.mode == "direct-main" {
             log(&format!(
@@ -1061,7 +1056,10 @@ impl Sync {
                     c.base_branch, self.timestamp
                 ),
                 &body,
-                &format!("Strict-risk issue created with label '{}'.", c.conflict_label),
+                &format!(
+                    "Strict-risk issue created with label '{}'.",
+                    c.conflict_label
+                ),
                 &format!(
                     "Failed to create strict-risk issue automatically; review report {}.",
                     self.report.path
@@ -1174,9 +1172,7 @@ impl Sync {
                 ),
                 &body,
                 &format!("Conflict issue created with label '{}'.", c.conflict_label),
-                &format!(
-                    "Failed to create conflict issue automatically; review report {path}."
-                ),
+                &format!("Failed to create conflict issue automatically; review report {path}."),
             )?;
         }
         Ok(die(&format!("{reason}. See {path}")))
@@ -1314,7 +1310,10 @@ Commits pending from upstream at sync start:
         );
         let body = TempFile::new(&body)?;
         let body_path = body.path();
-        let title = format!("chore: sync upstream {} ({})", c.base_branch, self.timestamp);
+        let title = format!(
+            "chore: sync upstream {} ({})",
+            c.base_branch, self.timestamp
+        );
         let mut args = vec![
             "pr",
             "create",
@@ -1365,7 +1364,7 @@ Commits pending from upstream at sync start:
 /// The path from the last line holding `marker`, as the script's `awk` and
 /// `${line#*Report: }` took it.
 fn report_path(output: &str, marker: &str) -> Option<String> {
-    let line = output.lines().filter(|l| l.contains(marker)).last()?;
+    let line = output.lines().rfind(|l| l.contains(marker))?;
     Some(
         line.split_once("Report: ")
             .map_or(line, |(_, rest)| rest)
@@ -1392,8 +1391,16 @@ mod tests {
     #[test]
     fn matches_bash_patterns() {
         for (pattern, path, want) in [
-            ("crates/hermes-auth/**", "crates/hermes-auth/src/a/b.rs", true),
-            ("crates/hermes-agent/src/memory_plugins/*.rs", "crates/hermes-agent/src/memory_plugins/x/y.rs", true),
+            (
+                "crates/hermes-auth/**",
+                "crates/hermes-auth/src/a/b.rs",
+                true,
+            ),
+            (
+                "crates/hermes-agent/src/memory_plugins/*.rs",
+                "crates/hermes-agent/src/memory_plugins/x/y.rs",
+                true,
+            ),
             ("Cargo.toml", "crates/Cargo.toml", false),
             ("scripts/setup-*.sh", "scripts/setup-x.sh", true),
             ("docs/[nN]otes.md", "docs/Notes.md", true),
@@ -1426,15 +1433,23 @@ mod tests {
             queue_summary(&path)
         };
         assert_eq!(
-            summary(r#"[{"state":"queued","classification":"Actionable"},{"status":"OPEN"},{"state":0,"status":"todo"},{"state":1,"status":"todo"},"x",{"class":"required"}]"#),
+            summary(
+                r#"[{"state":"queued","classification":"Actionable"},{"status":"OPEN"},{"state":0,"status":"todo"},{"state":1,"status":"todo"},"x",{"class":"required"}]"#
+            ),
             "total=6, queued=3, actionable=2"
         );
         assert_eq!(
             summary(r#"{"items":[],"entries":[{"state":"in_progress"}]}"#),
             "total=1, queued=1, actionable=0"
         );
-        assert_eq!(summary(r#"{"items":{"a":1,"b":2}}"#), "total=2, queued=0, actionable=0");
-        assert_eq!(summary(r#"{"items":"abc"}"#), "total=3, queued=0, actionable=0");
+        assert_eq!(
+            summary(r#"{"items":{"a":1,"b":2}}"#),
+            "total=2, queued=0, actionable=0"
+        );
+        assert_eq!(
+            summary(r#"{"items":"abc"}"#),
+            "total=3, queued=0, actionable=0"
+        );
         assert_eq!(summary(r#"{"items":5}"#), "unavailable");
         assert_eq!(summary("7"), "total=0, queued=0, actionable=0");
         assert_eq!(summary("{bad"), "unavailable");

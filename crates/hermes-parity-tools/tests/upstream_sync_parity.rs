@@ -75,10 +75,10 @@ const RISK_PATHS: &str = "# comment\n  # indented comment\n\ncrates/hermes-auth/
 
 /// Host tools the scripts and git need; `gh`, `cargo` and `crontab` are
 /// left out so only the fakes answer.
-const HOST_TOOLS: [&str; 27] = [
+const HOST_TOOLS: [&str; 28] = [
     "bash", "sh", "env", "git", "mkdir", "mktemp", "rm", "sed", "awk", "xargs", "python3", "cat",
     "dirname", "flock", "grep", "chmod", "date", "cp", "id", "sleep", "tr", "head", "tail", "ls",
-    "uname", "basename", "readlink",
+    "uname", "basename", "readlink", "echo",
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -136,7 +136,10 @@ impl Sandbox {
         let mut cmd = Command::new(program);
         cmd.current_dir(self.root.join("repo"))
             .env_clear()
-            .env("PATH", format!("{}:{}", self.path("bin"), self.path("sysbin")))
+            .env(
+                "PATH",
+                format!("{}:{}", self.path("bin"), self.path("sysbin")),
+            )
             .env("HOME", self.path("home"))
             .env("TMPDIR", self.path("tmp"))
             .env("LC_ALL", "C")
@@ -252,8 +255,10 @@ impl Sandbox {
         }
         let stderr = fs::read_to_string(&err_path).expect("stderr");
         let calls = fs::read_to_string(self.root.join("calls.log")).unwrap_or_default();
-        let mut text =
-            format!("exit={:?}\n--- stdout\n{stdout}--- stderr\n{stderr}--- calls\n{calls}", status.code());
+        let mut text = format!(
+            "exit={:?}\n--- stdout\n{stdout}--- stderr\n{stderr}--- calls\n{calls}",
+            status.code()
+        );
         let mut files = BTreeMap::new();
         for dir in ["home", "reports", "tmp", "repo/.sync-reports"] {
             collect(&self.root.join(dir), &self.root, &mut files);
@@ -321,7 +326,10 @@ fn collect(dir: &Path, root: &Path, out: &mut BTreeMap<String, String>) {
         } else {
             let name = path.strip_prefix(root).expect("prefix").to_string_lossy();
             let body = fs::read(&path).expect("read");
-            out.insert(name.into_owned(), String::from_utf8_lossy(&body).into_owned());
+            out.insert(
+                name.into_owned(),
+                String::from_utf8_lossy(&body).into_owned(),
+            );
         }
     }
 }
@@ -442,7 +450,11 @@ fn run(case: &Case, shell: bool) -> String {
     if let Some(text) = case.stderr_contains {
         let (head, rest) = record.split_once("--- stderr\n").expect("stderr section");
         let (stderr, tail) = rest.split_once("--- calls\n").expect("calls section");
-        assert!(stderr.contains(text), "case {}: stderr {stderr:?}", case.name);
+        assert!(
+            stderr.contains(text),
+            "case {}: stderr {stderr:?}",
+            case.name
+        );
         record = format!("{head}--- stderr\n<STDERR>\n--- calls\n{tail}");
     }
     record
@@ -466,27 +478,47 @@ fn sync(name: &'static str, scenario: Scenario, extra: &[&str]) -> Case {
 
 #[test]
 fn sync_help() {
-    check(case("sync_help", Tool::Sync, Scenario::NoUpdates, &["--help"]));
+    check(case(
+        "sync_help",
+        Tool::Sync,
+        Scenario::NoUpdates,
+        &["--help"],
+    ));
 }
 
 #[test]
 fn sync_unknown_flag() {
-    check(case("sync_unknown_flag", Tool::Sync, Scenario::NoUpdates, &["--bogus"]));
+    check(case(
+        "sync_unknown_flag",
+        Tool::Sync,
+        Scenario::NoUpdates,
+        &["--bogus"],
+    ));
 }
 
 #[test]
 fn sync_missing_value() {
     check(
-        case("sync_missing_value", Tool::Sync, Scenario::NoUpdates, &["--origin"])
-            .stderr_contains("missing value for --origin"),
+        case(
+            "sync_missing_value",
+            Tool::Sync,
+            Scenario::NoUpdates,
+            &["--origin"],
+        )
+        .stderr_contains("missing value for --origin"),
     );
 }
 
 #[test]
 fn sync_empty_value() {
     check(
-        case("sync_empty_value", Tool::Sync, Scenario::NoUpdates, &["--test-cmd", ""])
-            .stderr_contains("missing value for --test-cmd"),
+        case(
+            "sync_empty_value",
+            Tool::Sync,
+            Scenario::NoUpdates,
+            &["--test-cmd", ""],
+        )
+        .stderr_contains("missing value for --test-cmd"),
     );
 }
 
@@ -497,31 +529,50 @@ fn sync_bad_mode() {
 
 #[test]
 fn sync_bad_strategy() {
-    check(sync("sync_bad_strategy", Scenario::NoUpdates, &["--strategy", "rebase"]));
+    check(sync(
+        "sync_bad_strategy",
+        Scenario::NoUpdates,
+        &["--strategy", "rebase"],
+    ));
 }
 
 #[test]
 fn sync_non_official_upstream() {
-    check(sync("sync_non_official_upstream", Scenario::Clean, &[]).env("EXPECTED_UPSTREAM_REPO", "Acme/Other"));
+    check(
+        sync("sync_non_official_upstream", Scenario::Clean, &[])
+            .env("EXPECTED_UPSTREAM_REPO", "Acme/Other"),
+    );
 }
 
 #[test]
 fn sync_non_official_upstream_allowed() {
     check(
-        sync("sync_non_official_upstream_allowed", Scenario::Clean, &["--dry-run"])
-            .env("EXPECTED_UPSTREAM_REPO", "Acme/Other")
-            .env("ALLOW_NON_OFFICIAL_UPSTREAM", "1"),
+        sync(
+            "sync_non_official_upstream_allowed",
+            Scenario::Clean,
+            &["--dry-run"],
+        )
+        .env("EXPECTED_UPSTREAM_REPO", "Acme/Other")
+        .env("ALLOW_NON_OFFICIAL_UPSTREAM", "1"),
     );
 }
 
 #[test]
 fn sync_missing_origin_remote() {
-    check(sync("sync_missing_origin_remote", Scenario::Clean, &["--origin", "nope"]));
+    check(sync(
+        "sync_missing_origin_remote",
+        Scenario::Clean,
+        &["--origin", "nope"],
+    ));
 }
 
 #[test]
 fn sync_not_a_repository() {
-    check(sync("sync_not_a_repository", Scenario::Clean, &["--repo-root", "<ROOT>/home"]));
+    check(sync(
+        "sync_not_a_repository",
+        Scenario::Clean,
+        &["--repo-root", "<ROOT>/home"],
+    ));
 }
 
 #[test]
@@ -568,22 +619,41 @@ fn sync_dry_run_env_defaults() {
 
 #[test]
 fn sync_risk_pass_dry_run() {
-    check(sync("sync_risk_pass_dry_run", Scenario::Clean, &["--strict-risk-gate", "--dry-run"]));
+    check(sync(
+        "sync_risk_pass_dry_run",
+        Scenario::Clean,
+        &["--strict-risk-gate", "--dry-run"],
+    ));
 }
 
 #[test]
 fn sync_risk_blocked_dry_run() {
-    check(sync("sync_risk_blocked_dry_run", Scenario::Risk, &["--strict-risk-gate", "--dry-run"]));
+    check(sync(
+        "sync_risk_blocked_dry_run",
+        Scenario::Risk,
+        &["--strict-risk-gate", "--dry-run"],
+    ));
 }
 
 #[test]
 fn sync_risk_blocked() {
-    check(sync("sync_risk_blocked", Scenario::Risk, &["--strict-risk-gate", "--conflict-label", "risky"]));
+    check(sync(
+        "sync_risk_blocked",
+        Scenario::Risk,
+        &["--strict-risk-gate", "--conflict-label", "risky"],
+    ));
 }
 
 #[test]
 fn sync_risk_blocked_issue_fails() {
-    check(sync("sync_risk_blocked_issue_fails", Scenario::Risk, &["--strict-risk-gate"]).env("FAKE_GH_FAIL", "1"));
+    check(
+        sync(
+            "sync_risk_blocked_issue_fails",
+            Scenario::Risk,
+            &["--strict-risk-gate"],
+        )
+        .env("FAKE_GH_FAIL", "1"),
+    );
 }
 
 #[test]
@@ -690,7 +760,11 @@ fn sync_queue_summary_invalid() {
 
 #[test]
 fn sync_cherry_pick() {
-    check(sync("sync_cherry_pick", Scenario::Clean, &["--strategy", "cherry-pick", "--no-pr"]));
+    check(sync(
+        "sync_cherry_pick",
+        Scenario::Clean,
+        &["--strategy", "cherry-pick", "--no-pr"],
+    ));
 }
 
 #[test]
@@ -700,7 +774,11 @@ fn sync_merge_conflict() {
 
 #[test]
 fn sync_merge_conflict_no_issue() {
-    check(sync("sync_merge_conflict_no_issue", Scenario::Conflict, &["--no-conflict-issue"]));
+    check(sync(
+        "sync_merge_conflict_no_issue",
+        Scenario::Conflict,
+        &["--no-conflict-issue"],
+    ));
 }
 
 #[test]
@@ -714,12 +792,18 @@ fn sync_cherry_pick_conflict() {
 
 #[test]
 fn sync_test_cmd_fails() {
-    check(sync("sync_test_cmd_fails", Scenario::Clean, &[]).env("FAKE_CARGO_FAIL", "test -p hermes-gateway"));
+    check(
+        sync("sync_test_cmd_fails", Scenario::Clean, &[])
+            .env("FAKE_CARGO_FAIL", "test -p hermes-gateway"),
+    );
 }
 
 #[test]
 fn sync_fork_carry_fails() {
-    check(sync("sync_fork_carry_fails", Scenario::Clean, &[]).env("FAKE_CARGO_FAIL", "check-fork-carry"));
+    check(
+        sync("sync_fork_carry_fails", Scenario::Clean, &[])
+            .env("FAKE_CARGO_FAIL", "check-fork-carry"),
+    );
 }
 
 #[test]
@@ -729,7 +813,11 @@ fn sync_redteam_fails() {
 
 #[test]
 fn sync_elite_ok() {
-    check(sync("sync_elite_ok", Scenario::Clean, &["--elite-gate", "--no-pr"]));
+    check(sync(
+        "sync_elite_ok",
+        Scenario::Clean,
+        &["--elite-gate", "--no-pr"],
+    ));
 }
 
 #[test]
@@ -760,7 +848,11 @@ fn sync_doc_refresh_fails() {
 
 #[test]
 fn sync_direct_main() {
-    check(sync("sync_direct_main", Scenario::Clean, &["--mode", "direct-main"]));
+    check(sync(
+        "sync_direct_main",
+        Scenario::Clean,
+        &["--mode", "direct-main"],
+    ));
 }
 
 #[test]
@@ -807,7 +899,10 @@ fn cron_env_risk_blocked() {
             .env("CONFLICT_LABEL", "cron-label")
             .env("CREATE_CONFLICT_ISSUE", "0")
             .env("LOCK_FILE", "<ROOT>/home/locks/l.lock")
-            .env("RISK_PATHS_FILE", "<ROOT>/repo/scripts/upstream-risk-paths.txt"),
+            .env(
+                "RISK_PATHS_FILE",
+                "<ROOT>/repo/scripts/upstream-risk-paths.txt",
+            ),
     );
 }
 
@@ -851,8 +946,7 @@ fn install_missing_crontab() {
 
 #[test]
 fn install_missing_cron_script() {
-    check(
-        install("install_missing_cron_script", &[])
-            .setup(|s| fs::remove_file(s.root.join("repo/scripts/cron-upstream-sync.sh")).expect("rm")),
-    );
+    check(install("install_missing_cron_script", &[]).setup(|s| {
+        fs::remove_file(s.root.join("repo/scripts/cron-upstream-sync.sh")).expect("rm")
+    }));
 }

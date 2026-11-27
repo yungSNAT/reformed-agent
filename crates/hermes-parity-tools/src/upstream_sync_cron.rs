@@ -218,10 +218,8 @@ pub fn run_install(args: InstallArgs) -> Result<i32, String> {
         .output()
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
         .unwrap_or_default();
-    let tmp = std::env::temp_dir().join(format!(
-        "install-upstream-sync-cron.{}",
-        std::process::id()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("install-upstream-sync-cron.{}", std::process::id()));
     fs::write(&tmp, format!("{}{entry}\n", kept_lines(&current)))
         .map_err(|e| format!("{}: {e}", tmp.display()))?;
     let status = Command::new("crontab").arg(&tmp).status();
