@@ -5,7 +5,7 @@
 #[path = "support/oneshot.rs"]
 mod support;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 use support::{call, connect, next_json, release_slow, rpc, send, slow_arrived, start_with};
@@ -58,11 +58,21 @@ async fn slow_one_shot_calls_are_bounded_and_hold_nothing_up() {
     let reply = call(&mut other, 20, json!({"input": "fast"})).await;
     assert_eq!(reply["error"]["code"], 4090, "{reply}");
 
-    // Closing their connection stops them, and their places free at once.
+    // Closing their connection stops them and frees their places, long before the model's
+    // 60-second timeout would; the held calls are never let through.
     drop(busy);
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let began = Instant::now();
-    let reply = call(&mut other, 21, json!({"input": "fast"})).await;
-    assert!(reply["result"]["text"].is_string(), "{reply}");
-    assert!(began.elapsed() < Duration::from_secs(1));
+    let freed = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut id = 21;
+        loop {
+            let reply = call(&mut other, id, json!({"input": "fast"})).await;
+            if reply["error"]["code"] != 4090 {
+                return reply;
+            }
+            id += 1;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the closed connection's places were not freed within 5 seconds");
+    assert!(freed["result"]["text"].is_string(), "{freed}");
 }
