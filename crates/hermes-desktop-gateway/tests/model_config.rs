@@ -396,9 +396,16 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
             json!({"slug": SAVED, "api_key": "saved-key"}),
         )
         .await;
-    let env = home.path().join(".env");
-    assert!(env_lines(home.path()).contains("XIAOMI_API_KEY"), "{saved}");
-    std::fs::write(&env, "OPENAI_API_KEY=saved-key\n").unwrap();
+    let lines = env_lines(home.path());
+    assert!(lines.contains("XIAOMI_API_KEY"), "{saved}");
+    // Every other line stays: the openai key saved above.
+    let kept: String = lines
+        .lines()
+        .filter(|line| !line.starts_with("XIAOMI_API_KEY="))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert!(!kept.is_empty(), "{lines}");
+    std::fs::write(home.path().join(".env"), kept).unwrap();
     let reloaded = client.call(6, "reload.env", json!({})).await;
     let after = client.call(7, "model.options", json!({})).await;
     // Then deleted from the project `.env` too: gone.
