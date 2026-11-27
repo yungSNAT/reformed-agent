@@ -11,7 +11,8 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 const CONFIG: &str = "quick_commands:\n  rn:\n    type: alias\n    target: /review-notes\n  \
-                      up:\n    type: exec\n    command: uptime\n";
+                      up:\n    type: exec\n    command: uptime\n  nt:\n    type: alias\n  \
+                      bg:\n    type: bogus\n    target: /review-notes\n";
 
 /// A gateway whose home has one installed skill, `review-notes`, and the quick commands above.
 async fn start() -> (Socket, tempfile::TempDir) {
@@ -258,6 +259,79 @@ async fn command_dispatch_runs_no_exec_quick_command_and_names_an_unknown_one() 
     );
     let malformed = call(&mut socket, "command.dispatch", json!({"name": ["x"]})).await;
     assert_eq!(error(&malformed), (4000, "name must be a string"));
+}
+
+#[tokio::test]
+async fn command_dispatch_names_a_quick_command_with_no_target_or_an_unknown_type() {
+    let (mut socket, _home) = start().await;
+    let no_target = call(&mut socket, "command.dispatch", json!({"name": "nt"})).await;
+    assert_eq!(error(&no_target), (4018, "quick command /nt has no target"));
+    let bogus = call(&mut socket, "command.dispatch", json!({"name": "bg"})).await;
+    assert_eq!(
+        error(&bogus),
+        (4018, "quick command /bg has unsupported type bogus")
+    );
+}
+
+/// The number in `[Pasted text #<n>: ...` and the `HHMMSS` second of day in its file name.
+fn paste_number_and_second(reply: &Value) -> (u64, u64) {
+    let placeholder = reply["result"]["placeholder"].as_str().unwrap();
+    let number = placeholder["[Pasted text #".len()..]
+        .split(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let path = std::path::Path::new(reply["result"]["path"].as_str().unwrap());
+    let clock = path
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .rsplit('_')
+        .next()
+        .unwrap();
+    let field = |at: usize| clock[at..at + 2].parse::<u64>().unwrap();
+    (number, field(0) * 3600 + field(2) * 60 + field(4))
+}
+
+#[tokio::test]
+async fn paste_collapse_takes_the_next_number_when_a_file_already_has_it() {
+    let (mut socket, home) = start().await;
+    let first = call(&mut socket, "paste.collapse", json!({"text": "first"})).await;
+    let (number, second) = paste_number_and_second(&first);
+    // Files an earlier run left for the next 20 numbers, at this second and the 10 after it.
+    let pastes = home.path().join("pastes");
+    let mut left = Vec::new();
+    for taken in number + 1..=number + 20 {
+        for later in second..=second + 10 {
+            let s = later % 86_400;
+            let name = format!(
+                "paste_{taken}_{:02}{:02}{:02}.txt",
+                s / 3600,
+                s / 60 % 60,
+                s % 60
+            );
+            std::fs::write(pastes.join(&name), "earlier").unwrap();
+            left.push(pastes.join(name));
+        }
+    }
+    let next = call(&mut socket, "paste.collapse", json!({"text": "next"})).await;
+    let (next_number, _) = paste_number_and_second(&next);
+    assert!(
+        next_number > number + 20,
+        "took #{next_number}, a number left on disk"
+    );
+    let path = std::path::PathBuf::from(next["result"]["path"].as_str().unwrap());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "next");
+    for file in left {
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "earlier",
+            "{}",
+            file.display()
+        );
+    }
 }
 
 #[tokio::test]
