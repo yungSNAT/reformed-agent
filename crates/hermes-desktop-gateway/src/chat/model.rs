@@ -109,17 +109,20 @@ pub(super) struct Keys {
     started_in_project_file: BTreeSet<String>,
 }
 
-/// The assignments in `dir`'s `.env` as start-up reads them, names as [`env_name_key`] gives
-/// them: none for a missing file, `None` for one that cannot be read.
+/// The assignments in `dir`'s `.env` as start-up's fill-only project read takes them (the
+/// first of 2 lines), names as [`env_name_key`] gives them: none for a missing file, `None`
+/// for one that cannot be read.
 fn env_file_values(dir: &Path) -> Option<HashMap<String, String>> {
     match std::fs::read_to_string(dir.join(".env")) {
-        Ok(contents) => Some(
-            contents
-                .lines()
-                .filter_map(dotenv_assignment)
-                .map(|(name, value)| (env_name_key(name), strip_quotes(value.trim()).to_string()))
-                .collect(),
-        ),
+        Ok(contents) => {
+            let mut values = HashMap::new();
+            for (name, value) in contents.lines().filter_map(dotenv_assignment) {
+                values
+                    .entry(env_name_key(name))
+                    .or_insert_with(|| strip_quotes(value.trim()).to_string());
+            }
+            Some(values)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(HashMap::new()),
         Err(_) => None,
     }
@@ -188,29 +191,34 @@ impl Keys {
 
     /// Drops `var`'s value from the home `.env`, whose line is gone, as a fresh start would
     /// read it: the shell's start-up value when the shell set it, else the project `.env`'s
-    /// value now (`project`; `None` when it cannot be read, which keeps a key start-up took from
-    /// it), else removed. A disconnect stays. Whether its value changed.
+    /// value now (`project`, `None` when it cannot be read; start-up's project value when it
+    /// cannot be read or its value would not read back as itself), else removed. A disconnect
+    /// stays. Whether its value changed.
     fn drop_home_value(&self, var: &str, project: Option<&HashMap<String, String>>) -> bool {
         if matches!(self.lock().get(var), Some(None)) {
             return false;
         }
         let key = env_name_key(var);
         let in_project = self.started_in_project_file.contains(&key);
-        if !in_project
-            && !self.started_in_home_file.contains(&key)
-            && std::env::var_os(var).is_some()
-        {
-            let before = self.value(var);
-            self.lock().remove(var);
-            return self.value(var) != before;
+        let in_home = self.started_in_home_file.contains(&key);
+        if !in_project && !in_home && std::env::var_os(var).is_some() {
+            return self.back_to_start_up(var);
         }
         match project.map(|values| values.get(&key)) {
-            Some(Some(value)) => {
-                env_value_round_trips(var, value) && self.set(var, Some(value.clone()))
+            Some(Some(value)) if env_value_round_trips(var, value) => {
+                self.set(var, Some(value.clone()))
             }
-            None if in_project => false,
+            Some(None) => self.set(var, None),
+            _ if in_project && !in_home => self.back_to_start_up(var),
             _ => self.set(var, None),
         }
+    }
+
+    /// Forgets `var`'s change, so its start-up value applies; whether its value changed.
+    fn back_to_start_up(&self, var: &str) -> bool {
+        let before = self.value(var);
+        self.lock().remove(var);
+        self.value(var) != before
     }
 }
 
@@ -609,11 +617,12 @@ impl Chat {
     fn reload_env(&self) -> usize {
         let _write = env_write();
         let home_names = home_env_names(&self.home);
-        let project = env_file_values(Path::new(PROJECT));
+        // After the read that sanitises the project file, as at start-up.
         let values: HashMap<String, String> = dotenv_values_in(&self.home)
             .into_iter()
             .map(|(name, value)| (env_name_key(&name), value))
             .collect();
+        let project = env_file_values(Path::new(PROJECT));
         let changed = self
             .key_variables()
             .iter()
