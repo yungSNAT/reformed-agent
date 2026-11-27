@@ -337,6 +337,85 @@ fn browser_use_payload_and_idempotency_rules_match_provider_contract() {
 }
 
 #[tokio::test]
+async fn managed_browser_session_reuses_attempt_id_until_creation_is_rejected() {
+    use std::sync::atomic::AtomicUsize;
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let attempts = AtomicUsize::new(0);
+    let cdp_url = "ws://127.0.0.1:9/cdp-fixture";
+    Mock::given(method("POST"))
+        .and(path("/browsers"))
+        .and(header("X-Browser-Use-API-Key", "fixture-key"))
+        .and(body_json(json!({"timeout":5,"proxyCountryCode":"us"})))
+        .respond_with(
+            move |_: &Request| match attempts.fetch_add(1, Ordering::SeqCst) {
+                0 => ResponseTemplate::new(503).set_body_string("fixture service unavailable"),
+                1 => ResponseTemplate::new(409).set_body_json(
+                    json!({"error":{"message":"Managed session creation already in progress"}}),
+                ),
+                2 => ResponseTemplate::new(400).set_body_string("fixture request rejected"),
+                _ => ResponseTemplate::new(201)
+                    .set_body_json(json!({"id":"fixture","cdpUrl":cdp_url})),
+            },
+        )
+        .expect(4)
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/browsers/fixture"))
+        .and(header("X-Browser-Use-API-Key", "fixture-key"))
+        .and(body_json(json!({"action":"stop"})))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut backend = BrowserUseBrowserBackend::new(BrowserUseConfig {
+        api_key: "fixture-key".into(),
+        base_url: server.uri(),
+        managed_mode: true,
+        task_id: "fixture-task".into(),
+    });
+    backend.client = reqwest::Client::builder().no_proxy().build().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for (status, detail) in [
+            ("503", "fixture service unavailable"),
+            ("409", "already in progress"),
+            ("400", "fixture request rejected"),
+        ] {
+            let error = backend
+                .session_cdp_url()
+                .await
+                .expect_err("creation rejected");
+            assert!(matches!(error, ToolError::ExecutionFailed(message)
+                if message.contains(status) && message.contains(detail)));
+        }
+        assert_eq!(backend.session_cdp_url().await.unwrap(), cdp_url);
+        assert_eq!(backend.session_cdp_url().await.unwrap(), cdp_url);
+        assert!(backend.close_active_session().await.unwrap());
+        assert!(!backend.close_active_session().await.unwrap());
+    })
+    .await
+    .expect("managed session lifecycle deadline");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(requests.len(), 5);
+    let key = |index: usize| {
+        requests[index]
+            .headers
+            .get("x-idempotency-key")
+            .expect("create idempotency key")
+    };
+    assert_eq!(key(0), key(1));
+    assert_eq!(key(1), key(2));
+    assert_ne!(key(2), key(3));
+    assert!(requests[4].headers.get("x-idempotency-key").is_none());
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn browser_use_create_session_sends_managed_gateway_contract() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;

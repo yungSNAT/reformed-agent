@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use hermes_core::git::GitRead;
+
 use super::{emit_command_output, AgentError, App, CommandResult};
 
 /// `/diff [staged|all] [--stat] [path...]` for the working directory. Git
@@ -150,19 +152,21 @@ enum Git {
     TimedOut,
 }
 
-/// Runs a hardened git command for `cwd` with `args` within `timeout`.
+/// Runs a hardened `git <read> <args>` for `cwd` within `timeout`.
 /// `Err` holds the reason git cannot run safely here.
 fn git<S: AsRef<OsStr>>(
     cwd: &Path,
+    read: GitRead,
     args: impl IntoIterator<Item = S>,
     timeout: Duration,
 ) -> Result<Git, String> {
-    let mut cmd: Command = hermes_core::git::read_only_git(cwd).ok_or_else(|| {
-        "git could not be run safely here: it is missing, older than 2.39.1, or this repository's configuration could not be read or names a user.".to_string()
-    })?;
-    // `diff.submodule=diff` would start a second diff inside a submodule.
-    cmd.args(["-c", "core.quotePath=false", "-c", "diff.submodule=short"])
-        .args(args);
+    let mut cmd: Command = hermes_core::git::read_only_git(cwd)
+        .ok_or_else(|| {
+            "git could not be run safely here: it is missing, older than 2.39.1, or this repository's configuration could not be read or names a user.".to_string()
+        })?
+        .config("core.quotePath", "false")
+        .command(read);
+    cmd.args(args);
     Ok(
         match hermes_core::git::output_within_timeout(&mut cmd, timeout) {
             Some(output) => Git::Done(output.status.code(), output.stdout),
@@ -184,18 +188,17 @@ pub(super) fn collect_working_diff(
     cwd: &Path,
     request: &DiffRequest,
 ) -> Result<WorkingDiff, String> {
-    match git(cwd, ["rev-parse", "--is-inside-work-tree"], PROBE_TIMEOUT)? {
+    match git(
+        cwd,
+        GitRead::RevParse,
+        ["--is-inside-work-tree"],
+        PROBE_TIMEOUT,
+    )? {
         Git::Done(Some(0), out) if out.trim_ascii() == b"true" => {}
         Git::TimedOut => return Err("git rev-parse timed out.".to_string()),
         Git::Done(..) => return Err("Not a git repository.".to_string()),
     }
-    let mut base = vec![
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--ignore-submodules=dirty",
-    ];
-    base.extend_from_slice(request.mode.args());
+    let base = request.mode.args();
     let pathspec: Vec<&str> = std::iter::once("--")
         .chain(request.paths.iter().map(String::as_str))
         .collect();
@@ -206,7 +209,7 @@ pub(super) fn collect_working_diff(
             .chain(&pathspec)
             .copied()
             .collect::<Vec<_>>();
-        match git(cwd, args, timeout)? {
+        match git(cwd, GitRead::Diff, args, timeout)? {
             Git::Done(Some(0), out) => Ok(String::from_utf8_lossy(&out).trim().to_string()),
             Git::Done(code, _) => Err(format!(
                 "git diff failed (exit {}).",
@@ -231,10 +234,8 @@ pub(super) fn collect_working_diff(
         let chunks = untracked_diff(cwd, &untracked, |path| {
             git(
                 cwd,
+                GitRead::Diff,
                 [
-                    OsStr::new("diff"),
-                    OsStr::new("--no-ext-diff"),
-                    OsStr::new("--no-textconv"),
                     OsStr::new("--no-index"),
                     OsStr::new("--"),
                     OsStr::new("/dev/null"),
@@ -255,7 +256,8 @@ pub(super) fn collect_working_diff(
 fn untracked_files(cwd: &Path) -> Result<Vec<Untracked>, String> {
     let out = match git(
         cwd,
-        ["ls-files", "-z", "--others", "--exclude-standard"],
+        GitRead::LsFiles,
+        ["-z", "--others", "--exclude-standard"],
         GIT_TIMEOUT,
     )? {
         Git::Done(Some(0), out) => out,
