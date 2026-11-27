@@ -32,4 +32,6 @@ fn with_no_home_a_tilde_path_stays_as_written() {
         assert_eq!(reply["result"]["attached"], true, "{reply}");
         assert_eq!(reply["result"]["count"], 1, "{reply}");
     });
+    // Leave the folder before it is removed: Windows keeps a working folder.
+    std::env::set_current_dir(std::env::temp_dir()).unwrap();
 }
