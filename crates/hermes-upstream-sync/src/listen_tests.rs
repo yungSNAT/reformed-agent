@@ -181,17 +181,20 @@ async fn bad_signatures_are_refused_before_anything_else() {
                 .collect::<String>()
         )
     };
-    for sig in [
+    for (case, sig) in [
         wrong_secret,
         good.to_uppercase().replace("SHA256=", "sha256="),
         good.replace("sha256=", "sha1="),
         good[..good.len() - 2].to_string(),
         format!("{good}00"),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         assert_eq!(
             send(addr, push(PUSH, "d-2", Some(&sig))).await,
             (401, "invalid signature".into()),
-            "{sig}"
+            "signature case {case}"
         );
     }
     let unsigned = request(
