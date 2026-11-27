@@ -134,15 +134,16 @@ fn write_roster(root: &Path, agents: Option<&Value>) -> Result<usize, String> {
     let dir = root.join("bot_relay");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("roster.json");
-    // A link in the roster's place is replaced, never followed.
-    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+    // A link, pipe or other non-file in the roster's place is replaced, never followed or
+    // opened.
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file() && !m.is_dir()) {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
     // Owner-only on every write, as upstream writes it, before the content goes in: the atomic
     // write keeps the mode it finds.
     create_private(&path).map_err(|e| e.to_string())?;
     let bytes = serde_json::to_vec(&roster).map_err(|e| e.to_string())?;
-    // A link swapped in since is renamed over, never followed.
+    // A link or non-file swapped in since is refused, never followed.
     hermes_config::atomic_write_bytes_no_follow(&path, &bytes, None).map_err(|e| e.to_string())?;
     Ok(count)
 }

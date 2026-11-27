@@ -505,11 +505,8 @@ async fn a_crashed_child_fails_the_next_request_at_once_and_the_one_after_restar
     client.turn(None).await;
     let pids = children_in(&started.root.path().join("profiles/inbox"));
     assert_eq!(pids.len(), 1);
-    let killed = std::process::Command::new("kill")
-        .args(["-9", &pids[0].to_string()])
-        .status()
-        .unwrap();
-    assert!(killed.success());
+    let pid = libc::pid_t::try_from(pids[0]).unwrap();
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
     // Dead; its exit is collected when the profile is next leased.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     while std::fs::read_to_string(format!("/proc/{}/stat", pids[0]))
