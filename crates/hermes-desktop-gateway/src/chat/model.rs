@@ -16,7 +16,8 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use hermes_config::loader::{
-    dotenv_assignment, dotenv_values_in, env_name_writable, env_value_round_trips, set_env_file_value,
+    dotenv_assignment, dotenv_values_in, env_name_writable, env_value_round_trips,
+    set_env_file_value,
 };
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use hermes_core::providers::{canonical_provider_id, provider_api_key_env_vars, KNOWN_PROVIDERS};
@@ -133,7 +134,7 @@ impl Keys {
 
     /// Whether `var`'s value came from a `.env` file: changed since start-up, or in the home
     /// `.env` at start-up.
-    fn from_env_file(&self, var: &str) -> bool {
+    fn came_from_env_file(&self, var: &str) -> bool {
         self.changed(var) || self.from_file.contains(var)
     }
 
@@ -542,7 +543,7 @@ impl Chat {
                 Some(value) => {
                     env_value_round_trips(var, value) && self.keys.set(var, Some(value.clone()))
                 }
-                None => readable && self.keys.from_env_file(var) && self.keys.set(var, None),
+                None => readable && self.keys.came_from_env_file(var) && self.keys.set(var, None),
             })
             .count()
     }
