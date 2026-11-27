@@ -4,10 +4,12 @@
 //!
 //! Differences from upstream at `ae2a81cc`: resume serves a live session or its saved rows
 //! only (no lookup by title, no compression tips, no lazy or deferred modes) and its reply has
-//! no `started_at` and an `inflight` of null; a title is not refused for being another
-//! session's (this store keeps no title index), one that cleans to nothing is refused as
-//! missing rather than clearing the title, and no `session.info` event follows a title
-//! change, as this gateway's legacy wire sends none.
+//! no `started_at` and an `inflight` of null, and its `session_id` is the saved session's id, as
+//! in `resumed` and `session_key` (this gateway mints no separate runtime id). A title is not
+//! refused for being another session's (this store keeps no title index), one that cleans to
+//! nothing is refused as missing rather than clearing the title, no `session.info` event
+//! follows a title change, as this gateway's legacy wire sends none, and a title can be set
+//! whilst a turn runs, as upstream allows (a turn's save keeps the title).
 
 use std::sync::Arc;
 
@@ -43,26 +45,38 @@ fn session_id(params: &Map<String, Value>) -> Result<String, RpcError> {
 fn resume(req: Request) -> Reply {
     Box::pin(async move {
         let id = session_id(&req.params)?;
+        // A live session streams to this connection before its saved rows are read, so a turn
+        // that ends meanwhile is not lost: its last events follow this reply, and may repeat
+        // what the rows already hold.
+        let live = req.chat.lock_sessions().get(&id).cloned();
+        if let Some(session) = &live {
+            session.subscribe(req.conn.id, &req.conn.outbox);
+        }
         let chat = Arc::clone(&req.chat);
         let lookup = id.clone();
+        // A live session's subscription stays on a failed read: the connection asked for it,
+        // and it may have streamed the session already.
         let rows = match tokio::task::spawn_blocking(move || chat.history(&lookup)).await {
             Err(e) => return Err((RESUME_STORAGE, e.to_string())),
             Ok(None) => return Err((RESUME_NOT_FOUND, "session not found".into())),
             Ok(Some(Err(e))) => return Err((RESUME_STORAGE, e)),
             Ok(Some(Ok(rows))) => rows,
         };
-        let session: Arc<LiveSession> = {
-            let mut sessions = req.chat.lock_sessions();
-            match sessions.get(&id) {
-                Some(session) => Arc::clone(session),
-                None if rows.is_empty() => {
-                    return Err((RESUME_NOT_FOUND, "session not found".into()))
+        let session: Arc<LiveSession> = match live {
+            Some(session) => session,
+            None => {
+                let mut sessions = req.chat.lock_sessions();
+                match sessions.get(&id) {
+                    Some(session) => Arc::clone(session),
+                    None if rows.is_empty() => {
+                        return Err((RESUME_NOT_FOUND, "session not found".into()))
+                    }
+                    None => Arc::clone(
+                        sessions
+                            .entry(id.clone())
+                            .or_insert_with(|| req.chat.new_session()),
+                    ),
                 }
-                None => Arc::clone(
-                    sessions
-                        .entry(id.clone())
-                        .or_insert_with(|| req.chat.new_session()),
-                ),
             }
         };
         session.subscribe(req.conn.id, &req.conn.outbox);
