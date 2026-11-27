@@ -554,8 +554,6 @@ fn git(dir: &Path, root: &Path, read: GitRead) -> Option<Command> {
     let mut cmd = hermes_core::git::read_only_git(dir)?
         .config("core.hooksPath", "/dev/null")
         .config("diff.external", "")
-        .config("diff.submodule", "short")
-        .config("status.submoduleSummary", "false")
         .command(read);
     let ceiling = root.parent().unwrap_or(root);
     cmd.env("GIT_CEILING_DIRECTORIES", ceiling)

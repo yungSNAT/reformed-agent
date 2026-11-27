@@ -138,6 +138,7 @@ async fn a_local_caller_reads_the_working_folder_but_not_the_hermes_home() {
     let (_dir, base, home, marker) = work_tree();
     let (_runtime, origin) = serving(&home);
     work_folder(&home, &base);
+    std::fs::write(home.join("notes.txt"), "private").unwrap();
     let token = credential(&home, &origin).await;
     for who in ["browser", "native"] {
         // A native ticket is one-use, so each native request mints its own.
@@ -180,16 +181,17 @@ async fn a_local_caller_reads_the_working_folder_but_not_the_hermes_home() {
             "{who}: {body}"
         );
 
-        let secret = get(at("/api/fs/read-data-url", &home.join("config.yaml")))
+        // A name no credential rule refuses, so only the Hermes home rule keeps it out.
+        let secret = get(at("/api/fs/read-data-url", &home.join("notes.txt")))
             .await
             .unwrap();
         assert_eq!(secret.status(), 403, "{who} reads the Hermes home");
         let text = secret.text().await.unwrap();
-        assert!(!text.contains("webapp"), "{who}: {text}");
+        assert!(!text.contains("private"), "{who}: {text}");
         let listing = get(at("/api/fs/list", &home)).await.unwrap();
         let text = listing.text().await.unwrap();
         assert!(
-            !text.contains("config.yaml"),
+            !text.contains("notes.txt"),
             "{who} lists the Hermes home: {text}"
         );
 
