@@ -221,20 +221,48 @@ fn load_prefill_messages_accepts_relative_and_absolute_paths() {
 }
 
 #[test]
-fn load_prefill_messages_ignores_unreadable_or_invalid_files() {
-    let dir = tempfile::tempdir().unwrap();
-    assert!(load_prefill_messages_file(dir.path()).is_empty());
-    assert!(load_prefill_messages_file(&dir.path().join("missing.json")).is_empty());
+fn load_prefill_messages_warns_and_ignores_unreadable_or_invalid_files() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
-    for (name, contents) in [
-        ("invalid-json", "["),
-        ("object", r#"{"role":"user","content":"example"}"#),
-        ("invalid-message", r#"[{"role":"unknown","content":"example"}]"#),
-    ] {
-        let path = dir.path().join(name);
-        std::fs::write(&path, contents).unwrap();
-        assert!(load_prefill_messages_file(&path).is_empty(), "{name}");
+    struct WarningCounter(Arc<AtomicUsize>);
+
+    impl tracing::Subscriber for WarningCounter {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() == tracing::Level::WARN
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, _: &tracing::Event<'_>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
     }
+
+    let warnings = Arc::new(AtomicUsize::new(0));
+    let dir = tempfile::tempdir().unwrap();
+    tracing::subscriber::with_default(WarningCounter(Arc::clone(&warnings)), || {
+        assert!(load_prefill_messages_file(dir.path()).is_empty());
+        assert!(load_prefill_messages_file(&dir.path().join("missing.json")).is_empty());
+
+        for (name, contents) in [
+            ("invalid-json", "["),
+            ("object", r#"{"role":"user","content":"example"}"#),
+            (
+                "invalid-message",
+                r#"[{"role":"unknown","content":"example"}]"#,
+            ),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, contents).unwrap();
+            assert!(load_prefill_messages_file(&path).is_empty(), "{name}");
+        }
+    });
+    assert_eq!(warnings.load(Ordering::Relaxed), 5);
 }
 
 #[test]
