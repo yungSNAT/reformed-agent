@@ -1391,6 +1391,23 @@ fn a_worker_tree_cannot_reach_its_task_id_on_another_board() {
 }
 
 #[test]
+fn the_cli_takes_a_task_id_as_the_worker_signal() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |key: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    };
+    // An operator pinning a board is not a worker.
+    assert_eq!(cli_binding(env(&[(ENV_BOARD, "main")])), None);
+    assert_eq!(cli_binding(env(&[(ENV_RUN_ID, "run-a")])), None);
+    let bound = cli_binding(env(&[(ENV_TASK, "K-0001")])).unwrap();
+    assert_eq!((bound.task.as_str(), bound.board.as_str()), ("K-0001", ""));
+}
+
+#[test]
 fn a_worker_tree_may_run_only_reads_and_its_own_lifecycle() {
     let reads_and_lifecycle = [
         "status",

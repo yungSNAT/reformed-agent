@@ -325,11 +325,18 @@ pub fn check_cli_lifecycle(
     force: bool,
 ) -> Result<(), String> {
     let caller = CliCaller {
-        binding: KanbanWorkerBinding::from_env(),
+        binding: cli_binding(|key| std::env::var(key).ok()),
         worker_tree: worker_scope(std::env::var(ENV_WORKER_SCOPE).ok()),
         jobs_dir: background_jobs_path(),
     };
     check_cli_lifecycle_with(board, task, verb, completes, force, &caller)
+}
+
+/// The binding the CLI treats as a dispatched worker's. As upstream, the
+/// worker signal is [`ENV_TASK`]: a lone [`ENV_BOARD`] or [`ENV_RUN_ID`] does
+/// not mark a worker (the CLI does not use either to select a board).
+fn cli_binding(get: impl Fn(&str) -> Option<String>) -> Option<KanbanWorkerBinding> {
+    KanbanWorkerBinding::from_lookup(get).filter(|binding| !binding.task.is_empty())
 }
 
 /// `hermes kanban` subcommands a worker's process tree may run: the read-only
@@ -337,8 +344,8 @@ pub fn check_cli_lifecycle(
 /// to the worker's own task. Every other board write is refused there, as
 /// upstream refuses every board write from a worker's descendants.
 pub fn check_cli_verb(action: &str) -> Result<(), String> {
-    let in_worker_tree =
-        KanbanWorkerBinding::from_env().is_some() || std::env::var_os(ENV_WORKER_SCOPE).is_some();
+    let in_worker_tree = cli_binding(|key| std::env::var(key).ok()).is_some()
+        || std::env::var_os(ENV_WORKER_SCOPE).is_some();
     check_cli_verb_with(action, in_worker_tree)
 }
 

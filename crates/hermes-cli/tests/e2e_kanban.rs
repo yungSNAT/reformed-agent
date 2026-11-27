@@ -506,8 +506,14 @@ async fn a_worker_terminal_cannot_write_the_board_beyond_its_own_lifecycle() {
         }
     }
     assert_eq!(std::fs::read(&store).unwrap(), before);
-    // An operator still can.
-    assert_kanban(home, &["add", "third"], "K-0003").await;
+    // An operator still can, a board pinned with HERMES_KANBAN_BOARD alone
+    // included.
+    let pinned = kanban_as(home, &[("HERMES_KANBAN_BOARD", "runs")], &["add", "third"]).await;
+    let stdout = String::from_utf8_lossy(&pinned.stdout);
+    assert!(
+        pinned.status.success() && stdout.contains("K-0003"),
+        "{stdout}"
+    );
 }
 
 #[tokio::test]
