@@ -87,7 +87,8 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
 
     while let Some(ch) = chars.next() {
         match ch {
-            c if c.is_ascii_whitespace() => {
+            // Python shlex's whitespace; a form feed or vertical tab is part of a word.
+            ' ' | '\t' | '\r' | '\n' => {
                 if in_token {
                     tokens.push(std::mem::take(&mut current));
                     in_token = false;
@@ -108,14 +109,14 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
                 loop {
                     match chars.next() {
                         Some('"') => break,
+                        // Python shlex, unlike a POSIX shell, escapes only `"` and `\` here.
                         Some('\\') => match chars.next() {
-                            Some(esc @ ('"' | '\\' | '$' | '`')) => current.push(esc),
-                            Some('\n') => {}
+                            Some(esc @ ('"' | '\\')) => current.push(esc),
                             Some(other) => {
                                 current.push('\\');
                                 current.push(other);
                             }
-                            None => return Err("No closing quotation".to_string()),
+                            None => return Err("No escaped character".to_string()),
                         },
                         Some(c) => current.push(c),
                         None => return Err("No closing quotation".to_string()),
@@ -124,8 +125,8 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
             }
             '\\' => {
                 in_token = true;
+                // No line continuation: Python keeps an escaped newline.
                 match chars.next() {
-                    Some('\n') => {}
                     Some(c) => current.push(c),
                     None => return Err("No escaped character".to_string()),
                 }
@@ -141,6 +142,10 @@ pub(crate) fn shlex_split(input: &str) -> Result<Vec<String>, String> {
     }
     Ok(tokens)
 }
+
+#[cfg(test)]
+#[path = "script_helpers_shlex_tests.rs"]
+mod shlex_tests;
 
 pub(crate) fn shlex_quote(token: &str) -> String {
     if token.is_empty() {
@@ -391,8 +396,105 @@ pub(crate) fn py_float(value: Option<&Py>, default: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::run_process;
+    use super::{
+        collect_rs_files, extract_report_path, fs, py_float, py_int, read_rust_surface,
+        run_process, shlex_join, shlex_split, Py,
+    };
     use std::path::Path;
+
+    #[test]
+    fn quoted_command_arguments_round_trip_without_losing_empty_values() {
+        let args = [
+            "report",
+            "weekly summary",
+            "",
+            "O'Brien",
+            r"C:\reports\archive",
+        ]
+        .map(String::from);
+        assert_eq!(shlex_split(&shlex_join(&args)).unwrap(), args);
+        let input = r#"report "weekly \"status\"" 'a''b' "kept\z""#;
+        assert_eq!(
+            shlex_split(input).unwrap(),
+            ["report", "weekly \"status\"", "ab", "kept\\z"]
+        );
+
+        for unfinished in ["'weekly", "\"weekly"] {
+            assert_eq!(shlex_split(unfinished).unwrap_err(), "No closing quotation");
+        }
+        assert_eq!(shlex_split("weekly\\").unwrap_err(), "No escaped character");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_timeout_returns_exit_124_with_no_output() {
+        let cwd = tempfile::tempdir().unwrap();
+        let args = ["sh", "-c", "exec sleep 30"].map(String::from);
+        let result = run_process(&args, cwd.path(), Some(0)).unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.ok);
+        assert_eq!(result.exit_code, 124);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.is_empty());
+    }
+
+    #[test]
+    fn source_surface_includes_sorted_rust_siblings_and_reports_missing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let module = root.path().join("report.rs");
+        let parts = module.with_extension("");
+        fs::create_dir_all(parts.join("a")).unwrap();
+        fs::write(&module, "pub fn summary() {}\r\n").unwrap();
+        fs::write(parts.join("z.rs"), "fn z() {}\r\n").unwrap();
+        fs::write(parts.join("a").join("first.rs"), "fn first() {}\r\n").unwrap();
+        fs::write(parts.join("notes.txt"), "fixture notes").unwrap();
+        assert_eq!(
+            read_rust_surface(&module).unwrap(),
+            "pub fn summary() {}\n\nfn first() {}\n\nfn z() {}\n"
+        );
+        assert_eq!(
+            read_rust_surface(&parts).unwrap(),
+            "fn first() {}\n\nfn z() {}\n"
+        );
+
+        let last = parts.join("zz.rs");
+        let mut files = vec![last.clone()];
+        collect_rs_files(&parts, &mut files).unwrap();
+        assert_eq!(
+            files,
+            [parts.join("a").join("first.rs"), parts.join("z.rs"), last]
+        );
+
+        let missing = root.path().join("missing.rs");
+        assert!(read_rust_surface(&missing)
+            .unwrap_err()
+            .contains("missing.rs"));
+        assert!(collect_rs_files(&missing, &mut Vec::new())
+            .unwrap_err()
+            .contains("missing.rs"));
+    }
+
+    #[test]
+    fn numeric_coercion_and_report_path_match_the_python_contract() {
+        assert_eq!(py_int(Some(&Py::Bool(true)), 7), 1);
+        assert_eq!(py_int(Some(&Py::Float(-4.5)), 7), -4);
+        assert_eq!(py_int(Some(&Py::Str(" -8 ".into())), 7), -8);
+        assert_eq!(py_float(Some(&Py::Int(-4)), 7.0), -4.0);
+        assert_eq!(py_float(Some(&Py::Bool(false)), 7.0), 0.0);
+        assert_eq!(py_float(Some(&Py::Bool(true)), 7.0), 1.0);
+        assert_eq!(py_float(Some(&Py::Str(" 3.5 ".into())), 7.0), 3.5);
+        let hints = [r"^Export complete$", r"^Report: (.*)$"];
+        assert_eq!(
+            extract_report_path(
+                "Export complete\r\nReport:  reports/weekly summary.json  \r\n",
+                &hints
+            )
+            .as_deref(),
+            Some("reports/weekly summary.json")
+        );
+        assert_eq!(extract_report_path("Export complete\r\n", &hints), None);
+    }
 
     #[test]
     fn run_process_captures_output_and_reports_missing_binary() {

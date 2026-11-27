@@ -14,7 +14,7 @@ use hermes_intelligence::estimate_tokens_rough;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use hermes_core::git::{output_within_timeout, read_only_git};
+use hermes_core::git::{output_within_timeout, read_only_git, GitRead};
 
 const TRAILING_PUNCTUATION: &str = ",.;!?";
 const SENSITIVE_HOME_DIRS: &[&str] = &[".ssh", ".aws", ".gnupg", ".kube"];
@@ -232,12 +232,12 @@ async fn expand_reference(
     match reference.kind.as_str() {
         "file" => expand_file_reference(reference, cwd, allowed_root).await,
         "folder" => expand_folder_reference(reference, cwd, allowed_root).await,
-        "diff" => expand_git_reference(reference, cwd, "diff", Vec::new(), "git diff").await,
+        "diff" => expand_git_reference(reference, cwd, GitRead::Diff, Vec::new(), "git diff").await,
         "staged" => {
             expand_git_reference(
                 reference,
                 cwd,
-                "diff",
+                GitRead::Diff,
                 vec!["--staged".into()],
                 "git diff --staged",
             )
@@ -252,7 +252,7 @@ async fn expand_reference(
                 .unwrap_or(1);
             let arg = format!("-{count}");
             let label = format!("git log {arg} -p");
-            expand_git_reference(reference, cwd, "log", vec![arg, "-p".into()], &label).await
+            expand_git_reference(reference, cwd, GitRead::Log, vec![arg, "-p".into()], &label).await
         }
         "url" => expand_url_reference(reference).await,
         _ => (
@@ -350,30 +350,22 @@ const GIT_REFERENCE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Runs `git <subcommand> <args>` in `cwd` as the workspace snapshot does, so
 /// the repository's own configuration cannot make it run a program: the
-/// repository may be a clone of anyone's. `--no-ext-diff` and
-/// `--no-textconv` turn off the diff drivers a `.gitattributes` names, which
-/// no fixed override can.
+/// repository may be a clone of anyone's.
 async fn expand_git_reference(
     reference: &ContextReference,
     cwd: &Path,
-    subcommand: &'static str,
+    subcommand: GitRead,
     args: Vec<String>,
     label: &str,
 ) -> (Option<String>, Option<String>) {
     let cwd = cwd.to_path_buf();
     let run = tokio::task::spawn_blocking(move || {
-        let mut git = read_only_git(&cwd).ok_or(
+        let git = read_only_git(&cwd).ok_or(
             "git could not be run safely here: it is missing, older than 2.39.1, \
              or this repository's configuration could not be read or names a user",
         )?;
-        // `diff.submodule=diff` would start a second diff inside a submodule.
-        git.args(["-c", "diff.submodule=short", subcommand])
-            .args([
-                "--no-ext-diff",
-                "--no-textconv",
-                "--ignore-submodules=dirty",
-            ])
-            .args(args);
+        let mut git = git.command(subcommand);
+        git.args(args);
         output_within_timeout(&mut git, GIT_REFERENCE_TIMEOUT).ok_or("git timed out")
     })
     .await;
@@ -390,8 +382,10 @@ async fn expand_git_reference(
     if !output.status.success() {
         return (
             Some(format!(
-                "{}: git {subcommand} failed ({}); is this folder in a git repository?",
-                reference.raw, output.status
+                "{}: git {} failed ({}); is this folder in a git repository?",
+                reference.raw,
+                subcommand.name(),
+                output.status
             )),
             None,
         );

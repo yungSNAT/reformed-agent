@@ -86,6 +86,31 @@ fn read_gateway_pid(path: &Path) -> Option<u32> {
     u32::try_from(pid).ok()
 }
 
+/// Writes the pid file whole, through a sibling temp file renamed into place, so `gateway stop`
+/// reading it meanwhile finds the old pid or the new one, never an emptied file.
+fn write_gateway_pid(path: &Path, pid: u32) -> std::io::Result<()> {
+    hermes_config::atomic_write_bytes(path, format!("{pid}\n").as_bytes())
+        .map_err(|e| std::io::Error::other(e.to_string()))
+}
+
+/// Why `gateway stop` found no live pid but a run still holds the home's `gateway.lock`: the
+/// first stop removed the pid file and the run is still shutting down. A lock that cannot be
+/// tested reads as held.
+#[cfg(unix)]
+fn gateway_still_stopping(home: &Path) -> Option<String> {
+    hermes_desktop_gateway::local::lock_held(home).then(|| {
+        format!(
+            "Gateway stop: a gateway still holds {}/gateway.lock, so it is starting or still stopping (or the lock cannot be tested); run stop again once it has written gateway.pid.",
+            home.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn gateway_still_stopping(_home: &Path) -> Option<String> {
+    None
+}
+
 /// Removes a stale pid file. `gateway.lock` stays: its `flock`, not its presence, says whether
 /// an owner runs, and unlinking a live owner's lock would let a second owner claim the home.
 fn cleanup_stale_gateway_metadata(pid_path: &Path) {
