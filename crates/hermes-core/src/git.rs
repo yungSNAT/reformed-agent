@@ -79,8 +79,9 @@ pub fn is_git_2_39_1_or_later(version: &str) -> bool {
 /// Git must not fetch an object the repository lacks from a promisor remote
 /// either, which runs `core.sshCommand` or a remote helper: `guard` says how.
 /// A repository whose own config names a user (see [`names_a_user`]) gets
-/// no command. A submodule's own config is out of reach of these overrides,
-/// so [`ReadOnlyGit::command`] keeps git out of submodule worktrees.
+/// no command. A filter or diff driver that only a submodule's own config
+/// names is out of reach of these overrides, so [`ReadOnlyGit::command`] keeps
+/// git out of submodule worktrees.
 pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<ReadOnlyGit> {
     workspace_git_with(std::ffi::OsStr::new("git"), root, guard).map(ReadOnlyGit)
 }
@@ -91,7 +92,9 @@ pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<ReadOnlyGit> 
 #[derive(Debug)]
 pub struct ReadOnlyGit(Command);
 
-/// The git subcommands a [`ReadOnlyGit`] runs.
+/// The git subcommands a [`ReadOnlyGit`] runs. `Branch` and `Config` take any
+/// arguments, so the caller keeps them to reads (`--show-current`, `--get`):
+/// `branch -D` or `config <key> <value>` would write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GitRead {
     Status,
@@ -128,8 +131,8 @@ impl GitRead {
     }
 
     /// The options that follow the subcommand. A submodule's own config can
-    /// name a filter, an fsmonitor or a diff driver that the overrides do not
-    /// reach, and status and diff run status inside a submodule's worktree to
+    /// name a filter or a diff driver that the overrides do not reach, and
+    /// status and diff run status inside a submodule's worktree to
     /// find changes there, unless `--ignore-submodules` says otherwise. Only
     /// the command line outranks a repository's `submodule.<name>.ignore`, so
     /// `diff.ignoreSubmodules` in config is not enough. `dirty` still reports
@@ -2372,10 +2375,14 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
     }
 
     /// Each subcommand, with options a caller might add, runs no program
-    /// that the repository's or a submodule's own config names. The
-    /// submodule's filter, fsmonitor and diff driver are out of reach of the
-    /// overrides, so only keeping git out of the submodule's worktree stops
-    /// them.
+    /// that the repository's or a submodule's own config names, and starts no
+    /// git inside the submodule: first with the submodule's worktree dirty,
+    /// then with its gitlink moved and the repository asking for a long
+    /// status's summary and an inline submodule diff. A filter or diff driver
+    /// the superproject never names is out of reach of the overrides, so only
+    /// keeping git out of the submodule stops the submodule's own. None of
+    /// these reads honours `submodule.recurse`, so no case here can show that
+    /// override at work.
     #[test]
     fn no_subcommand_runs_a_program_a_submodule_or_the_repository_names() {
         if lazy_fetch_guard().is_none() {
@@ -2439,7 +2446,6 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
         for (key, name) in [
             ("filter.evil.clean", "sub-filter"),
             ("diff.evil.textconv", "sub-textconv"),
-            ("core.fsmonitor", "sub-fsmonitor"),
         ] {
             git(&repo, &["config", "-f", sub_config, key, &program(name)]);
         }
@@ -2448,25 +2454,57 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
         std::fs::write(repo.join("sub/a.txt"), "two\n").unwrap();
         std::fs::write(repo.join("t.txt"), "six\n").unwrap();
 
-        for read in GitRead::ALL {
-            let args: &[&str] = match read {
-                GitRead::Status => &["--short", "--branch"],
-                GitRead::Diff => &["--stat", "HEAD"],
-                GitRead::Log => &["-2", "-p"],
-                GitRead::RevParse => &["HEAD"],
-                GitRead::LsFiles => &["-z"],
-                GitRead::Branch => &["--show-current"],
-                GitRead::Config => &["--get", "diff.external"],
-            };
-            let _ = std::fs::remove_file(&marker);
-            let output = output_within_timeout(
-                read_only_git(&repo).unwrap().command(read).args(args),
-                Duration::from_secs(20),
-            )
-            .expect("git finished in time");
-            assert!(output.status.success(), "git {read:?} {args:?} failed");
-            let ran = std::fs::read_to_string(&marker).unwrap_or_default();
-            assert!(ran.is_empty(), "git {read:?} {args:?} ran: {ran}");
+        let trace = tmp.path().join("trace");
+        let every_read_stays_out = |stage: &str| {
+            for read in GitRead::ALL {
+                let cases: &[&[&str]] = match read {
+                    GitRead::Status => &[&["--short", "--branch"], &[]],
+                    GitRead::Diff => &[&["--stat", "HEAD"], &["HEAD"]],
+                    GitRead::Log => &[&["-2", "-p"]],
+                    GitRead::RevParse => &[&["HEAD"]],
+                    GitRead::LsFiles => &[&["-z"]],
+                    GitRead::Branch => &[&["--show-current"]],
+                    GitRead::Config => &[&["--get", "diff.external"]],
+                };
+                for args in cases {
+                    let _ = std::fs::remove_file(&marker);
+                    let _ = std::fs::remove_file(&trace);
+                    let output = output_within_timeout(
+                        read_only_git(&repo)
+                            .unwrap()
+                            .command(read)
+                            .args(*args)
+                            .env("GIT_TRACE", &trace),
+                        Duration::from_secs(20),
+                    )
+                    .expect("git finished in time");
+                    assert!(output.status.success(), "{stage}: git {read:?} {args:?} failed");
+                    let ran = std::fs::read_to_string(&marker).unwrap_or_default();
+                    assert!(ran.is_empty(), "{stage}: git {read:?} {args:?} ran: {ran}");
+                    // Git traces each process it starts, a filter or driver
+                    // included, as `run_command`.
+                    let started = std::fs::read_to_string(&trace).unwrap_or_default();
+                    assert!(
+                        !started.contains("run_command"),
+                        "{stage}: git {read:?} {args:?} started: {started}"
+                    );
+                }
+            }
+        };
+        every_read_stays_out("submodule dirty");
+
+        // The submodule gets a commit its superproject does not record, and
+        // the repository asks for what would run git inside it: a long
+        // status's summary (`git submodule summary`) and an inline submodule
+        // diff (`git diff` run in the submodule).
+        commit(&repo.join("sub"), "two");
+        for (key, value) in [
+            ("status.submoduleSummary", "true"),
+            ("diff.submodule", "diff"),
+            ("submodule.recurse", "true"),
+        ] {
+            git(&repo, &["config", key, value]);
         }
+        every_read_stays_out("gitlink moved");
     }
 }
