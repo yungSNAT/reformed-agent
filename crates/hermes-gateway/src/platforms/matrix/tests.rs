@@ -548,6 +548,112 @@ fn test_parse_decrypt_ffi_output_accepts_matrix_message_shape() {
     assert!(out.relates_to.is_none());
 }
 
+#[test]
+fn decrypt_bridge_preserves_edits_and_relation_metadata() {
+    for (reply, body, event_type, is_edit, relation) in [
+        (
+            r#"{
+                "relates_to":{"rel_type":"m.replace","event_id":"$first"},
+                "m.new_content":{"body":" revised "},
+                "body":"original"
+            }"#,
+            "revised",
+            "m.room.message",
+            true,
+            Some(("m.replace", "$first", None)),
+        ),
+        (
+            r#"{
+                "body":"original",
+                "content":{
+                    "m.relates_to":{"rel_type":"m.replace","event_id":"$second"},
+                    "m.new_content":{"body":"nested revision"}
+                }
+            }"#,
+            "nested revision",
+            "m.room.message",
+            true,
+            Some(("m.replace", "$second", None)),
+        ),
+        (
+            r#"{"is_edit":true,"body":"legacy edit"}"#,
+            "legacy edit",
+            "m.room.message",
+            true,
+            None,
+        ),
+        (
+            r#"{"is_edit":true,"content":{"body":"legacy wrapped edit"}}"#,
+            "legacy wrapped edit",
+            "m.room.message",
+            true,
+            None,
+        ),
+        (
+            r#"{
+                "event_type":"m.reaction",
+                "body":"acknowledged",
+                "m.relates_to":{"rel_type":"m.annotation","event_id":"$first","key":"✔"}
+            }"#,
+            "acknowledged",
+            "m.reaction",
+            false,
+            Some(("m.annotation", "$first", Some("✔"))),
+        ),
+        (
+            r#"{
+                "content":{
+                    "m.relates_to":{"rel_type":"m.replace"},
+                    "m.new_content":{"body":"fallback"}
+                }
+            }"#,
+            "fallback",
+            "m.room.message",
+            false,
+            None,
+        ),
+        (
+            "plain bridge reply",
+            "plain bridge reply",
+            "m.room.message",
+            false,
+            None,
+        ),
+    ] {
+        let out = MatrixAdapter::parse_decrypt_ffi_output(reply).unwrap();
+        assert_eq!(out.body, body, "{reply}");
+        assert_eq!(out.event_type, event_type, "{reply}");
+        assert_eq!(out.is_edit, is_edit, "{reply}");
+        assert_eq!(
+            out.relates_to.as_ref().map(|r| (
+                r.rel_type.as_str(),
+                r.event_id.as_str(),
+                r.key.as_deref()
+            )),
+            relation,
+            "{reply}"
+        );
+    }
+
+    for (reply, error) in [
+        ("", "empty stdout from decrypt FFI"),
+        (
+            r#"{"error":"message unavailable","body":"ignored"}"#,
+            "decrypt FFI error: message unavailable",
+        ),
+        (
+            r#"{"content":{"body":" "}}"#,
+            "decrypt FFI JSON missing non-empty body",
+        ),
+    ] {
+        assert_eq!(
+            MatrixAdapter::parse_decrypt_ffi_output(reply).unwrap_err(),
+            error,
+            "{reply}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn decrypt_ffi_config_loads_environment_options() {
     const CHILD_CASE: &str = "HERMES_TEST_MATRIX_DECRYPT_FFI_CASE";
