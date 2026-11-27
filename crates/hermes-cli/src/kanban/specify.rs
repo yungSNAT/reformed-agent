@@ -45,6 +45,7 @@ impl Selection {
 }
 
 pub async fn specify_kanban(args: &[&str], config: &GatewayConfig) -> Result<String, AgentError> {
+    crate::kanban::check_cli_verb("specify").map_err(AgentError::Config)?;
     let Some(selection) = Selection::parse(args) else {
         return Ok(USAGE.to_string());
     };
