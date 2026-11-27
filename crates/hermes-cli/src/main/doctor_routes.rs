@@ -1,17 +1,84 @@
 /// Handle `hermes doctor`.
 use hermes_core::subprocess::CommandNoWindowExt;
 
+#[cfg(windows)]
+const DEFAULT_PATHEXT: Option<&str> = Some(".COM;.EXE;.BAT;.CMD");
+#[cfg(not(windows))]
+const DEFAULT_PATHEXT: Option<&str> = None;
+
+fn is_shell_env_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_executable_file(path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+fn candidate_matches_with_pathext(base: &std::path::Path, pathext: Option<&str>) -> bool {
+    if is_executable_file(base) {
+        return true;
+    }
+    let Some(exts) = pathext else {
+        return false;
+    };
+    let base_str = base.as_os_str();
+    exts.split(';')
+        .map(str::trim)
+        .filter(|ext| ext.starts_with('.'))
+        .any(|ext| {
+            let mut with_ext = base_str.to_os_string();
+            with_ext.push(ext);
+            is_executable_file(std::path::Path::new(&with_ext))
+        })
+}
+
+fn elite_gate_override_available_with(
+    cmdline: &str,
+    path_env: Option<&std::ffi::OsStr>,
+    pathext: Option<&str>,
+) -> bool {
+    let Some(tokens) = shlex::split(cmdline) else {
+        return false;
+    };
+    let Some(program) = tokens.iter().find(|token| !is_shell_env_assignment(token)) else {
+        return false;
+    };
+    let candidate = std::path::Path::new(program);
+    if candidate.components().count() > 1 {
+        candidate_matches_with_pathext(candidate, pathext)
+    } else {
+        path_env.is_some_and(|paths| {
+            std::env::split_paths(paths)
+                .any(|dir| candidate_matches_with_pathext(&dir.join(program), pathext))
+        })
+    }
+}
+
 fn elite_gate_override_available(cmdline: &str) -> bool {
-    cmdline.split_whitespace().next().is_some_and(|program| {
-        let candidate = std::path::Path::new(program);
-        if candidate.components().count() > 1 {
-            candidate.is_file()
-        } else {
-            std::env::var_os("PATH").is_some_and(|paths| {
-                std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
-            })
-        }
-    })
+    let pathext = std::env::var("PATHEXT")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    elite_gate_override_available_with(
+        cmdline,
+        std::env::var_os("PATH").as_deref(),
+        pathext.as_deref().or(DEFAULT_PATHEXT),
+    )
 }
 
 fn build_elite_doctor_diagnostics(cli: &Cli) -> serde_json::Value {

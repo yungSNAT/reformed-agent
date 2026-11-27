@@ -484,30 +484,77 @@ async fn shallow_doctor_snapshots_check_results_and_can_write_a_bundle() {
     );
 }
 
-#[cfg(unix)]
+fn write_executable_fixture(path: &Path, bytes: impl AsRef<[u8]>) {
+    write_fixture(path, bytes);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+}
+
 #[test]
-fn elite_gate_override_availability_checks_explicit_paths_and_path_commands() {
+fn elite_gate_override_availability_handles_quotes_env_prefixes_and_pathext() {
     let Some(cli) = isolated_cli(
-        "elite_gate_override_availability_checks_explicit_paths_and_path_commands",
-        &[(
-            "HERMES_ELITE_GATE_CMD",
-            "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate",
-        )],
+        "elite_gate_override_availability_handles_quotes_env_prefixes_and_pathext",
+        &[
+            (
+                "HERMES_ELITE_GATE_CMD",
+                "FOO_1=bar BAR='with space' cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate",
+            ),
+            ("PATHEXT", ".com;.exe;.bat;.cmd"),
+        ],
     ) else {
         return;
     };
     let cwd = std::env::current_dir().unwrap();
-    let explicit = cwd.join("gates/custom-elite-gate");
-    let explicit_cmd = format!("{} --json", explicit.display());
+    let bin = cwd.join("bin");
+
+    // Malformed shell quoting and env-assignment-only commands are unavailable.
+    assert!(!elite_gate_override_available("\"unterminated"));
+    assert!(!elite_gate_override_available("FOO=1 BAR=2"));
+
+    // Quoted executable path with spaces and `=` in a path segment (not an env assignment).
+    let spaced = cwd.join("my tools/v=1/custom gate");
+    let quoted_spaced = shlex::try_quote(spaced.to_str().unwrap()).unwrap();
+    let spaced_cmd = format!("FOO=1 {quoted_spaced} --json");
+    assert!(!elite_gate_override_available(&spaced_cmd));
+    #[cfg(unix)]
+    {
+        write_fixture(&spaced, b"#!/bin/sh\nexit 0\n");
+        assert!(!elite_gate_override_available(&spaced_cmd));
+    }
+    write_executable_fixture(&spaced, b"#!/bin/sh\nexit 0\n");
+    assert!(elite_gate_override_available(&spaced_cmd));
+
+    // Explicit path without extension resolves via PATHEXT.
+    let explicit_stem = cwd.join("gates/win-gate");
+    let quoted_stem = shlex::try_quote(explicit_stem.to_str().unwrap()).unwrap();
+    let explicit_cmd = format!("{quoted_stem} --json");
     assert!(!elite_gate_override_available(&explicit_cmd));
-    write_fixture(&explicit, b"#!/bin/sh\nexit 0\n");
+    write_executable_fixture(&cwd.join("gates/win-gate.cmd"), b"@echo off\r\n");
     assert!(elite_gate_override_available(&explicit_cmd));
 
+    // Bare command with leading env assignments resolves via PATH + PATHEXT.
     let missing_cargo = build_elite_doctor_diagnostics(&cli);
     assert_eq!(missing_cargo["elite_gate"]["runner"], "shell_override");
     assert_eq!(missing_cargo["elite_gate"]["script_available"], false);
 
-    install_shell_fixture("cargo", "exit 0");
-    let with_cargo = build_elite_doctor_diagnostics(&cli);
-    assert_eq!(with_cargo["elite_gate"]["script_available"], true);
+    write_executable_fixture(&bin.join("cargo.exe"), b"#!/bin/sh\nexit 0\n");
+    let with_cargo_exe = build_elite_doctor_diagnostics(&cli);
+    assert_eq!(with_cargo_exe["elite_gate"]["script_available"], true);
+}
+
+#[test]
+fn elite_gate_override_availability_without_pathext_env_uses_platform_default() {
+    let Some(_cli) = isolated_cli(
+        "elite_gate_override_availability_without_pathext_env_uses_platform_default",
+        &[],
+    ) else {
+        return;
+    };
+    let bin = std::env::current_dir().unwrap().join("bin");
+    write_executable_fixture(&bin.join("cargo.exe"), b"#!/bin/sh\nexit 0\n");
+    let cmd = "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate";
+    assert_eq!(elite_gate_override_available(cmd), cfg!(windows));
 }
