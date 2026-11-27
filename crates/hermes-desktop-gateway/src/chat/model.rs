@@ -805,6 +805,22 @@ mod tests {
     }
 
     #[test]
+    fn reload_env_drops_a_key_start_up_read_from_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let var = "DESKTOP_MODEL_UNIT_TEST_START_UP_KEY";
+        let config = xiaomi_chat(dir.path(), json!({ "api_key_env": var })).config;
+        let path = dir.path().join(".env");
+        std::fs::write(&path, format!("OTHER_KEY=keep-me\n{var}=start-up-key\n")).unwrap();
+        let chat = Chat::new(config);
+        std::fs::write(&path, "OTHER_KEY=keep-me\n").unwrap();
+        // The process environment never held `var`, so the count cannot show the removal.
+        chat.reload_env();
+        assert!(chat.keys.changed(var));
+        assert_eq!(chat.keys.value(var), None);
+        assert!(!chat.keys.changed("OTHER_KEY"));
+    }
+
+    #[test]
     fn a_saved_key_goes_to_the_entry_named_as_the_slug_first() {
         // `llm_providers` is a `HashMap`: each new map iterates in its own order.
         for _ in 0..32 {
