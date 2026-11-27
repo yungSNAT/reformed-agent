@@ -753,6 +753,21 @@ async fn unpaged_local_read_preserves_mixed_line_endings_and_final_newline() {
     assert_eq!(backend.read_file(path, None, None).await.unwrap(), original);
 }
 
+#[tokio::test]
+async fn local_read_error_identifies_the_missing_fixture() {
+    let directory = tempdir().unwrap();
+    let missing = directory.path().join("missing-notes.txt");
+    let error = LocalBackend::default()
+        .read_file(&missing.to_string_lossy(), None, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AgentError::Io(message)
+            if message.starts_with("Failed to read file") && message.contains("missing-notes.txt")
+    ));
+}
+
 #[test]
 fn test_relative_file_paths_use_terminal_cwd() {
     let _lock = lock_env();
@@ -1123,6 +1138,47 @@ async fn test_background_process_not_found_contract() {
 
     let kill = backend.kill_process("proc_missing").await.unwrap();
     assert_eq!(kill["status"], "not_found");
+
+    let submit = backend
+        .submit_process_stdin("proc_missing", "synthetic input")
+        .await
+        .unwrap();
+    assert_eq!(submit["status"], "not_found");
+    let close = backend.close_process_stdin("proc_missing").await.unwrap();
+    assert_eq!(close["status"], "not_found");
+}
+
+#[tokio::test]
+async fn process_readers_keep_output_and_report_a_read_error() {
+    struct FailingReader;
+
+    impl AsyncRead for FailingReader {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("fixture read failed")))
+        }
+    }
+
+    let stream = || (&b"received data"[..]).chain(FailingReader);
+    let text = Arc::new(Mutex::new(String::new()));
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    LocalBackend::read_stream_to_buffer(stream(), text.clone(), 128).await;
+    LocalBackend::read_stream_to_bytes(stream(), bytes.clone(), 128).await;
+
+    let expected = "received data\n[stream read error: fixture read failed]";
+    assert_eq!(*text.lock().unwrap(), expected);
+    assert_eq!(LocalBackend::decode_output(&bytes), expected);
+}
+
+#[tokio::test]
+async fn background_output_keeps_the_tail_on_a_utf8_boundary() {
+    let output = Arc::new(Mutex::new(String::new()));
+    LocalBackend::read_stream_to_buffer("dropé留".as_bytes(), output.clone(), 4).await;
+
+    assert_eq!(*output.lock().unwrap(), "留");
 }
 
 /// A value no UTF-8 string can hold: a lone 0xFF byte on Unix, a lone
@@ -1758,4 +1814,25 @@ async fn test_commands_longer_than_a_windows_command_line_run() {
         Some("40000"),
         "{wait}"
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_write_file_refuses_leaf_symlink() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target.txt");
+    let link = dir.path().join("alias.txt");
+    std::fs::write(&target, "untouched").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let backend = LocalBackend::default();
+    let link_str = link.to_str().unwrap();
+    let err = backend.write_file(link_str, "overwrite").await.unwrap_err();
+    assert!(err.to_string().contains("symlink"), "{err}");
+    let err_tool = backend
+        .write_file_for_tool(link_str, "overwrite")
+        .await
+        .unwrap_err();
+    assert!(err_tool.to_string().contains("symlink"), "{err_tool}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
 }

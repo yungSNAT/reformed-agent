@@ -27,7 +27,9 @@ use crate::auth::{
 use crate::events::{plan_entries_from_todo_result, AcpEvent, AcpEventKind, EventSink};
 use crate::permissions::PermissionStore;
 use crate::protocol::*;
-use crate::session::{SessionManager, SessionMetaUpdate, SessionPhase, SessionState, TurnStart};
+use crate::session::{
+    QueuedOrFinished, SessionManager, SessionMetaUpdate, SessionPhase, SessionState, TurnStart,
+};
 
 /// Trait for handling ACP requests.
 #[async_trait::async_trait]
@@ -104,6 +106,24 @@ include!("handler/hermes_handler_impl.rs");
 
 include!("handler/session_helpers.rs");
 include!("handler/request_dispatch.rs");
+
+/// A test's step for one session, run when a prompt for it finds the turn
+/// busy, at the last point before the handler answers: it forces another
+/// task's step into that window.
+#[cfg(test)]
+type AfterBusyHook = (String, Box<dyn Fn() + Send>);
+
+#[cfg(test)]
+static AFTER_BUSY: std::sync::Mutex<Option<AfterBusyHook>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn after_busy(session_id: &str) {
+    if let Some((id, hook)) = AFTER_BUSY.lock().unwrap().as_ref() {
+        if id == session_id {
+            hook();
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Default handler (backward compat)

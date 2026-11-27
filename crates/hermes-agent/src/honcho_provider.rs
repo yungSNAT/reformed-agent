@@ -222,4 +222,120 @@ mod tests {
         let provider = HonchoProvider::new(config);
         assert_eq!(provider.base_url, "https://custom.honcho.dev");
     }
+
+    #[tokio::test]
+    async fn honcho_sync_and_prefetch_handle_loopback_responses() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mut provider = HonchoProvider::new(HonchoConfig {
+            api_key: "honcho-fixture".into(),
+            app_id: "field notes".into(),
+            base_url: Some(format!("{}/v1", server.uri())),
+            auto_sync: true,
+            prefetch: true,
+        });
+        provider.client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+        assert_eq!(provider.get_cached_context().await, None);
+
+        for (session, encoded_session, role, content, status) in [
+            ("first/turn", "first%2Fturn", "user", "Fixture note", 204),
+            ("rejected", "rejected", "assistant", "Fixture reply", 503),
+        ] {
+            let payload = serde_json::json!({"role": role, "content": content});
+            Mock::given(method("POST"))
+                .and(path(format!(
+                    "/v1/apps/field%20notes/users/member%2F7/sessions/{encoded_session}/messages"
+                )))
+                .and(header("Authorization", "Bearer honcho-fixture"))
+                .and(body_json(payload))
+                .respond_with(ResponseTemplate::new(status))
+                .expect(1)
+                .mount(&server)
+                .await;
+            provider
+                .sync_turn("member/7", session, role, content)
+                .await
+                .unwrap();
+        }
+
+        let context = "Prefers concise field notes.";
+        for (user, encoded_user, response, expected) in [
+            (
+                "member/7",
+                "member%2F7",
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"content": context})),
+                Ok(Some(context)),
+            ),
+            (
+                "empty",
+                "empty",
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({})),
+                Ok(None),
+            ),
+            (
+                "unavailable",
+                "unavailable",
+                ResponseTemplate::new(503),
+                Ok(None),
+            ),
+            (
+                "malformed",
+                "malformed",
+                ResponseTemplate::new(200).set_body_string("not JSON"),
+                Err("Honcho parse failed"),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "/v1/apps/field%20notes/users/{encoded_user}/metamemories"
+                )))
+                .and(header("Authorization", "Bearer honcho-fixture"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let actual = provider.prefetch_context(user).await;
+            match expected {
+                Ok(expected) => assert_eq!(actual.unwrap().as_deref(), expected),
+                Err(expected) => assert!(matches!(
+                    actual,
+                    Err(AgentError::Io(message)) if message.contains(expected)
+                )),
+            }
+            assert_eq!(
+                provider.get_cached_context().await.as_deref(),
+                Some(context)
+            );
+        }
+        server.verify().await;
+
+        provider.base_url = "http://[".into();
+        provider.config.auto_sync = false;
+        provider
+            .sync_turn("member/7", "first/turn", "user", "Fixture note")
+            .await
+            .unwrap();
+        assert!(matches!(
+            provider.prefetch_context("member/7").await,
+            Err(AgentError::Io(detail)) if detail.contains("Honcho prefetch failed")
+        ));
+
+        provider.config.auto_sync = true;
+        provider.config.prefetch = false;
+        assert!(matches!(
+            provider.sync_turn("member/7", "first/turn", "user", "Fixture note").await,
+            Err(AgentError::Io(detail)) if detail.contains("Honcho sync failed")
+        ));
+        assert_eq!(provider.prefetch_context("member/7").await.unwrap(), None);
+        assert_eq!(
+            provider.get_cached_context().await.as_deref(),
+            Some(context)
+        );
+    }
 }

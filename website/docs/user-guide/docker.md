@@ -268,10 +268,10 @@ The Ultra image uses a Rust multi-stage build and a slim Debian runtime. It incl
 - `ca-certificates` for HTTPS provider/API calls.
 - MIT license metadata plus `LICENSE` and `NOTICE` under `/usr/share/doc/hermes-agent-ultra`.
 
-The entrypoint script (`docker/entrypoint.sh`) keeps runtime state separated from the immutable Rust image:
+The entrypoint (`/usr/local/bin/hermes-entrypoint`, built from `crates/hermes-entrypoint`) keeps runtime state separated from the immutable Rust image:
 - Resolves `HERMES_HOME` to `/data` by default.
 - Creates the data directory if it is missing.
-- Remaps the `hermes` user/group to `HERMES_UID` / `HERMES_GID` when the container starts as root.
+- Remaps the `hermes` user/group to `HERMES_UID` / `HERMES_GID` when the container starts as root. A value that is not a whole number stops the container with an error instead of being passed on.
 - Recursively repairs ownership only for the mounted data directory when needed.
 - Drops privileges with `gosu` before running the requested `hermes` command.
 

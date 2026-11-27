@@ -159,6 +159,11 @@ async fn an_unknown_method_gets_method_not_found_with_its_id() {
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["id"], "r1");
     assert_eq!(reply["error"]["code"], -32601);
+    // Upstream's text, which the desktop matches to tell an unserved method from a failure.
+    assert_eq!(
+        reply["error"]["message"],
+        "unknown method: no.such.method \u{2014} not available on this Hermes backend"
+    );
 
     socket.send(Message::text("not json")).await.unwrap();
     let reply = next_json(&mut socket).await;

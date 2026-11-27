@@ -393,3 +393,7 @@ fn truncate_json(value: &Value, max_chars: usize) -> String {
         raw.chars().take(max_chars).collect::<String>() + "..."
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "auth_sigv4_tests.rs"]
+mod auth_sigv4_tests;

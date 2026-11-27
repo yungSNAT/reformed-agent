@@ -727,10 +727,15 @@ def register(ctx) -> None:
         return
 
     ctx.register_dashboard_auth_provider(provider)
+    scope_count = (
+        len(scopes)
+        if isinstance(scopes, (list, tuple, set))
+        else len(str(scopes).split())
+    )
     logger.info(
         "dashboard-auth-self-hosted: registered provider "
-        "(issuer=%s, client_id=%s, scopes=%r)",
-        issuer,
-        client_id,
-        scopes,
+        "(issuer_configured=%s, client_id_configured=%s, scope_count=%d)",
+        bool(issuer),
+        bool(client_id),
+        scope_count,
     )

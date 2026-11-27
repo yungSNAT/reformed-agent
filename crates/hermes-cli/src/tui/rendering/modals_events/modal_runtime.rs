@@ -521,6 +521,7 @@ fn handle_agent_run_complete(
             let total_turns = agent_result.total_turns;
             let interrupted = agent_result.interrupted;
             let finished_naturally = agent_result.finished_naturally;
+            app.count_run_cost(&agent_result);
             if let Err(err) = app.apply_agent_result_and_persist(agent_result) {
                 tracing::warn!("session autosave skipped: {}", err);
                 state.push_activity(format!("⚠ autosave skipped: {}", err));
@@ -535,6 +536,9 @@ fn handle_agent_run_complete(
                 app.push_ui_assistant("[Agent execution interrupted]");
             } else if !finished_naturally {
                 state.push_activity("run stopped before natural finish".to_string());
+                if let Some(note) = app.cost_guard_note().map(str::to_string) {
+                    app.push_ui_assistant(format!("[{note}]"));
+                }
             }
         }
         Err(err) => {
