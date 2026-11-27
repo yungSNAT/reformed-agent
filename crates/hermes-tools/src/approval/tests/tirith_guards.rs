@@ -271,26 +271,85 @@ fn test_combined_guards_tirith_import_unavailable_allows() {
 fn test_combined_guards_tirith_warn_empty_findings_prompts() {
     let _guard = lock_test_state();
     reset_approval_state_unlocked();
+    for (summary, description) in [
+        ("  generic warning  ", "Security scan: generic warning"),
+        ("   ", "Security scan: security issue detected"),
+    ] {
+        let mut prompts = Vec::new();
+        let mut callback = |prompt: ApprovalPrompt| {
+            prompts.push(prompt);
+            ApprovalChoice::Once
+        };
+        let result = check_all_command_guards_with_context(
+            "echo fixture",
+            "local",
+            interactive_context(TirithResult {
+                action: TirithAction::Warn,
+                findings: Vec::new(),
+                summary: summary.to_string(),
+            }),
+            Some(&mut callback),
+        )
+        .unwrap();
+
+        assert!(result.approved);
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].pattern_key, "tirith:unknown");
+        assert_eq!(prompts[0].description, description);
+    }
+}
+
+#[test]
+fn test_combined_guards_keep_readable_scanner_details_on_denial() {
+    let _guard = lock_test_state();
+    reset_approval_state_unlocked();
+    let findings = vec![
+        TirithFinding {
+            severity: Some(" notice ".to_string()),
+            title: Some(" First finding ".to_string()),
+            description: Some(" First detail ".to_string()),
+            ..TirithFinding::new(" fixture-rule ")
+        },
+        TirithFinding {
+            title: Some(" Second finding ".to_string()),
+            ..TirithFinding::new("second-rule")
+        },
+        TirithFinding {
+            description: Some(" Third detail ".to_string()),
+            ..TirithFinding::new("third-rule")
+        },
+        TirithFinding {
+            severity: Some("notice".to_string()),
+            title: Some("  ".to_string()),
+            ..TirithFinding::new("blank-rule")
+        },
+    ];
     let mut prompts = Vec::new();
-    let mut callback = |prompt: ApprovalPrompt| {
+    let mut decline = |prompt: ApprovalPrompt| {
         prompts.push(prompt);
-        ApprovalChoice::Once
+        ApprovalChoice::Deny
     };
     let result = check_all_command_guards_with_context(
-        "suspicious cmd",
+        "echo fixture",
         "local",
         interactive_context(TirithResult {
             action: TirithAction::Warn,
-            findings: Vec::new(),
-            summary: "generic warning".to_string(),
+            findings,
+            summary: "Fallback fixture summary".to_string(),
         }),
-        Some(&mut callback),
+        Some(&mut decline),
     )
     .unwrap();
 
-    assert!(result.approved);
+    let expected =
+        "Security scan: [notice] First finding: First detail; Second finding; Third detail";
+    assert!(!result.approved && !result.user_approved);
+    assert_eq!(result.pattern_key.as_deref(), Some("tirith:fixture-rule"));
+    assert_eq!(result.description.as_deref(), Some(expected));
     assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].description.contains("Security scan"));
+    assert_eq!(prompts[0].pattern_key, "tirith:fixture-rule");
+    assert_eq!(prompts[0].description, expected);
+    assert!(!prompts[0].allow_permanent);
 }
 
 #[test]

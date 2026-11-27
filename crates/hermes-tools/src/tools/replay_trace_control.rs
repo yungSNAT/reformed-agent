@@ -1052,6 +1052,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_replay_reports_empty_results_and_a_broken_chain_fails_verification() {
+        let home = tempfile::tempdir().unwrap();
+        let handler = ReplayTraceControlHandler::with_replay_dir(home.path().to_path_buf());
+        let session = "fixture-session";
+        let log = home.path().join(format!("{session}.jsonl"));
+        for (action, records) in [("tail", "rows"), ("focus", "rows"), ("graph", "edges")] {
+            let raw = handler
+                .execute(json!({"action": action, "session_id": session, "trace_id": "fixture"}))
+                .await
+                .unwrap();
+            let result: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(result["status"], "not_found", "{action}");
+            assert_eq!(result[records], json!([]), "{action}");
+        }
+        let verify = json!({"action": "verify", "session_id": session});
+        let raw = handler.execute(verify.clone()).await.unwrap();
+        let missing: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(missing["status"], "fail");
+        assert_eq!(
+            missing["summary"],
+            json!({"exists": false, "entries": 0, "parse_errors": 0, "chain_breaks": 0, "bytes": 0})
+        );
+        assert!(!log.exists());
+
+        let contents = concat!(
+            "{\"event_hash\":\"first\"}\n",
+            "\n",
+            "{\"prev_hash\":\"different\",\"event_hash\":\"second\"}\n",
+        );
+        std::fs::write(&log, contents).unwrap();
+        let raw = handler.execute(verify).await.unwrap();
+        let invalid: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(invalid["status"], "fail");
+        assert_eq!(
+            invalid["summary"],
+            json!({"exists": true, "entries": 2, "parse_errors": 0, "chain_breaks": 1, "bytes": contents.len()})
+        );
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), contents);
+    }
+
+    #[tokio::test]
+    async fn replay_export_verification_distinguishes_missing_and_malformed_files() {
+        let home = tempfile::tempdir().unwrap();
+        let handler = ReplayTraceControlHandler::with_replay_dir(home.path().to_path_buf());
+        let exports = home.path().join("exports");
+        let file = exports.join("fixture.json");
+        let verify = json!({"action": "verify", "export_path": "fixture.json"});
+        let raw = handler.execute(verify.clone()).await.unwrap();
+        let absent: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(absent["status"], "fail");
+        assert_eq!(
+            absent["summary"],
+            json!({"kind": "export", "exists": false, "rows": 0, "hashes": 0, "status": "missing"})
+        );
+        assert!(!exports.exists());
+
+        std::fs::create_dir(&exports).unwrap();
+        let invalid = b"invalid export";
+        std::fs::write(&file, invalid).unwrap();
+        assert!(matches!(
+            handler.execute(verify).await,
+            Err(ToolError::ExecutionFailed(message))
+                if message.starts_with("parse ") && message.contains("fixture.json")
+        ));
+        assert_eq!(std::fs::read(&file).unwrap(), invalid);
+    }
+
+    #[tokio::test]
     async fn diff_compares_replay_export_hashes_with_aliases() {
         let (env, handler) = handler_with_home();
         let exports = env.replay_dir.join("exports");
