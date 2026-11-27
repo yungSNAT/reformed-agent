@@ -128,7 +128,8 @@ impl Keys {
     }
 }
 
-/// Held across each `.env` change, so 2 key methods at once cannot lose one's change.
+/// Held across each `.env` change in this process, so 2 key methods at once cannot lose one's
+/// change.
 fn env_write() -> MutexGuard<'static, ()> {
     static WRITE: Mutex<()> = Mutex::new(());
     WRITE.lock().unwrap_or_else(|e| e.into_inner())
@@ -358,8 +359,9 @@ impl Chat {
         json!({"providers": providers, "model": model, "provider": current})
     }
 
-    /// A known provider's key variables, first to last: the `key_env` it is configured with,
-    /// then its own; `None` for a provider this gateway does not know.
+    /// A known provider's key variables, first to last: the `${VAR}` its configured `api_key`
+    /// still holds, the `key_env` it is configured with, then its own; `None` for a provider
+    /// this gateway does not know.
     fn slug_key_vars(&self, slug: &str) -> Option<Vec<&str>> {
         let known = key_vars(slug)?;
         let canonical = canonical_provider_id(&slug.trim().to_ascii_lowercase());
@@ -370,7 +372,15 @@ impl Chat {
             .filter(|(name, _)| {
                 name.eq_ignore_ascii_case(slug.trim()) || name.eq_ignore_ascii_case(&canonical)
             })
-            .filter_map(|(_, c)| c.api_key_env.as_deref().map(str::trim))
+            .flat_map(|(_, c)| {
+                let reference = c
+                    .api_key
+                    .as_deref()
+                    .and_then(|literal| literal_source(literal.trim(), &[]));
+                reference
+                    .into_iter()
+                    .chain(c.api_key_env.as_deref().map(str::trim))
+            })
             .filter(|var| !var.is_empty());
         let mut vars: Vec<&str> = configured.chain(known.iter().copied()).collect();
         let mut seen = std::collections::HashSet::new();
@@ -407,6 +417,7 @@ impl Chat {
             )
         })?;
         self.keys.set(var, Some(key.to_string()));
+        drop(_write);
         let canonical = canonical_provider_id(slug);
         let mut row = option_rows(&self.config, &self.keys, "", false)
             .into_iter()
@@ -445,6 +456,7 @@ impl Chat {
     /// managed `.env` last); the number changed. Other variables, and a value that would not
     /// read back as itself, take effect at the next start.
     fn reload_env(&self) -> usize {
+        let _write = env_write();
         let values = dotenv_values_in(&self.home);
         self.key_variables()
             .iter()
