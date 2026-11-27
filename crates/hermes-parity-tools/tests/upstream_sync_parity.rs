@@ -161,6 +161,11 @@ impl Sandbox {
             .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null");
+        // Under coverage the binary writes its profile where this names (absolute);
+        // without it, a default-named `.profraw` lands in the sandbox repository.
+        if let Some(value) = std::env::var_os("LLVM_PROFILE_FILE") {
+            cmd.env("LLVM_PROFILE_FILE", value);
+        }
         cmd
     }
 
