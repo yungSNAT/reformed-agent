@@ -284,16 +284,51 @@ impl Children {
         if let Some(gate) = evicted {
             tokio::spawn(Arc::clone(self).reap(gate));
         }
+        let (port, token) = self
+            .running(gate, home, None)
+            .await
+            .map_err(Refused::Failed)?;
+        lease.port = port;
+        lease.token = token;
+        Ok(lease)
+    }
+
+    /// Replaces the child behind `lease` when it still holds the lease's port: nothing listens
+    /// there, so it serves no one, even while its exit cannot be collected yet.
+    async fn replace(self: &Arc<Self>, lease: &mut Lease) -> Result<(), String> {
+        let home = self.home_of(&lease.name).ok_or("the profile is gone")?;
+        // A live lease keeps its entry: only entries with no lease are evicted or swept.
+        let gate = self
+            .lock()
+            .entries
+            .get(&lease.name)
+            .map(|entry| Arc::clone(&entry.gate))
+            .ok_or("the profile gateway was stopped")?;
+        let (port, token) = self.running(gate, home, Some(lease.port)).await?;
+        lease.port = port;
+        lease.token = token;
+        Ok(())
+    }
+
+    /// The port and token of the child behind `gate`, started if it is not running or is on
+    /// port `dead`.
+    async fn running(
+        &self,
+        gate: Arc<tokio::sync::Mutex<Option<Running>>>,
+        home: PathBuf,
+        dead: Option<u16>,
+    ) -> Result<(u16, String), String> {
         // The start runs in its own task, so a caller that goes away mid-start leaves a child
         // that is either running and owned by the entry, or killed and reaped.
         let program = self.config.clone();
-        let started = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut slot = gate.lock_owned().await;
             if let Some(running) = slot.as_mut() {
-                if matches!(running.child.try_wait(), Ok(None)) {
+                if Some(running.port) != dead && matches!(running.child.try_wait(), Ok(None)) {
                     return Ok((running.port, running.token.clone()));
                 }
                 if let Some(mut gone) = slot.take() {
+                    let _ = gone.child.start_kill();
                     let _ = gone.child.wait().await;
                 }
             }
@@ -303,11 +338,7 @@ impl Children {
             Ok(found)
         })
         .await
-        .unwrap_or_else(|e| Err(e.to_string()));
-        let (port, token) = started.map_err(Refused::Failed)?;
-        lease.port = port;
-        lease.token = token;
-        Ok(lease)
+        .unwrap_or_else(|e| Err(e.to_string()))
     }
 
     /// Kills the child behind `gate` and awaits its exit, then frees its slot.
@@ -404,6 +435,9 @@ async fn spawn(config: &ChildGateways, home: &Path) -> Result<Running, String> {
     })
 }
 
+type ChildSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
 /// One client connection's link to one child.
 struct Link {
     _lease: Lease,
@@ -471,10 +505,23 @@ pub(crate) fn child_origin(headers: &axum::http::HeaderMap) -> Origin {
 
 impl Link {
     /// Dials the leased child on the client's wire, as the client's origin, and starts copying
-    /// its events to `conn`.
-    async fn dial(lease: Lease, conn: &Conn) -> Result<Self, String> {
+    /// its events to `conn`. A child whose port refuses the connection is replaced once.
+    async fn dial(mut lease: Lease, conn: &Conn) -> Result<Self, String> {
+        let socket = match Self::connect(&lease, conn).await {
+            Err(tungstenite::Error::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                Arc::clone(&lease.children).replace(&mut lease).await?;
+                Self::connect(&lease, conn).await
+            }
+            other => other,
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(Self::attach(lease, socket, conn))
+    }
+
+    /// Opens the WebSocket to the leased child.
+    async fn connect(lease: &Lease, conn: &Conn) -> Result<ChildSocket, tungstenite::Error> {
         let url = format!("ws://127.0.0.1:{}/api/ws?token={}", lease.port, lease.token);
-        let mut request = url.into_client_request().map_err(|e| e.to_string())?;
+        let mut request = url.into_client_request()?;
         let headers = request.headers_mut();
         if conn.canonical {
             let protocol = tungstenite::http::HeaderValue::from_static(CANONICAL_PROTOCOL);
@@ -488,9 +535,12 @@ impl Link {
             .max_message_size(Some(ATTACH_MAX_MESSAGE_BYTES))
             .max_frame_size(Some(ATTACH_MAX_MESSAGE_BYTES));
         let (socket, _) =
-            tokio_tungstenite::connect_async_with_config(request, Some(config), false)
-                .await
-                .map_err(|e| e.to_string())?;
+            tokio_tungstenite::connect_async_with_config(request, Some(config), false).await?;
+        Ok(socket)
+    }
+
+    /// Starts copying the child's events on `socket` to `conn`.
+    fn attach(lease: Lease, socket: ChildSocket, conn: &Conn) -> Self {
         let (mut sink, mut stream) = socket.split();
         let (to_child, mut outgoing) = mpsc::unbounded_channel::<String>();
         let pending: Arc<Mutex<Pending>> = Arc::default();
@@ -533,11 +583,11 @@ impl Link {
             // The child connection is gone: every request waiting, and every later one, fails.
             Pending::close(&replies);
         });
-        Ok(Self {
+        Self {
             _lease: lease,
             to_child,
             pending,
-        })
+        }
     }
 
     /// Sends one request and waits for its reply for as long as the child's handler takes (a
