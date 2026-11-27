@@ -161,11 +161,14 @@ fn stale_owner(dir: &Path) -> Option<Vec<u8>> {
 /// own, which only one waiter's rename can do, then removed only if it still names the stale owner;
 /// a lock another writer re-took since the judgement goes back untouched.
 ///
-/// The protocol is upstream's and native Desktop's, and it is not airtight: when several writers
-/// race over a dead lock, a waiter acting on its earlier judgement can move a live lock aside
-/// whilst a third writer takes the free name. The moved holder then answers busy, but one that
-/// passed its `held()` check just before can still overwrite the newer write. No 10 s stall is
-/// needed.
+/// The lock folder, owner file, wait and stale age are shared with upstream and native Desktop.
+/// This break is stricter than upstream's, which removes a folder judged stale outright, but
+/// neither is airtight, and no 10 s stall is needed to hit the gap. With 3 writers of this
+/// gateway racing over a dead lock, a waiter acting on its earlier judgement can move a live lock
+/// aside whilst a third writer takes the free name. With 2 writers, one breaking as upstream does
+/// can remove a live lock this gateway took since that writer judged it. Either way the displaced
+/// holder answers busy at its next `held()` check, but one already past it can overwrite the
+/// newer write.
 fn break_stale(dir: &Path, seen: &[u8]) {
     let mut name = dir.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".stale-{}", uuid::Uuid::new_v4().simple()));
@@ -178,8 +181,10 @@ fn break_stale(dir: &Path, seen: &[u8]) {
         let _ = std::fs::remove_file(aside.join("owner"));
         let _ = std::fs::remove_dir(&aside);
     } else if std::fs::rename(&aside, dir).is_err() {
-        // A third writer took the free name meanwhile; the moved holder sees `held()` false and
-        // stops, so still only one writer holds the lock.
+        // A third writer took the free name meanwhile. The moved holder answers busy at its next
+        // `held()` check; one already past it is the limit stated above. On Unix the rename back
+        // also replaces an empty folder, so a taker that made `dir` but has not yet written
+        // `owner` writes into the moved-back folder and displaces the holder the same way.
         let _ = std::fs::remove_file(aside.join("owner"));
         let _ = std::fs::remove_dir(&aside);
     }
