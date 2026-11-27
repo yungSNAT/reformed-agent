@@ -471,3 +471,80 @@ async fn reload_env_keeps_a_key_the_project_env_still_holds() {
         .collect();
     assert_eq!(keys, ["Bearer saved-key", "Bearer project-key"]);
 }
+
+/// The `Authorization` header a turn on `model` sends after `model.save_key` for `slug`, and the
+/// slug of the row the save answers, with `llm_providers` `entries` (name, key variable), each
+/// pointed at the scripted model.
+async fn sent_after_save(
+    entries: &[(&str, Option<&str>)],
+    model: &str,
+    slug: &str,
+) -> (String, Value) {
+    let (model_addr, seen) = model_server().await;
+    let home = tempfile::tempdir().unwrap();
+    let mut config = hermes_config::GatewayConfig {
+        model: Some(model.into()),
+        home_dir: Some(home.path().to_string_lossy().into_owned()),
+        ..hermes_config::GatewayConfig::default()
+    };
+    for (name, var) in entries {
+        let entry = json!({"base_url": format!("http://{model_addr}/v1"), "api_key_env": var});
+        config
+            .llm_providers
+            .insert((*name).into(), serde_json::from_value(entry).unwrap());
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(hermes_desktop_gateway::serve(
+        listener,
+        TOKEN.to_string(),
+        hermes_desktop_gateway::Chat::new(config),
+    ));
+    let mut client = connect(addr).await;
+    let session = client.create().await;
+    let reply = client
+        .call(
+            3,
+            "model.save_key",
+            json!({"slug": slug, "api_key": "saved-key"}),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    client.turn(&session).await;
+    let seen = seen.lock().unwrap();
+    let sent = seen
+        .last()
+        .map(|(_, auth)| auth.clone())
+        .unwrap_or_default();
+    (sent, reply["result"]["provider"]["slug"].clone())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_sends_the_key_saved_for_its_provider_whichever_entry_spelling_it_matches() {
+    let (a, b) = (
+        Some("DESKTOP_MODEL_CONFIG_SPELLING_A_KEY"),
+        Some("DESKTOP_MODEL_CONFIG_SPELLING_B_KEY"),
+    );
+    // No entry spelt as the provider: the build reads the runtime name's (`mimo` runs as
+    // `xiaomi`); an entry with no key variable reads the registry's, never another entry's.
+    // The save answers the row of the entry the key went to.
+    for (entries, model, row) in [
+        ([("mimo", a), ("xiaomi", b)], "MIMO:m", "xiaomi"),
+        ([("MIMO", a), ("xiaomi", b)], "mimo:m", "xiaomi"),
+        ([("mimo", None), ("xiaomi", b)], "mimo:m", "mimo"),
+    ] {
+        let (slug, _) = model.split_once(':').unwrap();
+        let sent = sent_after_save(&entries, model, slug).await;
+        assert_eq!(
+            sent,
+            ("Bearer saved-key".into(), json!(row)),
+            "{entries:?} {model}"
+        );
+    }
+    // Only other spellings: the same one every time, though each new map iterates in its own
+    // order.
+    for _ in 0..32 {
+        let sent = sent_after_save(&[("Mimo", a), ("MIMO", b)], "mimo:m", "mimo").await;
+        assert_eq!(sent, ("Bearer saved-key".into(), json!("MIMO")));
+    }
+}
