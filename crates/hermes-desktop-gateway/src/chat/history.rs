@@ -15,7 +15,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
-use super::{Handler, LiveSession, Reply, Request, RpcError, INVALID_PARAMS, SESSION_NOT_FOUND};
+use super::{
+    Chat, Handler, LiveSession, Reply, Request, RpcError, INVALID_PARAMS, SESSION_NOT_FOUND,
+};
 
 // Upstream's codes: 4006 no session id, 4007 no such session to resume, 4021 no title, 4022 a
 // title too long, 5000 the sessions database cannot be read on resume, 5007 a title cannot be
@@ -40,31 +42,32 @@ fn session_id(params: &Map<String, Value>) -> Result<String, RpcError> {
     }
 }
 
+/// Session `id`'s saved user and assistant messages, read on the blocking pool.
+async fn saved_rows(chat: &Arc<Chat>, id: &str) -> Result<Vec<Value>, RpcError> {
+    let chat = Arc::clone(chat);
+    let lookup = id.to_string();
+    match tokio::task::spawn_blocking(move || chat.history(&lookup)).await {
+        Err(e) => Err((RESUME_STORAGE, e.to_string())),
+        Ok(None) => Err((RESUME_NOT_FOUND, "session not found".into())),
+        Ok(Some(Err(e))) => Err((RESUME_STORAGE, e)),
+        Ok(Some(Ok(rows))) => Ok(rows),
+    }
+}
+
 /// Attaches the connection to a live session, or to one saved earlier, and answers with its
 /// saved messages (each with `text`, which the terminal UI reads, and `content`).
 fn resume(req: Request) -> Reply {
     Box::pin(async move {
         let id = session_id(&req.params)?;
-        // A live session streams to this connection before its saved rows are read, so a turn
-        // that ends meanwhile is not lost: its last events follow this reply, and may repeat
-        // what the rows already hold.
+        // Nothing changes before the first wait, so a handler dropped there (a busy
+        // connection's) leaves no subscription.
+        tokio::task::yield_now().await;
         let live = req.chat.lock_sessions().get(&id).cloned();
-        if let Some(session) = &live {
-            session.subscribe(req.conn.id, &req.conn.outbox);
-        }
-        let chat = Arc::clone(&req.chat);
-        let lookup = id.clone();
-        // A live session's subscription stays on a failed read: the connection asked for it,
-        // and it may have streamed the session already.
-        let rows = match tokio::task::spawn_blocking(move || chat.history(&lookup)).await {
-            Err(e) => return Err((RESUME_STORAGE, e.to_string())),
-            Ok(None) => return Err((RESUME_NOT_FOUND, "session not found".into())),
-            Ok(Some(Err(e))) => return Err((RESUME_STORAGE, e)),
-            Ok(Some(Ok(rows))) => rows,
-        };
         let session: Arc<LiveSession> = match live {
             Some(session) => session,
             None => {
+                // Not live: its saved rows decide whether it can be resumed.
+                let rows = saved_rows(&req.chat, &id).await?;
                 let mut sessions = req.chat.lock_sessions();
                 match sessions.get(&id) {
                     Some(session) => Arc::clone(session),
@@ -79,7 +82,12 @@ fn resume(req: Request) -> Reply {
                 }
             }
         };
+        // The session streams to this connection before the rows that answer are read, so a
+        // turn that ends meanwhile, on this or another connection, is not lost: its last
+        // events follow this reply, and may repeat what the rows already hold. The
+        // subscription stays on a failed read: the connection may have streamed it already.
         session.subscribe(req.conn.id, &req.conn.outbox);
+        let rows = saved_rows(&req.chat, &id).await?;
         let ((running, _, _), _) = session.status(&id);
         let messages: Vec<Value> = rows
             .into_iter()
