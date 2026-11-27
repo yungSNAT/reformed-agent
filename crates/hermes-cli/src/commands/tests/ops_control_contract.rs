@@ -496,3 +496,82 @@ async fn ops_recommendations_and_autopilot_overrides_follow_local_state() {
     let status = command_output(&mut app, "/ops", &["autopilot", "status"]).await;
     assert!(status.contains("mode=advisory profile=off"), "{status}");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn autopilot_apply_reports_degraded_probes_and_applies_only_allowed_settings() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::ops_control_contract::autopilot_apply_reports_degraded_probes_and_applies_only_allowed_settings",
+    ) {
+        return;
+    }
+
+    let context = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1)
+        .mount(&context)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/memory/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"degraded": true})))
+        .expect(1)
+        .mount(&context)
+        .await;
+
+    let home = hermes_config::hermes_home();
+    let mut app = build_test_app_with_stream(&home).await;
+    let bin = home.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let bash = bin.join("bash");
+    std::fs::write(
+        &bash,
+        r#"#!/bin/sh
+[ "$#" = 2 ] && [ "$1" = -lc ] || exit 2
+case "$2" in
+    'cargo test -p hermes-tools tool_policy_hot_path_benchmark_report -- --nocapture')
+        printf 'tool_policy_hot_path_ns_per_eval=20000\n' ;;
+    'cargo test -p hermes-mcp stale_transport_marker_detection_matches_known_variants -- --nocapture')
+        exit 0 ;;
+    *) exit 2 ;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(bash, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::env::set_var("PATH", bin);
+    std::env::set_var("HERMES_REPO_ROOT", &home);
+    std::env::set_var("CONTEXTLATTICE_ORCHESTRATOR_URL", context.uri());
+
+    let output = command_output(&mut app, "/ops", &["autopilot", "apply"]).await;
+    let (payload, paths) = output.split_once("\nreport_path=").unwrap();
+    let (json_path, _) = paths.split_once("\nmarkdown_path=").unwrap();
+    let report: Value = serde_json::from_str(payload).unwrap();
+    let persisted: Value = serde_json::from_slice(&std::fs::read(json_path).unwrap()).unwrap();
+    assert_eq!(report, persisted);
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["sections"]["mcp_stale_recovery"]["ok"], true);
+    assert_eq!(report["sections"]["contextlattice_preflight"]["ok"], false);
+    let recommendations = report["recommendations"].as_array().unwrap();
+    for id in ["HOTPATH_SLOW", "CONTEXTLATTICE_PREFLIGHT_FAIL"] {
+        assert!(recommendations.iter().any(|item| item["id"] == id));
+    }
+    assert!(Path::new(report["applied_env"].as_str().unwrap()).is_file());
+    assert!(output.contains("Applied safe runtime knobs:"));
+    assert_eq!(std::env::var("HERMES_TOOL_POLICY_MODE").as_deref(), Ok("enforce"));
+    assert_eq!(
+        std::env::var("HERMES_PERF_AUTOPILOT_PROFILE").ok().as_deref(),
+        report["profile_recommendation"].as_str()
+    );
+    assert!(std::env::var_os("HERMES_CONTEXTLATTICE_MODE").is_none());
+    assert!(home
+        .join(".sync-reports/performance-autopilot-runtime.jsonl")
+        .is_file());
+    context.verify().await;
+}
