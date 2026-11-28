@@ -1,11 +1,12 @@
-# Codecov only reports coverage. The CI gate decides merges, so Codecov's own
-# statuses are informational and it posts no comments.
+# Codecov fails a PR whose patch is under 100% or whose project coverage falls.
 coverage:
   status:
     project:
       default:
-        informational: true
+        target: auto
+        threshold: 0%
     patch:
       default:
-        informational: true
+        target: 100%
+        threshold: 0%
 comment: false

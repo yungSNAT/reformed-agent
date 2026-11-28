@@ -316,7 +316,7 @@ async fn background_child_receives_stdin_and_only_the_fixture_is_terminated() {
     fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
 
     let task = "  first line\nsecond line\n";
-    let child = spawn_background_child(&script, task).unwrap();
+    let child = spawn_background_child(&script, task, None).unwrap();
     let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
         .await
         .unwrap()

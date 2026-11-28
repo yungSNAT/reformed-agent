@@ -73,6 +73,66 @@ fn config_file_activates_provider_and_loads_values() {
 }
 
 #[test]
+fn recall_config_reads_environment_values() {
+    const CHILD: &str = "REFORMED_OPENVIKING_RECALL_CONFIG_TEST";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let home = tempfile::tempdir().unwrap();
+        let executable = std::env::current_exe().expect("test executable");
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let test = format!("{module}::recall_config_reads_environment_values");
+        let mut command = std::process::Command::new(executable);
+        command
+            .env_clear()
+            .envs([
+                (CHILD, "1"),
+                ("OPENVIKING_RECALL_LIMIT", " 9 "),
+                ("OPENVIKING_RECALL_SCORE_THRESHOLD", " .375 "),
+                ("OPENVIKING_RECALL_MAX_INJECTED_CHARS", "1200"),
+                ("OPENVIKING_RECALL_TIMEOUT_SECONDS", ".875"),
+                ("OPENVIKING_RECALL_REQUEST_TIMEOUT_SECONDS", "1.75"),
+                ("OPENVIKING_RECALL_FULL_READ_LIMIT", "5"),
+                ("OPENVIKING_RECALL_PREFER_ABSTRACT", " nO "),
+                ("OPENVIKING_RECALL_RESOURCES", " yes "),
+            ])
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env("HERMES_HOME", home.path())
+            .current_dir(home.path())
+            .args(["--exact", &test, "--color", "never"]);
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env(
+                "LLVM_PROFILE_FILE",
+                std::path::absolute(profile).expect("resolve coverage output path"),
+            );
+        }
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system_root);
+        }
+        let output = command.output().expect("run isolated OpenViking fixture");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains(&format!("test {test} ... ok")),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    let profile = tempfile::tempdir().unwrap();
+    let home = profile.path().to_str().expect("UTF-8 fixture path");
+    let inherited = OpenVikingConfig::load(home).recall;
+    assert_eq!(inherited.limit, 9);
+    assert_eq!(inherited.score_threshold, 0.375);
+    assert_eq!(inherited.max_injected_chars, 1200);
+    assert_eq!(inherited.timeout, Duration::from_millis(875));
+    assert_eq!(inherited.request_timeout, Duration::from_millis(1750));
+    assert_eq!(inherited.full_read_limit, 5);
+    assert!(!inherited.prefer_abstract);
+    assert!(inherited.include_resources);
+}
+
+#[test]
 fn save_config_merges_and_writes_owner_only() {
     let _guard = config_io::TEST_ENV_LOCK.lock().expect("env lock");
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -1064,4 +1124,247 @@ fn add_resource_payload_zips_directory_and_skips_symlinks() {
     assert!(!names.contains(&"guide-link.md".to_string()));
 
     std::fs::remove_file(zip_path).expect("cleanup zip");
+}
+
+fn prefetch_for(
+    endpoint: String,
+    query: &str,
+    recall: OpenVikingRecallConfig,
+) -> OpenVikingPrefetch {
+    let st = plugin_with_endpoint(endpoint)
+        .state
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("state");
+    OpenVikingPrefetch {
+        st,
+        q: query.to_string(),
+        session_id: String::new(),
+        recall,
+    }
+}
+
+const RANKED_SEARCH: &str = r#"{"result":{
+    "memories":[
+        {"abstract":"An item without a URI is skipped","score":0.99},
+        {"uri":"viking://user/usr/memories/low.md","abstract":"Below the threshold","score":0.05},
+        {"uri":"viking://user/usr/memories/plain.md","abstract":"Plain note","score":0.5},
+        {"uri":"viking://user/usr/memories/rust-port.md","abstract":"Rust port plan","score":0.8}
+    ],
+    "resources":[{"uri":"viking://resources/spec.md","text":"Spec resource","score":0.9}]
+}}"#;
+
+#[test]
+fn recall_orders_by_score_and_drops_low_scores_and_items_without_uri() {
+    let (endpoint, rx) = openviking_server(vec![(200, RANKED_SEARCH)]);
+
+    let out = prefetch_for(endpoint, "", OpenVikingRecallConfig::default())
+        .run()
+        .expect("recall text");
+
+    assert_eq!(
+        out,
+        "- [0.80] Rust port plan (viking://user/usr/memories/rust-port.md)\n\
+         - [0.50] Plain note (viking://user/usr/memories/plain.md)",
+        "higher score first; resources are off by default"
+    );
+    let request = rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+    assert!(request.contains("\"context_type\":\"memory\""));
+    assert!(
+        !request.contains("session_id"),
+        "a blank session id is not sent"
+    );
+}
+
+#[test]
+fn recall_includes_resources_when_enabled() {
+    let (endpoint, rx) = openviking_server(vec![(200, RANKED_SEARCH)]);
+    let recall = OpenVikingRecallConfig {
+        include_resources: true,
+        ..OpenVikingRecallConfig::default()
+    };
+
+    let out = prefetch_for(endpoint, "unrelated words", recall)
+        .run()
+        .expect("recall text");
+
+    assert_eq!(
+        out.lines().next(),
+        Some("- [0.90] Spec resource (viking://resources/spec.md)")
+    );
+    assert_eq!(out.lines().count(), 3);
+    let request = rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+    assert!(request.contains("\"context_type\":[\"memory\",\"resource\"]"));
+}
+
+#[test]
+fn recall_drops_the_next_line_over_the_char_budget() {
+    let search = r#"{"results":[
+        {"uri":"viking://user/usr/memories/first.md","abstract":"First kept line","score":0.8},
+        {"uri":"viking://user/usr/memories/second.md","abstract":"Second line over budget","score":0.7}
+    ]}"#;
+    let first = "- [0.80] First kept line (viking://user/usr/memories/first.md)";
+    let (endpoint, rx) = openviking_server(vec![(200, search)]);
+    let recall = OpenVikingRecallConfig {
+        max_injected_chars: first.chars().count() + 1,
+        ..OpenVikingRecallConfig::default()
+    };
+
+    let out = prefetch_for(endpoint, "", recall)
+        .run()
+        .expect("recall text");
+
+    assert_eq!(out, first);
+    rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+}
+
+#[test]
+fn recall_prefers_abstracts_without_full_reads_when_configured() {
+    let search = r#"{"results":[
+        {"uri":"viking://user/usr/memories/deep.md","abstract":"Deep abstract","score":0.6,"content_level":2}
+    ]}"#;
+    let full = r#"{"result":{"content":"Full body"}}"#;
+    let (endpoint, rx) = openviking_server(vec![(200, search), (200, full)]);
+    let recall = OpenVikingRecallConfig {
+        prefer_abstract: true,
+        ..OpenVikingRecallConfig::default()
+    };
+
+    let out = prefetch_for(endpoint, "", recall)
+        .run()
+        .expect("recall text");
+
+    assert_eq!(
+        out,
+        "- [0.60] Deep abstract (viking://user/usr/memories/deep.md)"
+    );
+    rx.recv_timeout(StdDuration::from_secs(2)).expect("search");
+    assert!(
+        rx.recv_timeout(StdDuration::from_millis(300)).is_err(),
+        "no content read is made"
+    );
+}
+
+#[test]
+fn recall_fails_when_nothing_usable_comes_back() {
+    let cases: [Vec<(u16, &'static str)>; 2] = [
+        // Search and find both fail.
+        vec![(500, "{}"), (503, "{}")],
+        // Search returns a body that is not JSON; find returns no items.
+        vec![(200, "not json"), (200, r#"{"result":{}}"#)],
+    ];
+    for responses in cases {
+        let (endpoint, rx) = openviking_server(responses);
+        // With a session id the plugin tries search, then find.
+        let mut prefetch = prefetch_for(endpoint, "anything", OpenVikingRecallConfig::default());
+        prefetch.session_id = "s".to_string();
+        assert!(prefetch.run().is_err());
+        for _ in 0..2 {
+            rx.recv_timeout(StdDuration::from_secs(2)).expect("request");
+        }
+    }
+}
+
+#[test]
+fn recall_sends_nothing_when_the_time_budget_is_already_spent() {
+    let (endpoint, rx) = openviking_server(vec![(200, RANKED_SEARCH)]);
+    let recall = OpenVikingRecallConfig {
+        timeout: Duration::from_millis(10),
+        ..OpenVikingRecallConfig::default()
+    };
+
+    assert!(prefetch_for(endpoint, "rust", recall).run().is_err());
+    assert!(
+        rx.recv_timeout(StdDuration::from_millis(300)).is_err(),
+        "a budget under the minimum request timeout sends no request"
+    );
+}
+
+#[test]
+fn file_uris_decode_to_local_paths_or_explain_the_rejection() {
+    assert_eq!(
+        file_uri_to_path("file://localhost/srv/a%20b.md").unwrap(),
+        PathBuf::from("/srv/a b.md")
+    );
+    assert_eq!(
+        file_uri_to_path("file:///srv/plain.md").unwrap(),
+        PathBuf::from("/srv/plain.md")
+    );
+    for (uri, error) in [
+        (
+            "https://example.com/a.md",
+            "Unsupported file URI: https://example.com/a.md",
+        ),
+        (
+            "file://server/share/a.md",
+            "Unsupported non-local file URI: file://server/share/a.md",
+        ),
+    ] {
+        assert_eq!(file_uri_to_path(uri).unwrap_err(), error, "{uri}");
+    }
+}
+
+#[test]
+fn local_path_references_are_told_apart_from_names_and_urls() {
+    for value in [
+        "C:\\docs\\a.md",
+        "d:/docs/a.md",
+        "/abs/a.md",
+        "./a.md",
+        "../a.md",
+        "~/a.md",
+        ".\\a.md",
+        "..\\a.md",
+        "~\\a.md",
+        "docs/a.md",
+        "docs\\a.md",
+    ] {
+        assert!(is_local_path_reference(value), "{value}");
+    }
+    for value in [
+        "",
+        "a.md",
+        "two\nlines/a",
+        "carriage\r/a",
+        "https://example.com/a/b",
+    ] {
+        assert!(!is_local_path_reference(value), "{value:?}");
+    }
+    assert!(!is_windows_absolute_path("C:"));
+    assert!(!is_windows_absolute_path("1:/a"));
+}
+
+#[test]
+fn add_resource_payload_passes_through_unknown_sources_and_rejects_missing_local_paths() {
+    let args = json!({});
+    for source in ["s3://bucket/key.md", "resource-name-only"] {
+        let (body, upload) = add_resource_payload_for_source(source, &args).expect(source);
+        assert_eq!(body["path"], source);
+        assert!(upload.is_none());
+    }
+    for source in ["./no-such-dir-7f3a/a.md", "C:/no-such-dir-7f3a/a.md"] {
+        assert_eq!(
+            add_resource_payload_for_source(source, &args).unwrap_err(),
+            format!("Local resource path does not exist: {source}")
+        );
+    }
+    assert_eq!(
+        add_resource_payload_for_source("file://server/a.md", &args).unwrap_err(),
+        "Unsupported non-local file URI: file://server/a.md"
+    );
+    assert_eq!(
+        add_resource_payload_for_source("a.md", &json!({"to": "x", "parent": "y"})).unwrap_err(),
+        "Cannot specify both 'to' and 'parent'"
+    );
+}
+
+#[test]
+fn expanduser_resolves_the_home_directory_prefix() {
+    let home = dirs::home_dir().expect("home directory");
+    assert_eq!(PathBuf::from("~").expanduser(), home);
+    assert_eq!(
+        PathBuf::from("~/notes/a.md").expanduser(),
+        home.join("notes/a.md")
+    );
 }

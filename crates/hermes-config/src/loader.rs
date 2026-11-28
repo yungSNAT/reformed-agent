@@ -1380,11 +1380,14 @@ fn load_from_yaml_inner(path: &Path, expand_env_refs: bool) -> Result<GatewayCon
     mark_platform_enabled_explicit(&mut root, "slack");
     mark_platform_enabled_explicit(&mut root, "ntfy");
     let mut config: GatewayConfig = serde_yaml::from_value(root).map_err(yaml_to_config_error)?;
+    crate::python_yaml_compat::drop_written_default_platform_toolsets(
+        &mut config.platform_toolsets,
+    );
     normalize_platform_aliases(&mut config);
     Ok(config)
 }
 
-fn expand_env_vars_in_yaml(value: &mut serde_yaml::Value) {
+pub(crate) fn expand_env_vars_in_yaml(value: &mut serde_yaml::Value) {
     match value {
         serde_yaml::Value::String(s) => {
             *s = expand_env_refs_in_str(s);
@@ -1613,6 +1616,9 @@ pub fn load_from_json(path: &Path) -> Result<GatewayConfig, ConfigError> {
     let contents = std::fs::read_to_string(path).map_err(io_to_config_error)?;
     let mut config: GatewayConfig =
         serde_json::from_str(&contents).map_err(json_to_config_error)?;
+    crate::python_yaml_compat::drop_written_default_platform_toolsets(
+        &mut config.platform_toolsets,
+    );
     normalize_platform_aliases(&mut config);
     Ok(config)
 }

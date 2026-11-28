@@ -240,6 +240,53 @@ impl SessionPersistence {
         Ok(changed > 0)
     }
 
+    /// Set a stored session's title; false when no row has `session_id`.
+    pub fn update_session_title(&self, session_id: &str, title: &str) -> Result<bool, AgentError> {
+        if session_id.trim().is_empty() || !self.db_path.exists() {
+            return Ok(false);
+        }
+        let conn = rusqlite::Connection::open(&self.db_path)
+            .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
+        match conn.execute(
+            "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![title, hermes_core::time::now_rfc3339(), session_id],
+        ) {
+            Ok(changed) => Ok(changed > 0),
+            Err(rusqlite::Error::SqliteFailure(_, Some(message)))
+                if message.contains("no such table") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(AgentError::Io(format!(
+                "Failed to update session title: {e}"
+            ))),
+        }
+    }
+
+    /// Read a stored session's title without creating a database; `None` when the session has
+    /// no row or no title.
+    pub fn get_session_title(&self, session_id: &str) -> Result<Option<String>, AgentError> {
+        if session_id.trim().is_empty() || !self.db_path.exists() {
+            return Ok(None);
+        }
+        let conn = rusqlite::Connection::open(&self.db_path)
+            .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
+        match conn.query_row(
+            "SELECT title FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(title) => Ok(title.filter(|value| !value.trim().is_empty())),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(rusqlite::Error::SqliteFailure(_, Some(message)))
+                if message.contains("no such table") =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(AgentError::Io(format!("Failed to read session title: {e}"))),
+        }
+    }
+
     /// Read the persisted model metadata for a session without creating a database.
     pub fn get_session_model(&self, session_id: &str) -> Result<Option<String>, AgentError> {
         if session_id.trim().is_empty() || !self.db_path.exists() {

@@ -883,5 +883,8 @@ impl TelegramMultipartRequest<'_> {
 
 include!("telegram/adapter_impl.rs");
 
+#[path = "telegram/gateway_polling.rs"]
+mod gateway_polling;
+
 #[cfg(test)]
 mod tests;

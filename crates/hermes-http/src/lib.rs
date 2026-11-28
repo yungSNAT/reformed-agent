@@ -176,6 +176,7 @@ impl HttpServerState {
                         .run(messages, None)
                         .await
                         .map_err(|e| GatewayError::Platform(e.to_string()))?;
+                    ctx.add_session_spent_usd(result.session_cost_usd);
                     persist_gateway_result(
                         ctx.home.as_deref().or(config.home_dir.as_deref()),
                         &ctx.session_key,
@@ -243,6 +244,7 @@ impl HttpServerState {
                         .run_stream(messages, None, Some(stream_cb))
                         .await
                         .map_err(|e| GatewayError::Platform(e.to_string()))?;
+                    ctx.add_session_spent_usd(result.session_cost_usd);
                     persist_gateway_result(
                         ctx.home.as_deref().or(config.home_dir.as_deref()),
                         &ctx.session_key,
@@ -1044,10 +1046,23 @@ fn build_agent_for_gateway_context(
             FsPath::new(h),
         );
     }
-    hermes_agent::attach_discovered_memory(AgentLoop::new(agent_config, agent_tools, provider))
+    let agent =
+        hermes_agent::attach_discovered_memory(AgentLoop::new(agent_config, agent_tools, provider));
+    agent.set_session_spent_usd(ctx.session_spent_usd());
+    agent
 }
 
 fn extract_last_assistant_reply(messages: &[Message]) -> String {
+    // A run the spend cap refused or stopped ends with the guard's note, and
+    // the reply that tripped it is not kept: the note is the answer.
+    if let Some(note) = messages
+        .last()
+        .filter(|m| m.role == MessageRole::System)
+        .and_then(|m| m.content.as_deref())
+        .filter(|text| text.starts_with("Cost guard tripped"))
+    {
+        return note.to_string();
+    }
     messages
         .iter()
         .rev()
@@ -1136,6 +1151,54 @@ mod tests {
             build_agent_config(&config, "openai:dynamic").stream_max_lifetime,
             Some(1.5)
         );
+    }
+
+    #[test]
+    fn a_run_refused_at_the_spend_cap_replies_with_the_guards_note() {
+        let note = "Cost guard tripped: session spend $0.5000 reached max_cost_usd $0.5000 before this run. Not starting.";
+        let messages = [Message::user("hi"), Message::system(note)];
+        assert_eq!(extract_last_assistant_reply(&messages), note);
+        let later = [
+            Message::user("one"),
+            Message::assistant("first reply"),
+            Message::user("two"),
+            Message::system(note),
+        ];
+        assert_eq!(extract_last_assistant_reply(&later), note);
+        assert_eq!(
+            extract_last_assistant_reply(&[Message::system("other")]),
+            "(no assistant reply)"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_gateway_conversation_past_its_cap_gets_the_note_without_a_request() {
+        let home = tempfile::tempdir().unwrap();
+        let mut config = GatewayConfig {
+            model: Some("openai:gpt-4o".to_string()),
+            home_dir: Some(home.path().to_string_lossy().to_string()),
+            ..GatewayConfig::default()
+        };
+        config.agent.max_session_cost_usd = Some(0.3);
+        let generation = hermes_tools::gateway_approval::SessionGeneration::default();
+        generation.add_spent_usd(0.4);
+        let ctx = GatewayRuntimeContext {
+            session_key: "http:spend".to_string(),
+            session_generation: Some(generation),
+            ..GatewayRuntimeContext::default()
+        };
+        let agent =
+            build_agent_for_gateway_context(&config, &ctx, Arc::new(AgentToolRegistry::new()));
+
+        let history = vec![
+            Message::user("one"),
+            Message::assistant("first reply"),
+            Message::user("two"),
+        ];
+        let result = agent.run(history, None).await.unwrap();
+
+        assert!(extract_last_assistant_reply(&result.messages).starts_with("Cost guard tripped"));
+        assert_eq!(result.session_cost_usd, Some(0.0));
     }
 
     #[test]

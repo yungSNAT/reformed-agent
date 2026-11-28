@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use hermes_core::{AgentError, LlmProvider, LlmResponse, Message, StreamChunk, ToolSchema};
 
+use crate::api_bridge::CodexProvider;
 use crate::provider::{is_openai_dynamic_model_alias, GenericProvider};
 use crate::provider_profiles;
 
@@ -375,34 +376,45 @@ impl LlmProvider for NousProvider {
 #[path = "providers_extra/copilot_catalog.rs"]
 mod copilot_catalog;
 
-use copilot_catalog::{reconcile_effort, CopilotCatalog, EffortSupport};
+use copilot_catalog::{legacy_support, reconcile_effort, CopilotCatalog, EffortSupport};
 
 /// GitHub Copilot HTTP provider with a configurable inference base URL.
+/// GPT-5 and later models go to its Responses API, the rest to Chat
+/// Completions.
 ///
 /// Default model: `gpt-4o`
 #[derive(Debug, Clone)]
 pub struct CopilotProvider {
     inner: GenericProvider,
+    responses: CodexProvider,
     catalog: Option<Arc<CopilotCatalog>>,
 }
 
 impl CopilotProvider {
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+        let inner = GenericProvider::new(base_url, api_key, "gpt-4o");
+        let responses = CodexProvider::new(inner.api_key.clone())
+            .with_base_url(inner.base_url.clone())
+            .with_model(inner.model.clone());
         Self {
-            inner: GenericProvider::new(base_url, api_key, "gpt-4o"),
+            inner,
+            responses,
             catalog: None,
         }
     }
 
     pub fn with_model(self, model: impl Into<String>) -> Self {
+        let model = model.into();
         Self {
-            inner: self.inner.with_model(model),
+            inner: self.inner.with_model(model.clone()),
+            responses: self.responses.with_model(model),
             ..self
         }
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.inner = self.inner.with_base_url(url);
+        self.responses = self.responses.with_base_url(self.inner.base_url.clone());
         if self.catalog.is_some() {
             self.catalog = CopilotCatalog::for_base_url(&self.inner.base_url);
         }
@@ -422,8 +434,52 @@ impl CopilotProvider {
     pub fn with_optional_request_timeout_seconds(self, seconds: Option<f64>) -> Self {
         Self {
             inner: self.inner.with_optional_request_timeout_seconds(seconds),
+            responses: self
+                .responses
+                .with_optional_request_timeout_seconds(seconds),
             ..self
         }
+    }
+
+    /// Whether the request's wire model answers only on the Responses API.
+    fn uses_responses_api(&self, model: Option<&str>, extra_body: Option<&Value>) -> bool {
+        let wire_model = match extra_body.and_then(|body| body.get("model")) {
+            Some(Value::String(model)) => model,
+            _ => model.unwrap_or(&self.inner.model),
+        };
+        requires_responses_api(wire_model)
+    }
+
+    /// The effort levels the model is known to accept: the catalogue's
+    /// answer, else the pattern list upstream falls back to.
+    async fn known_effort_levels(&self, model: Option<&str>, body: Option<&Value>) -> Vec<String> {
+        let wire_model = match body.and_then(|body| body.get("model")) {
+            Some(Value::String(model)) => model,
+            _ => model.unwrap_or(&self.inner.model),
+        }
+        .trim();
+        let lookup = match wire_model.get(..7) {
+            Some(prefix) if prefix.eq_ignore_ascii_case("openai/") => &wire_model[7..],
+            _ => wire_model,
+        };
+        let support = match &self.catalog {
+            Some(catalog) => catalog.effort_support(&self.inner.api_key, lookup).await,
+            None => EffortSupport::Unknown,
+        };
+        match support {
+            EffortSupport::Supported(levels) => levels,
+            EffortSupport::Unsupported => Vec::new(),
+            EffortSupport::Unknown => match legacy_support(lookup) {
+                EffortSupport::Supported(levels) => levels,
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    /// The Responses API body, with the effort clamped to known levels.
+    async fn responses_body(&self, model: Option<&str>, body: Option<&Value>) -> Option<Value> {
+        let levels = self.known_effort_levels(model, body).await;
+        responses_extra_body(body, &levels)
     }
 
     async fn reconcile_reasoning<'a>(
@@ -470,21 +526,86 @@ impl CopilotProvider {
     }
 }
 
-fn requested_catalog_effort(body: &Value) -> Option<&str> {
-    if [
+fn reasoning_disabled(body: &Value) -> bool {
+    [
         "/reasoning/enabled",
         "/reasoning_config/enabled",
         "/supports_reasoning",
     ]
     .iter()
     .any(|field| body.pointer(field).and_then(Value::as_bool) == Some(false))
-    {
+        || body
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .is_some_and(|effort| effort.trim().eq_ignore_ascii_case("none"))
+}
+
+fn requested_catalog_effort(body: &Value) -> Option<&str> {
+    if reasoning_disabled(body) {
         return None;
     }
     body.get("reasoning_effort")?
         .as_str()
         .map(str::trim)
-        .filter(|effort| !effort.is_empty() && !effort.eq_ignore_ascii_case("none"))
+        .filter(|effort| !effort.is_empty())
+}
+
+/// GPT-5 and later answer only on Copilot's Responses API, except the
+/// `gpt-5-mini` family; other models use Chat Completions.
+fn requires_responses_api(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    let name = model.strip_prefix("openai/").unwrap_or(&model);
+    let Some(version) = name.strip_prefix("gpt-") else {
+        return false;
+    };
+    let major = &version[..version
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(version.len())];
+    major.parse::<u32>().is_ok_and(|major| major >= 5) && !name.starts_with("gpt-5-mini")
+}
+
+/// The Chat Completions extra body as the Responses API takes it. Unless
+/// reasoning is off, the effort asked for (medium by default, as upstream
+/// sends) is clamped to `levels` and goes in `reasoning` with a summary, as
+/// the reasoning text comes back only with one. With no known levels, no
+/// effort is sent.
+fn responses_extra_body(body: Option<&Value>, levels: &[String]) -> Option<Value> {
+    let mut map = match body {
+        Some(Value::Object(map)) => map.clone(),
+        None => serde_json::Map::new(),
+        Some(other) => return Some(other.clone()),
+    };
+    let effort = match body {
+        Some(body) if reasoning_disabled(body) => None,
+        _ => reconcile_effort(
+            body.and_then(requested_catalog_effort).unwrap_or("medium"),
+            levels,
+        ),
+    };
+    if body.is_none() && effort.is_none() {
+        return None;
+    }
+    for key in [
+        "reasoning_effort",
+        "reasoning",
+        "reasoning_config",
+        "supports_reasoning",
+    ] {
+        map.remove(key);
+    }
+    // The Responses API names its output limit `max_output_tokens`.
+    for limit in ["max_completion_tokens", "max_tokens"] {
+        if let Some(value) = map.remove(limit) {
+            map.entry("max_output_tokens").or_insert(value);
+        }
+    }
+    if let Some(effort) = effort {
+        map.insert(
+            "reasoning".into(),
+            serde_json::json!({"effort": effort, "summary": "auto"}),
+        );
+    }
+    Some(Value::Object(map))
 }
 
 #[async_trait]
@@ -498,6 +619,20 @@ impl LlmProvider for CopilotProvider {
         model: Option<&str>,
         extra_body: Option<&Value>,
     ) -> Result<LlmResponse, AgentError> {
+        if self.uses_responses_api(model, extra_body) {
+            let body = self.responses_body(model, extra_body).await;
+            return self
+                .responses
+                .chat_completion(
+                    messages,
+                    tools,
+                    max_tokens,
+                    temperature,
+                    model,
+                    body.as_ref(),
+                )
+                .await;
+        }
         let adjusted = self.reconcile_reasoning(model, extra_body).await;
         self.inner
             .chat_completion(
@@ -520,7 +655,10 @@ impl LlmProvider for CopilotProvider {
         model: Option<&str>,
         extra_body: Option<&Value>,
     ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-        if self.catalog.is_none() || extra_body.and_then(requested_catalog_effort).is_none() {
+        let responses = self.uses_responses_api(model, extra_body);
+        if !responses
+            && (self.catalog.is_none() || extra_body.and_then(requested_catalog_effort).is_none())
+        {
             return self.inner.chat_completion_stream(
                 messages,
                 tools,
@@ -537,17 +675,31 @@ impl LlmProvider for CopilotProvider {
         let model = model.map(str::to_owned);
         let extra_body = extra_body.cloned();
         Box::pin(async_stream::stream! {
-            let adjusted = provider
-                .reconcile_reasoning(model.as_deref(), extra_body.as_ref())
-                .await;
-            let mut stream = provider.inner.chat_completion_stream(
-                &messages,
-                &tools,
-                max_tokens,
-                temperature,
-                model.as_deref(),
-                adjusted.as_deref(),
-            );
+            let mut stream = if responses {
+                let body = provider
+                    .responses_body(model.as_deref(), extra_body.as_ref())
+                    .await;
+                provider.responses.chat_completion_stream(
+                    &messages,
+                    &tools,
+                    max_tokens,
+                    temperature,
+                    model.as_deref(),
+                    body.as_ref(),
+                )
+            } else {
+                let adjusted = provider
+                    .reconcile_reasoning(model.as_deref(), extra_body.as_ref())
+                    .await;
+                provider.inner.chat_completion_stream(
+                    &messages,
+                    &tools,
+                    max_tokens,
+                    temperature,
+                    model.as_deref(),
+                    adjusted.as_deref(),
+                )
+            };
             while let Some(chunk) = stream.next().await {
                 yield chunk;
             }

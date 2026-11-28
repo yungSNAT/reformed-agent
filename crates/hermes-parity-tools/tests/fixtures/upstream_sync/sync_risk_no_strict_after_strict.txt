@@ -1,0 +1,66 @@
+exit=Some(0)
+--- stdout
+[sync-upstream] Fetching origin/main and upstream/main...
+[sync-upstream] Dry run complete.
+[sync-upstream] Report: <ROOT>/reports/upstream-sync-<TS>.txt
+--- stderr
+--- calls
+--- file reports/upstream-sync-<TS>.txt
+# Upstream Sync Report
+
+timestamp_utc: <TS>
+repo_root: <ROOT>/repo
+mode: branch-pr
+strategy: merge
+strict_risk_gate: 0
+run_redteam_gate: 1
+redteam_cmd: <ROOT>/bin/cargo redteam
+run_elite_gate: 0
+elite_cmd: <ROOT>/bin/cargo elite
+elite_rollback_cmd: 
+draft_pr: 0
+allow_risk_paths: 0
+pr_labels: upstream-sync,parity-sync
+risk_paths_file: <ROOT>/repo/scripts/upstream-risk-paths.txt
+upstream_url: <ROOT>/remotes/NousResearch/hermes-agent.git
+expected_upstream_repo: NousResearch/hermes-agent
+allow_non_official_upstream: 0
+origin_ref: refs/remotes/origin/main
+upstream_ref: refs/remotes/upstream/main
+origin_sha: <C:fork: carry>
+upstream_sha: <C:upstream: touch risky paths>
+
+## Pending Upstream Commits
+```
+<C:upstream: touch risky paths> upstream: touch risky paths
+```
+
+## Diff Stat
+```
+ crates/hermes-auth/src/lib.rs | 1 +
+ docs/notes.md                 | 1 +
+ docs/other.md                 | 1 +
+ fork.txt                      | 1 -
+ scripts/setup-x.sh            | 1 +
+ 5 files changed, 4 insertions(+), 1 deletion(-)
+```
+
+## Files
+```
+A	crates/hermes-auth/src/lib.rs
+A	docs/notes.md
+A	docs/other.md
+D	fork.txt
+A	scripts/setup-x.sh
+```
+
+status: dry-run
+--- refs remotes/origin.git
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/main <C:fork: carry>
+refs/remotes/upstream/main <C:upstream: touch risky paths>
+--- status
+## main...origin/main

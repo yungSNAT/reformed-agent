@@ -159,7 +159,7 @@ impl AgentLoop {
         self.session_spent_usd.store(usd.to_bits(), Ordering::Relaxed);
     }
 
-    fn session_spent_usd(&self) -> f64 {
+    pub(crate) fn session_spent_usd(&self) -> f64 {
         f64::from_bits(self.session_spent_usd.load(Ordering::Relaxed))
     }
 
@@ -175,7 +175,7 @@ impl AgentLoop {
         Some((crate::SessionPersistence::new(self.session_budget_root.as_ref()?), id))
     }
 
-    fn restore_session_budget(&self) -> Result<Option<std::fs::File>, AgentError> {
+    fn restore_session_budget(&self) -> Result<Option<crate::session_persistence::BudgetLock>, AgentError> {
         let Some((store, id)) = self.session_budget() else { return Ok(None) };
         let lock = store.lock_session_budget(id)?;
         self.set_session_spent_usd(store.session_spend_usd(id)?);
