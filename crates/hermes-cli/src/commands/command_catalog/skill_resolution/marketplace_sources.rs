@@ -139,7 +139,9 @@ async fn resolve_official_skill_source(
     candidate_queries.dedup();
 
     for query in candidate_queries {
-        if let Ok(record) = resolve_skill_via_registry_index(client, &query, Some("official")).await
+        if let Ok(record) =
+            resolve_skill_via_registry_index(client, HERMES_SKILLS_INDEX_URL, &query, Some("official"))
+                .await
         {
             if let RegistryInstallSource::GitRepo(source) = record.install_source {
                 let mut candidates = official_skill_path_candidates(&source.skill_dir);
@@ -214,7 +216,9 @@ async fn resolve_skills_sh_source(
         });
     }
 
-    if let Ok(resolved) = resolve_skill_via_registry_index(client, req, Some("skills.sh")).await {
+    if let Ok(resolved) =
+        resolve_skill_via_registry_index(client, HERMES_SKILLS_INDEX_URL, req, Some("skills.sh")).await
+    {
         if let RegistryInstallSource::GitRepo(source) = resolved.install_source {
             let branch = github_default_branch(client, &source.repo).await?;
             return Ok(ResolvedSkillSource { branch, ..source });

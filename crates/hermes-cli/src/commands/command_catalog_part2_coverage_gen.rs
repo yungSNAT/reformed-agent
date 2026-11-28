@@ -339,11 +339,12 @@ async fn registry_and_github_calls_report_transport_errors_without_network() {
         .unwrap();
 
     assert_config_error(
-        search_multi_registry(&client, "calendar", 3).await,
+        search_multi_registry(&client, HERMES_SKILLS_INDEX_URL, "calendar", 3).await,
         "Skills index request failed:",
     );
     assert_config_error(
-        resolve_skill_via_registry_index(&client, "calendar", Some("official")).await,
+        resolve_skill_via_registry_index(&client, HERMES_SKILLS_INDEX_URL, "calendar", Some("official"))
+            .await,
         "Skills index request failed:",
     );
     assert_config_error(
@@ -354,6 +355,106 @@ async fn registry_and_github_calls_report_transport_errors_without_network() {
         github_repo_tree(&client, "test/project", "feature/calendar").await,
         "GitHub tree request failed:",
     );
+}
+
+#[tokio::test]
+async fn skills_index_search_ranks_matches_and_resolves_install_sources() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/index"))
+        .and(header("accept", "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "skills": [
+                {"name": "calendar", "source": "lobehub", "identifier": "lobehub/calendar"},
+                {"name": "calendar", "source": "official", "identifier": "unavailable"},
+                {
+                    "name": "tern-calendar", "source": "github", "identifier": "test/tern-calendar",
+                    "repo": "test/tern-calendar", "path": "skills/tern"
+                },
+                {
+                    "name": "calendar", "source": "official", "identifier": "official/calendar",
+                    "path": "skills/calendar"
+                },
+                {"name": "birding", "source": "clawhub", "identifier": "birding"}
+            ]
+        })))
+        .expect(5)
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let url = format!("{}/index", server.uri());
+    let results = search_multi_registry(&client, &url, "calendar", 2)
+        .await
+        .unwrap();
+    let identifiers = results
+        .iter()
+        .map(|hit| hit.identifier.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(identifiers, ["official/calendar", "lobehub/calendar"]);
+
+    let exact = resolve_skill_via_registry_index(&client, &url, " CALENDAR ", None)
+        .await
+        .unwrap();
+    assert_eq!(exact.identifier, "official/calendar");
+    assert!(matches!(
+        exact.install_source,
+        RegistryInstallSource::GitRepo(ref source)
+            if source.repo == OFFICIAL_SKILLS_REPO && source.skill_dir == "skills/calendar"
+    ));
+
+    let scoped = resolve_skill_via_registry_index(&client, &url, "calendar", Some("LobeHub"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        scoped.install_source,
+        RegistryInstallSource::LobeRegistry { slug } if slug == "calendar"
+    ));
+
+    let fuzzy = resolve_skill_via_registry_index(&client, &url, "tern", None)
+        .await
+        .unwrap();
+    assert_eq!(fuzzy.identifier, "test/tern-calendar");
+    assert_config_error(
+        resolve_skill_via_registry_index(&client, &url, "missing", None).await,
+        "Skill 'missing' was not found in multi-registry index.",
+    );
+}
+
+#[tokio::test]
+async fn skills_index_search_reports_http_and_json_errors() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for (route, response, message) in [
+        (
+            "/unavailable",
+            ResponseTemplate::new(503).set_body_string("registry maintenance"),
+            "Skills index lookup failed (503 Service Unavailable): registry maintenance",
+        ),
+        (
+            "/invalid",
+            ResponseTemplate::new(200).set_body_json(json!({"skills": "invalid schema"})),
+            "Invalid skills index response:",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let url = format!("{}{route}", server.uri());
+        assert_config_error(
+            search_multi_registry(&client, &url, "calendar", 2).await,
+            message,
+        );
+    }
 }
 
 /// Re-runs one test of this module alone in a child test process with the isolation marker set,
