@@ -53,6 +53,7 @@ async fn model_completions_use_configured_loopback_catalogues() {
             Some(ResponseTemplate::new(200).set_body_json(json!({"data": []}))),
             fallback_models,
         ),
+        ("invalid-url", key, fallback, true, None, fallback_models),
         (
             "keyed",
             key,
@@ -81,10 +82,15 @@ async fn model_completions_use_configured_loopback_catalogues() {
     ] {
         let provider = format!("{PREFIX}{case}");
         expected.extend(models.iter().map(|model| format!("{provider}:{model}")));
+        let base_url = if case == "invalid-url" {
+            "http://[".to_string()
+        } else {
+            format!("{}/{case}/", server.uri())
+        };
         providers.insert(
             provider,
             json!({
-                "base_url": format!("{}/{case}/", server.uri()),
+                "base_url": base_url,
                 "api_key": key,
                 "models": configured,
                 "discover_models": discover,
