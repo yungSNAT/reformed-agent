@@ -1010,6 +1010,7 @@
         SemanticRetryFailure { retryable: bool },
         FinalizerRewrite,
         EmptyStop,
+        ToolResultThenEmptyStop,
         PartialInterrupt,
         RecoverOnSecondAttempt,
         AlwaysFailMidToolCall,
@@ -1224,6 +1225,23 @@
                     ]
                 }
                 StreamRetryScenario::EmptyStop => vec![Ok(stream_chunk_finish("stop"))],
+                StreamRetryScenario::ToolResultThenEmptyStop if attempt == 1 => vec![
+                    Ok(stream_chunk_content("Recorded the sample.")),
+                    Ok(stream_chunk_tool_name(0, "fixture-record", "fixture_record")),
+                    Ok(stream_chunk_tool_args(0, "{}")),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
+                StreamRetryScenario::ToolResultThenEmptyStop => {
+                    assert_eq!(attempt, 2);
+                    assert!(messages.iter().any(|message| {
+                        message.role == MessageRole::Tool
+                            && message
+                                .content
+                                .as_deref()
+                                .is_some_and(|text| text.contains("Sample receipt"))
+                    }));
+                    vec![Ok(stream_chunk_finish("stop"))]
+                }
                 StreamRetryScenario::PartialInterrupt => vec![Ok(StreamChunk {
                     usage: Some(hermes_core::UsageStats {
                         prompt_tokens: 2,
@@ -1517,6 +1535,43 @@
         assert!(result.finished_naturally);
         assert_eq!(result.total_turns, 1);
         assert_eq!(*provider.calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn stream_empty_stop_keeps_the_text_from_the_tool_turn() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            skip_memory: true,
+            skip_context_files: true,
+            max_turns: 4,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "fixture_record",
+            ToolSchema::new(
+                "fixture_record",
+                "Record one sample",
+                hermes_core::JsonSchema::new("object"),
+            ),
+            Arc::new(|_| Ok("Sample receipt".to_string())),
+        );
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::ToolResultThenEmptyStop));
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone());
+        let result = agent
+            .run_stream(
+                vec![Message::user("Record one sample entry")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(*provider.calls.lock().unwrap(), 2);
+        let last = result.messages.last().unwrap();
+        assert_eq!(last.role, MessageRole::Assistant);
+        assert_eq!(last.content.as_deref(), Some("Recorded the sample."));
     }
 
     #[tokio::test]
