@@ -4,6 +4,7 @@
 
 use hermes_config::managed_gateway::resolve_openai_audio_api_key;
 use hermes_core::AgentError;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -204,6 +205,7 @@ fn gateway_transcription_response_format(provider: &str, model: &str) -> &'stati
 /// Voice mode manager.
 pub struct VoiceManager {
     config: VoiceConfig,
+    openai_speech_url: Cow<'static, str>,
     joined_channels: Mutex<HashMap<String, HashSet<String>>>,
     voice_mixers: Mutex<HashMap<String, VoiceMixer>>,
     ack_phrase_cursor: Mutex<usize>,
@@ -213,6 +215,7 @@ impl VoiceManager {
     pub fn new(config: VoiceConfig) -> Self {
         Self {
             config,
+            openai_speech_url: Cow::Borrowed("https://api.openai.com/v1/audio/speech"),
             joined_channels: Mutex::new(HashMap::new()),
             voice_mixers: Mutex::new(HashMap::new()),
             ack_phrase_cursor: Mutex::new(0),
@@ -873,7 +876,7 @@ impl VoiceManager {
         });
 
         let resp = client
-            .post("https://api.openai.com/v1/audio/speech")
+            .post(self.openai_speech_url.as_ref())
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()

@@ -393,13 +393,7 @@ impl AnthropicProvider {
             return url.to_string();
         }
 
-        let mut url = format!("{trimmed}/v1/messages");
-        if is_azure_anthropic_endpoint(Some(trimmed)) && !url.contains("api-version=") {
-            let sep = if url.contains('?') { '&' } else { '?' };
-            url.push(sep);
-            url.push_str("api-version=2025-04-15");
-        }
-        url
+        format!("{trimmed}/v1/messages")
     }
 
     fn strip_unsupported_anthropic_controls(body: &mut Value, model: &str) {
@@ -488,14 +482,6 @@ impl AnthropicProvider {
                     if let Some(ref text) = msg.content {
                         if let Some(parts) = parse_acp_multimodal_parts(text) {
                             content_blocks.extend(anthropic_blocks_from_multimodal_parts(&parts));
-                            if content_blocks.is_empty() {
-                                let fallback = flatten_multimodal_parts_text(&parts);
-                                if !fallback.is_empty() {
-                                    content_blocks.push(
-                                        serde_json::json!({"type": "text", "text": fallback}),
-                                    );
-                                }
-                            }
                         } else {
                             content_blocks.push(serde_json::json!({"type": "text", "text": text}));
                         }

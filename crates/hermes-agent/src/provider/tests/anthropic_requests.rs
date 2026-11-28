@@ -26,6 +26,21 @@ fn test_anthropic_convert_messages_decodes_acp_multimodal_user_parts() {
 }
 
 #[test]
+fn test_anthropic_convert_messages_omits_empty_multimodal_parts() {
+    let parts = serde_json::json!([
+        {"type": "text", "text": ""},
+        {"type": "image_url", "image_url": {"url": " "}},
+        {"type": "other"}
+    ]);
+    let messages = [Message::user(format!("{ACP_MULTIMODAL_PREFIX}{parts}"))];
+    let (_, converted) = AnthropicProvider::convert_messages(&messages, None);
+    assert_eq!(
+        converted,
+        [serde_json::json!({"role": "user", "content": []})]
+    );
+}
+
+#[test]
 fn test_anthropic_convert_messages_with_tool_result() {
     let messages = vec![
         Message::system("System"),
@@ -219,6 +234,18 @@ fn test_anthropic_messages_url_adds_azure_api_version_query() {
         existing,
         "https://my-resource.openai.azure.com/anthropic/v1/messages?api-version=2024-01-01"
     );
+}
+
+#[tokio::test]
+async fn test_anthropic_invalid_endpoint_reports_request_error() {
+    let provider = AnthropicProvider::new("fixture-key").with_base_url(" http://[ ");
+    let url = provider.messages_url();
+    assert_eq!(url, "http://[/v1/messages");
+    let error = provider
+        .send_with_dead_connection_recovery(&url, "fixture-key", &serde_json::json!({}))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::LlmApi(message) if message.starts_with("HTTP request failed:")));
 }
 
 #[test]
