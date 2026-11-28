@@ -377,6 +377,33 @@ fn test_repo_review_tool_profile_keeps_todo_filters_messaging() {
 }
 
 #[test]
+fn test_repo_review_focus_keeps_review_tools_and_skips_unrelated_calls() {
+    let _guard = env_test_lock();
+    let _mode = EnvVarGuard::set("HERMES_REPO_REVIEW_TOOL_PROFILE_MODE", "focus");
+    let messages = [Message::user("review repo at /tmp/app and diagnose issue")];
+    let mut calls = ["read_file", "apply_patch", "todo", "weather", "render_chart"]
+        .into_iter()
+        .map(|name| ToolCall {
+            id: name.to_string(),
+            function: hermes_core::FunctionCall {
+                name: name.to_string(),
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        })
+        .collect::<Vec<_>>();
+
+    let note = apply_repo_review_tool_profile_narrowing(&mut calls, &messages).unwrap();
+    let retained = calls
+        .iter()
+        .map(|call| call.function.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(retained, ["read_file", "apply_patch", "todo"]);
+    assert!(note.contains("non-repo=1, focus=1"), "{note}");
+    assert!(apply_repo_review_tool_profile_narrowing(&mut calls, &messages).is_none());
+}
+
+#[test]
 fn test_repo_review_tool_profile_escape_hatch_disables_filtering() {
     let _guard = env_test_lock();
     let _env = EnvVarGuard::set("HERMES_REPO_REVIEW_TOOL_PROFILE_MODE", "focus");
@@ -587,6 +614,39 @@ fn test_tool_result_signal_score_rewards_workstream_evidence() {
         false,
     );
     assert!(score > 0.75, "score={score}");
+}
+
+#[test]
+fn test_tool_result_signal_score_discounts_missing_and_failed_evidence() {
+    let report = format!(
+        "file=Cargo.toml path=crates source_quality=high\n{}",
+        "detail ".repeat(24)
+    );
+    let score = tool_result_signal_score(&report, false);
+    let missing = tool_result_signal_score(&format!("{report}\nNo such file"), false);
+    assert!(score > 0.6, "score={score}");
+    assert!(missing < score, "missing={missing}, score={score}");
+    assert_eq!(tool_result_signal_score(&report, true), 0.0);
+}
+
+#[test]
+fn test_repo_review_budget_resets_the_streak_after_useful_results() {
+    let _guard = env_test_lock();
+    let _minimum = EnvVarGuard::set("HERMES_REPO_REVIEW_MIN_SIGNAL_SCORE", "0.5");
+    let messages = [Message::user("inspect repo /tmp/app and review codebase deeply")];
+    let mut state = RepoReviewBudgetState::default();
+
+    update_repo_review_budget_state_from_results(&mut state, &messages, &[]);
+    assert_eq!(state.low_signal_streak, 1);
+    assert_eq!(state.last_signal_score, 0.0);
+
+    let results = [hermes_core::ToolResult::ok(
+        "read",
+        "file=Cargo.toml path=crates cmd=cargo test",
+    )];
+    update_repo_review_budget_state_from_results(&mut state, &messages, &results);
+    assert_eq!(state.low_signal_streak, 0);
+    assert!(state.last_signal_score >= 0.5);
 }
 
 #[test]
