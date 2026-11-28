@@ -56,6 +56,29 @@ async fn profile_rename_preserves_active_selection_alias_and_exported_content() 
         "name: survey-template\nmodel: offline:survey\npersonality: quiet\nmax_turns: 7\n",
     )
     .unwrap();
+
+    let blocked = profiles.join("blocked.yaml");
+    fs::create_dir_all(&blocked).unwrap();
+    fs::write(blocked.join("notes.txt"), "Field notes").unwrap();
+    let refused = command(
+        root,
+        &[
+            "profile",
+            "import",
+            "survey.yaml",
+            "--import-name",
+            "blocked",
+            "--yes",
+        ],
+        1,
+    )
+    .await;
+    assert!(refused.contains("target path is a directory"), "{refused}");
+    assert_eq!(
+        fs::read_to_string(blocked.join("notes.txt")).unwrap(),
+        "Field notes"
+    );
+
     assert!(command(
         root,
         &["profile", "import", "survey.yaml", "--name", "field"],
@@ -72,6 +95,21 @@ async fn profile_rename_preserves_active_selection_alias_and_exported_content() 
 
     command(root, &["profile", "use", "field"], 0).await;
     assert_eq!(fs::read_to_string(&marker).unwrap().trim(), "survey");
+    command(
+        root,
+        &["profile", "alias", "survey", "--name", "catalogue"],
+        0,
+    )
+    .await;
+    let current = command(root, &["profile", "show"], 0).await;
+    assert!(
+        current
+            .lines()
+            .any(|line| line.split_once(':').is_some_and(|(label, value)| {
+                label.trim() == "Aliases" && value.trim() == "catalogue, field"
+            })),
+        "{current}"
+    );
     let config: serde_yaml::Value =
         serde_yaml::from_str(&fs::read_to_string(home.join("config.yaml")).unwrap()).unwrap();
     assert_eq!(config["model"].as_str(), Some("offline:survey"));
