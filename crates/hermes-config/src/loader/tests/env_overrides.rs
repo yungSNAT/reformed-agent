@@ -590,3 +590,17 @@ fn load_config_reads_the_env_file_of_the_home_it_is_given() {
     loaded.expect("load config");
     assert_eq!(probe.as_deref(), Ok("given"));
 }
+
+/// Where variable names ignore case (Windows), the `.env` writer refuses a name that steers
+/// the next process in any letter case, and compares names upper-cased.
+#[test]
+fn a_platform_whose_names_ignore_case_refuses_a_steering_name_in_any_case() {
+    for name in ["path", "Ld_Preload", "git_config_key_0", "node_options"] {
+        assert!(!env_name_writable_on(name, true), "{name}");
+        assert!(env_name_writable_on(name, false), "{name}");
+    }
+    assert!(env_name_writable_on("openai_api_key", true));
+    assert_eq!(env_name_key_on("Openai_Api_Key", true), "OPENAI_API_KEY");
+    assert_eq!(env_name_key_on("Openai_Api_Key", false), "Openai_Api_Key");
+    assert_eq!(env_name_key("PATH"), "PATH");
+}

@@ -1013,11 +1013,24 @@ struct FinalizerReplyProvider {
     calls: Arc<std::sync::atomic::AtomicU32>,
     first_reply: Option<&'static str>,
     reply: String,
+    retry_contract: Option<&'static str>,
 }
 
 impl FinalizerReplyProvider {
-    fn next_reply(&self) -> &str {
+    fn next_reply(&self, messages: &[Message]) -> &str {
         let attempt = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let (1, Some(contract)) = (attempt, self.retry_contract) {
+            assert!(
+                messages.iter().any(|message| {
+                    message.role == MessageRole::System
+                        && message
+                            .content
+                            .as_deref()
+                            .is_some_and(|text| text.contains(contract))
+                }),
+                "provider retry is missing the system contract {contract:?}"
+            );
+        }
         if let (0, Some(reply)) = (attempt, self.first_reply) {
             reply
         } else {
@@ -1030,7 +1043,7 @@ impl FinalizerReplyProvider {
 impl LlmProvider for FinalizerReplyProvider {
     async fn chat_completion(
         &self,
-        _messages: &[Message],
+        messages: &[Message],
         _tools: &[ToolSchema],
         _max_tokens: Option<u32>,
         _temperature: Option<f64>,
@@ -1038,7 +1051,7 @@ impl LlmProvider for FinalizerReplyProvider {
         _extra_body: Option<&serde_json::Value>,
     ) -> Result<hermes_core::LlmResponse, AgentError> {
         Ok(hermes_core::LlmResponse {
-            message: Message::assistant(self.next_reply()),
+            message: Message::assistant(self.next_reply(messages)),
             usage: None,
             model: "dummy".into(),
             finish_reason: Some("stop".into()),
@@ -1047,7 +1060,7 @@ impl LlmProvider for FinalizerReplyProvider {
 
     fn chat_completion_stream(
         &self,
-        _messages: &[Message],
+        messages: &[Message],
         _tools: &[ToolSchema],
         _max_tokens: Option<u32>,
         _temperature: Option<f64>,
@@ -1056,7 +1069,7 @@ impl LlmProvider for FinalizerReplyProvider {
     ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
         let chunk = StreamChunk {
             delta: Some(hermes_core::StreamDelta {
-                content: Some(self.next_reply().to_owned()),
+                content: Some(self.next_reply(messages).to_owned()),
                 tool_calls: None,
                 extra: None,
             }),
@@ -1081,6 +1094,7 @@ fn test_finalizer_retries_need_tools() {
             calls: calls.clone(),
             first_reply: None,
             reply: reply.to_owned(),
+            retry_contract: None,
         });
         let agent = AgentLoop::new(
             AgentConfig::default(),
@@ -1106,7 +1120,7 @@ fn test_finalizer_retries_need_tools() {
 }
 
 #[tokio::test]
-async fn stream_reissues_final_answers_with_the_required_contract() {
+async fn both_run_modes_reissue_final_answers_with_the_required_contract() {
     let cases = [
         (
             "Verify the fixture session is ready.",
@@ -1127,43 +1141,46 @@ async fn stream_reissues_final_answers_with_the_required_contract() {
             "REPO_RESEARCH_PLAN: blocked\nblocker=path missing\ncmd=list /fixtures/missing-notes",
         ),
     ];
-    for (prompt, first_reply, contract, reply) in cases {
-        let mut config = AgentConfig {
-            skip_context_files: true,
-            skip_memory: true,
-            ..AgentConfig::default()
-        };
-        let _home = isolate_route_learning_home(&mut config);
-        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let agent = AgentLoop::new(
-            config,
-            Arc::new(ToolRegistry::new()),
-            Arc::new(FinalizerReplyProvider {
-                calls: calls.clone(),
-                first_reply: Some(first_reply),
-                reply: reply.to_owned(),
-            }),
-        );
-        let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
-        let result = agent
-            .run_stream(
-                vec![Message::user(prompt)],
-                Some(vec![schema]),
-                Some(Box::new(|_| {})),
-            )
-            .await
-            .expect("stream finalizer completes the fixture turn");
-        assert!(result.finished_naturally, "{prompt}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2, "{prompt}");
-        assert!(result.messages.iter().any(|message| {
-            message.role == MessageRole::System
-                && message.content.as_deref().is_some_and(|text| text.contains(contract))
-        }), "missing retry contract for {prompt}");
-        assert_eq!(
-            result.messages.last().and_then(|message| message.content.as_deref()),
-            Some(reply),
-            "{prompt}"
-        );
+    for stream in [false, true] {
+        for (prompt, first_reply, contract, reply) in cases {
+            let mut config = AgentConfig {
+                skip_context_files: true,
+                skip_memory: true,
+                ..AgentConfig::default()
+            };
+            let _home = isolate_route_learning_home(&mut config);
+            let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let agent = AgentLoop::new(
+                config,
+                Arc::new(ToolRegistry::new()),
+                Arc::new(FinalizerReplyProvider {
+                    calls: calls.clone(),
+                    first_reply: Some(first_reply),
+                    reply: reply.to_owned(),
+                    retry_contract: Some(contract),
+                }),
+            );
+            let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
+            let messages = vec![Message::user(prompt)];
+            let tools = Some(vec![schema]);
+            let result = if stream {
+                agent.run_stream(messages, tools, Some(Box::new(|_| {}))).await
+            } else {
+                agent.run(messages, tools).await
+            }
+            .unwrap_or_else(|err| panic!("finalizer failed for {prompt:?} (stream={stream}): {err}"));
+            assert!(result.finished_naturally, "{prompt:?} (stream={stream})");
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2, "{prompt:?} (stream={stream})");
+            assert!(result.messages.iter().any(|message| {
+                message.role == MessageRole::System
+                    && message.content.as_deref().is_some_and(|text| text.contains(contract))
+            }), "missing retry contract for {prompt:?} (stream={stream})");
+            assert_eq!(
+                result.messages.last().and_then(|message| message.content.as_deref()),
+                Some(reply),
+                "{prompt:?} (stream={stream})"
+            );
+        }
     }
 }
 
@@ -1200,6 +1217,7 @@ async fn workspace_finalizer_retries_unsupported_mail_claims_in_both_loops() {
                     "GOOGLE_WORKSPACE_USED: yes\nI found an email titled Weekly Notes.",
                 ),
                 reply: reply.clone(),
+                retry_contract: None,
             }),
         );
         let messages = vec![
@@ -1314,6 +1332,7 @@ async fn objective_turns_record_decisions_and_bound_the_evaluation_history() {
                 calls: calls.clone(),
                 first_reply,
                 reply,
+                retry_contract: None,
             }),
         );
         let messages = vec![Message::user("What does the fixture show?")];

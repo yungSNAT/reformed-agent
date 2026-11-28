@@ -63,7 +63,10 @@ fn oneshot(req: Request) -> Reply {
             messages.push(Message::system(instructions));
         }
         messages.push(Message::user(input));
-        let provider = hermes_provider_runtime::build_provider(&req.chat.config, &model);
+        // The key a turn on this model would send: one saved, reloaded or disconnected since
+        // start-up included.
+        let config = req.chat.turn_config(&model).map_err(failed)?;
+        let provider = hermes_provider_runtime::build_provider(&config, &model);
         let call = provider.chat_completion(
             &messages,
             &[],
