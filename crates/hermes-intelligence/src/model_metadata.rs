@@ -837,7 +837,7 @@ mod tests {
     #[test]
     fn estimates_whole_messages_for_non_array_content() {
         for message in [
-            serde_json::json!({"role": "user", "content": "plain text"}),
+            serde_json::json!({"role": "user", "content": "a\nb\nc\nd"}),
             serde_json::json!({"role": "user", "content": null}),
             serde_json::json!({"role": "user"}),
         ] {
