@@ -384,11 +384,11 @@ esac
                 .expect("isolated SSH fixture deadline")
                 .unwrap();
             let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 output.status.success() && stdout.contains("1 passed; 0 failed"),
-                "isolated SSH fixture exited {}\n{stdout}\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
+                "isolated SSH fixture exited {}\n{stdout}\n{stderr}",
+                output.status
             );
             return;
         }
