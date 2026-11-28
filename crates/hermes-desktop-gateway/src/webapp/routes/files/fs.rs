@@ -62,7 +62,13 @@ pub(crate) fn open_dir_walk(path: &Path) -> Result<OwnedFd, Refusal> {
         let Component::Normal(name) = part else {
             return Err(Refusal::Outside);
         };
-        dir = openat_refusal(&dir, name, OFlags::RDONLY | OFlags::DIRECTORY)?;
+        dir = openat_refusal(&dir, name, OFlags::RDONLY | OFlags::DIRECTORY).map_err(|r| {
+            if r == Refusal::NotADirectory {
+                Refusal::Outside
+            } else {
+                r
+            }
+        })?;
     }
     Ok(dir)
 }
@@ -160,12 +166,13 @@ pub(crate) fn list_entries(
     shown: &Path,
     refused: &[PathBuf],
 ) -> std::io::Result<(Vec<Value>, bool)> {
-    let stream = Dir::read_from(&dir)?;
+    let stat_fd = dir.try_clone()?;
+    let stream = Dir::new(dir)?;
     let items = stream.map(|res| -> std::io::Result<_> {
         let entry = res?;
         Ok((entry.file_name().to_owned(), entry.file_type()))
     });
-    collect_entries(&dir, items, shown, refused)
+    collect_entries(&stat_fd, items, shown, refused)
 }
 
 pub(crate) fn mime_type(path: &Path) -> &'static str {

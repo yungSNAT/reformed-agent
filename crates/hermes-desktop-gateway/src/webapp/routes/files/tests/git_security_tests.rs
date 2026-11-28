@@ -107,7 +107,11 @@ fn a_newline_in_a_directory_name_cannot_spoof_repo_top() {
     run(&ext, &["init", "-q", "-b", "ext-branch"]);
     std::fs::write(ext.join("s.txt"), "x\n").unwrap();
     commit_all(&ext);
-    std::fs::create_dir_all(t.root.join("a/.git")).unwrap();
+    let decoy = t.root.join("a");
+    std::fs::create_dir(&decoy).unwrap();
+    run(&decoy, &["init", "-q", "-b", "decoy"]);
+    std::fs::write(decoy.join("d.txt"), "d\n").unwrap();
+    commit_all(&decoy);
     let r_no_slash = t.root.to_str().unwrap().trim_start_matches('/');
     let nl_rel = format!("a/\n/{r_no_slash}/a/.git/\n/{r_no_slash}/a/.git");
     let nl_dir = t.root.join(&nl_rel);
@@ -246,7 +250,7 @@ fn git_pathspecs_and_numstat_filter_sensitive_and_refused_paths() {
     }
     assert_eq!(
         numstat_counts(
-            "5\t2\t.env\03\t1\t.hermes/x\01\t0\tsrc/main.rs\0",
+            "5\t2\t.env\x003\t1\t.hermes/x\x001\t0\tsrc/main.rs\x00",
             &t.root,
             std::slice::from_ref(&t.hermes),
         ),
