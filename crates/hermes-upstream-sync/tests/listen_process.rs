@@ -1,8 +1,10 @@
 //! The listener as a process: start-up refusals and what reaches its log.
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_hermes-upstream-sync");
@@ -16,6 +18,26 @@ fn listen(dir: &std::path::Path, port: u16) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
+}
+
+struct RunningListener {
+    child: Child,
+    log: Option<JoinHandle<String>>,
+}
+
+impl RunningListener {
+    fn stop(&mut self) -> Option<String> {
+        let log = self.log.take()?;
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        log.join().ok()
+    }
+}
+
+impl Drop for RunningListener {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
 }
 
 #[test]
@@ -91,20 +113,39 @@ fn post(port: u16, headers: &str, body: &str) -> String {
 #[test]
 fn no_secret_signature_or_body_reaches_the_log() {
     let dir = tempfile::tempdir().unwrap();
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let mut child = listen(dir.path(), port)
+    let mut child = listen(dir.path(), 0)
         .env("GITHUB_WEBHOOK_SECRET", SECRET)
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(Instant::now() < deadline, "listener did not start");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    let (ready, bound_port) = mpsc::channel();
+    let stderr = child.stderr.take().unwrap();
+    let log_task = std::thread::spawn(move || {
+        let mut stderr = BufReader::new(stderr);
+        let mut log = String::new();
+        loop {
+            let start = log.len();
+            if stderr.read_line(&mut log).unwrap() == 0 {
+                return log;
+            }
+            let port = log[start..]
+                .split_once("webhook server listening on http://127.0.0.1:")
+                .and_then(|(_, endpoint)| endpoint.split_once('/'))
+                .and_then(|(port, _)| port.parse::<u16>().ok())
+                .filter(|port| *port != 0);
+            if let Some(port) = port {
+                let _ = ready.send(port);
+                stderr.read_to_string(&mut log).unwrap();
+                return log;
+            }
+        }
+    });
+    let mut listener = RunningListener {
+        child,
+        log: Some(log_task),
+    };
+    let port = bound_port
+        .recv_timeout(Duration::from_secs(20))
+        .expect("listener reported its bound port");
     let signature = format!("sha256={}", "ab".repeat(32));
     let body = r#"{"marker": "body-marker-77"}"#;
     let reply = post(
@@ -125,15 +166,7 @@ fn no_secret_signature_or_body_reaches_the_log() {
     let mut reply = String::new();
     stream.read_to_string(&mut reply).unwrap();
     assert!(reply.starts_with("HTTP/1.1 404"), "{reply}");
-    child.kill().unwrap();
-    let mut log = String::new();
-    child
-        .stderr
-        .take()
-        .unwrap()
-        .read_to_string(&mut log)
-        .unwrap();
-    child.wait().unwrap();
+    let log = listener.stop().expect("listener log thread completed");
     assert!(
         log.contains("\" 401 -") && log.contains("\"POST /x HTTP/1.1\" 404 -"),
         "{log}"
