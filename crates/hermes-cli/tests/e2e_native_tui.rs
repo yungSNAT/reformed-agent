@@ -523,6 +523,15 @@ streaming:
 
 #[tokio::test]
 async fn native_tui_resume_uses_the_saved_model_and_conversation() {
+    assert_native_tui_resume_uses_saved_history(false).await;
+}
+
+#[tokio::test]
+async fn native_tui_resumes_a_managed_turn_with_a_saved_quorum_hint() {
+    assert_native_tui_resume_uses_saved_history(true).await;
+}
+
+async fn assert_native_tui_resume_uses_saved_history(managed: bool) {
     let provider = MockServer::start().await;
     let first_prompt = "Where is the fixture train going?";
     let first_reply = "It is heading north.";
@@ -541,12 +550,23 @@ async fn native_tui_resume_uses_the_saved_model_and_conversation() {
             }],
         })
     );
+    let response = if managed {
+        ResponseTemplate::new(200).set_body_json(json!({
+            "id": "fixture-resume",
+            "model": "restored",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": reply},
+                "finish_reason": "stop",
+            }],
+        }))
+    } else {
+        ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream")
+    };
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .and(body_partial_json(
-            json!({"model": "restored", "stream": true}),
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream"))
+        .and(body_partial_json(json!({"model": "restored"})))
+        .respond_with(response)
         .expect(1)
         .mount(&provider)
         .await;
@@ -567,12 +587,24 @@ llm_providers:
     discover_models: false
     models: [initial, restored]
 streaming:
-  enabled: true
+  enabled: {}
 "#,
-            provider.uri()
+            provider.uri(),
+            !managed
         ),
     )
     .unwrap();
+    let mut messages = vec![
+        json!({"role": "User", "content": first_prompt}),
+        json!({"role": "Assistant", "content": first_reply}),
+    ];
+    if managed {
+        // Retain the hint saved by an earlier session. The new home's quorum policy is disabled.
+        messages.insert(
+            0,
+            json!({"role": "System", "content": "[QUORUM_MODE] Saved fixture hint"}),
+        );
+    }
     std::fs::write(
         sessions.join("session_fixture-resume.json"),
         json!({
@@ -580,10 +612,7 @@ streaming:
                 "session_id": "fixture-resume",
                 "model": "local-test:restored",
             },
-            "messages": [
-                {"role": "User", "content": first_prompt},
-                {"role": "Assistant", "content": first_reply},
-            ],
+            "messages": messages,
         })
         .to_string(),
     )
@@ -596,7 +625,10 @@ streaming:
     );
     read_until(&mut terminal, b"Resumed session").await;
     write!(terminal, "\x1b[200~{followup}\x1b[201~\r").unwrap();
-    read_until(&mut terminal, reply.as_bytes()).await;
+    let rendered = read_until(&mut terminal, reply.as_bytes()).await;
+    if managed {
+        assert!(String::from_utf8_lossy(&rendered).contains("Running managed agent turn"));
+    }
     terminal.write_all(b"\x03").unwrap();
     read_until(&mut terminal, b"\x1b[?1049l").await;
     assert!(timeout(Duration::from_secs(10), child.wait())
@@ -609,6 +641,7 @@ streaming:
     let requests = provider.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
     let request: Value = requests[0].body_json().unwrap();
+    assert_eq!(request["stream"].as_bool().unwrap_or(false), !managed);
     let history = request["messages"]
         .as_array()
         .unwrap()
