@@ -361,7 +361,8 @@ esac
             )
             .unwrap();
             std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let mut child = TokioCommand::new(std::env::current_exe().unwrap());
+            // Re-run this libtest fixture with a temporary home and a cleared environment.
+            let mut child = TokioCommand::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
             child
                 .env_clear()
                 .env("HOME", &fixture)
