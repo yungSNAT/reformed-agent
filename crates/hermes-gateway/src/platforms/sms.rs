@@ -29,6 +29,7 @@ pub struct SmsAdapter {
     base: BasePlatformAdapter,
     config: SmsConfig,
     client: Client,
+    messages_url: String,
     stop_signal: Arc<Notify>,
 }
 
@@ -37,10 +38,15 @@ impl SmsAdapter {
         let base = BasePlatformAdapter::new(&config.account_sid).with_proxy(config.proxy.clone());
         base.validate_token()?;
         let client = base.build_client()?;
+        let messages_url = format!(
+            "{TWILIO_API_BASE}/Accounts/{}/Messages.json",
+            urlencoding::encode(&config.account_sid)
+        );
         Ok(Self {
             base,
             config,
             client,
+            messages_url,
             stop_signal: Arc::new(Notify::new()),
         })
     }
@@ -51,12 +57,6 @@ impl SmsAdapter {
 
     /// Send an SMS via Twilio API.
     pub async fn send_sms(&self, to: &str, body: &str) -> Result<(), GatewayError> {
-        let url = format!(
-            "{}/Accounts/{}/Messages.json",
-            TWILIO_API_BASE,
-            urlencoding::encode(&self.config.account_sid)
-        );
-
         let params = [
             ("To", to),
             ("From", &self.config.from_number),
@@ -65,7 +65,7 @@ impl SmsAdapter {
 
         let resp = self
             .client
-            .post(&url)
+            .post(&self.messages_url)
             .basic_auth(&self.config.account_sid, Some(&self.config.auth_token))
             .form(&params)
             .send()
@@ -129,12 +129,6 @@ impl PlatformAdapter for SmsAdapter {
         // Twilio MMS: send a message with MediaUrl pointing to a publicly accessible URL.
         // If file_path is a local file, we need to host it or base64-encode it.
         // For URLs, we can use them directly via the MediaUrl parameter.
-        let url = format!(
-            "{}/Accounts/{}/Messages.json",
-            TWILIO_API_BASE,
-            urlencoding::encode(&self.config.account_sid)
-        );
-
         let body_text = caption.unwrap_or("");
 
         if file_path.starts_with("http://") || file_path.starts_with("https://") {
@@ -148,7 +142,7 @@ impl PlatformAdapter for SmsAdapter {
 
             let resp = self
                 .client
-                .post(&url)
+                .post(&self.messages_url)
                 .basic_auth(&self.config.account_sid, Some(&self.config.auth_token))
                 .form(&params)
                 .send()
@@ -180,3 +174,7 @@ impl PlatformAdapter for SmsAdapter {
         "sms"
     }
 }
+
+#[cfg(test)]
+#[path = "sms_tests.rs"]
+mod tests;
