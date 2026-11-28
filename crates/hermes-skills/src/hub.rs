@@ -676,6 +676,7 @@ fn parse_trusted_hub_public_keys(raw: &str) -> Result<Vec<TrustedHubKey>, SkillE
     }
     let mut out = Vec::new();
     for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        // An unlabelled base64 key can end with '=' padding.
         let (key_id, key_raw) = if let Some((id, value)) =
             entry.split_once('=').filter(|(_, value)| !value.is_empty())
         {
@@ -862,11 +863,14 @@ mod tests {
         let base64 = base64::engine::general_purpose::STANDARD.encode(public);
         let hex: String = public.iter().map(|byte| format!("{byte:02x}")).collect();
         let keys = parse_trusted_hub_public_keys(&format!(
-            "  {base64}, , preview = {base64}, stable={hex} "
+            "  {base64}, , {hex}, preview = {base64}, stable={hex} "
         ))
         .unwrap();
-        assert_eq!(keys.len(), 3);
-        for (key, label) in keys.iter().zip([None, Some("preview"), Some("stable")]) {
+        assert_eq!(keys.len(), 4);
+        for (key, label) in keys
+            .iter()
+            .zip([None, None, Some("preview"), Some("stable")])
+        {
             assert_eq!(key.key_id.as_deref(), label);
             assert_eq!(key.key.as_bytes(), &public);
         }
