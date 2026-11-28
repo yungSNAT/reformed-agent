@@ -68,6 +68,92 @@ fn fixture_commit(root: &Path, message: &str) {
 
 #[cfg(unix)]
 #[test]
+fn clippy_warning_gate_updates_allowlist_only_on_request() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let cargo = bin.join("cargo");
+    fs::write(
+        &cargo,
+        r#"#!/bin/sh
+[ "$#" -eq 5 ] && [ "$1" = clippy ] && [ "$2" = --workspace ] &&
+    [ "$3" = --all-targets ] && [ "$4" = --message-format=json ] &&
+    [ "$5" = --locked ] || exit 91
+case "$FIXTURE_CARGO_OUTPUT" in
+    invalid-utf8) printf '\377' ;;
+    *) printf '%s\n' "$FIXTURE_CARGO_OUTPUT" ;;
+esac
+exit "$FIXTURE_CARGO_EXIT"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let allowlist = root.join("warnings.txt");
+    let gate = |mode: &str, diagnostics: &str, cargo_exit: u8| -> Output {
+        let mut tool = parity_tool(root, "clippy-warning-gate");
+        tool.env_clear()
+            .env("PATH", &bin)
+            .env("HOME", root)
+            .env("FIXTURE_CARGO_OUTPUT", diagnostics)
+            .env("FIXTURE_CARGO_EXIT", cargo_exit.to_string())
+            .current_dir(root)
+            .arg("--allowlist")
+            .arg(&allowlist)
+            .args([mode, "--", "--locked"]);
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            tool.env("LLVM_PROFILE_FILE", profile);
+        }
+        tool.output().unwrap()
+    };
+
+    let absent = gate("--check", "", 0);
+    assert!(String::from_utf8_lossy(&absent.stderr).contains("allowlist not found"));
+    assert_exit(absent, 1, "missing allowlist");
+    assert!(!allowlist.exists());
+
+    let warning = json!({
+        "reason": "compiler-message",
+        "target": {"name": "survey"},
+        "message": {
+            "level": "warning",
+            "code": {"code": "clippy::redundant_clone"},
+            "spans": [{"file_name": "src/lib.rs", "is_primary": true}]
+        }
+    })
+    .to_string();
+    let previous = "# Keep fixture notes\n\nold|clippy::needless|src/old.rs\n";
+    fs::write(&allowlist, previous).unwrap();
+    let entry = "survey|clippy::redundant_clone|src/lib.rs";
+    let new_warning = gate("--check", &warning, 0);
+    assert!(String::from_utf8_lossy(&new_warning.stderr).contains(&format!("  + {entry}")));
+    assert_exit(new_warning, 1, "new warning");
+    assert_eq!(fs::read_to_string(&allowlist).unwrap(), previous);
+
+    assert_exit(gate("--update", &warning, 0), 0, "refresh allowlist");
+    let updated = format!("{entry}\n");
+    assert_eq!(fs::read_to_string(&allowlist).unwrap(), updated);
+
+    let stale = gate("--check", "", 0);
+    assert!(String::from_utf8_lossy(&stale.stdout).contains(&format!("  - {entry}")));
+    assert_exit(stale, 0, "stale warning");
+    assert_eq!(fs::read_to_string(&allowlist).unwrap(), updated);
+
+    assert_exit(gate("--update", "", 7), 7, "Clippy failure");
+    let invalid = gate("--update", "invalid-utf8", 0);
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("clippy JSON output is not UTF-8"));
+    assert_exit(invalid, 1, "invalid diagnostics");
+    assert_eq!(fs::read_to_string(&allowlist).unwrap(), updated);
+
+    assert_exit(gate("--update", "", 0), 0, "clear stale allowlist");
+    assert_eq!(fs::read_to_string(&allowlist).unwrap(), "");
+}
+
+#[cfg(unix)]
+#[test]
 fn fork_carry_reports_tests_that_run_and_keeps_declared_gaps_visible() {
     let fixture = tempfile::tempdir_in("/tmp").unwrap();
     let root = fixture.path();
