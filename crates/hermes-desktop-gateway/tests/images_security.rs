@@ -113,6 +113,27 @@ async fn image_attach_refuses_reserved_device_names() {
     }
 }
 
+/// Drive-relative paths (`C:NUL.png`, `C:..\shot.png`, bare `C:`) and unquoted missing paths with
+/// spaces ending in a reserved component are refused before touching the file system.
+#[tokio::test]
+async fn image_attach_refuses_drive_relative_paths() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let paths = vec![
+        "C:NUL.png".to_string(),
+        "c:com1.png".to_string(),
+        r"C:NUL\shot.png".to_string(),
+        r"C:..\shot.png".to_string(),
+        r"c:..\shot.png".to_string(),
+        "C:".to_string(),
+        format!("{} dir/NUL/shot.png", folder.path().join("missing").display()),
+    ];
+    expect_refused(&mut client, &session, &paths).await;
+    assert!(staged_images(started.home.path()).is_empty());
+}
+
 /// The read is bounded by what it reads, not by the size the file reports: the kernel's page
 /// map reports 0 bytes and holds far more. The kernel refuses a page-map read that is not a
 /// whole number of 8-byte entries, so the bounded read's last, odd-sized read fails (5027)
@@ -153,10 +174,13 @@ async fn image_attach_refuses_links_to_refused_paths() {
         std::os::unix::fs::symlink("//nohost.invalid/share", &unc_dir).unwrap();
         let reserved = folder.path().join("reserved.png");
         std::os::unix::fs::symlink(folder.path().join("NUL").join("shot.png"), &reserved).unwrap();
+        let drive_rel = folder.path().join("drive_rel.png");
+        std::os::unix::fs::symlink(r"C:..\shot.png", &drive_rel).unwrap();
         paths.push(unc_bs.display().to_string());
         paths.push(unc_fs.display().to_string());
         paths.push(unc_dir.join("a.png").display().to_string());
         paths.push(reserved.display().to_string());
+        paths.push(drive_rel.display().to_string());
     }
     #[cfg(windows)]
     {
@@ -166,8 +190,12 @@ async fn image_attach_refuses_links_to_refused_paths() {
         let unc_dir = folder.path().join("unc_dir");
         std::os::windows::fs::symlink_dir(r"\\nohost.invalid\share", &unc_dir)
             .expect("a symlink on Windows needs Developer Mode or an elevated shell");
+        let drive_rel = folder.path().join("drive_rel.png");
+        std::os::windows::fs::symlink_file(r"C:..\shot.png", &drive_rel)
+            .expect("a symlink on Windows needs Developer Mode or an elevated shell");
         paths.push(unc_file.display().to_string());
         paths.push(unc_dir.join("a.png").display().to_string());
+        paths.push(drive_rel.display().to_string());
     }
     expect_refused(&mut client, &session, &paths).await;
     assert!(staged_images(started.home.path()).is_empty());

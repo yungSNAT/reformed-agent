@@ -171,6 +171,33 @@ async fn dropped_path_spellings_resolve() {
     assert_eq!(reply["result"]["count"], 5);
 }
 
+/// Trailing prompt text mentioning a reserved name does not cause a valid dropped path to be
+/// refused.
+#[tokio::test]
+async fn dropped_path_ignores_reserved_names_in_trailing_text() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let shot = folder.path().join("shot.png");
+    let spaced = folder.path().join("my shot.png");
+    std::fs::write(&shot, png("plain")).unwrap();
+    std::fs::write(&spaced, png("spaced")).unwrap();
+
+    let cases = [
+        (format!("\"{}\" compare /NUL/foo", shot.display()), "compare /NUL/foo"),
+        (format!("{} check C:\\NUL\\a", shot.display()), "check C:\\NUL\\a"),
+        (format!("{} /NUL/foo bar", spaced.display()), "/NUL/foo bar"),
+    ];
+    for (n, (raw, remainder)) in cases.iter().enumerate() {
+        let reply = client
+            .call(10 + n as u64, "image.attach", json!({"session_id": session, "path": raw}))
+            .await;
+        assert_eq!(reply["result"]["attached"], true, "{raw}: {reply}");
+        assert_eq!(reply["result"]["remainder"], *remainder, "{raw}: {reply}");
+    }
+}
+
 /// A detached image is not sent and its staged copy is removed; the others still go.
 #[tokio::test]
 async fn a_detached_image_is_not_sent() {
