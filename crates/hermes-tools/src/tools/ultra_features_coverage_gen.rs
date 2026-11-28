@@ -27,7 +27,7 @@ fn anchor_err(content: &str, old: &str, new: &str, all: bool) -> ToolError {
     }
 }
 
-fn ufcg_git(dir: &Path, args: &[&str]) {
+fn ufcg_git(dir: &Path, args: &[&str]) -> std::process::Output {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -35,6 +35,7 @@ fn ufcg_git(dir: &Path, args: &[&str]) {
         .output()
         .unwrap();
     assert!(output.status.success(), "git {args:?}: {output:?}");
+    output
 }
 
 #[test]
@@ -973,6 +974,114 @@ async fn subagent_list_read_write_remove_and_errors() {
         .await
         .unwrap_err();
     assert!(matches!(err, ToolError::InvalidParams(_)), "{err}");
+}
+
+#[tokio::test]
+async fn subagent_git_workspace_tracks_its_branch_and_removes_only_its_checkout() {
+    const CHILD: &str = "HERMES_SUBAGENT_GIT_WORKSPACE_TEST_ROOT";
+    let Some(root) = std::env::var_os(CHILD).map(PathBuf::from) else {
+        let fixture = tempfile::tempdir().unwrap();
+        let config = fixture.path().join("git-config");
+        fs::write(&config, "").unwrap();
+        let module = module_path!().split_once("::").unwrap().1;
+        let mut child = tokio::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .env_clear()
+            .env(CHILD, fixture.path())
+            .env("HOME", fixture.path())
+            .env("USERPROFILE", fixture.path())
+            .env("GIT_CONFIG_GLOBAL", config)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .current_dir(fixture.path())
+            .args([
+                "--exact",
+                &format!("{module}::subagent_git_workspace_tracks_its_branch_and_removes_only_its_checkout"),
+            ])
+            .kill_on_drop(true);
+        for key in ["PATH", "SystemRoot", "LLVM_PROFILE_FILE"] {
+            if let Some(value) = std::env::var_os(key) {
+                child.env(key, value);
+            }
+        }
+        let output = tokio::time::timeout(Duration::from_secs(15), child.output())
+            .await
+            .expect("isolated Git fixture timed out")
+            .unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "isolated Git fixture failed: {output:?}"
+        );
+        return;
+    };
+
+    ufcg_git(&root, &["init", "--template=", "-q"]);
+    write(&root.join("notes.txt"), "Field notes\n");
+    ufcg_git(&root, &["add", "notes.txt"]);
+    ufcg_git(
+        &root,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "Initial notes",
+        ],
+    );
+    let state = UltraFeatureState::new(root.join("state"));
+    let branch = "ryan/fixture-notes";
+    let created = parse(
+        &subagent_workspace(
+            json!({ "action": "create", "id": "notes", "git_worktree": true, "branch": branch }),
+            &state,
+        )
+        .await
+        .unwrap(),
+    );
+    let checkout = state.agents_dir().join("notes");
+    assert_eq!(created["manifest"]["branch"], branch);
+    assert_eq!(created["manifest"]["git_worktree"], true);
+    assert_eq!(
+        fs::read_to_string(checkout.join("notes.txt"))
+            .unwrap()
+            .trim(),
+        "Field notes"
+    );
+    let branch_output = ufcg_git(&checkout, &["branch", "--show-current"]);
+    assert_eq!(
+        String::from_utf8_lossy(&branch_output.stdout).trim(),
+        branch
+    );
+
+    let duplicate = subagent_workspace(
+        json!({ "action": "create", "id": "duplicate", "git_worktree": true, "branch": branch }),
+        &state,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(duplicate, ToolError::ExecutionFailed(detail) if detail.contains("git worktree add exited"))
+    );
+    assert!(!state.agents_dir().join("duplicate").exists());
+
+    let removed = parse(
+        &subagent_workspace(json!({ "action": "remove", "id": "notes" }), &state)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(removed["removed"], true);
+    assert!(!checkout.exists());
+    assert!(root.join("notes.txt").is_file());
+    let worktrees = ufcg_git(&root, &["worktree", "list", "--porcelain"]);
+    assert_eq!(
+        String::from_utf8_lossy(&worktrees.stdout)
+            .lines()
+            .filter(|line| line.starts_with("worktree "))
+            .count(),
+        1,
+        "only the original checkout should remain registered"
+    );
 }
 
 #[cfg(unix)]
