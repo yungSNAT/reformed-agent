@@ -202,6 +202,36 @@ mod tests {
         assert!(out.contains(" at "));
     }
 
+    #[test]
+    fn out_of_range_epoch_stays_visible_without_becoming_a_session_timestamp() {
+        let raw = " 1700000000000 ";
+        assert!(SqliteSessionSearchBackend::parse_timestamp_utc(Some(raw)).is_none());
+        assert_eq!(
+            SqliteSessionSearchBackend::format_timestamp(Some(raw)),
+            "1700000000000"
+        );
+    }
+
+    #[test]
+    fn transcript_keeps_assistant_text_when_tool_metadata_is_not_an_array() {
+        let messages = [
+            (
+                "assistant".into(),
+                "Recorded description".into(),
+                Some(r#"{"name":"legacy-note"}"#.into()),
+            ),
+            (
+                "assistant".into(),
+                "Reported result".into(),
+                Some(r#"[{"function":{"name":"report"}}]"#.into()),
+            ),
+        ];
+        assert_eq!(
+            SqliteSessionSearchBackend::format_conversation(&messages),
+            "[ASSISTANT]: Recorded description\n\n[ASSISTANT]: [Called: report]\n\n[ASSISTANT]: Reported result"
+        );
+    }
+
     #[tokio::test]
     async fn recent_mode_keeps_marked_branch_visible_after_parent_reended() {
         let (tmp, backend) = backend_with_db();
