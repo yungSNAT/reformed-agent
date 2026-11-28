@@ -319,6 +319,13 @@ fn proof_metrics_reject_incomplete_deferral_evidence() {
         "report is missing review_date"
     );
 
+    reports.shared_classification = py::loads(
+        r#"{"items": [{"path": "fixture.rs", "classification": "intentional_divergence"}]}"#,
+    )
+    .unwrap();
+    let metrics = metrics::calculate(root, &reports).unwrap();
+    assert!(metrics.contains(&("max_deferred_review_overdue", 0.0)));
+
     reports.shared_classification = valid_classification;
     reports.shared_backlog = py::loads(r#"{"summary": {}}"#).unwrap();
     assert_eq!(
