@@ -36,10 +36,6 @@ async fn configured_model_catalogue_uses_its_loopback_endpoint() {
         .env("HTTPS_PROXY", "http://127.0.0.1:1")
         .env("NO_PROXY", "127.0.0.1")
         .env(CHILD, "1")
-        .args([
-            "--exact",
-            "configured_model_catalogue_uses_its_loopback_endpoint",
-        ])
         .kill_on_drop(true);
     let output = tokio::time::timeout(Duration::from_secs(30), command.output())
         .await
