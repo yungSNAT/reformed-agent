@@ -17,7 +17,7 @@ fn a_reload_never_overrides_the_administrator_pinned_env() {
     )
     .unwrap();
     // SAFETY: the only test in this binary, before its runtime starts any thread.
-    unsafe { std::env::set_var("HERMES_MANAGED_DIR", managed.path()) };
+    unsafe { std::env::set_var("HERMES_MANAGED_DIR", managed.path()) }; // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

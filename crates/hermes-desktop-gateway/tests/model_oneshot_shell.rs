@@ -11,7 +11,7 @@ const KEY_ENV: &str = "DESKTOP_MODEL_CONFIG_ONESHOT_SHELL_KEY";
 #[test]
 fn llm_oneshot_is_refused_before_any_request_once_a_shell_key_is_disconnected() {
     // SAFETY: the only test in this binary, before its runtime starts any thread.
-    unsafe { std::env::set_var(KEY_ENV, "shell-key") };
+    unsafe { std::env::set_var(KEY_ENV, "shell-key") }; // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

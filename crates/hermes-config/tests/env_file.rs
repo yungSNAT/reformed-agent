@@ -110,9 +110,9 @@ fn the_values_start_up_loads_put_the_managed_env_last() {
     )
     .unwrap();
     // SAFETY: no other test in this binary reads the environment.
-    unsafe { std::env::set_var("HERMES_MANAGED_DIR", managed.path()) };
+    unsafe { std::env::set_var("HERMES_MANAGED_DIR", managed.path()) }; // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     let values = dotenv_values_in(home.path());
-    unsafe { std::env::remove_var("HERMES_MANAGED_DIR") };
+    unsafe { std::env::remove_var("HERMES_MANAGED_DIR") }; // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     assert_eq!(values["ENV_FILE_TEST_PINNED"], "managed");
     assert_eq!(values["ENV_FILE_TEST_OWN"], "quoted");
     assert!(std::env::var_os("ENV_FILE_TEST_PINNED").is_none());
