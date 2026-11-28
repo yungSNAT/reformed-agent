@@ -580,8 +580,11 @@ const VERSION: &str = "1";
         );
 
         assert_eq!(index.ensure_fresh(), IndexStats::default());
+        assert!(index.last_refresh.is_none());
         assert_eq!(index.refresh_full(), IndexStats::default());
+        assert!(index.last_refresh.is_none());
         index.refresh_paths([path.clone()]);
+        assert!(index.last_refresh.is_none());
         assert!(index.list_file_symbols(&path, 1).is_empty());
         assert!(index.render_repo_map(None, None).is_empty());
     }
@@ -589,25 +592,33 @@ const VERSION: &str = "1";
     #[test]
     fn repo_map_stops_at_the_symbol_budget_across_files() {
         let temp = tempfile::tempdir().unwrap();
-        let source: String = (1..=10).map(|n| format!("fn item_{n}() {{}}\n")).collect();
-        fs::write(temp.path().join("a.rs"), source).unwrap();
-        fs::write(temp.path().join("b.rs"), "fn another_item() {}\n").unwrap();
+        for (file, prefix, count) in [
+            ("a.rs", "alpha", 5),
+            ("b.rs", "beta", 5),
+            ("c.rs", "gamma", 1),
+        ] {
+            let source: String = (1..=count)
+                .map(|n| format!("fn {prefix}_{n}() {{}}\n"))
+                .collect();
+            fs::write(temp.path().join(file), source).unwrap();
+        }
         let mut index = CodeIndex::new(temp.path(), CodeIndexConfig::default());
-        assert_eq!(index.refresh_full().files_indexed, 2);
+        assert_eq!(index.refresh_full().files_indexed, 3);
 
-        let map = index.render_repo_map(Some(2), Some(8));
+        let map = index.render_repo_map(Some(3), Some(8));
         assert_eq!(
             map.lines()
                 .filter(|line| line.starts_with("  - fn "))
                 .count(),
             8
         );
-        assert!(map.contains("fn item_8 (line 8)"));
-        assert!(!map.contains("fn item_9"));
-        assert!(!map.contains("b.rs (rust)"));
+        assert!(map.contains("fn alpha_5 (line 5)"));
+        assert!(map.contains("fn beta_3 (line 3)"));
+        assert!(!map.contains("fn beta_4"));
+        assert!(!map.contains("c.rs (rust)"));
         assert!(index
-            .render_repo_map(Some(2), Some(20))
-            .contains("b.rs (rust)"));
+            .render_repo_map(Some(3), Some(20))
+            .contains("c.rs (rust)"));
     }
 
     #[test]
