@@ -2,6 +2,8 @@ use super::*;
 use aes::cipher::BlockEncrypt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use wiremock::matchers::{body_json, body_string_contains, method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TS: &str = "1700000000";
 const PATH: &str = "/wecom/callback";
