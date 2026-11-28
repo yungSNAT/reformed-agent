@@ -467,6 +467,94 @@ mod tests {
         assert!(!raw.contains("sk-secret-should-not-appear"));
     }
 
+    const INVENTORY_FIXTURE: &str = "HERMES_TEST_AUTH_INVENTORY";
+    const INVENTORY_VALUE: &str = "auth-inventory-fixture-value";
+
+    #[test]
+    fn provider_inventory_reports_presence_and_capabilities_in_an_isolated_home() {
+        let home = tempdir().unwrap();
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .env_clear()
+            .env(INVENTORY_FIXTURE, "1")
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env("HERMES_HOME", home.path())
+            .env("HERMES_AUTH_PROVIDER_POOL", " , openrouter, nous")
+            .env("OPENROUTER_API_KEY", INVENTORY_VALUE)
+            .env("AWS_PROFILE", "fixture")
+            .envs(
+                ["LLVM_PROFILE_FILE", "SystemRoot", "WINDIR"]
+                    .into_iter()
+                    .filter_map(|name| std::env::var_os(name).map(|value| (name, value))),
+            )
+            .args(["--ignored", "--exact"])
+            .arg(format!("{module}::isolated_auth_provider_inventory"))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{stderr}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "run with a clean environment by the parent test"]
+    async fn isolated_auth_provider_inventory() {
+        assert_eq!(std::env::var(INVENTORY_FIXTURE).as_deref(), Ok("1"));
+        let tool = AuthSnapshotHandler;
+        let listed = tool.execute(json!({"action": "providers"})).await.unwrap();
+        assert!(!listed.contains(INVENTORY_VALUE));
+        let listed: Value = serde_json::from_str(&listed).unwrap();
+        assert_eq!(listed["status"], "ok");
+        assert_eq!(listed["secret_values_emitted"], false);
+        let rows = listed["providers"].as_array().unwrap();
+        let ids: BTreeSet<_> = rows
+            .iter()
+            .map(|row| row["provider"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(ids.len(), rows.len());
+        let expected: BTreeSet<_> = known_providers()
+            .into_iter()
+            .map(canonical_provider_id)
+            .collect();
+        assert_eq!(ids, expected);
+        let row = |id: &str| rows.iter().find(|row| row["provider"] == id).unwrap();
+        assert_eq!(row("openrouter")["credential_present"], true);
+        assert_eq!(row("bedrock")["credential_present"], true);
+        assert_eq!(row("nous")["credential_present"], false);
+        assert_eq!(row("nous")["managed_tools_supported"], true);
+
+        let status = tool.execute(json!({"include_known": true})).await.unwrap();
+        assert!(!status.contains(INVENTORY_VALUE));
+        let status: Value = serde_json::from_str(&status).unwrap();
+        assert_eq!(status["provider"], "openrouter");
+        assert_eq!(status["known_providers"], listed["providers"]);
+        assert_eq!(status["mutable"], false);
+
+        let gate = tool
+            .execute(json!({"action": "gate", "provider": "openai-oauth"}))
+            .await
+            .unwrap();
+        let gate: Value = serde_json::from_str(&gate).unwrap();
+        assert_eq!(gate["provider"], "openai");
+        assert_eq!(gate["oauth"]["supported"], true);
+        assert_eq!(gate["oauth"]["gate"]["provider"], "openai");
+
+        let help = tool.execute(json!({"action": "help"})).await.unwrap();
+        let help: Value = serde_json::from_str(&help).unwrap();
+        assert_eq!(
+            help["actions"],
+            json!(["status", "providers", "gate", "help"])
+        );
+        assert!(matches!(
+            tool.execute(json!({"action": "refresh"})).await,
+            Err(ToolError::InvalidParams(message)) if message.contains("unknown action 'refresh'")
+        ));
+    }
+
     #[test]
     fn credential_checks_the_variables_runs_read() {
         let _lock = env_lock();
