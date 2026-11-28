@@ -46,11 +46,6 @@ fi
 
 BACKEND="${UPSTREAM_SYNC_BACKEND:-sqlite}"
 SQLITE_PATH="${UPSTREAM_SYNC_SQLITE_PATH:-${REPO_ROOT}/.sync-queue/upstream-events.db}"
-SQS_QUEUE_URL="${UPSTREAM_SYNC_SQS_QUEUE_URL:-}"
-SQS_REGION="${UPSTREAM_SYNC_SQS_REGION:-${AWS_REGION:-}}"
-KAFKA_BOOTSTRAP="${UPSTREAM_SYNC_KAFKA_BOOTSTRAP:-127.0.0.1:9092}"
-KAFKA_TOPIC="${UPSTREAM_SYNC_KAFKA_TOPIC:-hermes-upstream-sync}"
-KAFKA_GROUP_ID="${UPSTREAM_SYNC_KAFKA_GROUP_ID:-hermes-upstream-worker}"
 
 MAX_ATTEMPTS="${UPSTREAM_SYNC_MAX_ATTEMPTS:-3}"
 SYNC_TIMEOUT_SEC="${UPSTREAM_SYNC_TIMEOUT_SEC:-1800}"
@@ -93,26 +88,11 @@ ARGS=(
   --global-parity-max-queue-commits "${GLOBAL_PARITY_MAX_QUEUE_COMMITS}"
 )
 
-case "${BACKEND}" in
-  sqlite)
-    ARGS+=(--sqlite-path "${SQLITE_PATH}")
-    ;;
-  sqs)
-    [[ -n "${SQS_QUEUE_URL}" ]] || {
-      echo "UPSTREAM_SYNC_SQS_QUEUE_URL is required for sqs backend" >&2
-      exit 2
-    }
-    ARGS+=(--sqs-queue-url "${SQS_QUEUE_URL}")
-    [[ -n "${SQS_REGION}" ]] && ARGS+=(--sqs-region "${SQS_REGION}")
-    ;;
-  kafka)
-    ARGS+=(--kafka-bootstrap "${KAFKA_BOOTSTRAP}" --kafka-topic "${KAFKA_TOPIC}" --kafka-group-id "${KAFKA_GROUP_ID}")
-    ;;
-  *)
-    echo "Unsupported UPSTREAM_SYNC_BACKEND='${BACKEND}' (expected sqlite|sqs|kafka)" >&2
-    exit 2
-    ;;
-esac
+if [[ "${BACKEND}" != "sqlite" ]]; then
+  echo "Unsupported UPSTREAM_SYNC_BACKEND='${BACKEND}' (expected sqlite)" >&2
+  exit 2
+fi
+ARGS+=(--sqlite-path "${SQLITE_PATH}")
 
 if [[ "${STRICT_RISK_GATE}" == "1" || "${STRICT_RISK_GATE}" == "true" ]]; then
   ARGS+=(--strict-risk-gate)

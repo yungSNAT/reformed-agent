@@ -30,11 +30,9 @@ enum Command {
     Listen(ListenArgs),
 }
 
-#[derive(Clone, Copy, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum)]
 enum Backend {
     Sqlite,
-    Sqs,
-    Kafka,
 }
 
 #[derive(clap::Args)]
@@ -53,21 +51,10 @@ struct ListenArgs {
     expected_repo: String,
     #[arg(long, default_value = "refs/heads/main")]
     expected_ref: String,
-    #[arg(long, value_enum, default_value = "sqlite")]
-    backend: Backend,
+    #[arg(long = "backend", value_enum, default_value = "sqlite")]
+    _backend: Backend,
     #[arg(long, default_value = ".sync-queue/upstream-events.db")]
     sqlite_path: PathBuf,
-    /// Default: UPSTREAM_SYNC_SQS_QUEUE_URL.
-    #[arg(long)]
-    sqs_queue_url: Option<String>,
-    #[arg(long = "sqs-region")]
-    _sqs_region: Option<String>,
-    /// Default: UPSTREAM_SYNC_KAFKA_BOOTSTRAP, else 127.0.0.1:9092.
-    #[arg(long)]
-    kafka_bootstrap: Option<String>,
-    /// Default: UPSTREAM_SYNC_KAFKA_TOPIC, else hermes-upstream-sync.
-    #[arg(long)]
-    kafka_topic: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -128,40 +115,6 @@ fn main() -> ExitCode {
 }
 
 fn listen(args: ListenArgs) -> Result<(), (u8, String)> {
-    // argparse took these defaults from the environment.
-    let flag_or_env = |flag: Option<String>, var: &str, default: &str| {
-        flag.unwrap_or_else(|| std::env::var(var).unwrap_or_else(|_| default.to_string()))
-    };
-    let sqs_queue_url = flag_or_env(args.sqs_queue_url, "UPSTREAM_SYNC_SQS_QUEUE_URL", "");
-    let kafka_bootstrap = flag_or_env(
-        args.kafka_bootstrap,
-        "UPSTREAM_SYNC_KAFKA_BOOTSTRAP",
-        "127.0.0.1:9092",
-    );
-    let kafka_topic = flag_or_env(
-        args.kafka_topic,
-        "UPSTREAM_SYNC_KAFKA_TOPIC",
-        "hermes-upstream-sync",
-    );
-    match args.backend {
-        Backend::Sqlite => {}
-        Backend::Sqs if sqs_queue_url.is_empty() => {
-            return Err((2, "--sqs-queue-url is required for SQS backend".into()))
-        }
-        Backend::Kafka if kafka_bootstrap.is_empty() || kafka_topic.is_empty() => {
-            return Err((
-                2,
-                "--kafka-bootstrap and --kafka-topic are required for Kafka backend".into(),
-            ))
-        }
-        Backend::Sqs | Backend::Kafka => {
-            return Err((
-                2,
-                "the sqs and kafka backends are not ported to Rust yet; use --backend sqlite"
-                    .into(),
-            ))
-        }
-    }
     let config = listen::ListenConfig {
         host: args.host,
         port: args.port,

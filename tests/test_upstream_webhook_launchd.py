@@ -127,6 +127,41 @@ class WebhookLaunchdTests(unittest.TestCase):
             expected[3] = "custom gate command"
             self.assertEqual(run(read_settings), expected)
 
+    def test_installer_refuses_retired_backends_before_restarting_agents(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch).resolve()
+            stub = root / "launchctl"
+            calls = root / "launchctl-calls"
+            stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$LAUNCHCTL_CALLS"\n')
+            stub.chmod(0o700)
+            wrappers = root / "scripts"
+            wrappers.mkdir()
+            for name in (
+                "run-upstream-webhook-listener.sh",
+                "run-upstream-webhook-worker.sh",
+                "upstream_webhook_sync.py",
+            ):
+                (wrappers / name).touch()
+            config = root / "settings"
+            install = [
+                "bash", str(SCRIPTS / "install-upstream-webhook-launchd.sh"),
+                "--repo-root", str(root), "--agents-dir", str(root / "agents"),
+                "--env-file", str(config), "--log-dir", str(root / "logs"),
+            ]
+            env = {
+                **os.environ, "PATH": f"{root}{os.pathsep}{os.defpath}",
+                "LAUNCHCTL_CALLS": str(calls), "UPSTREAM_SYNC_AUTO_GENERATE_SECRET": "0",
+            }
+            for backend in ("sqs", "kafka"):
+                with self.subTest(backend=backend):
+                    config.write_text(f"UPSTREAM_SYNC_BACKEND={backend}\n")
+                    result = subprocess.run(install, env=env, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("UPSTREAM_SYNC_BACKEND must be sqlite", result.stderr)
+                    self.assertFalse(calls.exists())
+            subprocess.run([*install, "--no-load"], env=env, check=True, capture_output=True, timeout=15)
+            self.assertFalse(calls.exists())
+
     def test_plists_preserve_configured_paths(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch).resolve()

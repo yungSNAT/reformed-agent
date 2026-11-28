@@ -113,6 +113,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${LOAD_SERVICES}" == "1" && -f "${ENV_FILE}" ]]; then
+  (
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
+    if [[ "${UPSTREAM_SYNC_BACKEND:-sqlite}" != "sqlite" ]]; then
+      echo "UPSTREAM_SYNC_BACKEND must be sqlite before loading the agents." >&2
+      exit 2
+    fi
+  )
+fi
+
 LISTENER_LABEL="${LABEL_PREFIX}.upstream_webhook_listener"
 WORKER_LABEL="${LABEL_PREFIX}.upstream_webhook_worker"
 LISTENER_PLIST="${AGENTS_DIR}/${LISTENER_LABEL}.plist"
@@ -178,12 +189,6 @@ UPSTREAM_SYNC_SUMMARY_LOCAL_PATH=$(printf '%q' "${REPO_ROOT}/.sync-reports/upstr
 # Optional Nous/Codex assist command invoked for risk_blocked/conflict/dead.
 UPSTREAM_SYNC_ASSIST_CMD=
 
-# Optional SQS/Kafka config (used when backend != sqlite)
-UPSTREAM_SYNC_SQS_QUEUE_URL=
-UPSTREAM_SYNC_SQS_REGION=
-UPSTREAM_SYNC_KAFKA_BOOTSTRAP=127.0.0.1:9092
-UPSTREAM_SYNC_KAFKA_TOPIC=hermes-upstream-sync
-UPSTREAM_SYNC_KAFKA_GROUP_ID=hermes-upstream-worker
 EOF
 fi
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_RUNTIME_ROLE" "dev"
