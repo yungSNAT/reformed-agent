@@ -74,6 +74,7 @@ async fn profile_rename_preserves_active_selection_alias_and_exported_content() 
     )
     .await;
     assert!(refused.contains("target path is a directory"), "{refused}");
+    assert_eq!(fs::read_dir(&blocked).unwrap().count(), 1);
     assert_eq!(
         fs::read_to_string(blocked.join("notes.txt")).unwrap(),
         "Field notes"
