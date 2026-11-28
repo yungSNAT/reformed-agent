@@ -2360,6 +2360,54 @@
     }
 
     #[tokio::test]
+    async fn agent_stream_delivers_a_visible_suffix_before_the_finish_frame() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(
+            StreamRetryScenario::BufferedContextTail {
+                text: "The sign is <",
+                finish: true,
+            },
+        ));
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&frames);
+        let result = agent
+            .run_stream(
+                vec![Message::user("Show a comparison sign")],
+                None,
+                Some(Box::new(move |frame| {
+                    observed.lock().unwrap().push((
+                        frame.delta.and_then(|delta| delta.content),
+                        frame.finish_reason,
+                    ));
+                })),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.finished_naturally);
+        assert_eq!(*provider.calls.lock().unwrap(), 1);
+        assert_eq!(
+            result.messages.last().and_then(|message| message.content.as_deref()),
+            Some("The sign is <")
+        );
+        assert_eq!(
+            frames.lock().unwrap().as_slice(),
+            [
+                (Some("The sign is ".to_string()), None),
+                (Some("<".to_string()), None),
+                (None, Some("stop".to_string())),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn stream_flushes_visible_context_prefixes_and_discards_unclosed_blocks() {
         for finish in [false, true] {
             for (text, expected, deltas) in [
