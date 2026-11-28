@@ -1508,6 +1508,7 @@ mod tests {
             target.context_from = Some(vec![source_id]);
             let target_id = scheduler.create_job(target).await.unwrap();
             let created = scheduler.get_job(&target_id).await.unwrap();
+            assert_eq!(created.prompt, "Summarise the digest");
             assert_eq!(provider.reconcile_count(), 2);
 
             scheduler.start().await;
