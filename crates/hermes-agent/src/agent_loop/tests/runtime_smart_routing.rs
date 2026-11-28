@@ -496,6 +496,75 @@
         assert_eq!(response.message.content.as_deref(), Some("loopback"));
     }
 
+    #[tokio::test]
+    async fn runtime_providers_send_the_selected_model_to_the_routed_endpoint() {
+        use serde_json::json;
+        use wiremock::matchers::{body_partial_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+
+        for (provider, model) in [
+            ("qwen-oauth", "qwen-fixture"),
+            ("kimi-coding", "kimi-fixture"),
+            ("minimax", "minimax-fixture"),
+            ("nous-api", "nous-fixture"),
+            ("stepfun", "stepfun-fixture"),
+        ] {
+            let base_url = format!("{}/{provider}", server.uri());
+            Mock::given(method("POST"))
+                .and(path(format!("/{provider}/chat/completions")))
+                .and(header("authorization", "Bearer fixture-only"))
+                .and(body_partial_json(json!({"model": model})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "model": model,
+                    "choices": [{"message": {"role": "assistant", "content": "Routed reply"}, "finish_reason": "stop"}]
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let routed = agent
+                .build_runtime_provider(
+                    provider,
+                    model,
+                    Some(&base_url),
+                    None,
+                    Some("fixture-only"),
+                    None,
+                    None,
+                )
+                .unwrap();
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                routed.chat_completion(
+                    &[Message::user("Summarise the field notes")],
+                    &[],
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            .await
+            .unwrap_or_else(|err| panic!("{provider} request timed out: {err}"))
+            .unwrap_or_else(|err| panic!("{provider} request failed: {err}"));
+            assert_eq!(response.message.content.as_deref(), Some("Routed reply"));
+            assert_eq!(response.model, model);
+        }
+    }
+
     #[test]
     fn test_degrade_guards_do_not_leave_custom_provider() {
         let mut runtime_providers = HashMap::new();
