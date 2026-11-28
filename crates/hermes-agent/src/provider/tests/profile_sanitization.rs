@@ -60,6 +60,52 @@ fn test_moonshot_tool_schema_sanitizer_repairs_mcp_shapes() {
 }
 
 #[test]
+fn moonshot_tool_schema_keeps_non_nullable_alternatives_and_scalar_types() {
+    use serde_json::json;
+
+    let params = json!({
+        "properties": {
+            "edition": {"enum": [1, 2, null]},
+            "in_print": {"enum": [false, true, null]},
+            "rating": {"enum": [1.5, 4.5, null]},
+            "notes": {"enum": [null, ""]},
+            "details": {"properties": {"pinned": {"type": "boolean"}}},
+            "labels": {"items": {"type": "string"}},
+            "identifier": {
+                "type": "string",
+                "nullable": true,
+                "anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "null"}]
+            }
+        }
+    });
+    assert_eq!(
+        sanitize_moonshot_tool_parameters(&params),
+        json!({
+            "type": "object",
+            "properties": {
+                "edition": {"type": "integer", "enum": [1, 2]},
+                "in_print": {"type": "boolean", "enum": [false, true]},
+                "rating": {"type": "number", "enum": [1.5, 4.5]},
+                "notes": {"type": "string"},
+                "details": {"type": "object", "properties": {"pinned": {"type": "boolean"}}},
+                "labels": {"type": "array", "items": {"type": "string"}},
+                "identifier": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
+            }
+        })
+    );
+}
+
+#[test]
+fn moonshot_tool_schema_supplies_a_parameter_object_for_missing_properties() {
+    use serde_json::json;
+
+    let empty_parameters = json!({"type": "object", "properties": {}});
+    for params in [json!(null), json!({"type": "string", "properties": []})] {
+        assert_eq!(sanitize_moonshot_tool_parameters(&params), empty_parameters);
+    }
+}
+
+#[test]
 fn native_gemini_tool_schemas_keep_to_the_gemini_subset() {
     let mut params = hermes_core::JsonSchema::new("object");
     params.additional_properties = Some(false);
