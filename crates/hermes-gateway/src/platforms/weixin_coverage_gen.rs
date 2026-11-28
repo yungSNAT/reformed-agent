@@ -432,12 +432,20 @@ async fn inbound_media_preserves_downloaded_bytes_and_skips_an_unavailable_cache
 
     let unavailable = dir.path().join("occupied");
     std::fs::write(&unavailable, b"original").unwrap();
-    let item = json!({ "type": 2, "image_item": { "media": { "full_url": full_url } } });
-    assert!(
-        WeChatAdapter::media_line_for_item(&adapter.inner, &item, &unavailable)
-            .await
-            .is_none()
-    );
+    let message = deliver_with_cache(
+        test_config(&server.uri()),
+        json!({
+             "from_user_id": "u1",
+             "item_list": [
+                 { "type": 1, "text_item": { "text": "Survey" } },
+                 { "type": 2, "image_item": { "media": { "full_url": full_url } } }
+             ]
+        }),
+        &unavailable,
+    )
+    .await
+    .expect("text delivered despite cache failure");
+    assert_eq!(message.text, "Survey");
     assert_eq!(std::fs::read(unavailable).unwrap(), b"original");
 }
 
