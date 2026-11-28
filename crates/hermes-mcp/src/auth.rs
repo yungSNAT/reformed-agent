@@ -314,4 +314,123 @@ mod tests {
         assert_eq!(deserialized.scopes, vec!["read"]);
         assert_eq!(deserialized.audience, Some("api".to_string()));
     }
+
+    async fn exchange_with_fixture(
+        status: &str,
+        body: &str,
+        configure: impl FnOnce(OAuthConfig) -> OAuthConfig,
+    ) -> (Result<String, McpError>, String) {
+        use crate::transport::tests::answer_once_with_body;
+        use tokio::net::TcpListener;
+        use tokio::time::{timeout, Duration};
+
+        let endpoint = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let token_url = format!("http://{}/token", endpoint.local_addr().unwrap());
+        let config = configure(OAuthConfig::new(
+            "fixture-client",
+            "fixture-secret",
+            "about:blank",
+            token_url,
+        ));
+        let reply = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let (result, (head, form)) = timeout(Duration::from_secs(10), async {
+            tokio::join!(config.get_token(), answer_once_with_body(&endpoint, reply))
+        })
+        .await
+        .expect("loopback token exchange timed out");
+        assert!(head.starts_with("post /token http/1.1"));
+        assert!(head.contains("content-type: application/x-www-form-urlencoded"));
+        (result, form)
+    }
+
+    #[tokio::test]
+    async fn oauth_exchange_uses_only_the_loopback_endpoint() {
+        use std::time::Duration;
+        use tokio::process::Command;
+
+        const FIXTURE_CHILD: &str = "HERMES_TEST_MCP_OAUTH_LOOPBACK_CHILD";
+        if std::env::var_os(FIXTURE_CHILD).is_none() {
+            // The production client honours proxies. Re-run only this fixture in
+            // a child without the parent's proxy configuration or credentials.
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .env_clear()
+                .env(FIXTURE_CHILD, "1")
+                .env("NO_PROXY", "127.0.0.1")
+                .kill_on_drop(true)
+                .args([
+                    "--exact",
+                    "auth::tests::oauth_exchange_uses_only_the_loopback_endpoint",
+                ]);
+            for variable in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+                if let Some(value) = std::env::var_os(variable) {
+                    command.env(variable, value);
+                }
+            }
+            let output = tokio::time::timeout(Duration::from_secs(35), command.output())
+                .await
+                .expect("isolated token exchange timed out")
+                .unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "{output:?}"
+            );
+            return;
+        }
+        let (result, form) = exchange_with_fixture(
+            "200 OK",
+            r#"{"access_token":"fixture-access","expires_in":3600}"#,
+            |config| {
+                config
+                    .with_scope("read")
+                    .with_scope("write")
+                    .with_audience("fixture-api")
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap(), "fixture-access");
+        let mut fields = form.split('&').collect::<Vec<_>>();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            [
+                "audience=fixture-api",
+                "client_id=fixture-client",
+                "client_secret=fixture-secret",
+                "grant_type=client_credentials",
+                "scope=read+write",
+            ]
+        );
+        for (status, body, expected) in [
+            (
+                "403 Forbidden",
+                "fixture denial",
+                "Token endpoint returned 403 Forbidden: fixture denial",
+            ),
+            (
+                "200 OK",
+                r#"{"expires_in":3600}"#,
+                "Failed to parse token response:",
+            ),
+        ] {
+            let (result, form) = exchange_with_fixture(status, body, |config| config).await;
+            let error = result.expect_err("expected a token exchange error");
+            assert!(
+                matches!(&error, McpError::Auth(message) if message.starts_with(expected)),
+                "{error}"
+            );
+            assert!(!form.contains("scope=") && !form.contains("audience="));
+        }
+
+        let config = OAuthConfig::new("fixture-client", "fixture-secret", "about:blank", "invalid");
+        let error = config.get_token().await.expect_err("invalid endpoint URL");
+        assert!(
+            matches!(&error, McpError::Auth(message) if message.starts_with("Token request failed:")),
+            "{error}"
+        );
+    }
 }
