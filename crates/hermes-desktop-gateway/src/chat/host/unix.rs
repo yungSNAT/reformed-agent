@@ -6,6 +6,7 @@ use hermes_intelligence::redact::redact_sensitive_text;
 use hermes_tools::approval::{
     check_all_command_guards_with_context, detect_dangerous_command, CommandGuardContext,
 };
+use rustix::fs::{openat, statat, AtFlags, FileType, Mode, OFlags, CWD};
 use serde_json::{json, Map, Value};
 use tokio::process::Command;
 
@@ -186,7 +187,8 @@ fn allowed(home: &Path, argv: &[String]) -> bool {
     }
 }
 
-/// A plain name with its own `profiles/<name>.yaml` (or `.yml`) file, not a link.
+/// A plain name with its own regular, non-link `profiles/<name>.yaml` (or `.yml`) inside a
+/// real, non-link `profiles` directory under `home`.
 fn listed_profile(home: &Path, name: &str) -> bool {
     let plain = !name.is_empty()
         && name.len() <= 64
@@ -194,11 +196,26 @@ fn listed_profile(home: &Path, name: &str) -> bool {
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    plain
-        && ["yaml", "yml"].iter().any(|ext| {
-            std::fs::symlink_metadata(home.join("profiles").join(format!("{name}.{ext}")))
-                .is_ok_and(|meta| meta.file_type().is_file())
+    if !plain {
+        return false;
+    }
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let Ok(profiles) = openat(CWD, home, flags, Mode::empty())
+        .and_then(|dir| openat(&dir, "profiles", flags | OFlags::NOFOLLOW, Mode::empty()))
+    else {
+        return false;
+    };
+    ["yaml", "yml"].iter().any(|ext| {
+        #[allow(clippy::unnecessary_cast, reason = "st_mode is u16 on macOS")]
+        statat(
+            &profiles,
+            format!("{name}.{ext}"),
+            AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .is_ok_and(|stat| {
+            FileType::from_raw_mode(stat.st_mode as rustix::fs::RawMode) == FileType::RegularFile
         })
+    })
 }
 
 async fn run_cli(

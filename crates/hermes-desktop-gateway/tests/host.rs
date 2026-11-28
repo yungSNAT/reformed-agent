@@ -95,13 +95,13 @@ mod local {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixStream;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
+    use futures::SinkExt;
     use hermes_desktop_gateway::local::{self, LocalRuntime};
     use serde_json::{json, Value};
-
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 
     use super::{call, next, requests, Socket, MARKER};
 
@@ -116,8 +116,7 @@ mod local {
         serde_json::from_str(&line).unwrap()
     }
 
-    /// A local-mode runtime for a private home, and the address an interactive ticket opens.
-    fn ticket_url() -> (tempfile::TempDir, LocalRuntime, String) {
+    fn start_local() -> (tempfile::TempDir, PathBuf, LocalRuntime) {
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let home = std::fs::canonicalize(dir.path()).unwrap();
@@ -126,27 +125,43 @@ mod local {
             ..Default::default()
         };
         let runtime = local::start(&home, hermes_desktop_gateway::Chat::new(config)).unwrap();
+        (dir, home, runtime)
+    }
+
+    fn ticket_url_on(home: &Path, runtime: &LocalRuntime) -> String {
         let reply = control(
-            &home,
+            home,
             json!({"protocol": 1, "id": 1, "verb": "session-ticket", "params": {
                 "profile_id": home.to_str().unwrap(), "instance_id": runtime.instance_id(),
                 "purpose": "interactive"}}),
         );
         let ticket = reply["result"]["ticket"].as_str().unwrap().to_string();
-        let url = format!(
+        format!(
             "{}/api/ws?native_dial=n1&ticket={ticket}",
             runtime.api_origin().replacen("http", "ws", 1)
-        );
+        )
+    }
+
+    /// A local-mode runtime for a private home, and the address an interactive ticket opens.
+    fn ticket_url() -> (tempfile::TempDir, LocalRuntime, String) {
+        let (dir, home, runtime) = start_local();
+        let url = ticket_url_on(&home, &runtime);
         (dir, runtime, url)
     }
 
-    /// A local-mode runtime for a private home, and a socket its interactive ticket opened.
-    async fn dial() -> (tempfile::TempDir, LocalRuntime, Socket) {
-        let (dir, runtime, url) = ticket_url();
+    async fn dial_on(home: &Path, runtime: &LocalRuntime) -> Socket {
+        let url = ticket_url_on(home, runtime);
         let (mut socket, _) = tokio_tungstenite::connect_async(url.as_str())
             .await
             .unwrap();
         assert_eq!(next(&mut socket).await["params"]["type"], "gateway.ready");
+        socket
+    }
+
+    /// A local-mode runtime for a private home, and a socket its interactive ticket opened.
+    async fn dial() -> (tempfile::TempDir, LocalRuntime, Socket) {
+        let (dir, home, runtime) = start_local();
+        let socket = dial_on(&home, &runtime).await;
         (dir, runtime, socket)
     }
 
@@ -217,5 +232,92 @@ mod local {
             let reply = call(&mut socket, "complete.path", json!({"word": word})).await;
             assert_eq!(reply["result"]["items"], json!([]), "{word}: {reply}");
         }
+    }
+
+    fn pid_alive(pid: i32) -> bool {
+        // SAFETY: signal 0 only checks whether the process exists.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    struct Cleanup(Vec<i32>);
+
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            for &pid in &self.0 {
+                // SAFETY: kill takes plain integers and touches no memory of ours.
+                // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    async fn wait_pid(path: &Path) -> i32 {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    if let Ok(pid) = text.trim().parse::<i32>() {
+                        return pid;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("child did not write its pid")
+    }
+
+    async fn wait_dead(pid: i32) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while pid_alive(pid) {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("child survived WebSocket close");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn closing_the_websocket_kills_a_running_shell_child_and_frees_its_slot() {
+        let (_dir, home, runtime) = start_local();
+        let mut socket = dial_on(&home, &runtime).await;
+        let work = tempfile::tempdir().unwrap();
+        let p1_file = work.path().join("p1");
+        let p2_file = work.path().join("p2");
+        for (id, file) in [(11, &p1_file), (12, &p2_file)] {
+            let tmp = file.with_extension("tmp");
+            let cmd = format!(
+                "sleep 300 & echo $! > '{}' && mv '{}' '{}'; wait",
+                tmp.display(),
+                tmp.display(),
+                file.display()
+            );
+            let req = json!({"jsonrpc": "2.0", "id": id, "method": "shell.exec", "params": {"command": cmd}});
+            socket.send(Message::text(req.to_string())).await.unwrap();
+        }
+        let mut cleanup = Cleanup(Vec::new());
+        let p1 = wait_pid(&p1_file).await;
+        cleanup.0.push(p1);
+        let p2 = wait_pid(&p2_file).await;
+        cleanup.0.push(p2);
+        assert!(pid_alive(p1) && pid_alive(p2));
+        // Both connection slots are occupied; a 3rd shell.exec on this socket is refused busy.
+        let busy = call(&mut socket, "shell.exec", json!({"command": "echo third"})).await;
+        assert_eq!(busy["error"]["code"], 4090, "{busy}");
+        // Closing the WebSocket drops the in-flight RPC futures, killing both children and
+        // releasing their slots.
+        let _ = socket.close(None).await;
+        drop(socket);
+        wait_dead(p1).await;
+        wait_dead(p2).await;
+        let mut socket2 = dial_on(&home, &runtime).await;
+        let ok = call(&mut socket2, "shell.exec", json!({"command": "echo freed"})).await;
+        assert_eq!(
+            ok["result"],
+            json!({"stdout": "freed\n", "stderr": "", "code": 0}),
+            "{ok}"
+        );
     }
 }

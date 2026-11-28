@@ -1,11 +1,29 @@
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+#[cfg(test)]
 use std::path::Path;
 
 use rustix::fs::{openat, statat, AtFlags, Dir, FileType, Mode, OFlags, CWD};
 use serde_json::{json, Value};
 
 use super::super::{text, RpcError};
-use super::folder;
+use super::NO_FOLDER;
 use crate::chat::Request;
+
+/// Opens the gateway's working directory directly as a descriptor so pathname swaps cannot
+/// redirect completion outside the working directory.
+fn open_cwd() -> Result<OwnedFd, RpcError> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    openat(CWD, ".", flags, Mode::empty())
+        .ok()
+        .ok_or((NO_FOLDER, "working folder unavailable".into()))
+}
+
+/// Opens `root` as a directory descriptor without following a final symlink.
+#[cfg(test)]
+pub(super) fn open_root(root: &Path) -> Option<OwnedFd> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW;
+    openat(CWD, root, flags, Mode::empty()).ok()
+}
 
 /// `complete.path {word, session_id?, cwd?}`: completions under the session's folder. The
 /// client's `cwd` is not used: the folder is the session's.
@@ -14,8 +32,8 @@ pub(in crate::chat::host) async fn complete_path(req: Request) -> Result<Value, 
     if word.is_empty() {
         return Ok(json!({"items": []}));
     }
-    let root = folder()?;
-    let items = tokio::task::spawn_blocking(move || items(&root, &word))
+    let root = open_cwd()?;
+    let items = tokio::task::spawn_blocking(move || items_in(root.as_fd(), &word))
         .await
         .unwrap_or_default();
     Ok(json!({"items": items}))
@@ -72,10 +90,10 @@ fn parse_word(context: bool, query: &str) -> Option<(&str, Vec<&str>, &str)> {
     Some((tag, parts, typed))
 }
 
-/// Upstream's listing (`_dir_listing_items`) confined to `root`: a word naming an absolute
-/// path, `~`, a drive or a `..` component lists nothing, and each folder on the way is
-/// opened from its parent's handle without following a link.
-pub(super) fn items(root: &Path, word: &str) -> Vec<Value> {
+/// Upstream's listing (`_dir_listing_items`) confined to the pinned `root` descriptor: a word
+/// naming an absolute path, `~`, a drive or a `..` component lists nothing, and each folder on
+/// the way is opened from its parent's handle without following a link.
+pub(super) fn items_in(root: BorrowedFd<'_>, word: &str) -> Vec<Value> {
     let context = word.starts_with('@');
     let query = if context { &word[1..] } else { word };
     if context && query.is_empty() {
@@ -141,12 +159,12 @@ fn entry_item(
     )
 }
 
-/// The sorted `(name, is_dir)` entries of `root/parts…`, each part opened relative to the
-/// one before with `O_NOFOLLOW`, so a link anywhere on the way lists nothing. A link inside
-/// the folder is listed as a plain entry and not followed.
-fn list(root: &Path, parts: &[&str]) -> Option<Vec<(String, bool)>> {
+/// The sorted `(name, is_dir)` entries of `root/parts…`, starting from the already-pinned
+/// `root` descriptor and opening each part with `O_NOFOLLOW`, so a link anywhere on the way
+/// lists nothing. A link inside the folder is listed as a plain entry and not followed.
+fn list(root: BorrowedFd<'_>, parts: &[&str]) -> Option<Vec<(String, bool)>> {
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    let mut dir = openat(CWD, root, flags, Mode::empty()).ok()?;
+    let mut dir = openat(root, ".", flags, Mode::empty()).ok()?;
     for part in parts {
         dir = openat(&dir, *part, flags | OFlags::NOFOLLOW, Mode::empty()).ok()?;
     }

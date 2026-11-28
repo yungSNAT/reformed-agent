@@ -1,3 +1,4 @@
+use std::os::fd::AsFd;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -5,13 +6,18 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::process::Command;
 
-use super::complete::items;
+use super::complete::{items_in, open_root};
 use super::supervise::{kept_env, supervise, Ended, Slot, RUNNING};
 use super::{allowed, run_cli};
 use crate::chat::Chat;
 
 mod edge;
 mod security;
+
+fn items(root: &Path, word: &str) -> Vec<Value> {
+    let fd = open_root(root).expect("open root");
+    items_in(fd.as_fd(), word)
+}
 fn texts(items: &[Value]) -> Vec<&str> {
     items
         .iter()

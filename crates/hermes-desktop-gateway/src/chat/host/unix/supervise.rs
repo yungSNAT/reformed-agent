@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -220,7 +222,9 @@ pub(super) fn kill_run(leader: i32) {
         libc::killpg(leader, libc::SIGKILL);
     }
     // A process that forks can add one behind a pass, so passes repeat until one kills
-    // nothing, at most 10.
+    // nothing, at most 10 (best-effort bound: a relentless fork loop outside the leader's
+    // group can outlive the final pass, though output draining stops after `DRAIN` and the
+    // slot still frees).
     #[cfg(target_os = "linux")]
     for _ in 0..10 {
         if sweep_session(leader) == 0 {
@@ -239,28 +243,82 @@ fn sweep_session(leader: i32) -> usize {
             .file_name()
             .to_str()
             .and_then(|n| n.parse::<i32>().ok())
-            .filter(|pid| *pid != leader)
+            .filter(|pid| *pid > 1 && *pid != leader)
         else {
             continue;
         };
         let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
             continue;
         };
-        // After the command's closing parenthesis: state, parent, group, session.
-        let fields: Vec<&str> = stat
-            .rsplit_once(')')
-            .map(|(_, rest)| rest.split_whitespace().take(4).collect())
-            .unwrap_or_default();
-        if fields.len() == 4 && fields[0] != "Z" && fields[3] == session {
-            // SAFETY: kill takes plain integers and touches no memory of ours.
-            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
+        if in_session(&stat, &session) && kill_if_in_session(pid, &session) {
             killed += 1;
         }
     }
     killed
+}
+
+/// True when `/proc/<pid>/stat` shows a live (non-zombie) process in `session`.
+#[cfg(target_os = "linux")]
+fn in_session(stat: &str, session: &str) -> bool {
+    // After the command's closing parenthesis: state, parent, group, session.
+    let fields: Vec<&str> = stat
+        .rsplit_once(')')
+        .map(|(_, rest)| rest.split_whitespace().take(4).collect())
+        .unwrap_or_default();
+    fields.len() == 4 && fields[0] != "Z" && fields[3] == session
+}
+
+/// Pins `pid` with a Linux pidfd (`OwnedFd`), or `None` if it exited or cannot be pinned.
+#[cfg(target_os = "linux")]
+pub(super) fn open_pidfd(pid: i32) -> Option<OwnedFd> {
+    // SAFETY: pidfd_open takes plain integers (pid, flags=0) and returns a new fd or -1.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0 as libc::c_uint) };
+    let fd = i32::try_from(fd).ok().filter(|&fd| fd >= 0)?;
+    // SAFETY: `fd` is a newly opened, non-negative descriptor owned exclusively by us.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    Some(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Sends `SIGKILL` to the process pinned by `pidfd`; returns true when the kernel accepts it.
+#[cfg(target_os = "linux")]
+fn kill_pidfd(pidfd: &OwnedFd) -> bool {
+    // SAFETY: pidfd_send_signal takes a valid owned fd, signal number, null siginfo and 0.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            libc::SIGKILL,
+            std::ptr::null::<libc::siginfo_t>(),
+            0 as libc::c_uint,
+        ) == 0
+    }
+}
+
+/// Pins `pid` via pidfd, re-verifies `/proc/<pid>/stat` after pinning so a PID reused before
+/// `pidfd_open` is never signalled, and sends `SIGKILL` through the pidfd.
+#[cfg(target_os = "linux")]
+fn kill_if_in_session(pid: i32, session: &str) -> bool {
+    kill_pinned_if_in_session(pid, session, open_pidfd, |p| {
+        std::fs::read_to_string(format!("/proc/{p}/stat")).ok()
+    })
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn kill_pinned_if_in_session(
+    pid: i32,
+    session: &str,
+    pin: impl FnOnce(i32) -> Option<OwnedFd>,
+    read_stat: impl FnOnce(i32) -> Option<String>,
+) -> bool {
+    let Some(pidfd) = pin(pid) else {
+        return false;
+    };
+    let Some(stat) = read_stat(pid) else {
+        return false;
+    };
+    in_session(&stat, session) && kill_pidfd(&pidfd)
 }
 
 /// Up to [`READ_CAP`] bytes of `stream`, read until its end or until `stop`'s sender is
