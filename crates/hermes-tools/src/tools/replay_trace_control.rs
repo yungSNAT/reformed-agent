@@ -1201,20 +1201,23 @@ mod tests {
         }
 
         std::fs::write(exports.join("empty.json"), br#"{"rows":[]}"#).unwrap();
-        let raw = handler
-            .execute(
-                json!({"action": "diff", "left_path": "many.json", "right_path": "empty.json"}),
-            )
-            .await
-            .unwrap();
-        let diff: Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(diff["only_in_left"], count);
-        assert_eq!(diff["only_in_right"], 0);
-        assert_eq!(
-            diff["only_in_left_hashes"],
-            json!(hashes[..MAX_DIFF_HASH_SAMPLES])
-        );
-        assert_eq!(diff["hash_samples_truncated"], true);
+        for (left, right, side, other) in [
+            ("many.json", "empty.json", "left", "right"),
+            ("empty.json", "many.json", "right", "left"),
+        ] {
+            let raw = handler
+                .execute(json!({"action": "diff", "left_path": left, "right_path": right}))
+                .await
+                .unwrap();
+            let diff: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(diff[format!("only_in_{side}")], count);
+            assert_eq!(diff[format!("only_in_{other}")], 0);
+            assert_eq!(
+                diff[format!("only_in_{side}_hashes")],
+                json!(hashes[..MAX_DIFF_HASH_SAMPLES])
+            );
+            assert_eq!(diff["hash_samples_truncated"], true);
+        }
     }
 
     #[tokio::test]
