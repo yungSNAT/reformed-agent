@@ -1105,6 +1105,56 @@ fn telegram_polling_threshold_marks_adapter_unhealthy() {
 }
 
 #[tokio::test]
+async fn telegram_photo_url_sends_caption_reply_and_topic_options() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/sendPhoto"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true,
+            "result": {"message_id": 19}
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let mut adapter = test_adapter(test_config());
+    adapter.api_base = server.uri();
+    adapter.client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    let image_url = "https://example.invalid/photo.png";
+    let visible_caption = "é".repeat(MAX_CAPTION_LENGTH);
+    let caption = format!(" {visible_caption}overflow ");
+    adapter
+        .send_image_url_with_options("-100123:8", image_url, Some(&caption), Some(5), Some(9))
+        .await
+        .unwrap();
+    adapter
+        .send_image_url_with_options("-100123:8", image_url, Some("  "), None, None)
+        .await
+        .unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].body_json::<Value>().unwrap(),
+        serde_json::json!({
+            "chat_id": "-100123", "photo": image_url, "caption": visible_caption,
+            "reply_to_message_id": 5, "message_thread_id": 9
+        })
+    );
+    assert_eq!(
+        requests[1].body_json::<Value>().unwrap(),
+        serde_json::json!({
+            "chat_id": "-100123", "photo": image_url, "message_thread_id": 8
+        })
+    );
+}
+
+#[tokio::test]
 async fn telegram_delete_webhook_can_preserve_pending_updates() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
