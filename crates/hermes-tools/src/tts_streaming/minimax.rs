@@ -335,11 +335,11 @@ mod tests {
         for (response, expected) in [
             (
                 ResponseTemplate::new(429).set_body_json(json!({"message": "rate limited"})),
-                "MiniMax HTTP 429",
+                &["MiniMax HTTP 429", "rate limited"][..],
             ),
             (
                 ResponseTemplate::new(200).set_body_string("invalid JSON"),
-                "MiniMax JSON decode failed",
+                &["MiniMax JSON decode failed"][..],
             ),
         ] {
             let server = MockServer::start().await;
@@ -355,9 +355,12 @@ mod tests {
                 .await
                 .unwrap_err();
 
-            assert!(
-                matches!(error, ToolError::ExecutionFailed(message) if message.contains(expected))
-            );
+            let ToolError::ExecutionFailed(message) = error else {
+                panic!("expected synthesis failure, got {error}");
+            };
+            for &fragment in expected {
+                assert!(message.contains(fragment), "{message}");
+            }
             assert!(!output.exists());
         }
     }
