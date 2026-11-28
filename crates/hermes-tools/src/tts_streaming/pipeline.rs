@@ -576,25 +576,28 @@ mod tests {
             Bytes::from_static(&[0u8; 4]),
         ]]));
         let pipeline = TtsStreamingPipeline::builder()
-            .with_sentence_sink(sink.clone() as Arc<dyn SentenceSink>)
-            .with_pcm_sink(pcm.clone() as Arc<dyn PcmSink>)
-            .with_streaming_backend(backend.clone() as Arc<dyn StreamingTtsBackend>)
+            .with_sentence_sink(sink.clone())
+            .with_pcm_sink(pcm.clone())
+            .with_streaming_backend(backend.clone())
             .build()
             .unwrap();
         let stop = pipeline.stop_handle();
         stop.store(true, Ordering::SeqCst);
 
         pipeline
-            .feed(TextDelta::chunk("Long enough blocked sentence here. "))
+            .feed(TextDelta::chunk("Discard this unfinished fragment "))
             .await
             .unwrap();
         pipeline.poll_force_flush().await.unwrap();
-        pipeline.feed(TextDelta::End).await.unwrap();
-        let outcome = pipeline.finish().await.unwrap();
-
-        assert_eq!(outcome.stats.sentences_emitted, 0);
         assert!(sink.snapshot().is_empty());
         assert!(pcm.chunks.lock().unwrap().is_empty());
+
+        stop.store(false, Ordering::SeqCst);
+        let fresh = "Fresh text after the interruption";
+        pipeline.feed(TextDelta::chunk(fresh)).await.unwrap();
+        assert_eq!(pipeline.finish().await.unwrap().stats.sentences_emitted, 1);
+        assert_eq!(sink.snapshot(), [fresh]);
+        assert_eq!(*backend.seen_texts.lock().unwrap(), [fresh]);
     }
 
     #[tokio::test]
