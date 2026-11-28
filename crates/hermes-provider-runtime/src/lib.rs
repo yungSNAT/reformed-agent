@@ -610,20 +610,29 @@ pub fn active_llm_provider_config<'a>(
     provider_name: &str,
     runtime_provider: &str,
 ) -> Option<&'a LlmProviderConfig> {
-    config
-        .llm_providers
-        .get(provider_name)
-        .or_else(|| config.llm_providers.get(runtime_provider))
+    active_llm_provider_entry(config, provider_name, runtime_provider).map(|(_, cfg)| cfg)
+}
+
+/// The `llm_providers` entry a provider build reads: the one named exactly `provider_name`,
+/// else the one named exactly `runtime_provider`, else the first by name of those named
+/// either in another case.
+pub fn active_llm_provider_entry<'a>(
+    config: &'a GatewayConfig,
+    provider_name: &str,
+    runtime_provider: &str,
+) -> Option<(&'a String, &'a LlmProviderConfig)> {
+    let providers = &config.llm_providers;
+    providers
+        .get_key_value(provider_name)
+        .or_else(|| providers.get_key_value(runtime_provider))
         .or_else(|| {
-            config.llm_providers.iter().find_map(|(name, cfg)| {
-                if name.eq_ignore_ascii_case(provider_name)
-                    || name.eq_ignore_ascii_case(runtime_provider)
-                {
-                    Some(cfg)
-                } else {
-                    None
-                }
-            })
+            providers
+                .iter()
+                .filter(|(name, _)| {
+                    name.eq_ignore_ascii_case(provider_name)
+                        || name.eq_ignore_ascii_case(runtime_provider)
+                })
+                .min_by_key(|(name, _)| name.as_str())
         })
 }
 

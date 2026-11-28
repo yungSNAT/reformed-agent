@@ -4,6 +4,9 @@ use crate::gateway::{Gateway, GatewayConfig, IncomingMessage};
 use crate::session::SessionManager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[path = "cron_fire_contract.rs"]
+mod cron_fire_contract;
+
 async fn spawn_one_request_server(
     mailbox: Arc<RwLock<ResponseMailbox>>,
     response_store: Arc<RwLock<ResponseStore>>,

@@ -309,7 +309,7 @@ impl ContextCompressor {
             // Token-budget walk backward.
             let mut accumulated: u64 = 0;
             let mut boundary = n;
-            let min_protect = protect_tail_count.min(n.saturating_sub(1));
+            let min_protect = protect_tail_count.min(n);
             for i in (0..n).rev() {
                 let msg = &result[i];
                 let mut msg_tokens = chars_to_tokens(content_len(msg)) + 10;
@@ -318,14 +318,13 @@ impl ContextCompressor {
                         msg_tokens += chars_to_tokens(tc.function.arguments.len());
                     }
                 }
-                if accumulated + msg_tokens > budget && (n - i) >= min_protect {
-                    boundary = i;
+                if accumulated + msg_tokens > budget && (n - i) > min_protect {
                     break;
                 }
                 accumulated += msg_tokens;
                 boundary = i;
             }
-            boundary.max(n.saturating_sub(min_protect))
+            boundary
         } else {
             n.saturating_sub(protect_tail_count)
         };

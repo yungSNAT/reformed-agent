@@ -33,6 +33,14 @@ fn start_in_pty(
     args: &[&str],
     allow_loopback: bool,
 ) -> (Child, File, libc::tcflag_t) {
+    start_command_in_pty(isolated_pty_command(sandbox, args, allow_loopback))
+}
+
+fn isolated_pty_command(
+    sandbox: &Path,
+    args: &[&str],
+    allow_loopback: bool,
+) -> tokio::process::Command {
     let mut command = support::isolated_hermes(sandbox);
     command
         .env("HTTP_PROXY", "http://127.0.0.1:1")
@@ -41,7 +49,7 @@ fn start_in_pty(
     if allow_loopback {
         command.env("NO_PROXY", "127.0.0.1");
     }
-    start_command_in_pty(command)
+    command
 }
 
 fn start_command_in_pty(mut command: tokio::process::Command) -> (Child, File, libc::tcflag_t) {
@@ -354,11 +362,22 @@ llm_providers:
 async fn native_tui_streams_a_loopback_turn_and_persists_the_full_reply() {
     let provider = MockServer::start().await;
     let prompt = "Read back the synthetic fixture";
-    let reply = "QuartzEcho from the loopback fixture.";
+    let mut first_delta = String::from("```\n");
+    for row in 1..=40 {
+        let label = if (10..=20).contains(&row) {
+            "AsterHistory"
+        } else {
+            "Fixture row"
+        };
+        first_delta.push_str(&format!("{label} {row:02}\n"));
+    }
+    first_delta.push_str("```\nQuartzEcho");
+    let final_delta = " from the loopback fixture.";
+    let reply = format!("{first_delta}{final_delta}");
     let mut stream = String::new();
     for choice in [
-        json!({"index": 0, "delta": {"role": "assistant", "content": "QuartzEcho"}}),
-        json!({"index": 0, "delta": {"content": " from the loopback fixture."}}),
+        json!({"index": 0, "delta": {"role": "assistant", "content": first_delta}}),
+        json!({"index": 0, "delta": {"content": final_delta}}),
         json!({"index": 0, "delta": {}, "finish_reason": "stop"}),
     ] {
         let chunk = json!({
@@ -401,9 +420,11 @@ streaming:
     )
     .unwrap();
 
-    let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["--ignore-rules"], true);
-    read_until(&mut terminal, b"\x1b[?1049h").await;
+    let mut command = isolated_pty_command(sandbox.path(), &["--ignore-rules"], true);
+    command.env("HERMES_TUI_MOUSE", "1");
+    let (mut child, mut terminal, initial_flags) = start_command_in_pty(command);
+    let startup = read_until(&mut terminal, b"\x1b[?1006h").await;
+    assert!(startup.windows(8).any(|bytes| bytes == b"\x1b[?1049h"));
     write!(terminal, "\x1b[200~{prompt}\x1b[201~\r").unwrap();
     // Separate frames can insert cursor escapes between the two deltas.
     let rendered = read_until(&mut terminal, b"from the loopback fixture.").await;
@@ -425,7 +446,7 @@ streaming:
                             let content = message["content"].as_str()?;
                             matches!(role, "User" | "Assistant").then_some((role, content))
                         });
-                        conversation.eq([("User", prompt), ("Assistant", reply)])
+                        conversation.eq([("User", prompt), ("Assistant", reply.as_str())])
                     })
                 });
             if saved {
@@ -436,6 +457,28 @@ streaming:
     })
     .await
     .expect("completed provider turn is saved in the isolated session");
+
+    let dimensions = libc::winsize {
+        ws_row: 16,
+        ws_col: 100,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // The child owns the slave as its controlling terminal, so this sends SIGWINCH.
+    assert_eq!(
+        unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSWINSZ, &dimensions) },
+        0,
+        "{}",
+        io::Error::last_os_error()
+    );
+    read_until(&mut terminal, b"\x1b[2J").await;
+
+    // Send SGR wheel events through the same PTY as keyboard input.
+    terminal.write_all(&b"\x1b[<64;5;6M".repeat(22)).unwrap();
+    // The terminal diff can split a line with cursor moves between changed spans.
+    read_until(&mut terminal, b"AsterHist").await;
+    terminal.write_all(&b"\x1b[<65;5;6M".repeat(22)).unwrap();
+    read_until(&mut terminal, b"Quartz").await;
 
     terminal.write_all(b"\x1b[200~/undo\x1b[201~\r!").unwrap();
     let edited = format!("{prompt}!");
@@ -480,6 +523,15 @@ streaming:
 
 #[tokio::test]
 async fn native_tui_resume_uses_the_saved_model_and_conversation() {
+    assert_native_tui_resume_uses_saved_history(false).await;
+}
+
+#[tokio::test]
+async fn native_tui_resumes_a_managed_turn_with_a_saved_quorum_hint() {
+    assert_native_tui_resume_uses_saved_history(true).await;
+}
+
+async fn assert_native_tui_resume_uses_saved_history(managed: bool) {
     let provider = MockServer::start().await;
     let first_prompt = "Where is the fixture train going?";
     let first_reply = "It is heading north.";
@@ -498,12 +550,23 @@ async fn native_tui_resume_uses_the_saved_model_and_conversation() {
             }],
         })
     );
+    let response = if managed {
+        ResponseTemplate::new(200).set_body_json(json!({
+            "id": "fixture-resume",
+            "model": "restored",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": reply},
+                "finish_reason": "stop",
+            }],
+        }))
+    } else {
+        ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream")
+    };
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .and(body_partial_json(
-            json!({"model": "restored", "stream": true}),
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream"))
+        .and(body_partial_json(json!({"model": "restored"})))
+        .respond_with(response)
         .expect(1)
         .mount(&provider)
         .await;
@@ -524,12 +587,24 @@ llm_providers:
     discover_models: false
     models: [initial, restored]
 streaming:
-  enabled: true
+  enabled: {}
 "#,
-            provider.uri()
+            provider.uri(),
+            !managed
         ),
     )
     .unwrap();
+    let mut messages = vec![
+        json!({"role": "User", "content": first_prompt}),
+        json!({"role": "Assistant", "content": first_reply}),
+    ];
+    if managed {
+        // Retain the hint saved by an earlier session. The new home's quorum policy is disabled.
+        messages.insert(
+            0,
+            json!({"role": "System", "content": "[QUORUM_MODE] Saved fixture hint"}),
+        );
+    }
     std::fs::write(
         sessions.join("session_fixture-resume.json"),
         json!({
@@ -537,20 +612,20 @@ streaming:
                 "session_id": "fixture-resume",
                 "model": "local-test:restored",
             },
-            "messages": [
-                {"role": "User", "content": first_prompt},
-                {"role": "Assistant", "content": first_reply},
-            ],
+            "messages": messages,
         })
         .to_string(),
     )
     .unwrap();
 
-    let (mut child, mut terminal, initial_flags) = start_in_pty(
+    let mut command = isolated_pty_command(
         sandbox.path(),
         &["--ignore-rules", "resume", "fixture-resume"],
         true,
     );
+    // Only the managed route adds the configured runtime reformulation to the request.
+    command.env("HERMES_RUNTIME_PROMPT_REFORMULATION", "1");
+    let (mut child, mut terminal, initial_flags) = start_command_in_pty(command);
     read_until(&mut terminal, b"Resumed session").await;
     write!(terminal, "\x1b[200~{followup}\x1b[201~\r").unwrap();
     read_until(&mut terminal, reply.as_bytes()).await;
@@ -566,9 +641,19 @@ streaming:
     let requests = provider.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
     let request: Value = requests[0].body_json().unwrap();
-    let history = request["messages"]
-        .as_array()
-        .unwrap()
+    assert_eq!(request["stream"].as_bool().unwrap_or(false), !managed);
+    let messages = request["messages"].as_array().unwrap();
+    assert_eq!(
+        messages.iter().any(|message| {
+            message["role"] == "system"
+                && message["content"].as_str().is_some_and(|content| {
+                    content.contains(hermes_app_runtime::RUNTIME_REFORMULATION_PREFIX)
+                })
+        }),
+        managed,
+        "only the managed turn reformulates the saved conversation"
+    );
+    let history = messages
         .iter()
         .filter_map(|message| {
             let role = message["role"].as_str()?;

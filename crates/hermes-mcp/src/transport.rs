@@ -1779,7 +1779,7 @@ impl McpTransport for HttpSseTransport {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
@@ -1805,6 +1805,20 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    fn proc_stat_is_zombie(stat: &str) -> bool {
+        stat.rsplit_once(") ")
+            .is_some_and(|(_, rest)| rest.starts_with('Z'))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proc_stat_reads_the_state_after_the_last_closing_parenthesis() {
+        assert!(proc_stat_is_zombie("7 (worker) name) Z 1"));
+        assert!(!proc_stat_is_zombie("7 (worker) Z 1) S 1"));
+        assert!(!proc_stat_is_zombie("7"));
+    }
+
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn dropping_started_stdio_transport_stops_child() {
         let mut transport =
@@ -1815,15 +1829,14 @@ mod tests {
             .as_ref()
             .and_then(Child::id)
             .expect("child pid");
-        drop(transport);
-
         // Gone, or a zombie awaiting reaping, once the kill lands.
         let stopped = || match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            Ok(stat) => stat
-                .rsplit_once(") ")
-                .is_some_and(|(_, rest)| rest.starts_with('Z')),
+            Ok(stat) => proc_stat_is_zombie(&stat),
             Err(_) => true,
         };
+        assert!(!stopped(), "MCP child {pid} stopped before transport drop");
+        drop(transport);
+
         for _ in 0..50 {
             if stopped() {
                 return;
@@ -2354,7 +2367,7 @@ mod tests {
         answer_once_with_body(listener, reply).await.0
     }
 
-    async fn answer_once_with_body(
+    pub(crate) async fn answer_once_with_body(
         listener: &tokio::net::TcpListener,
         reply: String,
     ) -> (String, String) {

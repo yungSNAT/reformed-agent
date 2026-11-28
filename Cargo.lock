@@ -1911,6 +1911,7 @@ version = "0.22.0"
 dependencies = [
  "aes 0.8.4",
  "async-trait",
+ "aws-lc-rs",
  "base64 0.22.1",
  "futures",
  "hermes-config",
@@ -1920,6 +1921,7 @@ dependencies = [
  "hermes-tools",
  "hmac 0.12.1",
  "jiff",
+ "jsonwebtoken",
  "libc",
  "matrix-sdk-crypto",
  "md5",

@@ -35,6 +35,7 @@ use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 mod canonical;
 mod history;
 mod host;
+mod model;
 mod oneshot;
 pub(crate) mod profiles;
 mod relay;
@@ -162,6 +163,7 @@ pub(crate) fn ready(result: Result<Value, RpcError>) -> Reply {
 const AREAS: &[&[(&str, Handler)]] = &[
     METHODS,
     history::METHODS,
+    model::METHODS,
     oneshot::METHODS,
     profiles::METHODS,
     relay::METHODS,
@@ -280,6 +282,9 @@ pub struct Chat {
     turns: Arc<Semaphore>,
     write_timeout: Duration,
     replay_epoch: Arc<str>,
+    /// Key variables changed since start-up (`model.save_key`, `model.disconnect`,
+    /// `reload.env`).
+    keys: model::Keys,
 }
 
 /// The reply streamed so far and its length in UTF-16 units, the desktop's offsets.
@@ -347,7 +352,6 @@ impl Chat {
             .unwrap_or_else(hermes_config::hermes_home);
         Self {
             config,
-            home,
             sessions: Mutex::default(),
             created: Mutex::default(),
             budget: Arc::default(),
@@ -355,6 +359,8 @@ impl Chat {
             turns: Arc::new(Semaphore::new(MAX_TURNS)),
             write_timeout: WRITE_TIMEOUT,
             replay_epoch: uuid::Uuid::new_v4().simple().to_string().into(),
+            keys: model::Keys::at_start_up(&home),
+            home,
         }
     }
 
@@ -442,7 +448,11 @@ impl Chat {
         let Some(model) = self.model() else {
             return json!({"ok": false, "error": "No model is configured: run `hermes model`."});
         };
-        let route = hermes_provider_runtime::provider_runtime_diagnostic(&self.config, model);
+        let config = match self.turn_config(model) {
+            Ok(config) => config,
+            Err(error) => return json!({"ok": false, "error": error}),
+        };
+        let route = hermes_provider_runtime::provider_runtime_diagnostic(&config, model);
         if route.api_key_present || route.local_no_key_allowed {
             json!({"ok": true, "provider": route.requested_provider, "model": route.model})
         } else {
@@ -991,11 +1001,11 @@ impl Turn {
         session: &Arc<LiveSession>,
         streamed: &Arc<Mutex<Streamed>>,
     ) -> Result<(String, Option<String>), String> {
-        let model = self
-            .chat
+        // The session's own choice (`config.set model`), else the gateway's.
+        let model = session
             .model()
-            .ok_or("no model is configured: run `hermes model`")?
-            .to_string();
+            .or_else(|| self.chat.model().map(str::to_string))
+            .ok_or("no model is configured: run `hermes model`")?;
         let sent_images = !images.is_empty();
         let text = if sent_images {
             with_markers(text, &images)
@@ -1092,7 +1102,9 @@ impl Turn {
         streamed: &Arc<Mutex<Streamed>>,
     ) -> Result<AgentResult, String> {
         let chat = &self.chat;
-        let mut agent_config = hermes_app_runtime::build_agent_config(&chat.config, model);
+        // The gateway's configuration, with a key changed since start-up.
+        let config = chat.turn_config(model)?;
+        let mut agent_config = hermes_app_runtime::build_agent_config(&config, model);
         agent_config.session_id = Some(self.id.clone());
         let home = chat.home.clone();
         let agent_config = tokio::task::spawn_blocking(move || {
@@ -1102,7 +1114,7 @@ impl Turn {
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-        let provider = hermes_provider_runtime::build_provider(&chat.config, model);
+        let provider = hermes_provider_runtime::build_provider(&config, model);
         let agent = AgentLoop::new(agent_config, Arc::new(ToolRegistry::new()), provider);
 
         let delta = DeltaSink {

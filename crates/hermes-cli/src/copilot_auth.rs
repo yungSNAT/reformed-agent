@@ -5,6 +5,7 @@
 //!
 //! After authorization, set `GITHUB_COPILOT_TOKEN` (or add to `$HERMES_HOME/.env`).
 
+use std::borrow::Cow;
 use std::time::Duration;
 
 use hermes_core::AgentError;
@@ -75,10 +76,23 @@ pub async fn start_copilot_device_flow() -> Result<String, AgentError> {
         .build()
         .map_err(|e| AgentError::Io(e.to_string()))?;
 
-    let body = form_body(&[("client_id", &client_id), ("scope", &scope)]);
+    let github_base = Cow::Borrowed("https://github.com");
+    #[cfg(test)]
+    let (http, github_base, client_id, scope) =
+        coverage_gen_copilot_auth::device_fixture_or((http, github_base, client_id, scope));
+    complete_device_flow(&http, &github_base, &client_id, &scope).await
+}
+
+async fn complete_device_flow(
+    http: &reqwest::Client,
+    github_base: &str,
+    client_id: &str,
+    scope: &str,
+) -> Result<String, AgentError> {
+    let body = form_body(&[("client_id", client_id), ("scope", scope)]);
 
     let dcr: DeviceCodeResponse = http
-        .post("https://github.com/login/device/code")
+        .post(format!("{github_base}/login/device/code"))
         .header("Accept", "application/json")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(body)
@@ -128,13 +142,13 @@ pub async fn start_copilot_device_flow() -> Result<String, AgentError> {
         tokio::time::sleep(poll_interval).await;
 
         let poll_body = form_body(&[
-            ("client_id", &client_id),
+            ("client_id", client_id),
             ("device_code", &device_code),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
         ]);
 
         let resp = http
-            .post("https://github.com/login/oauth/access_token")
+            .post(format!("{github_base}/login/oauth/access_token"))
             .header("Accept", "application/json")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(poll_body)

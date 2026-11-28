@@ -11,10 +11,13 @@ use support::isolated_hermes;
 async fn command(sandbox: &Path, args: &[&str], expected_exit: i32) -> String {
     let output = tokio::time::timeout(
         Duration::from_secs(15),
-        isolated_hermes(sandbox).args(args).output(),
+        isolated_hermes(sandbox)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output(),
     )
     .await
-    .expect("local CLI command timed out")
+    .unwrap_or_else(|_| panic!("{args:?}: local CLI command timed out"))
     .unwrap();
     assert_eq!(
         output.status.code(),
@@ -77,6 +80,20 @@ async fn profile_rename_preserves_active_selection_alias_and_exported_content() 
     command(root, &["profile", "export", "--output", "export.yaml"], 0).await;
     assert_eq!(fs::read(root.join("export.yaml")).unwrap(), imported);
 
+    let export_dir = root.join("export-target");
+    fs::create_dir(&export_dir).unwrap();
+    fs::write(export_dir.join("keep.txt"), "Field notes").unwrap();
+    let refused = command(root, &["profile", "export", "--output", "export-target"], 1).await;
+    assert!(
+        refused.contains("copy ") && refused.contains("export-target"),
+        "{refused}"
+    );
+    assert_eq!(fs::read(&survey).unwrap(), imported);
+    assert_eq!(
+        fs::read_to_string(export_dir.join("keep.txt")).unwrap(),
+        "Field notes"
+    );
+
     command(
         root,
         &[
@@ -105,6 +122,15 @@ async fn profile_rename_preserves_active_selection_alias_and_exported_content() 
     let profile: serde_yaml::Value = serde_yaml::from_str(&profile).unwrap();
     assert_eq!(profile["name"].as_str(), Some("notebook"));
     assert_eq!(profile["model"].as_str(), Some("offline:survey"));
+
+    let saved_profile = fs::read(&notebook).unwrap();
+    let saved_aliases = fs::read(&aliases).unwrap();
+    let refused = command(root, &["profile", "delete", "field"], 0).await;
+    assert!(refused.contains("Delete profile 'notebook'"), "{refused}");
+    assert!(refused.contains("Aborted."), "{refused}");
+    assert_eq!(fs::read(&notebook).unwrap(), saved_profile);
+    assert_eq!(fs::read(&aliases).unwrap(), saved_aliases);
+    assert_eq!(fs::read_to_string(&marker).unwrap().trim(), "notebook");
 
     command(root, &["profile", "delete", "field", "--yes"], 0).await;
     assert!(!notebook.exists());
