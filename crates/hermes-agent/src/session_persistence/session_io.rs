@@ -400,9 +400,6 @@ impl SessionPersistence {
             let Some(next) = next else {
                 break;
             };
-            if next == current {
-                break;
-            }
             current = next;
         }
         Ok(current)

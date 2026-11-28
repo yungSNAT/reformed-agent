@@ -1238,15 +1238,8 @@ async fn run_profile(
                     *target = new_name.clone();
                 }
             }
-            if let Some(v) = aliases.remove(&old_requested) {
-                aliases.insert(
-                    new_name.clone(),
-                    if v == old_resolved {
-                        new_name.clone()
-                    } else {
-                        v
-                    },
-                );
+            if let Some(target) = aliases.remove(&old_requested) {
+                aliases.insert(new_name.clone(), target);
             }
             save_profile_aliases(&aliases_path, &aliases)?;
             if read_active_profile_name(&profiles_dir).as_deref() == Some(old_resolved.as_str()) {

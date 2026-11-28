@@ -3,6 +3,53 @@ use hermes_core::AgentError;
 use rusqlite::Connection;
 
 #[test]
+fn compression_lookup_terminates_on_cycles_without_changing_the_starting_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let persistence = SessionPersistence::new(directory.path());
+    let links = [
+        ("cedar", "pine"),
+        ("elm", "cedar"),
+        ("pine", "elm"),
+        ("self", "self"),
+    ];
+    for (session, _) in links {
+        persistence
+            .persist_session(session, &[], None, None, None, None)
+            .unwrap();
+    }
+    let database = Connection::open(persistence.db_path()).unwrap();
+    for (session, parent) in links {
+        database
+            .execute(
+                "UPDATE sessions SET parent_session_id = ?2, end_reason = 'compression' WHERE id = ?1",
+                [session, parent],
+            )
+            .unwrap();
+    }
+
+    for (session, _) in links {
+        assert_eq!(
+            persistence.resolve_resume_session_id(session).unwrap(),
+            session
+        );
+    }
+}
+
+#[test]
+fn compression_lookup_reports_unreadable_database_content() {
+    let directory = tempfile::tempdir().unwrap();
+    let persistence = SessionPersistence::new(directory.path());
+    let contents = b"Legacy session export with no SQLite header";
+    std::fs::write(persistence.db_path(), contents).unwrap();
+
+    assert!(matches!(
+        persistence.resolve_resume_session_id("session"),
+        Err(AgentError::Io(message)) if message.starts_with("Failed to prepare compression-tip query:")
+    ));
+    assert_eq!(std::fs::read(persistence.db_path()).unwrap(), contents);
+}
+
+#[test]
 fn absent_session_database_is_not_created_by_metadata_queries_or_updates() {
     let directory = tempfile::tempdir().unwrap();
     let persistence = SessionPersistence::new(directory.path());

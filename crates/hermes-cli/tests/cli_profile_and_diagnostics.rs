@@ -181,6 +181,29 @@ async fn profile_rename_preserves_active_selection_alias_and_exported_content() 
 }
 
 #[tokio::test]
+async fn renaming_an_aliased_profile_preserves_unreadable_yaml() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let profiles = root.join("hermes").join("profiles");
+    fs::create_dir_all(&profiles).unwrap();
+    let old_profile = profiles.join("field.yml");
+    let original = b"name: [";
+    fs::write(&old_profile, original).unwrap();
+    let aliases = profiles.join("aliases.json");
+    fs::write(&aliases, br#"{"legacy":"field","other":"spare"}"#).unwrap();
+
+    command(root, &["profile", "rename", "legacy", "notebook"], 0).await;
+
+    assert!(!old_profile.exists());
+    assert_eq!(fs::read(profiles.join("notebook.yaml")).unwrap(), original);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(aliases).unwrap()).unwrap(),
+        json!({"notebook": "notebook", "other": "spare"})
+    );
+    assert!(!profiles.join(".active_profile").exists());
+}
+
+#[tokio::test]
 async fn diagnostics_list_and_remove_local_reports_and_read_recent_logs() {
     let sandbox = tempfile::tempdir().unwrap();
     let root = sandbox.path();
