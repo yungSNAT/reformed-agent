@@ -683,7 +683,7 @@ async fn test_foreground_collection_preserves_high_volume_line_output() {
 #[tokio::test]
 async fn test_foreground_collection_replaces_invalid_utf8() {
     let backend = LocalBackend::new(10, 1_048_576);
-    let command = "python3 -c 'import sys; sys.stdout.buffer.write(b\"before \"); sys.stdout.buffer.write(b\"\\xff\\xfe\"); sys.stdout.buffer.write(b\" after\\n\")'";
+    let command = r"printf 'before \377\376 after\n'";
     let output = backend
         .execute_command(command, Some(5), None, false, false)
         .await
