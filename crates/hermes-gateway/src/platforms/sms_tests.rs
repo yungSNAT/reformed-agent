@@ -33,6 +33,25 @@ fn fixture_adapter(server: &MockServer) -> SmsAdapter {
 }
 
 #[tokio::test]
+async fn sms_adapter_tracks_running_state_and_ignores_edits() {
+    let server = MockServer::start().await;
+    let adapter = fixture_adapter(&server);
+    assert_eq!(adapter.platform_name(), "sms");
+    assert_eq!(adapter.config().from_number, FROM);
+    assert!(!adapter.is_running());
+
+    adapter.start().await.unwrap();
+    assert!(adapter.is_running());
+    adapter
+        .edit_message(TO, "message-1", "Revised")
+        .await
+        .unwrap();
+    adapter.stop().await.unwrap();
+    assert!(!adapter.is_running());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn sms_and_mms_submit_the_expected_fields_and_local_attachment_label() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
