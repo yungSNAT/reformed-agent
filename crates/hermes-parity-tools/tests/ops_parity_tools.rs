@@ -925,6 +925,10 @@ fn self_evolution_loop_combines_gate_reports_and_honours_skip_flags() {
     assert_eq!(recommendations.len(), 2);
     assert_eq!(recommendations[0]["id"], "PARITY_DRIFT");
     assert_eq!(recommendations[1]["id"], "ELITE_GATE_FAIL");
+    assert_eq!(
+        recommendations[1]["command"],
+        "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --json"
+    );
     assert!(recommendations[0]["reason"]
         .as_str()
         .unwrap()
@@ -956,6 +960,59 @@ fn self_evolution_loop_combines_gate_reports_and_honours_skip_flags() {
     assert_eq!(saved["sections"], serde_json::json!({}));
     assert_eq!(saved["summary"]["intelligence_index"], 100.0);
     assert_eq!(saved["recommendations"][0]["id"], "PROMOTE_BASELINE");
+}
+
+#[test]
+fn self_evolution_loop_default_elite_cmd_runs_parity_tools() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let home = root.join("home");
+    let mock_bin = root.join("bin");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&mock_bin).unwrap();
+    let args_log = root.join("cargo-args.txt");
+    let profile = format!("export PATH='{}':\"$PATH\"\n", mock_bin.display());
+    fs::write(home.join(".bash_profile"), &profile).unwrap();
+    fs::write(home.join(".profile"), &profile).unwrap();
+    fs::write(
+        root.join("elite.json"),
+        r#"{"ok":true,"summary":{"passed_sections":8,"total_sections":8}}"#,
+    )
+    .unwrap();
+    write_executable(
+        &mock_bin.join("cargo"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '[elite-sync-gate] Report: elite.json\\n'\n",
+            args_log.display()
+        ),
+    );
+
+    let out = Command::new(bin())
+        .args([
+            "run-self-evolution-loop",
+            "--skip-golden",
+            "--skip-eval",
+            "--report-path",
+            "loop.json",
+            "--json",
+        ])
+        .current_dir(root)
+        .env("HOME", &home)
+        .env("PATH", path_with(&mock_bin))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        fs::read_to_string(&args_log).unwrap().trim(),
+        "run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --json"
+    );
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["ok"], true);
+    assert_eq!(
+        report["sections"]["elite_sync"]["command"],
+        "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --json"
+    );
+    assert_eq!(report["sections"]["elite_sync"]["report_ok"], true);
 }
 
 #[test]

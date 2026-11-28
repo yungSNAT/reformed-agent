@@ -26,7 +26,9 @@ ENV_FILE="${HOME}/.hermes-agent-ultra/upstream-webhook-sync.env"
 LOG_DIR="${HOME}/.hermes-agent-ultra/logs"
 LOAD_SERVICES="1"
 DEFAULT_HOSTNAME="$(hostname -s 2>/dev/null || hostname)"
-DEFAULT_ELITE_CMD="python3 scripts/run-elite-sync-gate.py"
+DEFAULT_ELITE_CMD="cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate"
+LEGACY_ELITE_CMD="python3 scripts/run-elite-sync-gate.py"
+LEGACY_ELITE_CMD_QUOTED="$(printf '%q' "${LEGACY_ELITE_CMD}")"
 AUTO_GENERATE_SECRET="${UPSTREAM_SYNC_AUTO_GENERATE_SECRET:-1}"
 
 ensure_env_key() {
@@ -50,8 +52,8 @@ replace_env_value() {
   local value="$4"
   local tmp
   tmp="$(mktemp)"
-  WEBHOOK_SETTING_VALUE="$(printf '%q' "${value}")" awk -v k="${key}" -v old="${key}=${previous}" '
-    $0 == old { print k "=" ENVIRON["WEBHOOK_SETTING_VALUE"]; next }
+  WEBHOOK_OLD_LINE="${key}=${previous}" WEBHOOK_SETTING_VALUE="$(printf '%q' "${value}")" awk -v k="${key}" '
+    $0 == ENVIRON["WEBHOOK_OLD_LINE"] { print k "=" ENVIRON["WEBHOOK_SETTING_VALUE"]; next }
     { print }
   ' "${file}" > "${tmp}"
   mv "${tmp}" "${file}"
@@ -210,9 +212,12 @@ ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH" "${REPO_ROOT}/.s
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_GATE" "0"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "${DEFAULT_ELITE_CMD}"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_ROLLBACK_CMD" ""
-if grep -Fxq "UPSTREAM_SYNC_ELITE_CMD=${DEFAULT_ELITE_CMD}" "${ENV_FILE}"; then
-  replace_env_value "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "${DEFAULT_ELITE_CMD}" "${DEFAULT_ELITE_CMD}"
-fi
+for legacy in "${LEGACY_ELITE_CMD}" "${LEGACY_ELITE_CMD_QUOTED}" \
+  "'${LEGACY_ELITE_CMD}'" "\"${LEGACY_ELITE_CMD}\"" "${DEFAULT_ELITE_CMD}"; do
+  if grep -Fxq "UPSTREAM_SYNC_ELITE_CMD=${legacy}" "${ENV_FILE}"; then
+    replace_env_value "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "${legacy}" "${DEFAULT_ELITE_CMD}"
+  fi
+done
 if grep -qE '^UPSTREAM_SYNC_EXPECTED_REPO=Lumio-Research/hermes-agent-rs$' "${ENV_FILE}"; then
   replace_env_value "${ENV_FILE}" "UPSTREAM_SYNC_EXPECTED_REPO" \
     "Lumio-Research/hermes-agent-rs" "NousResearch/hermes-agent"
