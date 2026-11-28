@@ -388,7 +388,7 @@ fn each_refusal_answers_with_its_status() {
 fn io_errors_map_to_refusals() {
     for (code, want) in [
         (Errno::NOENT.raw_os_error(), Refusal::NotFound),
-        (Errno::ACCES.raw_os_error(), Refusal::Denied),
+        (Errno::ACCESS.raw_os_error(), Refusal::Denied),
         (Errno::NOTDIR.raw_os_error(), Refusal::NotADirectory),
         (Errno::LOOP.raw_os_error(), Refusal::Outside),
         (Errno::ISDIR.raw_os_error(), Refusal::NotFound),
