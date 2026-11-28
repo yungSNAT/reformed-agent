@@ -339,7 +339,7 @@ async fn registry_and_github_calls_report_transport_errors_without_network() {
         .unwrap();
 
     assert_config_error(
-        search_multi_registry(&client, "calendar", 3).await,
+        search_multi_registry(&client, HERMES_SKILLS_INDEX_URL, "calendar", 3).await,
         "Skills index request failed:",
     );
     assert_config_error(

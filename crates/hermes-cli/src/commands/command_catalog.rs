@@ -971,10 +971,11 @@ fn resolved_source_from_index(entry: &HermesSkillsIndexEntry) -> Option<Registry
 
 async fn search_multi_registry(
     client: &reqwest::Client,
+    index_url: &str,
     query: &str,
     limit: usize,
 ) -> Result<Vec<RegistrySkillRecord>, AgentError> {
-    search_registry_index(client.get(HERMES_SKILLS_INDEX_URL), query, limit).await
+    search_registry_index(client.get(index_url), query, limit).await
 }
 
 async fn search_registry_index(
