@@ -1253,28 +1253,34 @@
             }
         }
 
-        let mut config = AgentConfig {
-            skip_memory: true,
-            skip_context_files: true,
-            ..AgentConfig::default()
-        };
-        let _home = isolate_route_learning_home(&mut config);
-        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), Arc::new(DummyProvider));
-        let interruption = Arc::new(InterruptBeforeModel(agent.interrupt.clone()));
-        let mut plugins = PluginManager::new();
-        plugins.register(interruption.clone());
-        plugins.initialize_all().await.unwrap();
-        let agent = agent.with_plugins(Arc::new(Mutex::new(plugins)));
-        let user = Message::user("Summarise the field notes");
-        let result = agent.run(vec![user.clone()], None).await.unwrap();
-        interruption.shutdown().await.unwrap();
+        for on_chunk in [None, Some(Box::new(|_| {}) as Box<dyn Fn(StreamChunk) + Send + Sync>)] {
+            let mut config = AgentConfig {
+                skip_memory: true,
+                skip_context_files: true,
+                ..AgentConfig::default()
+            };
+            let _home = isolate_route_learning_home(&mut config);
+            let agent =
+                AgentLoop::new(config, Arc::new(ToolRegistry::new()), Arc::new(DummyProvider));
+            let interruption = Arc::new(InterruptBeforeModel(agent.interrupt.clone()));
+            let mut plugins = PluginManager::new();
+            plugins.register(interruption.clone());
+            plugins.initialize_all().await.unwrap();
+            let agent = agent.with_plugins(Arc::new(Mutex::new(plugins)));
+            let user = Message::user("Summarise the field notes");
+            let result = agent
+                .run_stream(vec![user.clone()], None, on_chunk)
+                .await
+                .unwrap();
+            interruption.shutdown().await.unwrap();
 
-        assert!(result.interrupted);
-        assert!(!result.finished_naturally);
-        assert!(result.messages.contains(&user));
-        assert!(!result.messages.iter().any(|message| {
-            matches!(message.role, MessageRole::Assistant | MessageRole::Tool)
-        }));
+            assert!(result.interrupted);
+            assert!(!result.finished_naturally);
+            assert!(result.messages.contains(&user));
+            assert!(!result.messages.iter().any(|message| {
+                matches!(message.role, MessageRole::Assistant | MessageRole::Tool)
+            }));
+        }
     }
 
     #[test]
