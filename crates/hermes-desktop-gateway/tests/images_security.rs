@@ -102,8 +102,15 @@ async fn image_attach_refuses_reserved_device_names() {
     }
     paths.push(r"C:\temp\NUL\shot.png".to_string());
     expect_refused(&mut client, &session, &paths).await;
+}
 
-    // A name that only starts like one is served.
+/// A name that only starts like a Windows reserved device name is served.
+#[tokio::test]
+async fn image_attach_allows_names_with_reserved_prefixes() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
     for (n, name) in ["console.png", "com10.png", "lpt.png"].iter().enumerate() {
         let path = folder.path().join(name);
         std::fs::write(&path, png(name)).unwrap();
@@ -128,7 +135,10 @@ async fn image_attach_refuses_drive_relative_paths() {
         r"C:..\shot.png".to_string(),
         r"c:..\shot.png".to_string(),
         "C:".to_string(),
-        format!("{} dir/NUL/shot.png", folder.path().join("missing").display()),
+        format!(
+            "{} dir/NUL/shot.png",
+            folder.path().join("missing").display()
+        ),
     ];
     expect_refused(&mut client, &session, &paths).await;
     assert!(staged_images(started.home.path()).is_empty());

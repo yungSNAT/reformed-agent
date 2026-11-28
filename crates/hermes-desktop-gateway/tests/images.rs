@@ -51,11 +51,24 @@ async fn image_attach_refuses_bad_requests() {
             .await;
         assert_eq!(reply["error"]["code"], *code, "{params}: {reply}");
     }
+    assert!(staged_images(started.home.path()).is_empty());
+}
+
+/// Refusal error messages name the missing or unsupported path.
+#[tokio::test]
+async fn image_attach_refusal_messages_name_the_problem() {
+    let started = start().await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let folder = tempfile::tempdir().unwrap();
+    let notes = folder.path().join("notes.txt");
+    std::fs::write(&notes, "plain text").unwrap();
+    let missing = folder.path().join("missing.png");
     let reply = client
         .call(
             30,
             "image.attach",
-            json!({"session_id": session, "path": text(&missing)}),
+            json!({"session_id": session, "path": missing.display().to_string()}),
         )
         .await;
     assert_eq!(
@@ -67,14 +80,13 @@ async fn image_attach_refuses_bad_requests() {
         .call(
             31,
             "image.attach",
-            json!({"session_id": session, "path": text(&notes)}),
+            json!({"session_id": session, "path": notes.display().to_string()}),
         )
         .await;
     assert_eq!(
         reply["error"]["message"], "unsupported image: notes.txt",
         "{reply}"
     );
-    assert!(staged_images(started.home.path()).is_empty());
 }
 
 /// A path the client names is copied under the gateway's home, and the next prompt sends the
@@ -135,35 +147,20 @@ async fn dropped_path_spellings_resolve() {
         (format!("{} tell me", source.display()), "tell me"),
     ];
     for (n, (raw, remainder)) in spellings.iter().enumerate() {
-        let reply = client
-            .call(
-                10 + n as u64,
-                "image.attach",
-                json!({"session_id": session, "path": raw}),
-            )
-            .await;
+        let params = json!({"session_id": session, "path": raw});
+        let reply = client.call(10 + n as u64, "image.attach", params).await;
         assert_eq!(reply["result"]["name"], "my shot.png", "{raw}: {reply}");
         assert_eq!(reply["result"]["remainder"], *remainder, "{raw}");
     }
-    let reply = client
-        .call(
-            20,
-            "image.attach",
-            json!({"session_id": session, "path": "my shot.png"}),
-        )
-        .await;
+    let rel = json!({"session_id": session, "path": "my shot.png"});
+    let reply = client.call(20, "image.attach", rel).await;
     assert_eq!(
         reply["error"]["code"], 4016,
         "relative to the gateway's folder: {reply}"
     );
     // With no words after the path, the text is upstream's attachment line.
-    let reply = client
-        .call(
-            21,
-            "image.attach",
-            json!({"session_id": session, "path": source.display().to_string()}),
-        )
-        .await;
+    let plain = json!({"session_id": session, "path": source.display().to_string()});
+    let reply = client.call(21, "image.attach", plain).await;
     assert_eq!(
         reply["result"]["text"],
         "[User attached image: my shot.png]"
@@ -185,13 +182,23 @@ async fn dropped_path_ignores_reserved_names_in_trailing_text() {
     std::fs::write(&spaced, png("spaced")).unwrap();
 
     let cases = [
-        (format!("\"{}\" compare /NUL/foo", shot.display()), "compare /NUL/foo"),
-        (format!("{} check C:\\NUL\\a", shot.display()), "check C:\\NUL\\a"),
+        (
+            format!("\"{}\" compare /NUL/foo", shot.display()),
+            "compare /NUL/foo",
+        ),
+        (
+            format!("{} check C:\\NUL\\a", shot.display()),
+            "check C:\\NUL\\a",
+        ),
         (format!("{} /NUL/foo bar", spaced.display()), "/NUL/foo bar"),
     ];
     for (n, (raw, remainder)) in cases.iter().enumerate() {
         let reply = client
-            .call(10 + n as u64, "image.attach", json!({"session_id": session, "path": raw}))
+            .call(
+                10 + n as u64,
+                "image.attach",
+                json!({"session_id": session, "path": raw}),
+            )
             .await;
         assert_eq!(reply["result"]["attached"], true, "{raw}: {reply}");
         assert_eq!(reply["result"]["remainder"], *remainder, "{raw}: {reply}");

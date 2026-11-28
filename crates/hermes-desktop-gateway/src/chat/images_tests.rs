@@ -64,18 +64,24 @@ fn path_spellings() {
             .map(|f| f.path),
         Some(cwd.join("./sub/../shot.png"))
     );
-    #[cfg(unix)]
-    {
-        std::fs::write(cwd.join("sub/real.png"), b"x").unwrap();
-        std::os::unix::fs::symlink("sub/real.png", cwd.join("rel.png")).unwrap();
-        assert_eq!(
-            resolve("rel.png", cwd).ok().flatten().map(|f| f.path),
-            Some(cwd.join("rel.png"))
-        );
-        std::os::unix::fs::symlink(cwd.join("loop_b.png"), cwd.join("loop_a.png")).unwrap();
-        std::os::unix::fs::symlink(cwd.join("loop_a.png"), cwd.join("loop_b.png")).unwrap();
-        assert!(matches!(resolve("loop_a.png", cwd), Ok(None)));
-    }
+}
+
+/// Relative symlinks resolve; symlink loops return `Ok(None)` without hanging.
+#[cfg(unix)]
+#[test]
+fn relative_and_loop_symlinks() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path();
+    std::fs::create_dir(cwd.join("sub")).unwrap();
+    std::fs::write(cwd.join("sub/real.png"), b"x").unwrap();
+    std::os::unix::fs::symlink("sub/real.png", cwd.join("rel.png")).unwrap();
+    assert_eq!(
+        resolve("rel.png", cwd).ok().flatten().map(|f| f.path),
+        Some(cwd.join("rel.png"))
+    );
+    std::os::unix::fs::symlink(cwd.join("loop_b.png"), cwd.join("loop_a.png")).unwrap();
+    std::os::unix::fs::symlink(cwd.join("loop_a.png"), cwd.join("loop_b.png")).unwrap();
+    assert!(matches!(resolve("loop_a.png", cwd), Ok(None)));
 }
 
 /// `~/` names the home folder.

@@ -84,29 +84,54 @@ fn session_and_path(params: &Map<String, Value>) -> Result<(&str, &str), RpcErro
     Ok((id, path))
 }
 
+fn session_full() -> RpcError {
+    (
+        IMAGE_TOO_LARGE,
+        format!("a session holds at most {MAX_STAGED_IMAGES} images ({MAX_STAGED_BYTES} bytes)"),
+    )
+}
+
+fn resolve_for_attach(raw: &str) -> Result<(Found, String), RpcError> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| (IMAGE_WRITE_FAILED, format!("no working folder: {e}")))?;
+    match image_path(raw, &cwd) {
+        Ok(Some(found)) => Ok(found),
+        Ok(None) => {
+            let (token, _) = split_path_input(raw);
+            Err((IMAGE_UNSUPPORTED, format!("image not found: {token}")))
+        }
+        Err(Refused(token)) => Err((
+            IMAGE_UNSUPPORTED,
+            format!(
+                "image path refused: network shares, device paths, drive-relative paths and \
+                 reserved device names are not read: {token}"
+            ),
+        )),
+    }
+}
+
+fn attach_reply(name: &str, path: &Path, bytes: usize, remainder: &str, count: usize) -> Value {
+    json!({
+        "attached": true,
+        "name": name,
+        "path": path.display().to_string(),
+        "bytes": bytes,
+        "remainder": remainder,
+        "text": if remainder.is_empty() {
+            format!("[User attached image: {name}]")
+        } else {
+            remainder.to_string()
+        },
+        "count": count,
+    })
+}
+
 fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcError> {
     let (id, raw) = session_and_path(params)?;
     let Some(session) = chat.lock_sessions().get(id).cloned() else {
         return Err((SESSION_NOT_FOUND, "session not found".into()));
     };
-    let cwd = std::env::current_dir()
-        .map_err(|e| (IMAGE_WRITE_FAILED, format!("no working folder: {e}")))?;
-    let (found, remainder) = match image_path(raw, &cwd) {
-        Ok(Some(found)) => found,
-        Ok(None) => {
-            let (token, _) = split_path_input(raw);
-            return Err((IMAGE_UNSUPPORTED, format!("image not found: {token}")));
-        }
-        Err(Refused(token)) => {
-            return Err((
-                IMAGE_UNSUPPORTED,
-                format!(
-                    "image path refused: network shares, device paths and reserved device \
-                     names are not read: {token}"
-                ),
-            ));
-        }
-    };
+    let (found, remainder) = resolve_for_attach(raw)?;
     let name = found
         .path
         .file_name()
@@ -120,51 +145,28 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     if !ext.is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.as_str())) {
         return Err(unsupported());
     }
-    let too_large = || {
-        (
-            IMAGE_TOO_LARGE,
-            format!("image larger than {MAX_IMAGE_BYTES} bytes"),
-        )
-    };
-    let full = || {
-        (
-            IMAGE_TOO_LARGE,
-            format!(
-                "a session holds at most {MAX_STAGED_IMAGES} images ({MAX_STAGED_BYTES} bytes)"
-            ),
-        )
-    };
     if !session.has_room_for_image(0) {
-        return Err(full());
+        return Err(session_full());
     }
     let data = read_image(&found.target)
         .map_err(|e| (IMAGE_WRITE_FAILED, format!("cannot read {name}: {e}")))?;
     let staged = stage_image_bytes(&chat.home.join("images"), &data).map_err(|e| match e {
         ImageError::Unsupported => unsupported(),
-        ImageError::TooLarge => too_large(),
+        ImageError::TooLarge => (
+            IMAGE_TOO_LARGE,
+            format!("image larger than {MAX_IMAGE_BYTES} bytes"),
+        ),
         ImageError::Invalid(message) => (IMAGE_INVALID, message),
         ImageError::Write(message) => (IMAGE_WRITE_FAILED, message),
     })?;
-    let mut reply = json!({
-        "attached": true,
-        "name": name,
-        "path": staged.path.display().to_string(),
-        "bytes": staged.bytes,
-        "remainder": remainder,
-        "text": if remainder.is_empty() {
-            format!("[User attached image: {name}]")
-        } else {
-            remainder.clone()
-        },
-    });
+    let (path, bytes) = (staged.path.clone(), staged.bytes);
     match session.stage_image(staged) {
-        Ok(count) => reply["count"] = count.into(),
+        Ok(count) => Ok(attach_reply(&name, &path, bytes, &remainder, count)),
         Err(refused) => {
             let _ = std::fs::remove_file(&refused.path);
-            return Err(full());
+            Err(session_full())
         }
     }
-    Ok(reply)
 }
 
 /// The bytes of the regular file at `path`, read through one handle and at most one byte past
@@ -249,42 +251,55 @@ fn image_path(raw: &str, cwd: &Path) -> Result<Option<(Found, String)>, Refused>
     Ok(resolve(&token, cwd)?.map(|found| (found, remainder)))
 }
 
-/// Upstream's `_detect_file_drop`: a path at the start of `raw` (optionally quoted; `/`, `~`,
-/// `./`, `../`, a drive prefix, or unquoted `file://`), with the words after it.
-fn dropped(raw: &str, cwd: &Path) -> Result<Option<(Found, String)>, Refused> {
-    let text = raw.trim();
-    let quoted = text.starts_with(['"', '\'']);
+fn starts_like_path(text: &str, quoted: bool) -> bool {
     let unquoted = if quoted { &text[1..] } else { text };
     let bytes = unquoted.as_bytes();
     let drive = bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
         && matches!(bytes[2], b'\\' | b'/');
-    let like_path = ["/", "~", "./", "../"]
+    ["/", "~", "./", "../"]
         .iter()
         .any(|p| unquoted.starts_with(p))
         || (!quoted && is_file_url(unquoted))
-        || drive;
-    if !like_path {
+        || drive
+}
+
+/// Upstream's `_detect_file_drop`: a path at the start of `raw` (optionally quoted; `/`, `~`,
+/// `./`, `../`, a drive prefix, or unquoted `file://`), with the words after it.
+fn dropped(raw: &str, cwd: &Path) -> Result<Option<(Found, String)>, Refused> {
+    let text = raw.trim();
+    let quoted = text.starts_with(['"', '\'']);
+    if !starts_like_path(text, quoted) {
         return Ok(None);
-    }
-    if let Some(found) = resolve(text, cwd)? {
-        return Ok(Some((found, String::new())));
     }
     let (token, remainder) = split_path_input(text);
-    if let Some(found) = resolve(&token, cwd)? {
-        return Ok(Some((found, remainder)));
-    }
     if quoted {
-        return Ok(None);
+        return Ok(resolve(&token, cwd)?.map(|found| (found, remainder)));
     }
-    // An unquoted path with spaces: the longest prefix ending before a space that names a file.
-    for (pos, _) in text.match_indices(' ').rev() {
-        if let Some(found) = resolve(text[..pos].trim_end(), cwd)? {
-            return Ok(Some((found, text[pos + 1..].trim().to_string())));
+    let mut refused = None;
+    let candidates = [(text, ""), (token.as_str(), remainder.as_str())]
+        .into_iter()
+        .chain(
+            text.match_indices(' ')
+                .rev()
+                .map(|(pos, _)| (text[..pos].trim_end(), text[pos + 1..].trim())),
+        );
+    for (candidate, rest) in candidates {
+        match resolve(candidate, cwd) {
+            Ok(Some(found)) => return Ok(Some((found, rest.to_string()))),
+            Ok(None) => {}
+            Err(err) => {
+                if refused.is_none() {
+                    refused = Some(err);
+                }
+            }
         }
     }
-    Ok(None)
+    match refused {
+        Some(err) => Err(err),
+        None => Ok(None),
+    }
 }
 
 /// Upstream's `_split_path_input`: a leading path token, quoted or with `\ ` escapes, and the
@@ -326,19 +341,34 @@ fn is_file_url(text: &str) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
 }
 
+fn is_drive_relative(bytes: &[u8]) -> bool {
+    let [b'a'..=b'z' | b'A'..=b'Z', b':', rest @ ..] = bytes else {
+        return false;
+    };
+    !matches!(rest.first(), Some(b'/' | b'\\'))
+}
+
 /// Refuses 2 leading separators in any mix (`\\host\share`, `\\?\`, `\\.\`, `//host`, `/\host`,
-/// `\/host`), the `\??\` prefix, or any component naming a Windows reserved device name.
+/// `\/host`), the `\??\` prefix, Windows drive-relative paths (`C:foo`, `C:..\bar`, `C:`), or any
+/// component naming a Windows reserved device name.
 fn check_safe_path(path: &Path, raw: &str) -> Result<(), Refused> {
     let shown = path.as_os_str().to_string_lossy();
     let mut lead = shown.chars();
     let separator = |c: Option<char>| matches!(c, Some('/' | '\\'));
     if (separator(lead.next()) && separator(lead.next()))
         || shown.starts_with(r"\??\")
+        || is_drive_relative(shown.as_bytes())
         || shown.split(['/', '\\']).any(reserved_name)
     {
         return Err(Refused(raw.trim().to_string()));
     }
     Ok(())
+}
+
+fn has_dir_suffix(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    let trimmed = bytes.strip_suffix(b".").unwrap_or(bytes);
+    trimmed.ends_with(b"/") || trimmed.ends_with(b"\\")
 }
 
 /// Walks `path` component by component using `symlink_metadata`, validating every `read_link`
@@ -349,9 +379,7 @@ fn resolve_target(path: &Path, raw: &str) -> Result<Option<PathBuf>, Refused> {
     let mut work = path.to_path_buf();
     let mut hops = 0usize;
     'walk: loop {
-        let bytes = work.as_os_str().as_encoded_bytes();
-        let trimmed = bytes.strip_suffix(b".").unwrap_or(bytes);
-        if trimmed.ends_with(b"/") || trimmed.ends_with(b"\\") {
+        if has_dir_suffix(&work) {
             return Ok(None);
         }
         let mut cur = PathBuf::new();
