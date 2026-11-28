@@ -257,6 +257,29 @@ fn effective_config_keeps_the_managed_overlay_when_user_yaml_is_unusable() {
 }
 
 #[test]
+fn effective_config_keeps_user_settings_when_the_managed_overlay_is_unusable() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_managed_scope_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let managed = tempfile::tempdir().unwrap();
+    let user_config = home.path().join("config.yaml");
+    let managed_config = managed.path().join("config.yaml");
+    std::fs::write(&user_config, "max_turns: 13\n").unwrap();
+    set_test_env("HERMES_MANAGED_DIR", managed.path());
+
+    let results = [" \n", "- weekday\n", "? [weekday, weekend]\n: 3\n"].map(|content| {
+        std::fs::write(&managed_config, content).unwrap();
+        load_effective_config_yaml_value(&user_config)
+    });
+    clear_managed_scope_test_env();
+
+    assert_eq!(
+        results,
+        [(); 3].map(|_| Some(serde_json::json!({"max_turns": 13})))
+    );
+}
+
+#[test]
 fn load_effective_config_yaml_value_applies_managed_raw_overlay() {
     use tempfile::tempdir;
 
