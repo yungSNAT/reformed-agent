@@ -368,6 +368,17 @@ async fn native_outgoing_dispatch_sends_keys_and_room_requests() {
             OneTimeKeyAlgorithm::SignedCurve25519,
         )]),
     )]);
+    let signature_payload = json!({
+        "@fixture:test": {
+            "FIXTUREDEVICE": {
+                "user_id": "@fixture:test",
+                "device_id": "FIXTUREDEVICE",
+                "algorithms": ["m.olm.v1.curve25519-aes-sha2"],
+                "keys": {"ed25519:FIXTUREDEVICE": "fixturePublicKey"},
+                "signatures": {"@fixture:test": {"ed25519:FIXTUREDEVICE": "fixtureSignature"}}
+            }
+        }
+    });
     let transaction = ruma::TransactionId::new();
     let content = RoomMessageEventContent::text_plain("Working notes");
     let requests = [
@@ -381,10 +392,12 @@ async fn native_outgoing_dispatch_sends_keys_and_room_requests() {
             json!({"one_time_keys": {}}),
         ),
         (
-            AnyOutgoingRequest::from(upload_signatures::v3::Request::new(BTreeMap::new())),
+            AnyOutgoingRequest::from(upload_signatures::v3::Request::new(
+                serde_json::from_value(signature_payload.clone()).unwrap(),
+            )),
             Mock::given(method("POST"))
                 .and(path("/_matrix/client/v3/keys/signatures/upload"))
-                .and(body_json(json!({}))),
+                .and(body_json(signature_payload)),
             json!({"failures": {}}),
         ),
         (
