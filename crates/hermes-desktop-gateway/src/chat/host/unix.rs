@@ -13,8 +13,6 @@ use super::{text, RpcError, NOT_AVAILABLE};
 use crate::chat::{Chat, Request};
 
 mod complete;
-#[cfg(test)]
-mod edge_tests;
 mod supervise;
 #[cfg(test)]
 mod tests;

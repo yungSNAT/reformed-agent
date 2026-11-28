@@ -9,7 +9,9 @@ use super::complete::items;
 use super::supervise::{kept_env, supervise, Ended, Slot, RUNNING};
 use super::{allowed, run_cli};
 use crate::chat::Chat;
-pub(super) fn texts(items: &[Value]) -> Vec<&str> {
+
+mod edge;
+fn texts(items: &[Value]) -> Vec<&str> {
     items
         .iter()
         .map(|item| item["text"].as_str().unwrap())
@@ -246,7 +248,7 @@ fn held(conn: u64) -> usize {
 }
 
 /// A slot for `conn`, waiting while other tests hold the process's 4.
-pub(super) async fn slot(conn: u64) -> Slot {
+async fn slot(conn: u64) -> Slot {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if let Ok(slot) = Slot::take(conn) {

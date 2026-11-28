@@ -6,14 +6,14 @@ use hermes_config::TerminalBackendType;
 use serde_json::{json, Map, Value};
 use tokio::sync::watch;
 
-use super::super::{text, RpcError, NOT_AVAILABLE};
-use super::complete::{complete_path, items};
-use super::supervise::{kill_run, new_session, read_capped, wait_unreaped, Ended, Slot};
-use super::tests::{slot, texts};
-use super::{
+use super::super::super::{text, RpcError, NOT_AVAILABLE};
+use super::super::complete::{complete_path, items};
+use super::super::supervise::{kill_run, new_session, read_capped, wait_unreaped, Ended, Slot};
+use super::super::{
     cli_exec_beside, run_cli, shell_exec, shell_reply, BAD_ARGV, BLOCKED, BUSY, CLI_FAILED,
     CLI_TIMED_OUT, NOT_STARTED, TIMED_OUT,
 };
+use super::{slot, texts};
 use crate::chat::{Chat, Request};
 #[test]
 fn an_absent_or_null_text_is_empty_and_any_other_kind_is_refused() {
