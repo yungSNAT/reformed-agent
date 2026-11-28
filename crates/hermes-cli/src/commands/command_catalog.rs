@@ -882,11 +882,9 @@ fn sort_registry_skill_records(records: &mut [RegistrySkillRecord]) {
 }
 
 async fn fetch_hermes_skills_index(
-    client: &reqwest::Client,
-    index_url: &str,
+    request: reqwest::RequestBuilder,
 ) -> Result<Vec<HermesSkillsIndexEntry>, AgentError> {
-    let resp = client
-        .get(index_url)
+    let resp = request
         .header("Accept", "application/json")
         .header("User-Agent", "hermes-agent-ultra")
         .timeout(std::time::Duration::from_secs(25))
@@ -973,11 +971,18 @@ fn resolved_source_from_index(entry: &HermesSkillsIndexEntry) -> Option<Registry
 
 async fn search_multi_registry(
     client: &reqwest::Client,
-    index_url: &str,
     query: &str,
     limit: usize,
 ) -> Result<Vec<RegistrySkillRecord>, AgentError> {
-    let entries = fetch_hermes_skills_index(client, index_url).await?;
+    search_registry_index(client.get(HERMES_SKILLS_INDEX_URL), query, limit).await
+}
+
+async fn search_registry_index(
+    request: reqwest::RequestBuilder,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<RegistrySkillRecord>, AgentError> {
+    let entries = fetch_hermes_skills_index(request).await?;
     let mut matches: Vec<RegistrySkillRecord> = Vec::new();
     for entry in entries {
         let score = score_registry_match(&entry, query);
@@ -1005,11 +1010,18 @@ async fn search_multi_registry(
 
 async fn resolve_skill_via_registry_index(
     client: &reqwest::Client,
-    index_url: &str,
     requested: &str,
     source_hint: Option<&str>,
 ) -> Result<RegistrySkillRecord, AgentError> {
-    let entries = fetch_hermes_skills_index(client, index_url).await?;
+    resolve_registry_index(client.get(HERMES_SKILLS_INDEX_URL), requested, source_hint).await
+}
+
+async fn resolve_registry_index(
+    request: reqwest::RequestBuilder,
+    requested: &str,
+    source_hint: Option<&str>,
+) -> Result<RegistrySkillRecord, AgentError> {
+    let entries = fetch_hermes_skills_index(request).await?;
     let requested_l = requested.trim().to_ascii_lowercase();
     let source_hint = source_hint.map(|s| s.to_ascii_lowercase());
 

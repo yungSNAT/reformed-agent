@@ -217,9 +217,7 @@
                     },
                 )
             } else {
-                let from_index =
-                    resolve_skill_via_registry_index(&client, HERMES_SKILLS_INDEX_URL, &skill_name, None)
-                        .await;
+                let from_index = resolve_skill_via_registry_index(&client, &skill_name, None).await;
                 if let Ok(hit) = from_index {
                     if hit.source.eq_ignore_ascii_case("official") {
                         let resolved =

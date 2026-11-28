@@ -547,9 +547,7 @@ pub async fn handle_cli_skills(
             let client = reqwest::Client::new();
             let mut displayed_results = false;
 
-            if let Ok(results) =
-                search_multi_registry(&client, HERMES_SKILLS_INDEX_URL, &query, 40).await
-            {
+            if let Ok(results) = search_multi_registry(&client, &query, 40).await {
                 if !results.is_empty() {
                     displayed_results = true;
                     println!("Multi-registry matches:");

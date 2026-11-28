@@ -339,12 +339,11 @@ async fn registry_and_github_calls_report_transport_errors_without_network() {
         .unwrap();
 
     assert_config_error(
-        search_multi_registry(&client, HERMES_SKILLS_INDEX_URL, "calendar", 3).await,
+        search_multi_registry(&client, "calendar", 3).await,
         "Skills index request failed:",
     );
     assert_config_error(
-        resolve_skill_via_registry_index(&client, HERMES_SKILLS_INDEX_URL, "calendar", Some("official"))
-            .await,
+        resolve_skill_via_registry_index(&client, "calendar", Some("official")).await,
         "Skills index request failed:",
     );
     assert_config_error(
@@ -387,7 +386,7 @@ async fn skills_index_search_ranks_matches_and_resolves_install_sources() {
 
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let url = format!("{}/index", server.uri());
-    let results = search_multi_registry(&client, &url, "calendar", 2)
+    let results = search_registry_index(client.get(&url), "calendar", 2)
         .await
         .unwrap();
     let identifiers = results
@@ -396,7 +395,7 @@ async fn skills_index_search_ranks_matches_and_resolves_install_sources() {
         .collect::<Vec<_>>();
     assert_eq!(identifiers, ["official/calendar", "lobehub/calendar"]);
 
-    let exact = resolve_skill_via_registry_index(&client, &url, " CALENDAR ", None)
+    let exact = resolve_registry_index(client.get(&url), " CALENDAR ", None)
         .await
         .unwrap();
     assert_eq!(exact.identifier, "official/calendar");
@@ -406,7 +405,7 @@ async fn skills_index_search_ranks_matches_and_resolves_install_sources() {
             if source.repo == OFFICIAL_SKILLS_REPO && source.skill_dir == "skills/calendar"
     ));
 
-    let scoped = resolve_skill_via_registry_index(&client, &url, "calendar", Some("LobeHub"))
+    let scoped = resolve_registry_index(client.get(&url), "calendar", Some("LobeHub"))
         .await
         .unwrap();
     assert!(matches!(
@@ -414,12 +413,12 @@ async fn skills_index_search_ranks_matches_and_resolves_install_sources() {
         RegistryInstallSource::LobeRegistry { slug } if slug == "calendar"
     ));
 
-    let fuzzy = resolve_skill_via_registry_index(&client, &url, "tern", None)
+    let fuzzy = resolve_registry_index(client.get(&url), "tern", None)
         .await
         .unwrap();
     assert_eq!(fuzzy.identifier, "test/tern-calendar");
     assert_config_error(
-        resolve_skill_via_registry_index(&client, &url, "missing", None).await,
+        resolve_registry_index(client.get(&url), "missing", None).await,
         "Skill 'missing' was not found in multi-registry index.",
     );
 }
@@ -451,7 +450,7 @@ async fn skills_index_search_reports_http_and_json_errors() {
             .await;
         let url = format!("{}{route}", server.uri());
         assert_config_error(
-            search_multi_registry(&client, &url, "calendar", 2).await,
+            search_registry_index(client.get(&url), "calendar", 2).await,
             message,
         );
     }

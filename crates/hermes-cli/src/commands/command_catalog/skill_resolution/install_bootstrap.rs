@@ -73,13 +73,8 @@ async fn fetch_bundle_for_lock_entry(
             fetch_skill_files_from_github(client, &resolved).await
         }
         other => {
-            if let Ok(hit) = resolve_skill_via_registry_index(
-                client,
-                HERMES_SKILLS_INDEX_URL,
-                &entry.identifier,
-                Some(other),
-            )
-            .await
+            if let Ok(hit) =
+                resolve_skill_via_registry_index(client, &entry.identifier, Some(other)).await
             {
                 return match hit.install_source {
                     RegistryInstallSource::GitRepo(source) => {
