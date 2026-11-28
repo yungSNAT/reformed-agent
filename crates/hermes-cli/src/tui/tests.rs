@@ -1211,6 +1211,44 @@ mod tests {
     }
 
     #[test]
+    fn transcript_keeps_its_anchor_when_resized_with_new_messages() {
+        let _guard = env_test_lock();
+        let home = tempfile::tempdir().unwrap();
+        let mut app = build_test_app(home.path());
+        app.messages = vec![Message::user("earlier\nvisible anchor\nmiddle\nlast")];
+        let styles = Theme::default_theme().resolved_styles();
+        let draw = |width, height, app: &App, state: &mut TuiState| {
+            let area = Rect::new(0, 0, width, height);
+            rendered_frame(width, height, |frame, colors| {
+                render_messages(frame, app, state, area, &styles, colors);
+            })
+        };
+        let mut state = TuiState {
+            view_density: ViewDensity::Compact,
+            auto_follow_transcript: false,
+            scroll_offset: 1,
+            ..TuiState::default()
+        };
+
+        let _ = draw(2, 2, &app, &mut state);
+        assert!(state.transcript_cache.lines.is_empty());
+        assert_eq!(state.scroll_offset, 1);
+        let before = draw(48, 4, &app, &mut state);
+        assert!(before.contains("visible anchor"), "{before}");
+
+        app.push_ui_user("new arrival");
+        let resized = draw(32, 4, &app, &mut state);
+        assert!(resized.contains("visible anchor"), "{resized}");
+        assert!(!resized.contains("new arrival"), "{resized}");
+        assert_eq!(state.scroll_offset, 3);
+
+        state.auto_follow_transcript = true;
+        let latest = draw(32, 4, &app, &mut state);
+        assert!(latest.contains("new arrival"), "{latest}");
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
     fn transcript_density_and_tool_expansion_preserve_the_turn() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
