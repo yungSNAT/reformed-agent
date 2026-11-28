@@ -10,6 +10,53 @@ fn test_policy(models: &[&str], voters: usize) -> QuorumPolicy {
     }
 }
 
+#[tokio::test]
+async fn quorum_resolves_catalog_aliases_pinned_models_and_fallbacks() {
+    let catalog = async |provider: &str| {
+        if provider == "lab" {
+            vec!["catalog/base".into(), "catalog/amber".into()]
+        } else {
+            assert_eq!(provider, "unlisted");
+            Vec::new()
+        }
+    };
+    let policy = test_policy(
+        &[
+            "LAB : amber",
+            "lab:catalog/amber",
+            "lab:ancient-20250101",
+            "lab:zzzzzz",
+            ":stray",
+            "lab:",
+            "unlisted:variant",
+        ],
+        8,
+    );
+    let (models, notes) = App::resolve_quorum_models("unlisted:variant", &policy, &catalog).await;
+    assert_eq!(
+        models,
+        [
+            "lab:catalog/amber",
+            "lab:ancient-20250101",
+            "lab:catalog/base",
+            "unlisted:variant",
+        ]
+    );
+    assert_eq!(
+        notes,
+        [
+            "quorum model remapped via catalog: lab:amber -> lab:catalog/amber",
+            "quorum model preserved despite catalog miss: lab:ancient-20250101",
+            "quorum model not in provider catalog: lab:zzzzzz ; fallback -> lab:catalog/base ; close matches: (none)",
+        ]
+    );
+
+    let empty = test_policy(&[" "], 2);
+    let (models, notes) = App::resolve_quorum_models("", &empty, &catalog).await;
+    assert!(models.is_empty());
+    assert!(notes.is_empty());
+}
+
 #[test]
 fn compose_quorum_messages_merges_nonempty_sections_in_role_order() {
     let mut absent_system = hermes_core::Message::system("unused".to_string());

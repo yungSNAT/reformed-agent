@@ -426,15 +426,19 @@ impl App {
             .collect()
     }
 
-    async fn resolve_quorum_models(&self, policy: &QuorumPolicy) -> (Vec<String>, Vec<String>) {
-        let raw = Self::collect_quorum_models(policy, &self.current_model);
+    async fn resolve_quorum_models(
+        current_model: &str,
+        policy: &QuorumPolicy,
+        load_catalog: impl std::ops::AsyncFn(&str) -> Vec<String>,
+    ) -> (Vec<String>, Vec<String>) {
+        let raw = Self::collect_quorum_models(policy, current_model);
         if raw.is_empty() {
             return (Vec::new(), Vec::new());
         }
         let mut notes = Vec::new();
         let mut resolved = Vec::new();
         for raw_target in raw {
-            let normalized = Self::normalize_quorum_model_target(&self.current_model, &raw_target);
+            let normalized = Self::normalize_quorum_model_target(current_model, &raw_target);
             let (provider, model_id) = Self::split_provider_model(&normalized);
             let provider = provider.trim().to_ascii_lowercase();
             let model_id = model_id.trim();
@@ -442,8 +446,8 @@ impl App {
                 continue;
             }
             let mut final_target = normalized.clone();
-            let catalog = provider_model_ids(&provider).await;
-            if !catalog.is_empty() {
+            let catalog = load_catalog(&provider).await;
+            if let Some(fallback) = catalog.first() {
                 if let Some(candidate) = Self::resolve_quorum_catalog_candidate(model_id, &catalog)
                 {
                     final_target = format!("{}:{}", provider, candidate.trim());
@@ -458,18 +462,11 @@ impl App {
                         "quorum model preserved despite catalog miss: {}",
                         normalized
                     ));
-                } else if let Some(fallback) = catalog.first() {
-                    let ranked = Self::rank_catalog_candidates(model_id, &catalog, 3);
+                } else {
                     final_target = format!("{}:{}", provider, fallback.trim());
                     notes.push(format!(
-                        "quorum model not in provider catalog: {} ; fallback -> {} ; close matches: {}",
-                        normalized,
-                        final_target,
-                        if ranked.is_empty() {
-                            "(none)".to_string()
-                        } else {
-                            ranked.join(", ")
-                        }
+                        "quorum model not in provider catalog: {} ; fallback -> {} ; close matches: (none)",
+                        normalized, final_target
                     ));
                 }
             }
