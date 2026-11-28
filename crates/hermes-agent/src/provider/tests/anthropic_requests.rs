@@ -237,7 +237,7 @@ fn test_anthropic_messages_url_adds_azure_api_version_query() {
 }
 
 #[tokio::test]
-async fn test_anthropic_invalid_endpoint_returns_an_error_without_reconnecting() {
+async fn test_anthropic_invalid_endpoint_reports_request_error() {
     let provider = AnthropicProvider::new("fixture-key").with_base_url(" http://[ ");
     let url = provider.messages_url();
     assert_eq!(url, "http://[/v1/messages");
