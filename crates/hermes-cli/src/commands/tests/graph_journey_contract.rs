@@ -110,6 +110,35 @@ async fn journey_reads_local_decisions_and_forwards_graph_diagnostics() {
         .collect();
     assert_eq!(decisions.len(), 1, "{latest}");
     assert!(decisions[0].contains("objective_status_paused"), "{latest}");
+    let ledger = command_output(&mut app, "/journey", &["ledger"]).await;
+    assert!(
+        ledger.starts_with("Objective learning ledger\n"),
+        "{ledger}"
+    );
+    assert!(
+        ledger.contains("paused objective_status_paused"),
+        "{ledger}"
+    );
+    assert_eq!(
+        command_output(&mut app, "/journey", &["ledger", "tail", "1"]).await,
+        latest
+    );
+
+    for (args, expected) in [
+        (
+            &["walkthrough", "start", "full"][..],
+            "Started full walkthrough",
+        ),
+        (&["walkthrough"][..], "Walkthrough insights"),
+        (&["snapshots"][..], "No snapshots found in"),
+        (
+            &["timetravel", "goto"][..],
+            "Usage: /timetravel goto <snapshot-name>",
+        ),
+    ] {
+        let output = command_output(&mut app, "/journey", args).await;
+        assert!(output.starts_with(expected), "{output}");
+    }
     let unknown = command_output(&mut app, "/journey", &["missing-action"]).await;
     assert!(
         unknown.contains("Unknown /journey action 'missing-action'"),
@@ -145,6 +174,17 @@ async fn journey_reads_local_decisions_and_forwards_graph_diagnostics() {
                 .await;
         }
         let (args, heading, expected) = if telemetry_status == 200 {
+            std::sync::Arc::make_mut(&mut app.config).mcp_servers = vec![
+                hermes_config::McpServerEntry {
+                    name: "fixture-unrelated".into(),
+                    ..Default::default()
+                },
+                hermes_config::McpServerEntry {
+                    name: "fixture-memory".into(),
+                    url: Some(format!("{}/ContextLattice", server.uri())),
+                    ..Default::default()
+                },
+            ];
             (
                 &["graph"][..],
                 "Graph-memory status",
@@ -161,7 +201,9 @@ async fn journey_reads_local_decisions_and_forwards_graph_diagnostics() {
         assert!(output.contains(heading), "{output}");
         assert!(output.contains("health_status: 200"), "{output}");
         assert!(output.contains(expected), "{output}");
-        if telemetry_status == 503 {
+        if telemetry_status == 200 {
+            assert!(output.contains("contextlattice_mcp: yes"), "{output}");
+        } else {
             assert!(
                 output.contains("telemetry/embeddings status=503"),
                 "{output}"
