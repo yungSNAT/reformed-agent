@@ -67,5 +67,7 @@ rand = { version = "0.10.1", optional = true }
 libc = "0.2"
 
 [dev-dependencies]
+aws-lc-rs = "1"
+jsonwebtoken = { workspace = true }
 tempfile = "3"
 wiremock = "0.6"

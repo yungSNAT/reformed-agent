@@ -378,4 +378,51 @@ fn kanban_command_validation_leaves_the_board_unchanged() {
     assert_eq!(run_kanban_command(&[]).unwrap(), before);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn kanban_dispatch_persists_the_bound_job_and_sync_respects_opt_out() {
+    let Some(home) = isolated_test_root(
+        "kanban_dispatch_persists_the_bound_job_and_sync_respects_opt_out",
+        &[("HERMES_KANBAN_CONTEXTLATTICE_SYNC", "0")],
+    ) else {
+        return;
+    };
+
+    run_kanban_command(&["init", "Varrock archive"]).unwrap();
+    // Check the durable queue on the current thread before its worker can start.
+    for (title, override_text) in [
+        ("Catalogue notes", ""),
+        ("Review notes", "Summarise the supplied notes"),
+    ] {
+        run_kanban_command(&["add", title, "--lane", "todo", "--desc", "Local fixture"]).unwrap();
+        let output = run_kanban_command(&["dispatch", title, override_text]).unwrap();
+        let store = lock_store().unwrap().load().unwrap();
+        let board = store
+            .boards
+            .iter()
+            .find(|board| board.id == store.current_board_id)
+            .unwrap();
+        let task = board.tasks.iter().find(|task| task.title == title).unwrap();
+        assert_eq!(task.lane, KanbanLane::Doing);
+        let run = task.background_job_id.as_deref().unwrap();
+        assert!(output.starts_with(&format!("Dispatched {} as background job {run}", task.id)));
+        let path = home.join("background_jobs").join(format!("{run}.json"));
+        let job: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(job["id"], run);
+        assert_eq!(job["status"], "queued");
+        assert_eq!(job["kanban"], serde_json::json!({ "board": board.id, "task": task.id, "run": run }));
+        let message = job["task"].as_str().unwrap();
+        if override_text.is_empty() {
+            assert!(message.contains(title) && message.contains("Local fixture"));
+        } else {
+            assert_eq!(message, override_text);
+        }
+    }
+    let before = run_kanban_command(&["status"]).unwrap();
+    assert_eq!(
+        run_kanban_command(&["sync"]).unwrap(),
+        "ContextLattice sync disabled via HERMES_KANBAN_CONTEXTLATTICE_SYNC."
+    );
+    assert_eq!(run_kanban_command(&["status"]).unwrap(), before);
+}
+
 include!("command_kanban_objective_part2_coverage_gen.rs");

@@ -195,6 +195,132 @@ async fn compatible_image_diagnostics_distinguish_timeout_and_connection_failure
 }
 
 #[tokio::test]
+async fn image_provider_timeouts_identify_the_operation() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("cache");
+    let client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .unwrap();
+    let mut openai = backend(&server, cache.clone());
+    openai.client = client.clone();
+    let mut xai = xai_backend(&server, cache.clone());
+    xai.client = client.clone();
+    let mut krea = krea_backend(
+        KreaTransport::Direct {
+            api_key: "local-krea-fixture".into(),
+            base_url: server.uri(),
+        },
+        cache.clone(),
+    );
+    krea.client = client;
+
+    for endpoint in [
+        "/images/generations",
+        "/images/edits",
+        "/v1/images/generations",
+        "/generate/image/krea/krea-2/medium",
+    ] {
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(3)))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let reference = directory.path().join("reference.png");
+    std::fs::write(&reference, b"local-reference-data").unwrap();
+    let mut edit = request("Edit the fixture");
+    edit.image_url = Some(reference.to_string_lossy().into_owned());
+    let (generation, edit, xai, krea) = tokio::join!(
+        openai.generate(request("Generate the fixture")),
+        openai.generate(edit),
+        xai.generate(request("Generate the fixture")),
+        krea.generate(request("Generate the fixture")),
+    );
+    for (result, expected) in [
+        (generation, "OpenAI image generation timed out"),
+        (edit, "OpenAI image edit timed out"),
+        (xai, "xAI image generation timed out"),
+        (krea, "Krea submit timed out"),
+    ] {
+        assert!(
+            matches!(&result, Err(ToolError::ExecutionFailed(detail)) if detail.starts_with(expected)),
+            "expected {expected:?}, got {result:?}"
+        );
+    }
+    server.verify().await;
+    assert!(!cache.exists());
+}
+
+#[tokio::test]
+async fn image_provider_failures_distinguish_credentials_and_connection_errors() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("cache");
+    let mut openai = backend(&server, cache.clone());
+    let fixture_key = openai.config.api_key.take();
+    assert!(matches!(
+        openai.generate(request("Fixture")).await,
+        Err(ToolError::ExecutionFailed(detail)) if detail.starts_with("OpenAI image generation requires credentials")
+    ));
+    let mut krea = krea_backend(
+        KreaTransport::Direct {
+            api_key: String::new(),
+            base_url: server.uri(),
+        },
+        cache.clone(),
+    );
+    assert!(matches!(
+        krea.generate(request(" ")).await,
+        Err(ToolError::InvalidParams(detail)) if detail.starts_with("Prompt is required")
+    ));
+    assert!(matches!(
+        krea.generate(request("Fixture")).await,
+        Err(ToolError::ExecutionFailed(detail)) if detail.starts_with("Krea image generation requires credentials")
+    ));
+    assert!(matches!(
+        krea.poll_krea_job("fixture-job").await,
+        Err(ToolError::ExecutionFailed(detail)) if detail.contains("requires credentials during poll")
+    ));
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    let unavailable = "http://127.0.0.1:0";
+    openai.config.api_key = fixture_key;
+    openai.config.base_url = unavailable.into();
+    let mut xai = xai_backend(&server, cache.clone());
+    xai.config.base_url = unavailable.into();
+    krea.config.transport = KreaTransport::Direct {
+        api_key: "local-krea-fixture".into(),
+        base_url: unavailable.into(),
+    };
+    let reference = directory.path().join("reference.png");
+    std::fs::write(&reference, b"local-reference-data").unwrap();
+    let mut edit = request("Edit the fixture");
+    edit.image_url = Some(reference.to_string_lossy().into_owned());
+    let (generation, edit, xai, krea) = tokio::join!(
+        openai.generate(request("Generate the fixture")),
+        openai.generate(edit),
+        xai.generate(request("Generate the fixture")),
+        krea.generate(request("Generate the fixture")),
+    );
+    for (result, expected) in [
+        (generation, "OpenAI image generation failed:"),
+        (edit, "OpenAI image edit failed:"),
+        (xai, "xAI connection error:"),
+        (krea, "Krea connection error:"),
+    ] {
+        assert!(
+            matches!(&result, Err(ToolError::ExecutionFailed(detail)) if detail.starts_with(expected)),
+            "expected {expected:?}, got {result:?}"
+        );
+    }
+    assert!(!cache.exists());
+}
+
+#[tokio::test]
 async fn compatible_image_edits_forward_the_reference_and_cache_the_download() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
