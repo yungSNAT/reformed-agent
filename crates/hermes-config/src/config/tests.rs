@@ -468,9 +468,22 @@ display:
         ] {
             let config: LlmProviderConfig = serde_yaml::from_str(source).unwrap();
             assert_eq!(config.models, ["fixture-a", "fixture-b"], "{source}");
+            let value = serde_yaml::from_str::<serde_yaml::Value>(source).unwrap();
+            let owned: LlmProviderConfig = serde_yaml::from_value(value).unwrap();
+            assert_eq!(owned.models, config.models, "{source}");
         }
         let invalid = serde_yaml::from_str::<LlmProviderConfig>("models: 42").unwrap_err();
         assert!(invalid.to_string().contains("or map of model ids"));
+    }
+
+    #[test]
+    fn terminal_list_reports_the_supported_shapes_for_non_list_values() {
+        let source = "docker_volumes: 42";
+        let error = serde_yaml::from_str::<TerminalConfig>(source).unwrap_err();
+        assert!(error.to_string().contains("docker_volumes"));
+        assert!(error
+            .to_string()
+            .contains("a string, comma-separated string, or list of strings"));
     }
 
     #[test]

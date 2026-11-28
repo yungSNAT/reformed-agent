@@ -201,6 +201,20 @@ mod tests {
     }
 
     #[test]
+    fn windows_matches_generic_node_shims_after_explicit_extensions() {
+        let windows = NodePlatform::Windows;
+        assert_eq!(
+            candidate_node_command_names_for_platform(r"tools\pnpm", windows),
+            ["pnpm.cmd", "pnpm.exe", "pnpm"]
+        );
+        assert_eq!(
+            candidate_node_command_names_for_platform(r"tools\pnpm.exe", windows),
+            ["pnpm.exe"]
+        );
+        assert!(candidate_node_command_names_for_platform("tools/  ", windows).is_empty());
+    }
+
+    #[test]
     fn windows_prefers_root_node_and_cmd_shims() {
         let tmp = tempdir().expect("tempdir");
         let root_npm = tmp.path().join("node").join("npm.cmd");

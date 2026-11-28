@@ -44,6 +44,62 @@ custom_providers:
 }
 
 #[test]
+fn config_set_replaces_incompatible_containers_and_keeps_other_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    std::fs::write(
+        &path,
+        "future:\n  rooms: old\n  labels: old\nmax_turns: 10\n",
+    )
+    .unwrap();
+
+    set_user_config_value(dir.path(), "future.rooms.0", "croft-manor").unwrap();
+    set_user_config_value(dir.path(), "future.labels.title", "").unwrap();
+    set_user_config_value(dir.path(), "future.sections.0", "west").unwrap();
+
+    let written: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let expected: serde_yaml::Value = serde_yaml::from_str(
+        "future:\n  rooms: [croft-manor]\n  labels: {title: ''}\n  sections: [west]\nmax_turns: 10\n",
+    )
+    .unwrap();
+    assert_eq!(written, expected);
+}
+
+#[test]
+fn config_set_handles_blank_files_and_preserves_bytes_on_validation_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    std::fs::write(&path, "  \n\n").unwrap();
+
+    let saved = set_user_config_value(dir.path(), "max_turns", "32").unwrap();
+    assert_eq!(saved.config_path.as_deref(), Some(path.as_path()));
+    assert_eq!(load_user_config_file(&path).unwrap().max_turns, 32);
+    let before = std::fs::read(&path).unwrap();
+
+    let blank = set_user_config_value(dir.path(), "  ", "1").unwrap_err();
+    assert!(
+        matches!(blank, ConfigError::ValidationError(message) if message.contains("must not be empty"))
+    );
+    let invalid = set_user_config_value(dir.path(), "max_turns", "-2").unwrap_err();
+    assert!(matches!(invalid, ConfigError::ParseError(message) if message.contains("u32")));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn config_save_reports_a_parent_path_that_is_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let parent = dir.path().join("blocked");
+    std::fs::write(&parent, "keep me").unwrap();
+
+    let error = save_config_yaml(&parent.join("config.yaml"), &GatewayConfig::default())
+        .expect_err("a file cannot become the configuration directory");
+
+    assert!(matches!(error, ConfigError::ParseError(message) if !message.is_empty()));
+    assert_eq!(std::fs::read_to_string(&parent).unwrap(), "keep me");
+}
+
+#[test]
 fn apply_patch_save_load_roundtrip() {
     use tempfile::tempdir;
 
