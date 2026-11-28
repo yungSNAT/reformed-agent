@@ -527,22 +527,29 @@ fn elite_gate_override_availability_handles_quotes_env_prefixes_and_pathext() {
     write_executable_fixture(&spaced, b"#!/bin/sh\nexit 0\n");
     assert!(elite_gate_override_available(&spaced_cmd));
 
-    // Explicit path without extension resolves via PATHEXT.
+    // Explicit path without extension resolves via PATHEXT only on Windows.
     let explicit_stem = cwd.join("gates/win-gate");
     let quoted_stem = shlex::try_quote(explicit_stem.to_str().unwrap()).unwrap();
     let explicit_cmd = format!("{quoted_stem} --json");
     assert!(!elite_gate_override_available(&explicit_cmd));
     write_executable_fixture(&cwd.join("gates/win-gate.cmd"), b"@echo off\r\n");
-    assert!(elite_gate_override_available(&explicit_cmd));
+    assert_eq!(elite_gate_override_available(&explicit_cmd), cfg!(windows));
 
-    // Bare command with leading env assignments resolves via PATH + PATHEXT.
+    // Bare command with leading env assignments resolves via PATH (and PATHEXT on Windows).
     let missing_cargo = build_elite_doctor_diagnostics(&cli);
     assert_eq!(missing_cargo["elite_gate"]["runner"], "shell_override");
     assert_eq!(missing_cargo["elite_gate"]["script_available"], false);
 
     write_executable_fixture(&bin.join("cargo.exe"), b"#!/bin/sh\nexit 0\n");
     let with_cargo_exe = build_elite_doctor_diagnostics(&cli);
-    assert_eq!(with_cargo_exe["elite_gate"]["script_available"], true);
+    assert_eq!(
+        with_cargo_exe["elite_gate"]["script_available"],
+        cfg!(windows)
+    );
+
+    write_executable_fixture(&bin.join("cargo"), b"#!/bin/sh\nexit 0\n");
+    let with_cargo = build_elite_doctor_diagnostics(&cli);
+    assert_eq!(with_cargo["elite_gate"]["script_available"], true);
 }
 
 #[test]
@@ -557,7 +564,10 @@ fn elite_gate_override_availability_without_pathext_env_uses_platform_default() 
     write_executable_fixture(&bin.join("cargo.exe"), b"#!/bin/sh\nexit 0\n");
     let cmd = "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate";
     assert_eq!(elite_gate_override_available(cmd), cfg!(windows));
-    assert!(elite_gate_override_available(&format!("PATHEXT=.exe {cmd}")));
+    assert_eq!(
+        elite_gate_override_available(&format!("PATHEXT=.exe {cmd}")),
+        cfg!(windows)
+    );
 }
 
 #[test]
@@ -595,13 +605,16 @@ fn elite_gate_override_availability_honours_leading_path_and_pathext_assignments
     )));
     assert!(!elite_gate_override_available("PATH= orig-only --json"));
 
-    // Leading PATHEXT override: overrides or clears process PATHEXT; last PATHEXT wins.
+    // Leading PATHEXT overrides apply only on Windows; Unix bash ignores PATHEXT.
     assert!(!elite_gate_override_available(&format!(
         "PATH={q_alt} PATHEXT=.exe win-only --json"
     )));
-    assert!(elite_gate_override_available(&format!(
-        "PATH={q_alt} PATHEXT=.exe PATHEXT=.cmd win-only --json"
-    )));
+    assert_eq!(
+        elite_gate_override_available(&format!(
+            "PATH={q_alt} PATHEXT=.exe PATHEXT=.cmd win-only --json"
+        )),
+        cfg!(windows)
+    );
     assert!(!elite_gate_override_available(&format!(
         "PATH={q_alt} PATHEXT= win-only --json"
     )));
@@ -613,20 +626,100 @@ fn elite_gate_override_availability_honours_leading_path_and_pathext_assignments
     assert!(!elite_gate_override_available(&format!(
         "Path={q_alt} alt-only --json"
     )));
-    assert!(elite_gate_override_available(&format!(
-        "PATH={q_alt} Pathext= win-only --json"
-    )));
+    assert_eq!(
+        elite_gate_override_available(&format!("PATH={q_alt} Pathext= win-only --json")),
+        cfg!(windows)
+    );
 
     // Trailing assignments after the command token are arguments, not env overrides.
     assert!(elite_gate_override_available("orig-only PATH= PATHEXT="));
 
-    // Leading PATHEXT override also applies to explicit paths without extension.
+    // Leading PATHEXT override on explicit paths also applies only on Windows.
     let explicit_win = alt_bin.join("win-only");
     let q_explicit = shlex::try_quote(explicit_win.to_str().unwrap()).unwrap();
-    assert!(elite_gate_override_available(&format!(
-        "PATHEXT=.cmd {q_explicit} --json"
-    )));
+    assert_eq!(
+        elite_gate_override_available(&format!("PATHEXT=.cmd {q_explicit} --json")),
+        cfg!(windows)
+    );
     assert!(!elite_gate_override_available(&format!(
         "PATHEXT= {q_explicit} --json"
     )));
+}
+
+#[test]
+fn elite_gate_override_availability_expands_shell_vars_in_env_prefixes() {
+    let Some(_cli) = isolated_cli(
+        "elite_gate_override_availability_expands_shell_vars_in_env_prefixes",
+        &[],
+    ) else {
+        return;
+    };
+    let cwd = std::env::current_dir().unwrap();
+    let home_bin = cwd.join("user").join("bin");
+    let alt_bin = cwd.join("alt bin");
+    let empty_bin = cwd.join("empty bin");
+    fs::create_dir_all(&home_bin).unwrap();
+    fs::create_dir_all(&alt_bin).unwrap();
+    fs::create_dir_all(&empty_bin).unwrap();
+
+    write_executable_fixture(&cwd.join("bin/orig-only"), b"#!/bin/sh\nexit 0\n");
+    write_executable_fixture(&home_bin.join("home-only"), b"#!/bin/sh\nexit 0\n");
+    write_executable_fixture(&alt_bin.join("alt-only"), b"#!/bin/sh\nexit 0\n");
+
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let sub = if cfg!(windows) { r"\\bin" } else { "/bin" };
+    let cmd_sub = if cfg!(windows) { r"\\bin\\home-only" } else { "/bin/home-only" };
+    let q_alt = shlex::try_quote(alt_bin.to_str().unwrap()).unwrap();
+    let q_empty = shlex::try_quote(empty_bin.to_str().unwrap()).unwrap();
+
+    assert!(elite_gate_override_available("PATH=\"$PATH\" orig-only --json"));
+    assert!(elite_gate_override_available(&format!(
+        "PATH=\"$HOME{sub}{sep}$PATH\" home-only --json"
+    )));
+    assert!(elite_gate_override_available(&format!(
+        "PATH=\"$HOME{sub}{sep}$PATH\" orig-only --json"
+    )));
+    assert!(elite_gate_override_available(&format!(
+        "PATH=\"${{HOME}}{sub}{sep}${{PATH}}\" home-only --json"
+    )));
+    assert!(elite_gate_override_available(&format!(
+        "CUSTOM_DIR={q_alt} PATH=\"$CUSTOM_DIR{sep}$PATH\" alt-only --json"
+    )));
+    assert!(elite_gate_override_available(&format!(
+        "PATH={q_empty} CUSTOM_DIR={q_alt} PATH=\"$PATH{sep}$CUSTOM_DIR\" alt-only --json"
+    )));
+    assert!(elite_gate_override_available(&format!(
+        "\"$HOME{cmd_sub}\" --json"
+    )));
+}
+
+#[test]
+fn elite_gate_override_availability_handles_shell_quoting_and_invalid_expansions() {
+    let Some(_cli) = isolated_cli(
+        "elite_gate_override_availability_handles_shell_quoting_and_invalid_expansions",
+        &[],
+    ) else {
+        return;
+    };
+    let bin = std::env::current_dir().unwrap().join("bin");
+    write_executable_fixture(&bin.join("orig-only"), b"#!/bin/sh\nexit 0\n");
+
+    assert!(elite_gate_override_available(
+        r#"orig-only "a\nb" "a\"b" a\ b café"#
+    ));
+    for bad in [
+        "PATH='$PATH' orig-only --json",
+        r#"PATH="\$PATH" orig-only --json"#,
+        r"PATH=\$PATH orig-only --json",
+        "PATH=\"$UNSET_VAR\" orig-only --json",
+        "PATH=\"$1/bin\" orig-only --json",
+        "PATH=\"${UNCLOSED\" orig-only --json",
+        "PATH=\"${123}\" orig-only --json",
+        r"orig-only \",
+        "orig-only \"unterminated",
+        "",
+        "   ",
+    ] {
+        assert!(!elite_gate_override_available(bad), "expected unavailable: {bad}");
+    }
 }
