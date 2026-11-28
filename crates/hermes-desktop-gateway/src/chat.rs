@@ -34,6 +34,7 @@ use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
 mod canonical;
 mod history;
+mod host;
 mod model;
 mod oneshot;
 pub(crate) mod profiles;
@@ -109,6 +110,9 @@ pub(crate) struct Conn {
         reason = "read by the methods that serve only local clients"
     )]
     pub(crate) origin: Origin,
+    /// May act on the host (`chat/host.rs`): set only in `upgrade` (lib.rs), for a local-mode
+    /// ticket connection, which a native channel issues. Off by default.
+    pub(crate) host_input: bool,
 }
 
 impl Conn {
@@ -119,6 +123,7 @@ impl Conn {
             outbox,
             canonical,
             origin: Origin::default(),
+            host_input: false,
         }
     }
 }
@@ -163,6 +168,7 @@ const AREAS: &[&[(&str, Handler)]] = &[
     profiles::METHODS,
     relay::METHODS,
     slash::METHODS,
+    host::METHODS,
 ];
 
 /// The methods served on both wires.

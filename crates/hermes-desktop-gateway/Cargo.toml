@@ -21,6 +21,7 @@ hermes-agent = { workspace = true }
 hermes-app-runtime = { workspace = true }
 hermes-config = { workspace = true }
 hermes-core = { workspace = true }
+hermes-intelligence = { workspace = true }
 hermes-provider-runtime = { workspace = true }
 hermes-tools = { workspace = true }
 percent-encoding = "2"

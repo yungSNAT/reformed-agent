@@ -1835,6 +1835,7 @@ dependencies = [
  "hermes-app-runtime",
  "hermes-config",
  "hermes-core",
+ "hermes-intelligence",
  "hermes-provider-runtime",
  "hermes-tools",
  "libc",

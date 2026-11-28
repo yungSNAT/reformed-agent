@@ -559,6 +559,11 @@ async fn upgrade(
         (None, Auth::Token(_)) if gw.child => children::child_origin(&headers),
         (None, Auth::Token(_) | Auth::Native(_)) => Origin::Local,
     };
+    // The host-input capability (`Conn::host_input`): only local mode's tickets come through a
+    // native channel. A token can be presented through a tunnel from another machine, and a
+    // child gateway's parent dials it with a token, so neither gets it; nor does the Webapp's
+    // browser socket, which local mode also admits.
+    let host_input = revoke.is_none() && matches!(gw.auth, Auth::Native(_));
     // The ticket-bearing protocol is a credential: only the public one is ever selected.
     let ws = if canonical {
         ws.protocols([CANONICAL_PROTOCOL])
@@ -567,7 +572,11 @@ async fn upgrade(
     };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, chat, canonical, origin, revoke, scope, children))
+        .on_upgrade(move |socket| {
+            session(
+                socket, chat, canonical, origin, revoke, scope, children, host_input,
+            )
+        })
 }
 
 /// True when the dial offers `hermes-gateway-v1`.
@@ -673,6 +682,7 @@ fn protocol_ticket(headers: &HeaderMap) -> Result<Option<&str>, ()> {
 
 /// One connection. A `canonical` one ([`CANONICAL_PROTOCOL`]) announces the session authority in
 /// its `gateway.ready` and answers the session verbs as [`chat`]'s `canonical` module does.
+#[allow(clippy::too_many_arguments)] // Each is a fact `upgrade` settled for this connection.
 async fn session(
     mut socket: WebSocket,
     chat: Arc<Chat>,
@@ -681,6 +691,7 @@ async fn session(
     mut revoke: Option<Revoke>,
     scope: Option<Lease>,
     children: Option<Arc<Children>>,
+    host_input: bool,
 ) {
     let mut ready = json!({
         "jsonrpc": "2.0",
@@ -707,6 +718,7 @@ async fn session(
         canonical,
     );
     conn.origin = origin;
+    conn.host_input = host_input;
     let forwards = Forwards::new(Arc::clone(&chat), conn.clone(), scope, children);
     let call = |method: &str, params: Value| forwards.call(method, params);
     serve_socket(

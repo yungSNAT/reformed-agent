@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use hermes_desktop_gateway::local::{self, LocalRuntime};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest, Message};
@@ -506,6 +506,26 @@ async fn a_browser_socket_opens_once_with_its_ticket_and_own_origin() {
         panic!("no gateway.ready");
     };
     assert!(ready.contains("gateway.ready"), "{ready}");
+    // The browser holds no host-input capability: a host method is refused, and runs nothing.
+    let marker = home.join("browser-shell-exec-ran");
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "shell.exec",
+        "params": {"command": format!("touch {}", marker.display())}});
+    socket
+        .send(Message::Text(request.to_string().into()))
+        .await
+        .unwrap();
+    let reply = loop {
+        let Some(Ok(Message::Text(text))) = socket.next().await else {
+            panic!("no reply to shell.exec");
+        };
+        let frame: Value = serde_json::from_str(&text).unwrap();
+        if frame["id"] == 1 {
+            break frame;
+        }
+    };
+    assert_eq!(reply["error"]["code"], 4030, "{reply}");
+    assert_eq!(reply["error"]["message"], "not available to this client");
+    assert!(!marker.exists());
     // Spent.
     assert_eq!(
         refused_status(browser_dial(&origin, Some(&origin), &protocols(&ticket))).await,
