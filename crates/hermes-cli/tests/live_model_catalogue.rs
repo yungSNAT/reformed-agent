@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use hermes_cli::model_switch::provider_model_ids_for_config;
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use serde_json::json;
@@ -6,6 +8,50 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROVIDER: &str = "fixture-catalogue";
 const FIXTURE_KEY: &str = "catalogue-fixture";
+const CHILD: &str = "HERMES_TEST_LIVE_MODEL_CATALOGUE_CHILD";
+
+#[tokio::test]
+async fn configured_model_catalogue_uses_its_loopback_endpoint() {
+    if std::env::var_os(CHILD).is_some() {
+        configured_endpoint_returns_distinct_live_models_in_server_order().await;
+        configured_models_are_used_when_discovery_fails().await;
+        disabled_discovery_uses_configured_models_without_contacting_the_provider().await;
+        return;
+    }
+
+    let sandbox = tempfile::tempdir().expect("catalogue fixture directory");
+    let mut command = tokio::process::Command::new(std::env::current_exe().expect("test binary"));
+    command
+        .env_clear()
+        .envs(
+            ["LLVM_PROFILE_FILE", "SystemRoot"]
+                .into_iter()
+                .filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
+        )
+        .env("HOME", sandbox.path())
+        .env("USERPROFILE", sandbox.path())
+        .env("HERMES_HOME", sandbox.path())
+        .env("HERMES_MANAGED_DIR", sandbox.path())
+        .env("HTTP_PROXY", "http://127.0.0.1:1")
+        .env("HTTPS_PROXY", "http://127.0.0.1:1")
+        .env("NO_PROXY", "127.0.0.1")
+        .env(CHILD, "1")
+        .args([
+            "--exact",
+            "configured_model_catalogue_uses_its_loopback_endpoint",
+        ])
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(30), command.output())
+        .await
+        .expect("loopback catalogue checks timed out")
+        .expect("run catalogue test in an isolated process");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 fn catalogue_config(base_url: String, key: Option<&str>, models: &[&str]) -> GatewayConfig {
     let mut config = GatewayConfig::default();
@@ -22,7 +68,6 @@ fn catalogue_config(base_url: String, key: Option<&str>, models: &[&str]) -> Gat
     config
 }
 
-#[tokio::test]
 async fn configured_endpoint_returns_distinct_live_models_in_server_order() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -30,6 +75,7 @@ async fn configured_endpoint_returns_distinct_live_models_in_server_order() {
         .and(query_param("output_modalities", "all"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "data": [
+                {"id": "zulu-v1"},
                 {"id": " MixCase "},
                 {"id": "mixcase"},
                 {"id": 42},
@@ -48,7 +94,7 @@ async fn configured_endpoint_returns_distinct_live_models_in_server_order() {
         let config = catalogue_config(format!("{}/v1/", server.uri()), key, configured);
         assert_eq!(
             provider_model_ids_for_config(PROVIDER, &config).await,
-            ["MixCase", "local-summary"]
+            ["zulu-v1", "MixCase", "local-summary"]
         );
     }
     server.verify().await;
@@ -61,7 +107,6 @@ async fn configured_endpoint_returns_distinct_live_models_in_server_order() {
     assert!(!received[1].headers.contains_key("authorization"));
 }
 
-#[tokio::test]
 async fn configured_models_are_used_when_discovery_fails() {
     let server = MockServer::start().await;
     let configured = [" Local-Fallback ", "local-fallback", "summary"];
@@ -104,7 +149,6 @@ async fn configured_models_are_used_when_discovery_fails() {
     );
 }
 
-#[tokio::test]
 async fn disabled_discovery_uses_configured_models_without_contacting_the_provider() {
     let server = MockServer::start().await;
     let mut config = catalogue_config(server.uri(), Some(FIXTURE_KEY), &["summary"]);
