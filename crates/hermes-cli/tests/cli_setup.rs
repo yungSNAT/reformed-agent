@@ -340,7 +340,7 @@ async fn quick_setup_saves_the_gemini_provider_and_keeps_the_key_out_of_config()
         let mut menu = BufReader::new(child.stdout.take().unwrap()).lines();
         let mut input = child.stdin.take().unwrap();
         select(&mut menu, &mut input, "Quick setup").await;
-        select(&mut menu, &mut input, "Google Gemini CLI (OAuth)").await;
+        select(&mut menu, &mut input, "Google Gemini CLI").await;
         input.write_all(b"y\n").await.unwrap();
         drop(input);
 
