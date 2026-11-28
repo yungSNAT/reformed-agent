@@ -168,7 +168,52 @@ pub fn build_initialized_memory_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
     use std::process::Command;
+
+    fn child_coverage_environment(
+        profile: PathBuf,
+        temp: Option<OsString>,
+    ) -> impl Iterator<Item = (&'static str, PathBuf)> {
+        let temp_relative = profile.strip_prefix("%t");
+        let temp = temp
+            .filter(|path| temp_relative.is_ok() && !path.is_empty())
+            .map(|path| std::path::absolute(path).expect("absolute temporary directory"));
+        let profile = match temp_relative {
+            Ok(_) => profile,
+            Err(_) => std::path::absolute(profile).expect("absolute LLVM profile path"),
+        };
+        std::iter::once(("LLVM_PROFILE_FILE", profile)).chain(temp.map(|path| ("TMPDIR", path)))
+    }
+
+    #[test]
+    fn child_coverage_environment_preserves_paths_across_directories() {
+        let cwd = std::env::current_dir().unwrap();
+        let relative = PathBuf::from("coverage/%p.profraw");
+        let absolute = cwd.join(&relative);
+        let temp_pattern = PathBuf::from("%t/%p.profraw");
+        let cases = [
+            (relative, Some("tmp".into())),
+            (absolute.clone(), Some("tmp".into())),
+            (temp_pattern.clone(), Some("tmp".into())),
+            (temp_pattern.clone(), None),
+            (temp_pattern.clone(), Some(OsString::new())),
+        ];
+        let environments = cases
+            .map(|(profile, temp)| child_coverage_environment(profile, temp).collect::<Vec<_>>());
+        let expected = [
+            vec![("LLVM_PROFILE_FILE", absolute.clone())],
+            vec![("LLVM_PROFILE_FILE", absolute)],
+            vec![
+                ("LLVM_PROFILE_FILE", temp_pattern.clone()),
+                ("TMPDIR", cwd.join("tmp")),
+            ],
+            vec![("LLVM_PROFILE_FILE", temp_pattern.clone())],
+            vec![("LLVM_PROFILE_FILE", temp_pattern)],
+        ];
+        assert_eq!(environments, expected);
+    }
 
     #[test]
     fn contextlattice_is_discovered_initialized_and_ordered() {
@@ -213,22 +258,17 @@ mod tests {
                 .env("HERMES_HOME", home.path())
                 .env("PATH", home.path())
                 .current_dir(home.path())
+                .envs(
+                    std::env::var_os("LLVM_PROFILE_FILE")
+                        .into_iter()
+                        .flat_map(|profile| {
+                            child_coverage_environment(
+                                PathBuf::from(profile),
+                                std::env::var_os("TMPDIR"),
+                            )
+                        }),
+                )
                 .args(["--exact", &test]);
-            if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
-                let profile = std::path::PathBuf::from(profile);
-                let profile = if profile.starts_with("%t") {
-                    if let Some(temp) = std::env::var_os("TMPDIR").filter(|path| !path.is_empty()) {
-                        command.env(
-                            "TMPDIR",
-                            std::path::absolute(temp).expect("absolute temporary directory"),
-                        );
-                    }
-                    profile
-                } else {
-                    std::path::absolute(profile).expect("absolute LLVM profile path")
-                };
-                command.env("LLVM_PROFILE_FILE", profile);
-            }
             #[cfg(windows)]
             if let Some(system_root) = std::env::var_os("SystemRoot") {
                 command.env("SystemRoot", system_root);
