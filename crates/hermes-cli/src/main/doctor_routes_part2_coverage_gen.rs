@@ -557,4 +557,52 @@ fn elite_gate_override_availability_without_pathext_env_uses_platform_default() 
     write_executable_fixture(&bin.join("cargo.exe"), b"#!/bin/sh\nexit 0\n");
     let cmd = "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate";
     assert_eq!(elite_gate_override_available(cmd), cfg!(windows));
+    assert!(elite_gate_override_available(&format!("PATHEXT=.exe {cmd}")));
+}
+
+#[test]
+fn elite_gate_override_availability_honours_leading_path_and_pathext_assignments() {
+    let Some(_cli) = isolated_cli(
+        "elite_gate_override_availability_honours_leading_path_and_pathext_assignments",
+        &[("PATHEXT", ".com;.exe;.bat;.cmd")],
+    ) else {
+        return;
+    };
+    let cwd = std::env::current_dir().unwrap();
+    let orig_bin = cwd.join("bin");
+    let alt_bin = cwd.join("alt bin");
+    let empty_bin = cwd.join("empty bin");
+    fs::create_dir_all(&alt_bin).unwrap();
+    fs::create_dir_all(&empty_bin).unwrap();
+
+    write_executable_fixture(&orig_bin.join("orig-only"), b"#!/bin/sh\nexit 0\n");
+    write_executable_fixture(&alt_bin.join("alt-only"), b"#!/bin/sh\nexit 0\n");
+    write_executable_fixture(&alt_bin.join("win-only.cmd"), b"@echo off\r\n");
+
+    let q_alt = shlex::try_quote(alt_bin.to_str().unwrap()).unwrap();
+    let q_empty = shlex::try_quote(empty_bin.to_str().unwrap()).unwrap();
+
+    // Without PATH override: orig-only is found, alt-only is not.
+    assert!(elite_gate_override_available("orig-only --json"));
+    assert!(!elite_gate_override_available("alt-only --json"));
+
+    // Leading PATH override: alt-only resolves, orig-only no longer resolves, last PATH wins.
+    assert!(elite_gate_override_available(&format!(
+        "PATH={q_empty} PATH={q_alt} alt-only --json"
+    )));
+    assert!(!elite_gate_override_available(&format!(
+        "PATH={q_alt} orig-only --json"
+    )));
+    assert!(!elite_gate_override_available("PATH= orig-only --json"));
+
+    // Leading PATHEXT override: overrides or clears process PATHEXT; last PATHEXT wins.
+    assert!(!elite_gate_override_available(&format!(
+        "PATH={q_alt} PATHEXT=.exe win-only --json"
+    )));
+    assert!(elite_gate_override_available(&format!(
+        "PATH={q_alt} PATHEXT=.exe PATHEXT=.cmd win-only --json"
+    )));
+    assert!(!elite_gate_override_available(&format!(
+        "PATH={q_alt} PATHEXT= win-only --json"
+    )));
 }

@@ -6,15 +6,24 @@ const DEFAULT_PATHEXT: Option<&str> = Some(".COM;.EXE;.BAT;.CMD");
 #[cfg(not(windows))]
 const DEFAULT_PATHEXT: Option<&str> = None;
 
-fn is_shell_env_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
+#[cfg(windows)]
+fn env_var_eq(name: &str, expected: &str) -> bool {
+    name.eq_ignore_ascii_case(expected)
+}
+
+#[cfg(not(windows))]
+fn env_var_eq(name: &str, expected: &str) -> bool {
+    name == expected
+}
+
+fn parse_shell_env_assignment(token: &str) -> Option<(&str, &str)> {
+    let (name, value) = token.split_once('=')?;
     let mut chars = name.chars();
-    chars
+    let valid = chars
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    valid.then_some((name, value))
 }
 
 fn is_executable_file(path: &std::path::Path) -> bool {
@@ -56,16 +65,32 @@ fn elite_gate_override_available_with(
     let Some(tokens) = shlex::split(cmdline) else {
         return false;
     };
-    let Some(program) = tokens.iter().find(|token| !is_shell_env_assignment(token)) else {
+    let mut effective_path = path_env;
+    let mut effective_pathext = pathext;
+    let mut program = None;
+    for token in &tokens {
+        if let Some((name, value)) = parse_shell_env_assignment(token) {
+            if env_var_eq(name, "PATH") {
+                effective_path = (!value.is_empty()).then_some(std::ffi::OsStr::new(value));
+            } else if env_var_eq(name, "PATHEXT") {
+                let trimmed = value.trim();
+                effective_pathext = (!trimmed.is_empty()).then_some(trimmed);
+            }
+        } else {
+            program = Some(token.as_str());
+            break;
+        }
+    }
+    let Some(program) = program else {
         return false;
     };
     let candidate = std::path::Path::new(program);
     if candidate.components().count() > 1 {
-        candidate_matches_with_pathext(candidate, pathext)
+        candidate_matches_with_pathext(candidate, effective_pathext)
     } else {
-        path_env.is_some_and(|paths| {
+        effective_path.is_some_and(|paths| {
             std::env::split_paths(paths)
-                .any(|dir| candidate_matches_with_pathext(&dir.join(program), pathext))
+                .any(|dir| candidate_matches_with_pathext(&dir.join(program), effective_pathext))
         })
     }
 }

@@ -72,7 +72,7 @@ cargo test -p hermes-cli cli_parse_ -- --nocapture
 cargo test -p hermes-cli provenance_ -- --nocapture
 cargo test -p hermes-tools tool_policy_hot_path_benchmark_report -- --nocapture
 cargo test -p hermes-tools policy_counters_track_dispatch_outcomes -- --nocapture
-python3 -m py_compile scripts/upstream_webhook_sync.py
+python3 -m py_compile scripts/run-redteam-gate.py scripts/run-adapter-chaos-harness.py scripts/compare-adapter-chaos-reports.py scripts/upstream_webhook_sync.py
 cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --repo-root . --json
 ```
 

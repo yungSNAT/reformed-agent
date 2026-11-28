@@ -37,14 +37,14 @@ Run:
 cargo test -p hermes-cli -- --nocapture
 cargo test -p hermes-tools -- --nocapture
 cargo test -p hermes-agent -- --nocapture
-python3 -m py_compile scripts/upstream_webhook_sync.py
+python3 -m py_compile scripts/run-differential-parity-gate.py scripts/run-eval-trend-gate.py scripts/upstream_webhook_sync.py
 bash -n scripts/sync-upstream.sh
 ```
 
 Gate smokes:
 
 ```bash
-cargo run --locked -q -p hermes-parity-tools -- run-differential-parity-gate --repo-root . --json
-cargo run --locked -q -p hermes-parity-tools -- run-eval-trend-gate --repo-root . --allow-missing-baseline --json
+python3 scripts/run-differential-parity-gate.py --repo-root . --json
+python3 scripts/run-eval-trend-gate.py --repo-root . --allow-missing-baseline --json
 cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --repo-root . --json
 ```
