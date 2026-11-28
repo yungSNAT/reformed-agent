@@ -272,6 +272,95 @@ fn hex_nibble(c: u8) -> Result<u8, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn loopback_backend(server: &MockServer) -> MiniMaxTtsBackend {
+        MiniMaxTtsBackend::with_config(
+            Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap(),
+            "loopback-only",
+            format!("{}/v1/t2a_v2", server.uri()),
+            DEFAULT_MINIMAX_MODEL,
+            MiniMaxVoiceSettings::default(),
+        )
+    }
+
+    #[tokio::test]
+    async fn minimax_synthesis_writes_decoded_audio_and_returns_metadata() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/t2a_v2"))
+            .and(body_partial_json(json!({
+                "text": "hello",
+                "voice_setting": {"voice_id": "fixture-voice"},
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "base_resp": {"status_code": 0},
+                "data": {"audio": "001780ff"},
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("speech.mp3");
+
+        let result = loopback_backend(&server)
+            .synthesize(
+                "hello",
+                Some("fixture-voice"),
+                None,
+                Some(output.to_str().unwrap()),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(&output).unwrap(), [0, 23, 128, 255]);
+        assert_eq!(
+            serde_json::from_str::<Value>(&result).unwrap(),
+            json!({"provider": "minimax", "file": output, "voice": "fixture-voice",
+                   "model": DEFAULT_MINIMAX_MODEL, "bytes": 4})
+        );
+    }
+
+    #[tokio::test]
+    async fn minimax_synthesis_errors_leave_audio_output_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("speech.mp3");
+        for (response, expected) in [
+            (
+                ResponseTemplate::new(429).set_body_json(json!({"message": "rate limited"})),
+                "MiniMax HTTP 429",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_string("invalid JSON"),
+                "MiniMax JSON decode failed",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/t2a_v2"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let error = loopback_backend(&server)
+                .synthesize("hello", None, None, Some(output.to_str().unwrap()), None)
+                .await
+                .unwrap_err();
+
+            assert!(
+                matches!(error, ToolError::ExecutionFailed(message) if message.contains(expected))
+            );
+            assert!(!output.exists());
+        }
+    }
 
     #[test]
     fn payload_shape_matches_python() {
