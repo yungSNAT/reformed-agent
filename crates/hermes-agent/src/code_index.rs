@@ -567,6 +567,50 @@ const VERSION: &str = "1";
     }
 
     #[test]
+    fn disabled_index_ignores_lazy_full_and_incremental_refreshes() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("catalog.rs");
+        fs::write(&path, "fn catalogue() {}\n").unwrap();
+        let mut index = CodeIndex::new(
+            temp.path(),
+            CodeIndexConfig {
+                enabled: false,
+                ..CodeIndexConfig::default()
+            },
+        );
+
+        assert_eq!(index.ensure_fresh(), IndexStats::default());
+        assert_eq!(index.refresh_full(), IndexStats::default());
+        index.refresh_paths([path.clone()]);
+        assert!(index.list_file_symbols(&path, 1).is_empty());
+        assert!(index.render_repo_map(None, None).is_empty());
+    }
+
+    #[test]
+    fn repo_map_stops_at_the_symbol_budget_across_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let source: String = (1..=10).map(|n| format!("fn item_{n}() {{}}\n")).collect();
+        fs::write(temp.path().join("a.rs"), source).unwrap();
+        fs::write(temp.path().join("b.rs"), "fn another_item() {}\n").unwrap();
+        let mut index = CodeIndex::new(temp.path(), CodeIndexConfig::default());
+        assert_eq!(index.refresh_full().files_indexed, 2);
+
+        let map = index.render_repo_map(Some(2), Some(8));
+        assert_eq!(
+            map.lines()
+                .filter(|line| line.starts_with("  - fn "))
+                .count(),
+            8
+        );
+        assert!(map.contains("fn item_8 (line 8)"));
+        assert!(!map.contains("fn item_9"));
+        assert!(!map.contains("b.rs (rust)"));
+        assert!(index
+            .render_repo_map(Some(2), Some(20))
+            .contains("b.rs (rust)"));
+    }
+
+    #[test]
     fn incremental_refresh_indexes_go_and_evicts_files_over_the_size_limit() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
