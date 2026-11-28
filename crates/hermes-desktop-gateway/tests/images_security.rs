@@ -54,6 +54,26 @@ async fn image_attach_refuses_share_and_device_paths() {
     expect_refused(&mut client, &session, &paths).await;
 }
 
+const RESERVED_NAMES: [&str; 17] = [
+    "NUL.png",
+    "con.png",
+    "Aux.jpg",
+    "prn.gif",
+    "COM1.png",
+    "lpt9.webp",
+    "nul",
+    "CONIN$.png",
+    "conout$.png",
+    "COM0.png",
+    "lpt0.png",
+    "COM\u{b9}.png",
+    "com\u{b2}.png",
+    "COM\u{b3}",
+    "LPT\u{b9}.png",
+    "lpt\u{b2}.png",
+    "LPT\u{b3}.jpg",
+];
+
 /// A Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0` to
 /// `COM9`, `LPT0` to `LPT9`, and `COM` or `LPT` with a superscript 1, 2 or 3), in any case and
 /// with or without an extension, is refused before it is opened, on every platform, even where
@@ -65,28 +85,7 @@ async fn image_attach_refuses_reserved_device_names() {
     let session = client.create().await;
     let folder = tempfile::tempdir().unwrap();
     let mut paths = Vec::new();
-    for (i, name) in [
-        "NUL.png",
-        "con.png",
-        "Aux.jpg",
-        "prn.gif",
-        "COM1.png",
-        "lpt9.webp",
-        "nul",
-        "CONIN$.png",
-        "conout$.png",
-        "COM0.png",
-        "lpt0.png",
-        "COM\u{b9}.png",
-        "com\u{b2}.png",
-        "COM\u{b3}",
-        "LPT\u{b9}.png",
-        "lpt\u{b2}.png",
-        "LPT\u{b3}.jpg",
-    ]
-    .iter()
-    .enumerate()
-    {
+    for (i, name) in RESERVED_NAMES.iter().enumerate() {
         let sub = folder.path().join(format!("f{i}"));
         let path = sub.join(name);
         #[cfg(not(windows))]
@@ -173,7 +172,54 @@ async fn image_attach_bounds_the_read_itself() {
     assert!(staged_images(started.home.path()).is_empty());
 }
 
-/// A local symlink pointing to a network share or reserved device component is refused before
+#[cfg(unix)]
+fn refused_link_paths(folder: &std::path::Path) -> Vec<String> {
+    let unc_bs = folder.join("unc_bs.png");
+    std::os::unix::fs::symlink(r"\\nohost.invalid\share\a.png", &unc_bs).unwrap();
+    let unc_fs = folder.join("unc_fs.png");
+    std::os::unix::fs::symlink("//nohost.invalid/share/a.png", &unc_fs).unwrap();
+    let unc_dir = folder.join("unc_dir");
+    std::os::unix::fs::symlink("//nohost.invalid/share", &unc_dir).unwrap();
+    let reserved = folder.join("reserved.png");
+    std::os::unix::fs::symlink(folder.join("NUL").join("shot.png"), &reserved).unwrap();
+    let drive_rel = folder.join("drive_rel.png");
+    std::os::unix::fs::symlink(r"C:..\shot.png", &drive_rel).unwrap();
+    vec![
+        unc_bs.display().to_string(),
+        unc_fs.display().to_string(),
+        unc_dir.join("a.png").display().to_string(),
+        reserved.display().to_string(),
+        drive_rel.display().to_string(),
+    ]
+}
+
+#[cfg(windows)]
+fn refused_link_paths(folder: &std::path::Path) -> Vec<String> {
+    let unc_file = folder.join("unc_file.png");
+    std::os::windows::fs::symlink_file(r"\\nohost.invalid\share\a.png", &unc_file)
+        .expect("a symlink on Windows needs Developer Mode or an elevated shell");
+    let unc_dir = folder.join("unc_dir");
+    std::os::windows::fs::symlink_dir(r"\\nohost.invalid\share", &unc_dir)
+        .expect("a symlink on Windows needs Developer Mode or an elevated shell");
+    let real_dir = folder.join("real");
+    std::fs::create_dir(&real_dir).unwrap();
+    std::fs::write(real_dir.join("shot.png"), png("junction")).unwrap();
+    let junc = folder.join("junc");
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junc)
+        .arg(&real_dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "mklink /J failed");
+    vec![
+        unc_file.display().to_string(),
+        unc_dir.join("a.png").display().to_string(),
+        junc.join("shot.png").display().to_string(),
+    ]
+}
+
+/// A local symlink or Windows directory junction pointing to a refused path is refused before
 /// following it to its target.
 #[tokio::test]
 async fn image_attach_refuses_links_to_refused_paths() {
@@ -181,48 +227,7 @@ async fn image_attach_refuses_links_to_refused_paths() {
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let folder = tempfile::tempdir().unwrap();
-    let mut paths = Vec::new();
-    #[cfg(unix)]
-    {
-        let unc_bs = folder.path().join("unc_bs.png");
-        std::os::unix::fs::symlink(r"\\nohost.invalid\share\a.png", &unc_bs).unwrap();
-        let unc_fs = folder.path().join("unc_fs.png");
-        std::os::unix::fs::symlink("//nohost.invalid/share/a.png", &unc_fs).unwrap();
-        let unc_dir = folder.path().join("unc_dir");
-        std::os::unix::fs::symlink("//nohost.invalid/share", &unc_dir).unwrap();
-        let reserved = folder.path().join("reserved.png");
-        std::os::unix::fs::symlink(folder.path().join("NUL").join("shot.png"), &reserved).unwrap();
-        let drive_rel = folder.path().join("drive_rel.png");
-        std::os::unix::fs::symlink(r"C:..\shot.png", &drive_rel).unwrap();
-        paths.push(unc_bs.display().to_string());
-        paths.push(unc_fs.display().to_string());
-        paths.push(unc_dir.join("a.png").display().to_string());
-        paths.push(reserved.display().to_string());
-        paths.push(drive_rel.display().to_string());
-    }
-    #[cfg(windows)]
-    {
-        let unc_file = folder.path().join("unc_file.png");
-        std::os::windows::fs::symlink_file(r"\\nohost.invalid\share\a.png", &unc_file)
-            .expect("a symlink on Windows needs Developer Mode or an elevated shell");
-        let unc_dir = folder.path().join("unc_dir");
-        std::os::windows::fs::symlink_dir(r"\\nohost.invalid\share", &unc_dir)
-            .expect("a symlink on Windows needs Developer Mode or an elevated shell");
-        let real_dir = folder.path().join("real");
-        std::fs::create_dir(&real_dir).unwrap();
-        std::fs::write(real_dir.join("shot.png"), png("junction")).unwrap();
-        let junc = folder.path().join("junc");
-        let status = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&junc)
-            .arg(&real_dir)
-            .status()
-            .unwrap();
-        assert!(status.success(), "mklink /J failed");
-        paths.push(unc_file.display().to_string());
-        paths.push(unc_dir.join("a.png").display().to_string());
-        paths.push(junc.join("shot.png").display().to_string());
-    }
+    let paths = refused_link_paths(folder.path());
     expect_refused(&mut client, &session, &paths).await;
     assert!(staged_images(started.home.path()).is_empty());
 }

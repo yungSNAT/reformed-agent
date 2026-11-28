@@ -12,7 +12,7 @@
 //! accesses arbitrary host paths.
 
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{json, Map, Value};
 
@@ -22,6 +22,11 @@ use super::{
     IMAGE_TOO_LARGE, IMAGE_UNSUPPORTED, IMAGE_WRITE_FAILED, INVALID_PARAMS, SESSION_NOT_FOUND,
 };
 use crate::attach::{stage_image_bytes, ImageError, MAX_IMAGE_BYTES};
+
+#[path = "image_path.rs"]
+mod path;
+
+use path::{image_path, split_path_input, Found, Refused};
 
 pub(super) const METHODS: &[(&str, Handler)] =
     &[("image.attach", attach), ("image.detach", detach)];
@@ -148,7 +153,7 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     if !session.has_room_for_image(0) {
         return Err(session_full());
     }
-    let data = read_image(&found.target)
+    let data = read_image(found.file)
         .map_err(|e| (IMAGE_WRITE_FAILED, format!("cannot read {name}: {e}")))?;
     let staged = stage_image_bytes(&chat.home.join("images"), &data).map_err(|e| match e {
         ImageError::Unsupported => unsupported(),
@@ -169,25 +174,9 @@ fn attach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     }
 }
 
-/// The bytes of the regular file at `path`, read through one handle and at most one byte past
-/// [`MAX_IMAGE_BYTES`] (a file may report a smaller size than it reads), so staging refuses one
-/// too large. Opens without following a final link or reparse point, returns an error when the
-/// handle is not a regular file (one swapped in after [`resolve`] checked the path), and opens a
-/// FIFO without waiting for a writer.
-fn read_image(path: &Path) -> std::io::Result<Vec<u8>> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(
-        &mut options,
-        libc::O_NONBLOCK | libc::O_NOFOLLOW,
-    );
-    #[cfg(windows)]
-    std::os::windows::fs::OpenOptionsExt::custom_flags(
-        &mut options,
-        windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
-    );
-    let file = options.open(path)?;
+/// The bytes of the already-opened regular file `file`, at most one byte past [`MAX_IMAGE_BYTES`]
+/// (a file may report a smaller size than it reads), so staging refuses one too large.
+fn read_image(file: std::fs::File) -> std::io::Result<Vec<u8>> {
     if !file.metadata()?.is_file() {
         return Err(std::io::Error::other("not a regular file"));
     }
@@ -202,302 +191,22 @@ fn detach_now(chat: &Chat, params: &Map<String, Value>) -> Result<Value, RpcErro
     let Some(session) = chat.lock_sessions().get(id).cloned() else {
         return Err((SESSION_NOT_FOUND, "session not found".into()));
     };
-    let (removed, count) = {
-        let mut queued = session.images();
-        let removed = queued
-            .iter()
-            .position(|image| image.path == Path::new(raw))
-            .map(|index| queued.remove(index));
-        (removed, queued.len())
+    let mut queued = session.images();
+    let Some(index) = queued.iter().position(|image| image.path == Path::new(raw)) else {
+        return Ok(json!({"detached": false, "count": queued.len()}));
     };
-    let Some(image) = removed else {
-        return Ok(json!({"detached": false, "count": count}));
-    };
-    // Each staged image is this gateway's own copy under `<home>/images`.
-    match std::fs::remove_file(&image.path) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            session.images().push(image);
-            Err((
-                IMAGE_WRITE_FAILED,
-                format!("cannot remove staged image: {e}"),
-            ))
-        }
-        Ok(()) | Err(_) => Ok(json!({"detached": true, "count": count})),
-    }
-}
-
-/// A path refused before any file system call: a network share or device namespace path, or
-/// a Windows reserved device name. Holds the client's token.
-struct Refused(String);
-
-/// A resolved local image: `path` keeps the client-named path (`cwd.join(...)`) for display name
-/// and extension checks, whilst `target` is the link-free regular file opened by [`read_image`].
-struct Found {
-    path: PathBuf,
-    target: PathBuf,
-}
-
-/// Maximum symlink hops resolved whilst walking a path (POSIX `SYMLOOP_MAX`).
-const MAX_SYMLINK_DEPTH: usize = 40;
-
-/// The image file `raw` names and the words after it, as upstream's `image.attach` reads a
-/// terminal drop: a dropped path when `raw` starts like one, else its first token. `None` when
-/// it names no file.
-fn image_path(raw: &str, cwd: &Path) -> Result<Option<(Found, String)>, Refused> {
-    if let Some(found) = dropped(raw, cwd)? {
-        return Ok(Some(found));
-    }
-    let (token, remainder) = split_path_input(raw);
-    Ok(resolve(&token, cwd)?.map(|found| (found, remainder)))
-}
-
-fn starts_like_path(text: &str, quoted: bool) -> bool {
-    let unquoted = if quoted { &text[1..] } else { text };
-    let bytes = unquoted.as_bytes();
-    let drive = bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'\\' | b'/');
-    ["/", "~", "./", "../"]
-        .iter()
-        .any(|p| unquoted.starts_with(p))
-        || (!quoted && is_file_url(unquoted))
-        || drive
-}
-
-/// Upstream's `_detect_file_drop`: a path at the start of `raw` (optionally quoted; `/`, `~`,
-/// `./`, `../`, a drive prefix, or unquoted `file://`), with the words after it.
-fn dropped(raw: &str, cwd: &Path) -> Result<Option<(Found, String)>, Refused> {
-    let text = raw.trim();
-    let quoted = text.starts_with(['"', '\'']);
-    if !starts_like_path(text, quoted) {
-        return Ok(None);
-    }
-    let (token, remainder) = split_path_input(text);
-    if quoted {
-        return Ok(resolve(&token, cwd)?.map(|found| (found, remainder)));
-    }
-    let mut refused = None;
-    let candidates = [(text, ""), (token.as_str(), remainder.as_str())]
-        .into_iter()
-        .chain(
-            text.match_indices(' ')
-                .rev()
-                .map(|(pos, _)| (text[..pos].trim_end(), text[pos + 1..].trim())),
-        );
-    for (candidate, rest) in candidates {
-        match resolve(candidate, cwd) {
-            Ok(Some(found)) => return Ok(Some((found, rest.to_string()))),
-            Ok(None) => {}
-            Err(err) => {
-                if refused.is_none() {
-                    refused = Some(err);
-                }
-            }
+    // Each staged image is this gateway's own copy under `<home>/images`. Hold `queued` across
+    // unlink so a concurrent attach or prompt cannot observe the slot free whilst removal fails.
+    match std::fs::remove_file(&queued[index].path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err((
+            IMAGE_WRITE_FAILED,
+            format!("cannot remove staged image: {e}"),
+        )),
+        Ok(()) | Err(_) => {
+            queued.remove(index);
+            Ok(json!({"detached": true, "count": queued.len()}))
         }
     }
-    match refused {
-        Some(err) => Err(err),
-        None => Ok(None),
-    }
-}
-
-/// Upstream's `_split_path_input`: a leading path token, quoted or with `\ ` escapes, and the
-/// text after it.
-fn split_path_input(raw: &str) -> (String, String) {
-    let raw = raw.trim();
-    let bytes = raw.as_bytes();
-    if let Some(&quote @ (b'"' | b'\'')) = bytes.first() {
-        let mut pos = 1;
-        while pos < bytes.len() {
-            if bytes[pos] == b'\\' && pos + 1 < bytes.len() {
-                pos += 2;
-                continue;
-            }
-            if bytes[pos] == quote {
-                return (raw[1..pos].to_string(), raw[pos + 1..].trim().to_string());
-            }
-            pos += 1;
-        }
-        return (raw[1..].to_string(), String::new());
-    }
-    let mut pos = 0;
-    while pos < bytes.len() {
-        match bytes[pos] {
-            b'\\' if bytes.get(pos + 1) == Some(&b' ') => pos += 2,
-            b' ' => break,
-            _ => pos += 1,
-        }
-    }
-    (
-        raw[..pos].replace("\\ ", " "),
-        raw[pos..].trim().to_string(),
-    )
-}
-
-/// Whether `text` begins with the `file://` URI scheme (case-insensitive).
-fn is_file_url(text: &str) -> bool {
-    text.get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
-}
-
-fn is_drive_relative(bytes: &[u8]) -> bool {
-    let [b'a'..=b'z' | b'A'..=b'Z', b':', rest @ ..] = bytes else {
-        return false;
-    };
-    !matches!(rest.first(), Some(b'/' | b'\\'))
-}
-
-/// Refuses 2 leading separators in any mix (`\\host\share`, `\\?\`, `\\.\`, `//host`, `/\host`,
-/// `\/host`), the `\??\` prefix, Windows drive-relative paths (`C:foo`, `C:..\bar`, `C:`), or any
-/// component naming a Windows reserved device name.
-fn check_safe_path(path: &Path, raw: &str) -> Result<(), Refused> {
-    let shown = path.as_os_str().to_string_lossy();
-    let mut lead = shown.chars();
-    let separator = |c: Option<char>| matches!(c, Some('/' | '\\'));
-    if (separator(lead.next()) && separator(lead.next()))
-        || shown.starts_with(r"\??\")
-        || is_drive_relative(shown.as_bytes())
-        || shown.split(['/', '\\']).any(reserved_name)
-    {
-        return Err(Refused(raw.trim().to_string()));
-    }
-    Ok(())
-}
-
-fn has_dir_suffix(path: &Path) -> bool {
-    let bytes = path.as_os_str().as_encoded_bytes();
-    let trimmed = bytes.strip_suffix(b".").unwrap_or(bytes);
-    trimmed.ends_with(b"/") || trimmed.ends_with(b"\\")
-}
-
-/// Walks `path` component by component using `symlink_metadata`, validating every `read_link`
-/// target with [`check_safe_path`] before following it. Returns the resolved link-free path when
-/// the final entry is a regular file, `Ok(None)` when missing, non-regular or a link loop, and
-/// `Err(Refused)` when any link points to a refused path.
-fn resolve_target(path: &Path, raw: &str) -> Result<Option<PathBuf>, Refused> {
-    let mut work = path.to_path_buf();
-    let mut hops = 0usize;
-    'walk: loop {
-        if has_dir_suffix(&work) {
-            return Ok(None);
-        }
-        let mut cur = PathBuf::new();
-        let mut is_file = false;
-        let mut parts = work.components();
-        while let Some(part) = parts.next() {
-            if is_file {
-                return Ok(None);
-            }
-            match part {
-                Component::ParentDir => {
-                    cur.pop();
-                }
-                Component::Normal(name) => {
-                    cur.push(name);
-                    let Ok(meta) = std::fs::symlink_metadata(&cur) else {
-                        return Ok(None);
-                    };
-                    if !meta.is_file() && !meta.is_dir() {
-                        let Ok(target) = std::fs::read_link(&cur) else {
-                            return Ok(None);
-                        };
-                        hops += 1;
-                        if hops > MAX_SYMLINK_DEPTH {
-                            return Ok(None);
-                        }
-                        check_safe_path(&target, raw)?;
-                        cur.pop();
-                        let mut next = cur.join(target);
-                        next.extend(parts);
-                        work = next;
-                        continue 'walk;
-                    }
-                    is_file = meta.is_file();
-                }
-                other => cur.push(other.as_os_str()),
-            }
-        }
-        return Ok(is_file.then_some(cur));
-    }
-}
-
-/// Upstream's `_resolve_attachment_path`: quotes, `\ ` escapes, `file://` and a leading `~`
-/// are undone, a relative path is taken from `cwd`, and only an existing file is returned.
-/// Before anything touches it, [`Refused`]: 2 leading separators in any mix (`\\host\share`,
-/// `\\?\`, `\\.\`, `//host`, `/\host`, `\/host`), the `\??\` prefix, a `file://` URL naming a
-/// host, a reserved device name ([`reserved_name`]) in any component, or a symlink/junction
-/// targeting any of those.
-fn resolve(raw: &str, cwd: &Path) -> Result<Option<Found>, Refused> {
-    let mut token = raw.trim();
-    if token.len() >= 2 && token.starts_with(['"', '\'']) && token.ends_with(&token[..1]) {
-        token = token[1..token.len() - 1].trim();
-    }
-    let token = token.replace("\\ ", " ");
-    if token.is_empty() {
-        return Ok(None);
-    }
-    let path = if is_file_url(&token) {
-        match url::Url::parse(&token) {
-            Ok(url)
-                if url
-                    .host_str()
-                    .is_some_and(|h| !h.is_empty() && h != "localhost") =>
-            {
-                return Err(Refused(raw.trim().to_string()));
-            }
-            Ok(url) => url
-                .to_file_path()
-                .unwrap_or_else(|()| PathBuf::from(&token)),
-            Err(_) => PathBuf::from(&token),
-        }
-    } else if let Some(expanded) = token
-        .strip_prefix('~')
-        .filter(|rest| rest.is_empty() || rest.starts_with(['/', '\\']))
-        .and_then(|rest| Some(home()?.join(rest.trim_start_matches(['/', '\\']))))
-    {
-        // With no `HOME` or `USERPROFILE`, `~` stays as written.
-        expanded
-    } else {
-        PathBuf::from(&token)
-    };
-    check_safe_path(&path, raw)?;
-    let path = cwd.join(path);
-    Ok(resolve_target(&path, raw)?.map(|target| Found { path, target }))
-}
-
-/// Whether `name` is a Windows reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`,
-/// `CONOUT$`, `COM0` to `COM9`, `LPT0` to `LPT9`, and `COM` or `LPT` with a superscript 1, 2
-/// or 3), in any case, with or without an extension or trailing spaces and dots. Refused on
-/// every platform, so a path means the same file everywhere.
-fn reserved_name(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or_default();
-    let stem = stem.trim_end_matches([' ', '.']).to_ascii_uppercase();
-    if matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) {
-        return true;
-    }
-    let Some(port) = stem
-        .strip_prefix("COM")
-        .or_else(|| stem.strip_prefix("LPT"))
-    else {
-        return false;
-    };
-    let mut chars = port.chars();
-    matches!(
-        (chars.next(), chars.next()),
-        (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
-    )
-}
-
-/// The user's home folder, as `~` names it. An empty `HOME` falls back to `USERPROFILE`.
-fn home() -> Option<PathBuf> {
-    ["HOME", "USERPROFILE"]
-        .iter()
-        .find_map(|key| std::env::var_os(key).filter(|home| !home.is_empty()))
-        .map(PathBuf::from)
 }
 
 #[cfg(test)]

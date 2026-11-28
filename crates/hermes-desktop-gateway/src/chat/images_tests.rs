@@ -4,6 +4,7 @@ use futures::FutureExt as _;
 use serde_json::json;
 
 use super::super::{Chat, Conn, Origin, Request};
+use super::path::{dropped, home, resolve, split_path_input};
 use super::*;
 
 /// A browser session of the Webapp, and a connection whose listener set no origin, are
@@ -54,6 +55,7 @@ fn path_spellings() {
         "shot.png/",
         r"shot.png\",
         "sub",
+        "sub/..",
     ] {
         assert!(matches!(resolve(nothing, cwd), Ok(None)), "{nothing}");
     }
@@ -66,7 +68,7 @@ fn path_spellings() {
     );
 }
 
-/// Relative symlinks resolve; symlink loops return `Ok(None)` without hanging.
+/// Relative symlinks resolve; directory-suffixed leaf links and symlink loops return `Ok(None)`.
 #[cfg(unix)]
 #[test]
 fn relative_and_loop_symlinks() {
@@ -74,11 +76,13 @@ fn relative_and_loop_symlinks() {
     let cwd = dir.path();
     std::fs::create_dir(cwd.join("sub")).unwrap();
     std::fs::write(cwd.join("sub/real.png"), b"x").unwrap();
-    std::os::unix::fs::symlink("sub/real.png", cwd.join("rel.png")).unwrap();
+    std::os::unix::fs::symlink("./sub/real.png", cwd.join("rel.png")).unwrap();
     assert_eq!(
         resolve("rel.png", cwd).ok().flatten().map(|f| f.path),
         Some(cwd.join("rel.png"))
     );
+    std::os::unix::fs::symlink("sub/real.png/", cwd.join("dir_slash.png")).unwrap();
+    assert!(matches!(resolve("dir_slash.png", cwd), Ok(None)));
     std::os::unix::fs::symlink(cwd.join("loop_b.png"), cwd.join("loop_a.png")).unwrap();
     std::os::unix::fs::symlink(cwd.join("loop_a.png"), cwd.join("loop_b.png")).unwrap();
     assert!(matches!(resolve("loop_a.png", cwd), Ok(None)));
@@ -123,12 +127,22 @@ fn a_drive_prefix_starts_a_dropped_path() {
 #[test]
 fn a_folder_is_not_read_as_an_image() {
     let dir = tempfile::tempdir().unwrap();
-    let refused = read_image(dir.path());
-    // Unix opens a folder, and the handle is checked; Windows refuses to open it as a file.
     #[cfg(unix)]
-    assert_eq!(refused.unwrap_err().to_string(), "not a regular file");
-    #[cfg(not(unix))]
-    assert!(refused.is_err());
+    let file = std::fs::File::open(dir.path()).unwrap();
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir.path())
+            .unwrap()
+    };
+    assert_eq!(
+        read_image(file).unwrap_err().to_string(),
+        "not a regular file"
+    );
 }
 
 /// An `image.attach` request from a local client for a PNG at `<home>/shot.png`.
@@ -275,8 +289,95 @@ fn ancestor_swap_after_resolve_does_not_read_redirected_target() {
     std::fs::rename(&ok_dir, dir.path().join("ok_old")).unwrap();
     std::os::unix::fs::symlink(&nul_dir, &ok_dir).unwrap();
 
-    let bytes = read_image(&found.target).unwrap();
+    let bytes = read_image(found.file).unwrap();
     assert_eq!(bytes, safe_bytes, "read followed swapped ancestor link");
+}
+
+#[cfg(unix)]
+fn setup_ancestor_race(
+    work: &std::path::Path,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    [u8; 10],
+) {
+    let ok_dir = work.join("ok");
+    let nul_dir = work.join("NUL");
+    let safe = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'O', b'K'];
+    let forbidden = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'N', b'O'];
+    std::fs::create_dir_all(ok_dir.join("sub")).unwrap();
+    std::fs::create_dir_all(nul_dir.join("sub")).unwrap();
+    let shot = ok_dir.join("sub").join("shot.png");
+    std::fs::write(&shot, safe).unwrap();
+    std::fs::write(nul_dir.join("sub").join("shot.png"), forbidden).unwrap();
+    (ok_dir, nul_dir, shot, safe)
+}
+
+/// Racing an ancestor swap (`ok` <-> symlink to `NUL`) during `attach` never stages redirected
+/// bytes (S8).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_ancestor_swap_never_stages_refused_target() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let home = tempfile::tempdir().unwrap();
+    let request = local_attach(home.path());
+    let chat = Arc::clone(&request.chat);
+    let id = request.params["session_id"].as_str().unwrap().to_string();
+    let work = tempfile::tempdir().unwrap();
+    let (ok_dir, nul_dir, shot, safe) = setup_ancestor_race(work.path());
+    let stop = Arc::new(AtomicBool::new(false));
+    let (flag, s_ok, s_bak, s_nul) = (
+        Arc::clone(&stop),
+        ok_dir,
+        work.path().join("ok_bak"),
+        nul_dir,
+    );
+    let racer = std::thread::spawn(move || {
+        while !flag.load(Ordering::Relaxed) {
+            if std::fs::rename(&s_ok, &s_bak).is_ok() {
+                let _ = std::os::unix::fs::symlink(&s_nul, &s_ok);
+                let _ = std::fs::remove_file(&s_ok);
+                let _ = std::fs::rename(&s_bak, &s_ok);
+            }
+        }
+    });
+    let params = json!({"session_id": id, "path": shot.display().to_string()})
+        .as_object()
+        .unwrap()
+        .clone();
+    for _ in 0..60 {
+        if let Ok(reply) = attach_now(&chat, &params) {
+            let staged = std::path::PathBuf::from(reply["path"].as_str().unwrap());
+            assert_eq!(std::fs::read(&staged).unwrap(), safe);
+            let _ = std::fs::remove_file(&staged);
+            chat.lock_sessions()
+                .values()
+                .for_each(|s| s.images().clear());
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    racer.join().unwrap();
+}
+
+/// Fills `session` to `MAX_STAGED_IMAGES` and replaces image 0's staged file with a folder.
+fn fill_session_with_blocked_first(
+    home: &std::path::Path,
+    chat: &Chat,
+    id: &str,
+) -> (Arc<super::super::LiveSession>, std::path::PathBuf) {
+    let session = chat.lock_sessions().get(id).cloned().unwrap();
+    let png_bytes = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'x'];
+    let images_dir = home.join("images");
+    for _ in 0..MAX_STAGED_IMAGES {
+        let staged = stage_image_bytes(&images_dir, &png_bytes).unwrap();
+        session.stage_image(staged).unwrap();
+    }
+    let first = session.images()[0].path.clone();
+    std::fs::remove_file(&first).unwrap();
+    std::fs::create_dir(&first).unwrap();
+    (session, first)
 }
 
 /// A failing `image.detach` at session capacity must never free a slot for a concurrent attach or
@@ -289,22 +390,11 @@ async fn failing_detach_at_capacity_keeps_queue_order_and_cap() {
     let request = local_attach(home.path());
     let chat = Arc::clone(&request.chat);
     let id = request.params["session_id"].as_str().unwrap().to_string();
-    let session = chat.lock_sessions().get(&id).cloned().unwrap();
-    let png_bytes = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'x'];
-    let images_dir = home.path().join("images");
-    for _ in 0..MAX_STAGED_IMAGES {
-        let staged = stage_image_bytes(&images_dir, &png_bytes).unwrap();
-        session.stage_image(staged).unwrap();
-    }
-    let first_path = session.images()[0].path.clone();
-    std::fs::remove_file(&first_path).unwrap();
-    std::fs::create_dir(&first_path).unwrap();
+    let (session, first_path) = fill_session_with_blocked_first(home.path(), &chat, &id);
 
     let stop = Arc::new(AtomicBool::new(false));
-    let racing_session = Arc::clone(&session);
-    let racing_stop = Arc::clone(&stop);
+    let (racing_session, racing_stop) = (Arc::clone(&session), Arc::clone(&stop));
     let raced_over_cap = std::thread::spawn(move || {
-        let mut admitted = false;
         while !racing_stop.load(Ordering::Relaxed) {
             let probe = crate::attach::StagedImage {
                 path: std::path::PathBuf::from("probe.png"),
@@ -312,11 +402,10 @@ async fn failing_detach_at_capacity_keeps_queue_order_and_cap() {
                 bytes: 1,
             };
             if racing_session.stage_image(probe).is_ok() {
-                admitted = true;
-                break;
+                return true;
             }
         }
-        admitted
+        false
     });
 
     let params = json!({"session_id": id, "path": first_path.display().to_string()})
@@ -331,6 +420,9 @@ async fn failing_detach_at_capacity_keeps_queue_order_and_cap() {
         assert_eq!(queued[0].path, first_path, "queue order changed");
     }
     stop.store(true, Ordering::Relaxed);
-    assert!(!raced_over_cap.join().unwrap(), "concurrent attach took slot");
+    assert!(
+        !raced_over_cap.join().unwrap(),
+        "concurrent attach took slot"
+    );
     std::fs::remove_dir(&first_path).unwrap();
 }
