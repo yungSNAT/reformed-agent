@@ -61,6 +61,36 @@
     }
 
     #[test]
+    fn test_copilot_acp_uses_defaults_when_process_metadata_is_blank() {
+        if run_isolated_agent_test(
+            "agent_loop::tests::test_copilot_acp_uses_defaults_when_process_metadata_is_blank",
+        ) {
+            return;
+        }
+
+        let agent = AgentLoop::new(
+            AgentConfig {
+                acp_command: Some("  ".into()),
+                acp_args: vec!["\t".into()],
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..Default::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DummyProvider),
+        );
+
+        assert_eq!(
+            agent.resolve_runtime_base_url("copilot-acp", None).as_deref(),
+            Some("acp://copilot")
+        );
+        let (command, args) = agent.resolve_runtime_command_args(Some("copilot-acp"));
+        assert_eq!(command.as_deref(), Some("copilot"));
+        assert_eq!(args, ["--acp", "--stdio"]);
+    }
+
+    #[test]
     fn test_runtime_wire_model_remaps_openai_dynamic_only() {
         assert_eq!(
             AgentLoop::runtime_wire_model_for_provider("openai", "dynamic"),
