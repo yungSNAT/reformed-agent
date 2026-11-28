@@ -205,12 +205,15 @@ pub async fn run(
     config: ListenConfig,
     queue: Arc<dyn Publisher>,
 ) -> Result<(), String> {
+    let bound_port = listener
+        .local_addr()
+        .map_or(config.port, |addr| addr.port());
     log(
         Level::Info,
         &format!(
             "webhook server listening on http://{}:{}{} backend={} expected={} {}",
             config.host,
-            config.port,
+            bound_port,
             config.path,
             config.backend_name,
             config.expected_repo,
