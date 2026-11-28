@@ -184,6 +184,7 @@ mod tests {
             .unwrap();
         }
         let server = MockServer::start().await;
+        let mut expected_paths = vec!["/index"];
         Mock::given(method("GET"))
             .and(path("/index"))
             .respond_with(index)
@@ -191,6 +192,7 @@ mod tests {
             .mount(&server)
             .await;
         let hub_url = if let Some(response) = hub {
+            expected_paths.push("/hub");
             Mock::given(method("GET"))
                 .and(path("/hub"))
                 .and(query_param("q", "report"))
@@ -202,7 +204,12 @@ mod tests {
         } else {
             "invalid URL".into()
         };
-        let requests = if fallback.is_some() { 1 } else { 0 };
+        let requests = if fallback.is_some() {
+            expected_paths.push("/fallback");
+            1
+        } else {
+            0
+        };
         Mock::given(method("GET"))
             .and(path("/fallback"))
             .and(query_param("q", "report"))
@@ -228,12 +235,18 @@ mod tests {
                     .build()
                     .unwrap()
             },
-            |_| FixtureTap,
+            |_| {
+                assert_eq!(requests, 1, "tap lookup followed a registry match");
+                FixtureTap
+            },
             |line| writeln!(&mut output, "{line}").unwrap(),
         )
         .await
         .unwrap();
         server.verify().await;
+        let received = server.received_requests().await.unwrap();
+        let actual_paths: Vec<_> = received.iter().map(|request| request.url.path()).collect();
+        assert_eq!(actual_paths, expected_paths);
         output
     }
 
@@ -276,6 +289,20 @@ mod tests {
             assert!(!output.contains("Skills Hub"));
             assert!(!output.contains("tap-backed"));
         }
+    }
+
+    #[tokio::test]
+    async fn search_stops_after_a_match_from_the_legacy_hub_alone() {
+        let output = search_fixture(
+            ResponseTemplate::new(200).set_body_json(json!({"skills": []})),
+            Some(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [{"name": "report-archive", "version": "1.2"}]
+            }))),
+            None,
+            false,
+        )
+        .await;
+        assert!(output.contains("Legacy Skills Hub matches:\n  • report-archive (v1.2)"));
     }
 
     #[tokio::test]
