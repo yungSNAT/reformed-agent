@@ -407,6 +407,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_model_summaries_keep_raw_session_previews() {
+        use std::net::SocketAddr;
+        use std::time::Duration;
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const CHILD: &str = "REFORMED_SESSION_SUMMARY_FIXTURE_CHILD";
+        const SHORT_NOTE: &str = "fixturetopic retains a short note";
+        const LONG_ENDING: &str = "ending-outside-preview";
+        let Ok(address) = std::env::var(CHILD) else {
+            let server = MockServer::start().await;
+            let empty = ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"content": "  "}}]
+            }));
+            for content in [SHORT_NOTE, LONG_ENDING] {
+                Mock::given(method("POST"))
+                    .and(path("/chat/completions"))
+                    .and(body_string_contains(content))
+                    .respond_with(empty.clone())
+                    .expect(3)
+                    .mount(&server)
+                    .await;
+            }
+
+            let (_, module) = module_path!().split_once("::").unwrap();
+            let test = format!("{module}::empty_model_summaries_keep_raw_session_previews");
+            let executable = std::env::current_exe().unwrap(); // nosemgrep: rust.lang.security.current-exe.current-exe
+            let mut child = tokio::process::Command::new(executable);
+            child
+                .env_clear()
+                .env(CHILD, server.address().to_string())
+                .env("NO_PROXY", "127.0.0.1,::1")
+                .env("HERMES_SESSION_SEARCH_SUMMARY_BASE_URL", server.uri())
+                .env("HERMES_SESSION_SEARCH_SUMMARY_API_KEY", "fixture-only")
+                .envs(std::env::var_os("LLVM_PROFILE_FILE").map(|mut file| {
+                    let pattern = file.to_string_lossy();
+                    if !pattern.contains("%p") && !pattern.contains("%m") {
+                        file.push(".%p.profraw");
+                    }
+                    ("LLVM_PROFILE_FILE", file)
+                }))
+                .envs(["TMPDIR", "TEMP", "TMP", "SystemRoot"].into_iter().filter_map(|name| {
+                    std::env::var_os(name).map(|value| (name, value))
+                }))
+                .kill_on_drop(true)
+                .args(["--exact", &test, "--color", "never"]);
+            let output = tokio::time::timeout(Duration::from_secs(20), child.output())
+                .await
+                .expect("session search fixture deadline")
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains(&format!("test {test} ... ok")),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        };
+        let address: SocketAddr = address.parse().expect("summary fixture socket address");
+        assert!(address.ip().is_loopback());
+        assert!(std::env::var("HERMES_SESSION_SEARCH_SUMMARY_BASE_URL")
+            .is_ok_and(|url| url == format!("http://{address}")));
+
+        let (tmp, backend) = backend_with_db();
+        let conn = db_conn(&tmp);
+        let long = format!("fixturetopic {}{LONG_ENDING}", "notes ".repeat(100));
+        for (id, text) in [("short-fixture", SHORT_NOTE), ("long-fixture", long.as_str())] {
+            insert_session(&conn, id, None, None, None, None, "2026-01-01T00:00:00Z");
+            insert_message(&conn, id, "user", text);
+        }
+        let output = backend.search(Some("fixturetopic"), None, 5, None).await.unwrap();
+        let response: Value = serde_json::from_str(&output).unwrap();
+        let results = response["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        let preview = |id: &str| {
+            let row = results.iter().find(|row| row["session_id"] == id).unwrap();
+            let summary = row["summary"].as_str().unwrap();
+            summary.strip_prefix("[Raw preview — summarization unavailable]\n").unwrap()
+        };
+        assert!(preview("short-fixture").contains(SHORT_NOTE));
+        let truncated = preview("long-fixture");
+        assert!(truncated.starts_with("[USER]: fixturetopic"));
+        assert!(truncated.ends_with("…[truncated]"));
+        assert!(!truncated.contains(LONG_ENDING));
+    }
+
+    #[tokio::test]
     async fn damaged_ranked_index_falls_back_to_active_messages_with_the_requested_role() {
         let (tmp, backend) = backend_with_db();
         let conn = db_conn(&tmp);
