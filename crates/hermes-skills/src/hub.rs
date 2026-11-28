@@ -732,6 +732,9 @@ fn decode_base64_or_hex_32(raw: &str) -> Result<[u8; 32], String> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+mod http_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
