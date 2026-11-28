@@ -1433,6 +1433,64 @@ async fn assert_gateway_review_notification_order(streaming: bool) {
 }
 
 #[tokio::test]
+async fn gateway_notifications_send_directly_when_the_queue_is_missing_or_poisoned() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let gateway = Arc::new(Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        DmManager::with_pair_behavior(),
+        GatewayConfig::default(),
+    ));
+    gateway
+        .register_adapter(
+            "thread-option-test",
+            Arc::new(ThreadOptionTestAdapter {
+                sends: sent.clone(),
+            }),
+        )
+        .await;
+
+    let poisoned = Arc::new(Mutex::new(Vec::new()));
+    let panic = std::panic::catch_unwind(|| {
+        let _pending = poisoned.lock().unwrap();
+        panic!("fixture poisons the notification queue");
+    });
+    assert!(panic.is_err());
+
+    for (message, pending) in [("no queue", None), ("poisoned queue", Some(poisoned))] {
+        let context = GatewayRuntimeContext {
+            platform: "thread-option-test".into(),
+            chat_id: "chat1".into(),
+            thread_id: Some("topic".into()),
+            deferred_post_delivery_released: pending
+                .as_ref()
+                .map(|_| Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            deferred_post_delivery_messages: pending,
+            ..Default::default()
+        };
+        gateway.post_delivery_notify_callback(&context)(message);
+    }
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while sent.lock().unwrap().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("both fallback notifications should be delivered");
+    let mut messages = sent.lock().unwrap().clone();
+    messages.sort_unstable();
+    assert_eq!(
+        messages,
+        ["no queue", "poisoned queue"].map(|text| (
+            "chat1".to_string(),
+            text.to_string(),
+            Some("topic".to_string()),
+            true
+        ))
+    );
+}
+
+#[tokio::test]
 async fn gateway_replies_and_deferred_messages_preserve_source_thread() {
     let sends = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(ThreadOptionTestAdapter {
