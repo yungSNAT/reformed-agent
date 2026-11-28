@@ -1,14 +1,15 @@
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::fs::symlink;
 
 use hermes_core::git::GitRead;
 
 use super::super::git::{
-    classify, git, repo_dir, repo_status, rev_parse_args, untracked_lines, valid_ref, walk_entries,
-    DIFF_ARGS, STATUS_ARGS, UNTRACKED_LINE_MAX_BYTES,
+    classify, git, rev_parse_args, untracked_lines, valid_ref, walk_entries, DIFF_ARGS,
+    STATUS_ARGS, UNTRACKED_LINE_MAX_BYTES,
 };
-use super::super::roots::Roots;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use super::super::git::{repo_dir, repo_status};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use super::{at, roots};
 use super::{commit_all, run, status_at, tree};
 
@@ -127,7 +128,7 @@ fn a_submodule_cannot_run_its_own_filter_on_status() {
     assert_eq!(status["branch"], "main");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn git_runs_in_the_folder_that_was_checked() {
     let t = tree();
@@ -188,6 +189,8 @@ fn every_git_call_carries_the_overrides_no_behaviour_test_can_see() {
     for want in [
         "core.hooksPath=/dev/null",
         "diff.external=",
+        "status.relativePaths=false",
+        "diff.relative=false",
         "diff.submodule=short",
         "status.submoduleSummary=false",
     ] {
@@ -293,190 +296,4 @@ fn status_of_a_repository_without_a_commit_counts_its_untracked_lines() {
     // `a.txt` and the folder `src/`, whose lines are not counted.
     assert_eq!(status["untracked"], 2);
     assert_eq!(status["added"], 1);
-}
-
-#[test]
-fn core_worktree_and_gitfile_escapes_are_refused() {
-    let t = tree();
-    std::fs::write(t.hermes.join("gateway-connection-tokens.json"), "{}").unwrap();
-    let repo = t.root.join("proj");
-    run(&repo, &["init", "-q", "-b", "main"]);
-    commit_all(&repo);
-    run(
-        &repo,
-        &["config", "core.worktree", t.hermes.to_str().unwrap()],
-    );
-    assert_eq!(status_at(&t, "proj"), None, "core.worktree into .hermes");
-
-    run(
-        &repo,
-        &["config", "core.worktree", t.root.to_str().unwrap()],
-    );
-    run(&repo, &["config", "status.showUntrackedFiles", "all"]);
-    assert_eq!(status_at(&t, "proj"), None, "core.worktree to root");
-
-    run(&repo, &["config", "--unset", "core.worktree"]);
-    run(&repo, &["config", "--unset", "status.showUntrackedFiles"]);
-    let wt = t.root.join("wt");
-    run(
-        &repo,
-        &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
-    );
-    let wt_status = status_at(&t, "wt").expect("linked worktree inside root");
-    assert_eq!(wt_status["branch"], "feat");
-
-    let ext = t.outside.join("ext");
-    std::fs::create_dir(&ext).unwrap();
-    run(&ext, &["init", "-q", "-b", "secret"]);
-    std::fs::write(ext.join("s.txt"), "x\n").unwrap();
-    commit_all(&ext);
-    let linked = t.root.join("linked");
-    std::fs::create_dir(&linked).unwrap();
-    std::fs::write(
-        linked.join(".git"),
-        format!("gitdir: {}\n", ext.join(".git").display()),
-    )
-    .unwrap();
-    assert_eq!(status_at(&t, "linked"), None, "gitfile outside root");
-}
-
-#[test]
-fn a_worktree_commondir_escaping_the_root_or_hermes_home_is_refused() {
-    let t = tree();
-    let ext = t.outside.join("ext");
-    std::fs::create_dir(&ext).unwrap();
-    run(&ext, &["init", "-q", "-b", "secret"]);
-    std::fs::write(ext.join("s.txt"), "x\n").unwrap();
-    commit_all(&ext);
-    let hermes_repo = t.hermes.join("secret_repo");
-    std::fs::create_dir(&hermes_repo).unwrap();
-    run(&hermes_repo, &["init", "-q", "-b", "hermes-secret"]);
-    std::fs::write(hermes_repo.join("h.txt"), "h\n").unwrap();
-    commit_all(&hermes_repo);
-    for (name, target_git, branch) in [
-        ("commondir-outside", ext.join(".git"), "secret"),
-        (
-            "commondir-hermes",
-            hermes_repo.join(".git"),
-            "hermes-secret",
-        ),
-    ] {
-        let fake_git = t.root.join(format!("{name}-git"));
-        let wt_dir = t.root.join(name);
-        std::fs::create_dir(&fake_git).unwrap();
-        std::fs::create_dir(&wt_dir).unwrap();
-        std::fs::write(fake_git.join("HEAD"), format!("ref: refs/heads/{branch}\n")).unwrap();
-        std::fs::write(
-            fake_git.join("gitdir"),
-            format!("{}\n", wt_dir.join(".git").display()),
-        )
-        .unwrap();
-        std::fs::write(
-            fake_git.join("commondir"),
-            format!("{}\n", target_git.display()),
-        )
-        .unwrap();
-        std::fs::write(
-            wt_dir.join(".git"),
-            format!("gitdir: {}\n", fake_git.display()),
-        )
-        .unwrap();
-        assert_eq!(status_at(&t, name), None, "{name}");
-    }
-}
-
-#[test]
-fn a_newline_in_a_directory_name_cannot_spoof_repo_top() {
-    let t = tree();
-    let ext = t.outside.join("ext");
-    std::fs::create_dir(&ext).unwrap();
-    run(&ext, &["init", "-q", "-b", "secret"]);
-    std::fs::write(ext.join("s.txt"), "x\n").unwrap();
-    commit_all(&ext);
-    std::fs::create_dir_all(t.root.join("a/.git")).unwrap();
-    let r_no_slash = t.root.to_str().unwrap().trim_start_matches('/');
-    let nl_rel = format!("a/\n/{r_no_slash}/a/.git/\n/{r_no_slash}/a/.git");
-    let nl_dir = t.root.join(&nl_rel);
-    std::fs::create_dir_all(&nl_dir).unwrap();
-    std::fs::write(
-        nl_dir.join(".git"),
-        format!("gitdir: {}\n", ext.join(".git").display()),
-    )
-    .unwrap();
-    assert_eq!(
-        status_at(&t, &nl_rel),
-        None,
-        "newline-in-path repo_top spoof"
-    );
-}
-
-#[test]
-fn a_repository_at_the_root_omits_refused_entries_and_numstat_counts() {
-    let t = tree();
-    run(&t.root, &["init", "-q", "-b", "main"]);
-    commit_all(&t.root);
-    std::fs::write(t.hermes.join("auth.json"), "1\n2\n3\n4\n5\n6\n").unwrap();
-    std::fs::write(t.root.join("proj/src/main.rs"), "fn main() {}\n// extra\n").unwrap();
-    let status = status_at(&t, "proj").expect("real repo at root");
-    let paths: Vec<&str> = status["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|f| f["path"].as_str())
-        .collect();
-    assert!(
-        !paths.iter().any(|p| p.starts_with(".hermes")),
-        "refused tree listed in status: {paths:?}"
-    );
-    assert_eq!(
-        status["added"], 1,
-        "refused tree tracked lines leaked into added: {status}"
-    );
-}
-
-#[test]
-fn a_root_under_a_colon_parent_still_stops_discovery_above_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = std::fs::canonicalize(dir.path()).unwrap();
-    let colon_parent = base.join("a:b");
-    let root = colon_parent.join("home");
-    let proj = root.join("proj");
-    std::fs::create_dir_all(&proj).unwrap();
-    run(&colon_parent, &["init", "-q", "-b", "outer"]);
-    let r = Roots::new(std::slice::from_ref(&root), &[]);
-    let repo = repo_dir(proj.to_str().unwrap(), &r, Some(&root)).unwrap();
-    assert_eq!(repo_status(&repo, &[]), None);
-}
-
-#[test]
-fn a_renamed_all_digit_file_does_not_inflate_line_counts() {
-    let t = tree();
-    let repo = t.root.join("proj");
-    run(&repo, &["init", "-q", "-b", "main"]);
-    std::fs::write(repo.join("7"), "one\n").unwrap();
-    commit_all(&repo);
-    run(&repo, &["mv", "7", "8"]);
-    let status = status_at(&t, "proj").expect("a status");
-    assert_eq!(status["added"], 0, "rename path inflated added: {status}");
-    assert_eq!(status["removed"], 0);
-}
-
-#[test]
-fn a_filename_starting_with_a_tab_does_not_swallow_following_numstat_records() {
-    let t = tree();
-    let repo = t.root.join("proj");
-    run(&repo, &["init", "-q", "-b", "main"]);
-    for name in ["\ta.txt", "b.txt", "c.txt"] {
-        std::fs::write(repo.join(name), "one\n").unwrap();
-    }
-    commit_all(&repo);
-    for name in ["\ta.txt", "b.txt", "c.txt"] {
-        std::fs::write(repo.join(name), "one\ntwo\n").unwrap();
-    }
-    let status = status_at(&t, "proj").expect("a status");
-    assert_eq!(
-        status["added"], 3,
-        "leading-tab filename swallowed numstat records: {status}"
-    );
-    assert_eq!(status["removed"], 0);
 }

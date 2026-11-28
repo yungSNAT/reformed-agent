@@ -414,3 +414,78 @@ fn a_home_relative_path_needs_a_home_folder() {
     );
     assert!(resolve("~/proj", &roots(&t), Some(&t.root)).is_ok());
 }
+
+#[test]
+fn dangling_symlinks_answer_alike_before_and_after_target_creation() {
+    let t = tree();
+    let r = roots(&t);
+    let cases = [
+        (
+            "dangling_out",
+            t.outside.join("later.txt"),
+            t.outside.join("later.txt"),
+            Refusal::Outside,
+        ),
+        (
+            "dangling_rel",
+            PathBuf::from("../outside/later_rel.txt"),
+            t.outside.join("later_rel.txt"),
+            Refusal::Outside,
+        ),
+        (
+            "dangling_sens",
+            t.root.join(".ssh/later_key"),
+            t.root.join(".ssh/later_key"),
+            Refusal::Sensitive,
+        ),
+        (
+            "dangling_hermes",
+            t.hermes.join("later.json"),
+            t.hermes.join("later.json"),
+            Refusal::Sensitive,
+        ),
+    ];
+    for (link_name, link_target, real_file, want) in cases {
+        symlink(&link_target, t.root.join(link_name)).unwrap();
+        assert_eq!(
+            resolve(&at(&t, link_name), &r, Some(&t.root)).unwrap_err(),
+            want,
+            "before {link_name}"
+        );
+        std::fs::write(&real_file, "x").unwrap();
+        assert_eq!(
+            resolve(&at(&t, link_name), &r, Some(&t.root)).unwrap_err(),
+            want,
+            "after {link_name}"
+        );
+    }
+}
+
+#[test]
+fn dangling_inside_link_loop_and_parent_traversal_are_classified_consistently() {
+    let t = tree();
+    let r = roots(&t);
+    symlink(t.root.join("proj/later.txt"), t.root.join("dangling_in")).unwrap();
+    assert_eq!(
+        resolve(&at(&t, "dangling_in"), &r, Some(&t.root)).unwrap_err(),
+        Refusal::NotFound
+    );
+    std::fs::write(t.root.join("proj/later.txt"), "ok").unwrap();
+    assert!(resolve(&at(&t, "dangling_in"), &r, Some(&t.root)).is_ok());
+    symlink(t.outside.join("missing_dir"), t.root.join("dangling_dir")).unwrap();
+    assert_eq!(
+        resolve(
+            &at(&t, "dangling_dir/../../home/proj/src/main.rs"),
+            &r,
+            Some(&t.root)
+        )
+        .unwrap_err(),
+        Refusal::Outside
+    );
+    symlink(t.root.join("loop_b"), t.root.join("loop_a")).unwrap();
+    symlink(t.root.join("loop_a"), t.root.join("loop_b")).unwrap();
+    assert_eq!(
+        resolve(&at(&t, "loop_a"), &r, Some(&t.root)).unwrap_err(),
+        Refusal::Outside
+    );
+}

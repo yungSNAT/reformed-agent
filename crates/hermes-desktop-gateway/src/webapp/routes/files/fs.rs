@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::ffi::{CStr, CString, OsStr};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
@@ -46,20 +46,36 @@ pub(crate) fn openat(dir: impl AsFd, name: &OsStr, flags: OFlags) -> std::io::Re
     )?)
 }
 
-/// Opens `resolved` by walking it from its root's descriptor, one segment at a time without
-/// following a link, so what opens is what was checked. Only a folder or a regular file opens;
-/// a FIFO or device is refused without blocking.
+fn openat_refusal(dir: impl AsFd, name: &OsStr, flags: OFlags) -> Result<OwnedFd, Refusal> {
+    openat(dir, name, flags).map_err(|e| io_refusal(&e))
+}
+
+/// Opens an absolute canonical folder by walking every component from `/` without following any
+/// link, so a swapped ancestor above a working root cannot redirect the open.
+pub(crate) fn open_dir_walk(path: &Path) -> Result<OwnedFd, Refusal> {
+    let mut parts = path.components();
+    if !matches!(parts.next(), Some(Component::RootDir)) {
+        return Err(Refusal::Outside);
+    }
+    let mut dir = openat_refusal(CWD, OsStr::new("/"), OFlags::RDONLY | OFlags::DIRECTORY)?;
+    for part in parts {
+        let Component::Normal(name) = part else {
+            return Err(Refusal::Outside);
+        };
+        dir = openat_refusal(&dir, name, OFlags::RDONLY | OFlags::DIRECTORY)?;
+    }
+    Ok(dir)
+}
+
+/// Opens `resolved` by walking every component from `/` through its root and relative path
+/// without following a link, so what opens is what was checked. Only a folder or a regular file
+/// opens; a FIFO or device is refused without blocking.
 pub(crate) fn open_resolved(resolved: &Resolved) -> Result<Opened, Refusal> {
     let rel = resolved
         .path
         .strip_prefix(&resolved.root)
         .map_err(|_| Refusal::Outside)?;
-    let mut dir = openat(
-        CWD,
-        resolved.root.as_os_str(),
-        OFlags::RDONLY | OFlags::DIRECTORY,
-    )
-    .map_err(|e| io_refusal(&e))?;
+    let mut dir = open_dir_walk(&resolved.root)?;
     let parts: Vec<&OsStr> = rel
         .components()
         .map(|c| match c {
@@ -71,9 +87,9 @@ pub(crate) fn open_resolved(resolved: &Resolved) -> Result<Opened, Refusal> {
         return Ok(Opened::Dir(dir));
     };
     for part in folders {
-        dir = openat(&dir, part, OFlags::RDONLY | OFlags::DIRECTORY).map_err(|e| io_refusal(&e))?;
+        dir = openat_refusal(&dir, part, OFlags::RDONLY | OFlags::DIRECTORY)?;
     }
-    let fd = openat(&dir, last, OFlags::RDONLY | OFlags::NONBLOCK).map_err(|e| io_refusal(&e))?;
+    let fd = openat_refusal(&dir, last, OFlags::RDONLY | OFlags::NONBLOCK)?;
     let st = rustix::fs::fstat(&fd).map_err(|e| io_refusal(&e.into()))?;
     match FileType::from_raw_mode(st.st_mode) {
         FileType::Directory => Ok(Opened::Dir(fd)),
@@ -82,19 +98,28 @@ pub(crate) fn open_resolved(resolved: &Resolved) -> Result<Opened, Refusal> {
     }
 }
 
-/// The entries of an opened folder, as upstream lists them: folders first, then by name;
-/// build folders, sensitive entries and refused trees left out; links listed by their own type.
-pub(crate) fn list_entries(
-    dir: OwnedFd,
+fn stat_entry_type(dir: impl AsFd, name: &CStr) -> std::io::Result<FileType> {
+    let st = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)?;
+    Ok(FileType::from_raw_mode(st.st_mode))
+}
+
+/// Collects, filters and sorts entries for `dir`, propagating every iteration or classification
+/// error so a mid-read failure never yields a partial listing. Uses `d_type` when supplied and
+/// falls back to `statat` (propagating errors) only on `FileType::Unknown`.
+pub(crate) fn collect_entries<I>(
+    dir: impl AsFd,
+    entries: I,
     shown: &Path,
     refused: &[PathBuf],
-) -> std::io::Result<(Vec<Value>, bool)> {
-    let stream = Dir::read_from(&dir)?;
-    let mut entries: Vec<(bool, String)> = Vec::new();
+) -> std::io::Result<(Vec<Value>, bool)>
+where
+    I: IntoIterator<Item = std::io::Result<(CString, FileType)>>,
+{
+    let mut kept: Vec<(bool, String, String)> = Vec::new();
     let mut truncated = false;
-    for entry in stream.flatten() {
-        let name = entry.file_name();
-        let bytes = name.to_bytes();
+    for entry in entries {
+        let (name, kind) = entry?;
+        let bytes = name.as_bytes();
         if bytes == b"." || bytes == b".." {
             continue;
         }
@@ -107,22 +132,40 @@ pub(crate) fn list_entries(
         {
             continue;
         }
-        if entries.len() == LIST_MAX_ENTRIES {
+        if kept.len() == LIST_MAX_ENTRIES {
             truncated = true;
             break;
         }
-        let is_dir = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW)
-            .is_ok_and(|st| FileType::from_raw_mode(st.st_mode) == FileType::Directory);
-        entries.push((is_dir, text));
+        let is_dir = match kind {
+            FileType::Directory => true,
+            FileType::Unknown => stat_entry_type(&dir, &name)? == FileType::Directory,
+            _ => false,
+        };
+        kept.push((is_dir, text.to_lowercase(), text));
     }
-    entries.sort_by(|a, b| (!a.0, a.1.to_lowercase(), &a.1).cmp(&(!b.0, b.1.to_lowercase(), &b.1)));
-    let list = entries
+    kept.sort_by(|a, b| (!a.0, &a.1, &a.2).cmp(&(!b.0, &b.1, &b.2)));
+    let list = kept
         .into_iter()
-        .map(|(is_dir, name)| {
+        .map(|(is_dir, _, name)| {
             json!({"name": name, "path": shown.join(&name).to_string_lossy(), "isDirectory": is_dir})
         })
         .collect();
     Ok((list, truncated))
+}
+
+/// The entries of an opened folder, as upstream lists them: folders first, then by name;
+/// build folders, sensitive entries and refused trees left out; links listed by their own type.
+pub(crate) fn list_entries(
+    dir: OwnedFd,
+    shown: &Path,
+    refused: &[PathBuf],
+) -> std::io::Result<(Vec<Value>, bool)> {
+    let stream = Dir::read_from(&dir)?;
+    let items = stream.map(|res| -> std::io::Result<_> {
+        let entry = res?;
+        Ok((entry.file_name().to_owned(), entry.file_type()))
+    });
+    collect_entries(&dir, items, shown, refused)
 }
 
 pub(crate) fn mime_type(path: &Path) -> &'static str {

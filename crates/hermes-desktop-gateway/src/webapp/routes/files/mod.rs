@@ -12,16 +12,19 @@
 //!   root;
 //! - credential files and folders are refused anywhere, browser profiles, cookie and password
 //!   stores and keyrings included;
-//! - paths are absolute or `~`; the resolved path is opened by walking it from the root's
-//!   descriptor without following links, so a link swapped in after the check is refused;
-//! - a path outside the roots answers 403 whether or not it exists or is readable;
+//! - paths are absolute or `~`; the resolved path is opened by walking every component from `/`
+//!   without following links, so a link swapped into any ancestor or target after the check is
+//!   refused;
+//! - a path outside the roots answers 403 whether or not it exists or is readable, including
+//!   dangling symlinks;
 //! - only a loopback peer reaches these routes, and never the remote-mode token caller;
 //! - `rev-parse` takes a ref of plain ref characters only, after `--end-of-options`;
-//! - git never searches above the root, never enters a submodule, runs no hook, external diff or
-//!   configured program, and refuses any repository whose work tree or git folder leaves the root,
-//!   enters a refused or sensitive tree, or points away from the checked folder; on Linux it runs
-//!   in the folder descriptor that was checked (elsewhere by its checked path, so a link swapped
-//!   in during the call is a limitation).
+//! - git never searches above the root, never enters a submodule, excludes refused and sensitive
+//!   paths at git execution as well as output filtering, runs no hook, external diff or configured
+//!   program, and refuses any repository whose work tree, git folder or common folder leaves the
+//!   root, enters a refused or sensitive tree, or points away from the checked folder; on Linux
+//!   and macOS it binds the checked folder and the validated work tree, git folder and common
+//!   folder by open descriptor and checks `commondir` before each run.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -45,7 +48,7 @@ mod git;
 mod roots;
 
 use fs::{etag, list_entries, mime_type, open_resolved, read_capped, Opened, DATA_URL_MAX_BYTES};
-use git::{git_line, repo_dir, repo_status, repo_top, rev_parse_args, valid_ref};
+use git::{open_repo, repo_dir, repo_status, rev_parse_args, valid_ref};
 use roots::{local_only, peer, resolve, roots_for, Refusal, Resolved, Roots};
 
 /// Each handler gets `served` from the route, not from the request; the requested path reaches
@@ -275,15 +278,8 @@ async fn rev_parse(
     }
     blocking(move || {
         let dir = repo_dir(&raw, &roots, home.as_deref())?;
-        let git_path = dir.git_path();
-        let sha = repo_top(&git_path, &dir.resolved.root, &roots.refused).and_then(|_| {
-            git_line(
-                &git_path,
-                &dir.resolved.root,
-                GitRead::RevParse,
-                &rev_parse_args(&wanted),
-            )
-        });
+        let sha = open_repo(&dir, &roots.refused)
+            .and_then(|repo| repo.line(GitRead::RevParse, &rev_parse_args(&wanted)));
         Ok(json!({"sha": sha}))
     })
     .await

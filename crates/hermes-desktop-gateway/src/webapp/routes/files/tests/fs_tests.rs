@@ -1,20 +1,20 @@
-use std::ffi::OsStr;
+use std::ffi::{CString, OsStr};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use axum::http::StatusCode;
-use rustix::fs::{OFlags, CWD};
+use rustix::fs::{FileType, OFlags, CWD};
 use rustix::io::Errno;
 use serde_json::json;
 
 use super::super::fs::{
-    list_entries, mime_type, open_resolved, openat, read_capped, Opened, DATA_URL_MAX_BYTES,
-    LIST_MAX_ENTRIES,
+    collect_entries, list_entries, mime_type, open_dir_walk, open_resolved, openat, read_capped,
+    Opened, DATA_URL_MAX_BYTES, LIST_MAX_ENTRIES,
 };
 use super::super::git::repo_dir;
-use super::super::roots::{resolve, Refusal, Resolved};
+use super::super::roots::{resolve, Refusal, Resolved, Roots};
 use super::super::{data_url, listing};
 use super::{at, list, roots, tree};
 use crate::webapp::api::ApiError;
@@ -145,6 +145,96 @@ fn a_walk_opens_only_what_its_root_holds() {
         Some(Refusal::NotFound)
     );
     assert_eq!(walk(&t.root, t.root.join("proj/src/main.rs")), None);
+    assert_eq!(
+        open_dir_walk(Path::new("rel")).err(),
+        Some(Refusal::Outside)
+    );
+    assert_eq!(
+        open_dir_walk(&t.root.join("proj/..")).err(),
+        Some(Refusal::Outside)
+    );
+}
+
+#[test]
+fn a_swapped_ancestor_of_a_nested_root_is_not_followed() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let work = base.join("parent/work");
+    std::fs::create_dir_all(work.join("proj")).unwrap();
+    std::fs::write(work.join("proj/file.txt"), "inside").unwrap();
+    let decoy = base.join("outside/work/proj");
+    std::fs::create_dir_all(&decoy).unwrap();
+    std::fs::write(decoy.join("file.txt"), "outside").unwrap();
+    let r = Roots::new(std::slice::from_ref(&work), &[]);
+    let checked_file = resolve(work.join("proj/file.txt").to_str().unwrap(), &r, None).unwrap();
+    let checked_root = resolve(work.to_str().unwrap(), &r, None).unwrap();
+    std::fs::rename(base.join("parent"), base.join("parent.old")).unwrap();
+    symlink(base.join("outside"), base.join("parent")).unwrap();
+    assert_eq!(open_resolved(&checked_file).err(), Some(Refusal::Outside));
+    assert_eq!(open_resolved(&checked_root).err(), Some(Refusal::Outside));
+}
+
+#[test]
+fn a_readdir_error_or_unknown_stat_failure_fails_closed() {
+    let t = tree();
+    let proj = resolve(&at(&t, "proj"), &roots(&t), None).unwrap();
+    let Ok(Opened::Dir(dir)) = open_resolved(&proj) else {
+        panic!("not a folder")
+    };
+    let mid_err = collect_entries(
+        &dir,
+        [
+            Ok((CString::new("a.txt").unwrap(), FileType::RegularFile)),
+            Err(std::io::Error::from_raw_os_error(Errno::IO.raw_os_error())),
+        ],
+        &proj.path,
+        &[],
+    );
+    assert!(mid_err.is_err(), "mid-read error returned partial listing");
+    let (unknown_ok, truncated) = collect_entries(
+        &dir,
+        [Ok((CString::new("src").unwrap(), FileType::Unknown))],
+        &proj.path,
+        &[],
+    )
+    .unwrap();
+    assert!(!truncated);
+    assert_eq!(unknown_ok.len(), 1);
+    assert_eq!(unknown_ok[0]["isDirectory"], true);
+    let unknown_err = collect_entries(
+        &dir,
+        [Ok((CString::new("missing").unwrap(), FileType::Unknown))],
+        &proj.path,
+        &[],
+    );
+    assert!(
+        unknown_err.is_err(),
+        "stat failure on Unknown entry collapsed to false"
+    );
+}
+
+#[test]
+fn a_non_searchable_folder_classifies_entries_without_statat() {
+    let t = tree();
+    let noexec = t.root.join("noexec");
+    std::fs::create_dir_all(noexec.join("sub")).unwrap();
+    std::fs::write(noexec.join("file.txt"), "x").unwrap();
+    std::fs::set_permissions(&noexec, std::fs::Permissions::from_mode(0o400)).unwrap();
+    let body = list(&t, &at(&t, "noexec"));
+    std::fs::set_permissions(&noexec, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let body = body.unwrap();
+    let names: Vec<(&str, bool)> = body["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["name"].as_str().unwrap(),
+                e["isDirectory"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(names, [("sub", true), ("file.txt", false)]);
 }
 
 #[test]

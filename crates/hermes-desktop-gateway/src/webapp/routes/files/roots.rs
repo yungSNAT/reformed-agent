@@ -8,7 +8,7 @@ use crate::webapp::api::{ApiError, Caller};
 
 /// Credential file names, matched case-insensitively wherever they sit (upstream's managed-file
 /// list and home credential files, plus this gateway's own secret stores).
-const SENSITIVE_FILES: [&str; 32] = [
+pub(crate) const SENSITIVE_FILES: [&str; 32] = [
     "auth.json",
     "auth.lock",
     "credentials",
@@ -45,7 +45,7 @@ const SENSITIVE_FILES: [&str; 32] = [
 
 /// Credential folders, matched as consecutive lower-case path components anywhere: browser
 /// profiles (cookies, saved passwords), password stores and keyrings among them.
-const SENSITIVE_DIRS: [&[&str]; 27] = [
+pub(crate) const SENSITIVE_DIRS: [&[&str]; 27] = [
     &[".ssh"],
     &[".aws"],
     &[".gnupg"],
@@ -209,22 +209,66 @@ pub(crate) fn resolve(raw: &str, roots: &Roots, home: Option<&Path>) -> Result<R
     })
 }
 
-fn unresolved_refusal(requested: &Path, roots: &Roots, err: &std::io::Error) -> Refusal {
-    let near = requested.ancestors().skip(1).find_map(|a| {
-        let real = std::fs::canonicalize(a).ok()?;
-        let tail = requested.strip_prefix(a).ok()?;
-        Some((real, tail))
-    });
-    match near {
-        Some((near, _)) if roots.refused.iter().any(|r| near.starts_with(r)) => Refusal::Sensitive,
-        Some((near, tail)) if roots.allowed.iter().any(|r| near.starts_with(r)) => {
-            if sensitive(&near.join(tail)) {
-                Refusal::Sensitive
-            } else {
-                io_refusal(err)
+const MAX_LINK_HOPS: usize = 40;
+
+/// Resolves `requested` component by component, following links via `read_link` even when their
+/// target does not exist, so a dangling link out of the roots or into a sensitive/refused tree
+/// yields its intended path rather than stopping at an innocent parent. Returns `None` on a link
+/// loop.
+fn trace_path(requested: &Path) -> Option<PathBuf> {
+    let mut cur = PathBuf::from("/");
+    let mut pending: Vec<std::ffi::OsString> = requested
+        .components()
+        .rev()
+        .filter(|c| !matches!(c, Component::RootDir | Component::CurDir))
+        .map(|c| c.as_os_str().to_os_string())
+        .collect();
+    let mut hops = 0usize;
+    while let Some(part) = pending.pop() {
+        if part.as_os_str() == ".." {
+            if !std::fs::symlink_metadata(&cur).is_ok_and(|m| m.is_dir()) {
+                break;
             }
+            cur.pop();
+            continue;
         }
-        _ => Refusal::Outside,
+        cur.push(&part);
+        if let Ok(target) = std::fs::read_link(&cur) {
+            hops += 1;
+            if hops > MAX_LINK_HOPS {
+                return None;
+            }
+            if target.is_absolute() {
+                cur = PathBuf::from("/");
+            } else {
+                cur.pop();
+            }
+            pending.extend(
+                target
+                    .components()
+                    .rev()
+                    .filter(|c| !matches!(c, Component::RootDir | Component::CurDir))
+                    .map(|c| c.as_os_str().to_os_string()),
+            );
+        }
+    }
+    Some(cur)
+}
+
+fn unresolved_refusal(requested: &Path, roots: &Roots, err: &std::io::Error) -> Refusal {
+    let Some(traced) = trace_path(requested) else {
+        return Refusal::Outside;
+    };
+    if roots.refused.iter().any(|r| traced.starts_with(r)) {
+        Refusal::Sensitive
+    } else if roots.allowed.iter().any(|r| traced.starts_with(r)) {
+        if sensitive(&traced) {
+            Refusal::Sensitive
+        } else {
+            io_refusal(err)
+        }
+    } else {
+        Refusal::Outside
     }
 }
 

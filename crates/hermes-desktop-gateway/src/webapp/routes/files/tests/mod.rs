@@ -102,5 +102,6 @@ pub(super) fn list(t: &Tree, raw: &str) -> Result<Value, ApiError> {
 }
 
 mod fs_tests;
+mod git_security_tests;
 mod git_tests;
 mod roots_tests;
