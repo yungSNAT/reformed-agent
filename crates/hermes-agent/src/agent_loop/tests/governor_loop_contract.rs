@@ -44,8 +44,10 @@ impl GuardProvider {
 }
 
 #[tokio::test]
-async fn streamed_interrupt_preserves_only_answered_tool_calls() {
-    for interrupt_before_tool in [true, false] {
+async fn interrupt_preserves_only_answered_tool_calls() {
+    for (streaming, interrupt_before_tool) in
+        [(true, true), (true, false), (false, true), (false, false)]
+    {
         let directory = tempfile::tempdir().unwrap();
         let provider = Arc::new(GuardProvider::default());
         let interrupt = InterruptController::new();
@@ -93,17 +95,26 @@ async fn streamed_interrupt_preserves_only_answered_tool_calls() {
         )
         .with_callbacks(callbacks);
 
-        let result = agent
-            .run_stream(
-                vec![Message::user("Try the fixture tool.")],
-                Some(vec![schema]),
-                Some(Box::new(|_| {})),
-            )
-            .await
-            .unwrap();
+        let messages = vec![Message::user("Try the fixture tool.")];
+        let schemas = Some(vec![schema]);
+        let result = if streaming {
+            agent
+                .run_stream(messages, schemas, Some(Box::new(|_| {})))
+                .await
+        } else {
+            agent.run(messages, schemas).await
+        }
+        .unwrap();
         assert!(result.interrupted);
         assert!(!result.finished_naturally);
-        assert_eq!(provider.stream_turns.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            provider.stream_turns.load(Ordering::Relaxed),
+            usize::from(streaming)
+        );
+        assert_eq!(
+            provider.complete_turns.load(Ordering::Relaxed),
+            usize::from(!streaming)
+        );
         assert_eq!(
             tool_runs.load(Ordering::Relaxed),
             usize::from(!interrupt_before_tool)
