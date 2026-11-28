@@ -649,7 +649,7 @@ fn looks_like_image_bytes(data: &[u8]) -> bool {
         || data.starts_with(b"BM")
 }
 
-fn cache_mcp_image_block(item: &Value) -> Option<String> {
+fn cache_mcp_image_block(item: &Value, cache_dir: &Path) -> Option<String> {
     let typ = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
     if !typ.eq_ignore_ascii_case("image") && !typ.eq_ignore_ascii_case("image_content") {
         return None;
@@ -678,8 +678,7 @@ fn cache_mcp_image_block(item: &Value) -> Option<String> {
         );
         return None;
     }
-    let cache_dir = mcp_image_cache_dir();
-    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+    if let Err(e) = std::fs::create_dir_all(cache_dir) {
         warn!(
             "MCP image cache mkdir failed ({}): {}",
             cache_dir.display(),

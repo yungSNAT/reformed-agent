@@ -1401,28 +1401,60 @@ async fn send_request_replies_to_sampling_request_then_continues_waiting() {
     assert!(client.is_connected());
 }
 
+const FIXTURE_PNG: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQT+wHAAHKARj0Pn3tAAAAAElFTkSuQmCC";
+
 #[test]
-fn cache_mcp_image_block_writes_media_file() {
-    let td = TempDir::new().expect("tempdir");
-    let old_home = std::env::var("HERMES_HOME").ok();
-    std::env::set_var("HERMES_HOME", td.path().display().to_string());
-    // 1x1 PNG.
-    let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Xn8cAAAAASUVORK5CYII=";
-    let item = json!({
-        "type": "image",
-        "mimeType": "image/png",
-        "data": png_b64
-    });
-    let media = cache_mcp_image_block(&item).expect("expected media tag");
-    assert!(media.starts_with("MEDIA:"));
-    let path = media.trim_start_matches("MEDIA:");
-    assert!(
-        std::path::Path::new(path).exists(),
-        "cached media path should exist"
-    );
-    if let Some(prev) = old_home {
-        std::env::set_var("HERMES_HOME", prev);
-    } else {
-        std::env::remove_var("HERMES_HOME");
+fn cache_mcp_image_block_writes_original_bytes_in_the_requested_format() {
+    use base64::Engine as _;
+    use std::ffi::OsStr;
+
+    let home = TempDir::new().unwrap();
+    let cache = home.path().join("images");
+    let gif = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBADs=";
+    for (kind, mime_key, mime, data, extension) in [
+        ("image", "mimeType", "image/png", FIXTURE_PNG, "png"),
+        (
+            "image_content",
+            "mime_type",
+            " Image/GIF; charset=binary ",
+            gif,
+            "gif",
+        ),
+    ] {
+        let item = json!({"type": kind, (mime_key): mime, "data": data});
+        let media = cache_mcp_image_block(&item, &cache).expect("expected media tag");
+        let path = std::fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension() == Some(OsStr::new(extension)))
+            .expect("cached image of the requested format");
+        assert_eq!(media, format!("MEDIA:{}", path.display()));
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .unwrap()
+        );
     }
+}
+
+#[test]
+fn cache_mcp_image_block_rejects_unusable_payloads_and_an_unavailable_cache() {
+    let home = TempDir::new().unwrap();
+    let cache = home.path().join("images");
+    for item in [
+        json!({"type": "image"}),
+        json!({"type": "image", "mimeType": "text/plain", "data": FIXTURE_PNG}),
+        json!({"type": "image", "data": "invalid base64"}),
+        json!({"type": "image", "data": "SGVsbG8="}),
+    ] {
+        assert!(cache_mcp_image_block(&item, &cache).is_none());
+    }
+    assert!(!cache.exists());
+
+    std::fs::write(&cache, b"Existing notes").unwrap();
+    let item = json!({"type": "image", "data": FIXTURE_PNG});
+    assert!(cache_mcp_image_block(&item, &cache).is_none());
+    assert_eq!(std::fs::read(&cache).unwrap(), b"Existing notes");
 }

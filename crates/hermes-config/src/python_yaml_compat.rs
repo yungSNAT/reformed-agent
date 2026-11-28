@@ -608,16 +608,12 @@ fn lift_root_platform_blocks(map: &mut Mapping) {
 
     for name in NAMES {
         let nk = key(name);
-        if !map.contains_key(&nk) {
-            continue;
-        }
         if platforms.contains_key(&nk) {
             continue;
         }
-        let Some(block) = map.remove(&nk) else {
-            continue;
-        };
-        platforms.insert(nk, block);
+        if let Some(block) = map.remove(&nk) {
+            platforms.insert(nk, block);
+        }
     }
 
     if !platforms.is_empty() {
@@ -643,6 +639,12 @@ pub(crate) fn normalize_config_yaml_root(map: &mut Mapping) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_fixture(raw: &str) -> crate::config::GatewayConfig {
+        let mut root = serde_yaml::from_str(raw).expect("YAML fixture must be a mapping");
+        normalize_config_yaml_root(&mut root);
+        serde_yaml::from_value(Value::Mapping(root)).expect("valid config fixture")
+    }
 
     #[test]
     fn legacy_empty_providers_preserve_native_settings_and_lift_agent_limits() {
@@ -706,6 +708,23 @@ llm_providers:
     }
 
     #[test]
+    fn legacy_provider_scalar_preserves_native_provider_metadata() {
+        let raw = r#"
+llm_providers:
+  office: {model: office-default, base_url: 'https://office.invalid/v1'}
+providers:
+  office: false
+"#;
+        let cfg = parse_fixture(raw);
+        let office = &cfg.llm_providers["office"];
+        assert_eq!(office.model.as_deref(), Some("office-default"));
+        assert_eq!(
+            office.base_url.as_deref(),
+            Some("https://office.invalid/v1")
+        );
+    }
+
+    #[test]
     fn legacy_unknown_reset_mode_and_model_value_survive_normalisation() {
         let raw = r#"
 model: true
@@ -762,12 +781,7 @@ model:
   base_url: https://openrouter.ai/api/v1
 max_turns: 99
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         assert_eq!(cfg.model.as_deref(), Some("openrouter:z-ai/glm-5.1"));
         assert!(cfg.model_switch.persist_switch_by_default);
         assert_eq!(cfg.max_turns, 99);
@@ -783,12 +797,7 @@ model:
   provider: openrouter
   persist_switch_by_default: "false"
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         assert_eq!(cfg.model.as_deref(), Some("openrouter:zai/glm-5.2"));
         assert!(!cfg.model_switch.persist_switch_by_default);
     }
@@ -807,12 +816,7 @@ model:
 "#,
                 model = expected.split_once(':').unwrap().1
             );
-            let mut root: Value = serde_yaml::from_str(&raw).unwrap();
-            let Value::Mapping(ref mut m) = root else {
-                panic!();
-            };
-            normalize_config_yaml_root(m);
-            let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+            let cfg = parse_fixture(&raw);
             assert_eq!(cfg.model.as_deref(), Some(expected));
         }
     }
@@ -826,12 +830,7 @@ model:
   model: stale/model
   provider: openrouter
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         assert_eq!(cfg.model.as_deref(), Some("openrouter:canonical/model"));
     }
 
@@ -868,24 +867,14 @@ model:
             ),
         ] {
             let raw = format!("model:\n  {model_block}\n");
-            let mut root: Value = serde_yaml::from_str(&raw).unwrap();
-            let Value::Mapping(ref mut m) = root else {
-                panic!();
-            };
-            normalize_config_yaml_root(m);
-            let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+            let cfg = parse_fixture(&raw);
             assert_eq!(cfg.model.as_deref(), Some(expected), "{raw}");
         }
 
         // The outer provider keeps the credentials written beside it.
         let raw = "model:\n  default: {provider: anthropic, model: claude-sonnet-4-6}\n  \
                    provider: openrouter\n  api_key: sk-outer\n";
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         assert_eq!(cfg.model.as_deref(), Some("anthropic:claude-sonnet-4-6"));
         assert_eq!(
             cfg.llm_providers
@@ -898,12 +887,7 @@ model:
         // With no outer provider they go to the nested one.
         let raw = "model:\n  default: {provider: deepseek, model: deepseek-chat}\n  \
                    base_url: https://api.deepseek.com/\n";
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         assert_eq!(cfg.model.as_deref(), Some("deepseek:deepseek-chat"));
         assert_eq!(
             cfg.llm_providers
@@ -923,12 +907,7 @@ model:
   api_key: sk-local
   api_key_env: DEEPSEEK_API_KEY
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
 
         assert_eq!(cfg.model.as_deref(), Some("deepseek:deepseek-chat"));
         let provider = cfg.llm_providers.get("deepseek").expect("deepseek");
@@ -962,12 +941,7 @@ providers:
     key_env: FIRST_KEY
     api_key_env: SECOND_KEY
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
 
         assert_eq!(cfg.model.as_deref(), Some("mock:mock-model"));
         let mock = cfg.llm_providers.get("mock").expect("mock provider");
@@ -1024,12 +998,7 @@ custom_providers:
   - name: local
     base_url: http://localhost:8080/v1/
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
 
         assert_eq!(cfg.model.as_deref(), Some("beans:my-model"));
         let beans = cfg.llm_providers.get("beans").expect("beans provider");
@@ -1053,12 +1022,7 @@ toolsets:
   - hermes-cli
   - web
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         assert_eq!(cfg.tools, vec!["hermes-cli", "web"]);
     }
 
@@ -1078,14 +1042,14 @@ web: null
 sessions: null
 agent: null
 personalities: null
+42: null
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        assert!(!m.contains_key(key("personalities")));
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let mut root = serde_yaml::from_str(raw).expect("YAML fixture must be a mapping");
+        normalize_config_yaml_root(&mut root);
+        assert!(!root.contains_key(key("personalities")));
+        assert!(!root.contains_key(Value::from(42)));
+        let cfg: crate::config::GatewayConfig =
+            serde_yaml::from_value(Value::Mapping(root)).unwrap();
         let default = crate::config::GatewayConfig::default();
         assert_eq!(cfg.model, default.model);
         assert_eq!(cfg.personality, default.personality);
@@ -1106,12 +1070,7 @@ discord:
   free_response_channels: ""
   auto_thread: true
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         let d = cfg.platforms.get("discord").expect("discord");
         assert_eq!(d.require_mention, Some(true));
         assert!(d.extra.contains_key("free_response_channels"));
@@ -1125,12 +1084,7 @@ slack:
   enabled: true
   typing_indicator: false
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         let slack = cfg.platforms.get("slack").expect("slack");
         assert!(slack.enabled);
         assert!(!slack.typing_indicator_enabled());
@@ -1144,12 +1098,7 @@ session_reset:
   idle_minutes: 1440
   at_hour: 4
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
         match cfg.session.reset_policy {
             crate::session::SessionResetPolicy::Both { daily, idle } => {
                 assert_eq!(daily.at_hour, 4);
@@ -1206,12 +1155,7 @@ platform_toolsets:
     - true
   cron: 42
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
 
         let cli = cfg.platform_toolsets.get("cli").expect("cli");
         assert!(cli.contains(&"hermes-cli".to_string()));
@@ -1223,12 +1167,7 @@ platform_toolsets:
     }
 
     fn load(raw: &str) -> crate::config::GatewayConfig {
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let mut cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let mut cfg = parse_fixture(raw);
         drop_written_default_platform_toolsets(&mut cfg.platform_toolsets);
         cfg
     }
@@ -1350,12 +1289,7 @@ fallback_model:
   model: Hermes-4
   api_key_env: NOUS_API_KEY
 "#;
-        let mut root: Value = serde_yaml::from_str(raw).unwrap();
-        let Value::Mapping(ref mut m) = root else {
-            panic!();
-        };
-        normalize_config_yaml_root(m);
-        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        let cfg = parse_fixture(raw);
 
         assert_eq!(
             cfg.fallback_models,
