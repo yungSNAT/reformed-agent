@@ -318,6 +318,23 @@ mod tests {
     }
 
     #[test]
+    fn string_valued_arguments_repair_nested_none_and_preserve_quoted_text() {
+        let raw = concat!(
+            r#"{"note":"None \"quoted\" \\folder"#,
+            "\r\t\u{0001}",
+            r#"","optional":None,}"#
+        );
+        let value = Value::String(raw.to_owned());
+        let (arguments, repair) = arguments_value_to_string(Some(&value));
+
+        assert_eq!(repair, ToolArgumentRepair::Repaired);
+        assert_eq!(
+            serde_json::from_str::<Value>(&arguments).unwrap(),
+            json!({"note": "None \"quoted\" \\folder\r\t\u{0001}", "optional": null})
+        );
+    }
+
+    #[test]
     fn trailing_commas_and_missing_closers_are_repaired() {
         assert_eq!(parsed(r#"{"key": "value",}"#), json!({"key": "value"}));
         assert_eq!(parsed(r#"{"a": [1, 2,]}"#), json!({"a": [1, 2]}));

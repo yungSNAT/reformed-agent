@@ -106,6 +106,59 @@ async fn websocket_start_delivers_callback_and_acks_duplicate() {
 }
 
 #[tokio::test]
+async fn rich_text_callbacks_forward_text_and_preserve_conversation_kind() {
+    let config = DingTalkConfig {
+        openapi_endpoint: "http://127.0.0.1:1".into(),
+        ..sample_cfg()
+    };
+    let adapter = DingTalkAdapter::new(config).unwrap();
+    let (sender, mut inbound) = mpsc::channel(2);
+    adapter.set_inbound_sender(sender).await;
+
+    for (frame_id, conversation, kind, chat, message_id, is_dm) in [
+        (
+            "rich-group",
+            "fixture-group",
+            "2",
+            "fixture-group",
+            Some("rich-1"),
+            false,
+        ),
+        ("rich-direct", "", "1", "fixture-user", None, true),
+    ] {
+        let frame = json!({
+            "type": "CALLBACK",
+            "headers": {"topic": CHATBOT_TOPIC, "messageId": frame_id},
+            "data": {
+                "conversationId": conversation,
+                "conversationType": kind,
+                "senderId": "fixture-user",
+                "msgId": message_id,
+                "msgtype": "richText",
+                "content": {"richText": [{"text": " café"}, {"type": "image"}, {"text": "notes "}]}
+            }
+        });
+        let ack = DingTalkAdapter::handle_ws_message(&adapter.inner, &frame.to_string())
+            .await
+            .unwrap()
+            .expect("acknowledge rich text callback");
+        let ack: Value = serde_json::from_str(&ack).unwrap();
+        assert_eq!(ack["code"], 200);
+        assert_eq!(ack["headers"]["messageId"], frame_id);
+
+        let incoming = tokio::time::timeout(Duration::from_secs(2), inbound.recv())
+            .await
+            .unwrap()
+            .expect("forward rich text callback");
+        assert_eq!(incoming.chat_id, chat);
+        assert_eq!(incoming.user_id, "fixture-user");
+        assert_eq!(incoming.text, "café notes");
+        assert_eq!(incoming.message_id.as_deref(), message_id);
+        assert_eq!(incoming.is_dm, is_dm);
+    }
+}
+
+#[tokio::test]
 async fn markdown_replies_use_the_cached_session_and_report_http_failures() {
     let server = MockServer::start().await;
     let adapter = adapter_for_fixture(&server);

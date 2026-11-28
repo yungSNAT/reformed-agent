@@ -201,6 +201,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_reasoning_falls_through_empty_fields_in_provider_envelopes() {
+        let cases = [
+            (
+                json!({"reasoning_content": "", "reasoning": "Review the headings"}),
+                Some("Review the headings"),
+            ),
+            (
+                json!({"reasoning": "", "reasoning_details": [{"text": "Check the dates"}]}),
+                Some("Check the dates"),
+            ),
+            (
+                json!({"reasoning_details": [{"text": ""}], "content": "Finished"}),
+                None,
+            ),
+        ];
+        for (message, expected) in cases {
+            let nested = json!({"reasoning": "", "reasoning_details": [], "message": &message});
+            let choices = json!({
+                "message": {"reasoning_details": []},
+                "choices": [{"message": &message}]
+            });
+            for response in [nested, choices] {
+                assert_eq!(
+                    parse_reasoning(&response).as_deref(),
+                    expected,
+                    "{response}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_no_reasoning() {
         let response = json!({
             "content": "Just a plain response"
@@ -219,13 +251,16 @@ mod tests {
 
     #[test]
     fn test_extract_reasoning_details_thinking() {
-        let details = vec![
+        let details = [
             json!({ "type": "thinking", "thinking": "Hmm, let me consider..." }),
-            json!({ "type": "text", "text": "Conclusion reached" }),
+            json!({ "type": "text", "text": "Conclusion reached", "thinking": "unused" }),
+            json!({ "text": "", "thinking": "", "content": "Check complete" }),
+            json!({ "content": "" }),
         ];
-        let text = extract_reasoning_details(&details);
-        assert!(text.contains("Hmm"));
-        assert!(text.contains("Conclusion"));
+        assert_eq!(
+            extract_reasoning_details(&details),
+            "Hmm, let me consider...\nConclusion reached\nCheck complete"
+        );
     }
 
     #[test]

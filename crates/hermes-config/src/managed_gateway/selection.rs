@@ -257,12 +257,18 @@ mod tests {
 
     #[test]
     fn modal_mode_coerce() {
-        assert_eq!(coerce_modal_mode(None), ModalMode::Auto);
-        assert_eq!(coerce_modal_mode(Some("direct")), ModalMode::Direct);
-        assert_eq!(coerce_modal_mode(Some("MANAGED")), ModalMode::Managed);
-        assert_eq!(coerce_modal_mode(Some("auto")), ModalMode::Auto);
-        assert_eq!(coerce_modal_mode(Some("garbage")), ModalMode::Auto);
-        assert_eq!(coerce_modal_mode(Some("  managed  ")), ModalMode::Managed);
+        for (input, expected, name) in [
+            (None, ModalMode::Auto, "auto"),
+            (Some("direct"), ModalMode::Direct, "direct"),
+            (Some("MANAGED"), ModalMode::Managed, "managed"),
+            (Some("auto"), ModalMode::Auto, "auto"),
+            (Some("garbage"), ModalMode::Auto, "auto"),
+            (Some("  managed  "), ModalMode::Managed, "managed"),
+        ] {
+            let mode = coerce_modal_mode(input);
+            assert_eq!(mode, expected);
+            assert_eq!(mode.as_str(), name);
+        }
     }
 
     #[test]
@@ -272,6 +278,10 @@ mod tests {
         std::env::remove_var("HERMES_ENABLE_NOUS_MANAGED_TOOLS");
         let s = resolve_modal_backend_state(Some("auto"), true, true);
         assert_eq!(s.selected_backend, Some(SelectedBackend::Direct));
+        assert_eq!(
+            s.selected_backend.map(SelectedBackend::as_str),
+            Some("direct")
+        );
         assert!(!s.managed_mode_blocked);
 
         let s = resolve_modal_backend_state(Some("managed"), true, true);
@@ -281,6 +291,10 @@ mod tests {
         std::env::set_var("HERMES_ENABLE_NOUS_MANAGED_TOOLS", "1");
         let s = resolve_modal_backend_state(Some("managed"), false, true);
         assert_eq!(s.selected_backend, Some(SelectedBackend::Managed));
+        assert_eq!(
+            s.selected_backend.map(SelectedBackend::as_str),
+            Some("managed")
+        );
         assert!(!s.managed_mode_blocked);
 
         let s = resolve_modal_backend_state(Some("managed"), true, false);

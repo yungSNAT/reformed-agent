@@ -601,12 +601,57 @@
         assert!(is_tool_payload_validation_error(provider_generic));
         let no_choices_provider_shape = "No choices in response (status=400; message=This request is not valid. Check the model name and other parameters. Additional info: Provider returned error)";
         assert!(is_tool_payload_validation_error(no_choices_provider_shape));
+        assert!(is_tool_payload_validation_error(
+            "Empty choices array after sending tools"
+        ));
+        assert!(!is_tool_payload_validation_error("Empty choices array"));
         let unprocessable_payload =
             "API error 422 Unprocessable Entity: Check that you're sending a valid payload";
         assert!(is_tool_payload_validation_error(unprocessable_payload));
         assert!(!is_tool_payload_validation_error(
             "API error 400 Bad Request: max_tokens must be positive"
         ));
+    }
+
+    #[test]
+    fn stream_retry_distinguishes_transport_failures_from_terminal_errors() {
+        for (error, retry) in [
+            (AgentError::Timeout("no reply".into()), true),
+            (
+                AgentError::RateLimited {
+                    retry_after_secs: None,
+                },
+                true,
+            ),
+            (AgentError::LlmApi("RemoteProtocol read failed".into()), true),
+            (AgentError::LlmApi("model not available".into()), false),
+            (AgentError::Gateway("transport disconnected".into()), true),
+            (AgentError::Io("broken pipe".into()), true),
+            (AgentError::Io("read-only file system".into()), false),
+            (AgentError::ToolExecution("network error".into()), true),
+            (AgentError::Config("unsupported model".into()), false),
+            (AgentError::AuthFailed("access denied".into()), false),
+            (AgentError::InvalidToolCall("missing argument".into()), false),
+            (
+                AgentError::Interrupted {
+                    message: Some("network error".into()),
+                },
+                false,
+            ),
+            (AgentError::MaxTurnsExceeded, false),
+            (AgentError::ContextTooLong, false),
+        ] {
+            assert_eq!(is_transient_stream_error(&error), retry, "{error}");
+        }
+    }
+
+    #[test]
+    fn tool_result_status_distinguishes_failed_and_absent_output() {
+        assert!(looks_like_tool_error_output(r#"{"status":"FaIlEd"}"#));
+        assert!(!looks_like_tool_error_output(
+            r#"{"status":"complete","error":null}"#
+        ));
+        assert!(!looks_like_tool_error_output(" \n "));
     }
 
     #[test]
