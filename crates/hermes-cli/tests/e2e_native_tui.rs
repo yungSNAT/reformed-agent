@@ -114,6 +114,22 @@ fn start_command_in_pty(mut command: tokio::process::Command) -> (Child, File, l
     (child, master, initial_flags)
 }
 
+fn resize_pty(terminal: &File, rows: u16, columns: u16) {
+    let dimensions = libc::winsize {
+        ws_row: rows,
+        ws_col: columns,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // The child owns the slave as its controlling terminal, so this sends SIGWINCH.
+    assert_eq!(
+        unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSWINSZ, &dimensions) },
+        0,
+        "{}",
+        io::Error::last_os_error()
+    );
+}
+
 async fn read_until(terminal: &mut File, expected: &[u8]) -> Vec<u8> {
     let mut output = Vec::new();
     let result = timeout(Duration::from_secs(12), async {
@@ -458,19 +474,7 @@ streaming:
     .await
     .expect("completed provider turn is saved in the isolated session");
 
-    let dimensions = libc::winsize {
-        ws_row: 16,
-        ws_col: 100,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    // The child owns the slave as its controlling terminal, so this sends SIGWINCH.
-    assert_eq!(
-        unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSWINSZ, &dimensions) },
-        0,
-        "{}",
-        io::Error::last_os_error()
-    );
+    resize_pty(&terminal, 16, 100);
     read_until(&mut terminal, b"\x1b[2J").await;
 
     // Send SGR wheel events through the same PTY as keyboard input.
@@ -624,6 +628,11 @@ streaming:
         true,
     );
     read_until(&mut terminal, b"Resumed session").await;
+    if managed {
+        // The processing indicators fill the standard-width status line.
+        resize_pty(&terminal, 32, 240);
+        read_until(&mut terminal, b"\x1b[2J").await;
+    }
     write!(terminal, "\x1b[200~{followup}\x1b[201~\r").unwrap();
     let rendered = read_until(&mut terminal, reply.as_bytes()).await;
     if managed {
