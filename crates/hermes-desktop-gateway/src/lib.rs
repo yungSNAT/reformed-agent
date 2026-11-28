@@ -1073,6 +1073,20 @@ mod tests {
     use std::cell::Cell;
     use tokio::time::{Duration, Instant};
 
+    #[test]
+    fn closing_an_unchanged_generation_watch_keeps_revocation_pending() {
+        let (sender, changes) = tokio::sync::watch::channel(1);
+        drop(sender);
+        let mut revoke = Some(Revoke {
+            generation: 1,
+            changes,
+            _open: Box::new(()),
+        });
+        let mut ended = std::pin::pin!(Revoke::ended(&mut revoke));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(ended.as_mut(), &mut context).is_pending());
+    }
+
     #[tokio::test]
     async fn a_write_is_not_started_once_its_deadline_has_passed() {
         let polls = Cell::new(0);
