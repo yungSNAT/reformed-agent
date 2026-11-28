@@ -37,9 +37,6 @@ fn item(text: String, meta: &str, display: String) -> Value {
     json!({"text": text, "display": display, "meta": meta})
 }
 
-/// Upstream's listing (`_dir_listing_items`) confined to `root`: a word naming an absolute
-/// path, `~`, a drive or a `..` component lists nothing, and each folder on the way is
-/// opened from its parent's handle without following a link.
 /// Splits `query` into `(tag, folder parts, typed prefix)`, refusing paths outside `root`.
 fn parse_word(context: bool, query: &str) -> Option<(&str, Vec<&str>, &str)> {
     let (tag, path) = match query.split_once(':') {
@@ -75,6 +72,9 @@ fn parse_word(context: bool, query: &str) -> Option<(&str, Vec<&str>, &str)> {
     Some((tag, parts, typed))
 }
 
+/// Upstream's listing (`_dir_listing_items`) confined to `root`: a word naming an absolute
+/// path, `~`, a drive or a `..` component lists nothing, and each folder on the way is
+/// opened from its parent's handle without following a link.
 pub(super) fn items(root: &Path, word: &str) -> Vec<Value> {
     let context = word.starts_with('@');
     let query = if context { &word[1..] } else { word };

@@ -120,7 +120,7 @@ fn a_child_keeps_only_listed_names_and_no_credential_looking_value() {
 fn script(dir: &Path, body: &str) -> PathBuf {
     let path = dir.join("hermes");
     std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
     path
 }
 

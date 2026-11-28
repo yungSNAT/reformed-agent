@@ -75,15 +75,6 @@ pub(super) enum Ended {
 /// can hold the pipes open, and the answer does not wait for it.
 const DRAIN: Duration = Duration::from_secs(2);
 
-/// Starts `command` as the leader of its own session and process group, with stdin closed,
-/// an environment of the kept names plus those `command` sets (which skip [`kept_env`]'s
-/// filter, so a caller sets none that carries a credential), and `folder` as its working
-/// folder, under a supervisor task that owns it. The supervisor ends the run when the child
-/// exits, `limit` passes or this future is dropped. It then kills the group and, on Linux,
-/// every process left in the session before reaping the child, so neither id can be reused
-/// under the kill; reads output for at most [`DRAIN`] more; and gives the slot back. A
-/// descendant that starts its own session (`setsid`), or on macOS its own process group,
-/// survives the run.
 /// Applies the filtered environment, working folder, pipes and session setup to `command`.
 fn prepare_command(command: &mut Command, folder: PathBuf) {
     let env =
@@ -112,6 +103,15 @@ fn prepare_command(command: &mut Command, folder: PathBuf) {
     }
 }
 
+/// Starts `command` as the leader of its own session and process group, with stdin closed,
+/// an environment of the kept names plus those `command` sets (which skip [`kept_env`]'s
+/// filter, so a caller sets none that carries a credential), and `folder` as its working
+/// folder, under a supervisor task that owns it. The supervisor ends the run when the child
+/// exits, `limit` passes or this future is dropped. It then kills the group and, on Linux,
+/// every process left in the session before reaping the child, so neither id can be reused
+/// under the kill; reads output for at most [`DRAIN`] more; and gives the slot back. A
+/// descendant that starts its own session (`setsid`), or on macOS its own process group,
+/// survives the run.
 pub(super) async fn supervise(
     mut command: Command,
     folder: PathBuf,
