@@ -315,8 +315,6 @@ mod rest_contract {
 
     #[tokio::test]
     async fn attachments_and_image_embeds_route_to_the_thread() {
-        use base64::Engine as _;
-
         let server = MockServer::start().await;
         let adapter = adapter_for_mock(&server, None);
         let metadata = DiscordSendMetadata::with_thread_id("thread").with_non_conversational(true);
@@ -325,11 +323,9 @@ mod rest_contract {
         let bytes = "café audio fixture";
         tokio::fs::write(&local_file, bytes).await.unwrap();
         let local_file = local_file.to_str().unwrap();
-        let image_file = directory.path().join("poster.png");
-        let png = base64::engine::general_purpose::STANDARD
-            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQT+wHAAHKARj0Pn3tAAAAAElFTkSuQmCC")
-            .unwrap();
-        tokio::fs::write(&image_file, &png).await.unwrap();
+        let image_file = directory.path().join("poster.svg");
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="blue"/></svg>"#;
+        tokio::fs::write(&image_file, svg).await.unwrap();
         Mock::given(method("POST"))
             .and(path("/channels/thread/messages"))
             .and(header("Authorization", "Bot test-token"))
@@ -338,7 +334,7 @@ mod rest_contract {
                     .as_bytes()
                     .starts_with(b"multipart/form-data")
                 {
-                    let filename = b"filename=\"poster.png\"";
+                    let filename = b"filename=\"poster.svg\"";
                     let id = if request.body.windows(filename.len()).any(|part| part == filename) {
                         "image"
                     } else {
@@ -408,41 +404,44 @@ mod rest_contract {
         let [attachment, embed, image, _rejected] = requests.as_slice() else {
             panic!("expected three thread messages and one rejected upload");
         };
-        let content_type = attachment.headers["content-type"].to_str().unwrap();
-        let boundary = content_type
-            .strip_prefix("multipart/form-data; boundary=")
-            .unwrap();
-        let form = std::str::from_utf8(&attachment.body).unwrap();
-        let delimiter = format!("--{boundary}");
-        let parts: Vec<_> = form
-            .split(&delimiter)
-            .filter_map(|part| part.split_once("\r\n\r\n"))
-            .collect();
-        let [(file_header, file_body), (payload_header, payload_body)] = parts.as_slice() else {
-            panic!("expected an attachment and its metadata");
-        };
-        for (headers, expected) in [
-            (
-                file_header,
-                &["name=\"files[0]\"", "filename=\"fixture.txt\""][..],
-            ),
-            (payload_header, &["name=\"payload_json\""][..]),
+        for (request, filename, expected_file, caption) in [
+            (attachment, "fixture.txt", bytes, "caption"),
+            (image, "poster.svg", svg, "poster attachment"),
         ] {
-            let disposition = headers
-                .lines()
-                .filter_map(|line| line.split_once(':'))
-                .find(|(name, _)| name.eq_ignore_ascii_case("Content-Disposition"))
-                .expect("multipart part has a content disposition")
-                .1;
-            let mut fields = disposition.split(';').map(str::trim);
-            assert_eq!(fields.next(), Some("form-data"));
-            let fields: Vec<_> = fields.collect();
-            assert!(expected.iter().all(|field| fields.contains(field)));
+            let content_type = request.headers["content-type"].to_str().unwrap();
+            let boundary = content_type
+                .strip_prefix("multipart/form-data; boundary=")
+                .unwrap();
+            let form = std::str::from_utf8(&request.body).unwrap();
+            let delimiter = format!("--{boundary}");
+            let parts: Vec<_> = form
+                .split(&delimiter)
+                .filter_map(|part| part.split_once("\r\n\r\n"))
+                .collect();
+            let [(file_header, file_body), (payload_header, payload_body)] = parts.as_slice() else {
+                panic!("expected an attachment and its metadata");
+            };
+            let filename = format!("filename=\"{filename}\"");
+            for (headers, expected) in [
+                (file_header, &["name=\"files[0]\"", filename.as_str()][..]),
+                (payload_header, &["name=\"payload_json\""][..]),
+            ] {
+                let disposition = headers
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("Content-Disposition"))
+                    .expect("multipart part has a content disposition")
+                    .1;
+                let mut fields = disposition.split(';').map(str::trim);
+                assert_eq!(fields.next(), Some("form-data"));
+                let fields: Vec<_> = fields.collect();
+                assert!(expected.iter().all(|field| fields.contains(field)));
+            }
+            assert_eq!(file_body.strip_suffix("\r\n"), Some(expected_file));
+            let payload: serde_json::Value = serde_json::from_str(payload_body).unwrap();
+            assert_eq!(payload["content"], caption);
+            assert!(payload["allowed_mentions"].is_object());
         }
-        assert_eq!(file_body.strip_suffix("\r\n"), Some(bytes));
-        let payload: serde_json::Value = serde_json::from_str(payload_body).unwrap();
-        assert_eq!(payload["content"], "caption");
-        assert!(payload["allowed_mentions"].is_object());
         assert_eq!(embed.headers["content-type"], "application/json");
         let payload: serde_json::Value = serde_json::from_slice(&embed.body).unwrap();
         assert_eq!(payload["content"], "image caption");
@@ -450,9 +449,6 @@ mod rest_contract {
             payload["embeds"][0]["image"]["url"],
             "https://example.invalid/fixture.png"
         );
-        for expected in [png.as_slice(), b"filename=\"poster.png\"", b"poster attachment"] {
-            assert!(image.body.windows(expected.len()).any(|part| part == expected));
-        }
     }
 
     #[tokio::test]
