@@ -680,6 +680,32 @@ platforms:
     }
 
     #[test]
+    fn legacy_sections_extend_native_provider_and_switch_settings() {
+        let source = r#"
+model: {default: plain-model, persist_switch_by_default: true}
+model_switch: {future_option: keep}
+llm_providers:
+  office: {model: office-default}
+  lab: {model: lab-default}
+custom_providers:
+  - {name: office, base_url: 'https://office.invalid/v1'}
+providers:
+  office: {request_timeout_seconds: 12}
+"#;
+        let expected = r#"
+model: plain-model
+model_switch: {future_option: keep, persist_switch_by_default: true}
+llm_providers:
+  office: {model: office-default, base_url: 'https://office.invalid/v1', request_timeout_seconds: 12}
+  lab: {model: lab-default}
+"#;
+        let mut root: Mapping = serde_yaml::from_str(source).unwrap();
+        normalize_config_yaml_root(&mut root);
+
+        assert_eq!(root, serde_yaml::from_str::<Mapping>(expected).unwrap());
+    }
+
+    #[test]
     fn legacy_unknown_reset_mode_and_model_value_survive_normalisation() {
         let raw = r#"
 model: true
