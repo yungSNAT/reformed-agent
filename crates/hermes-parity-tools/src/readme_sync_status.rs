@@ -307,3 +307,65 @@ pub fn run(args: ReadmeSyncStatusArgs) -> Result<i32, String> {
     }
     Ok(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn status_requires_local_inputs_and_keeps_current_readme_unmodified() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let readme = root.join("README.md");
+        let reports = root.join(".sync-reports");
+        let generate = || {
+            run(ReadmeSyncStatusArgs {
+                repo_root: root.to_str().unwrap().to_owned(),
+                readme: "README.md".into(),
+                report_dir: ".sync-reports".into(),
+                queue_json: "queue.json".into(),
+                proof_json: "proof.json".into(),
+                workstream_json: "workstream.json".into(),
+                check: false,
+            })
+        };
+
+        assert!(generate().unwrap_err().contains("README not found"));
+        let original = format!("# Fixture\n\n{UPSTREAM_SECTION}");
+        fs::write(&readme, &original).unwrap();
+        assert!(generate()
+            .unwrap_err()
+            .contains("report directory not found"));
+        assert_eq!(fs::read_to_string(&readme).unwrap(), original);
+
+        fs::create_dir(&reports).unwrap();
+        fs::write(
+            reports.join("upstream-sync-2026-01-02.txt"),
+            "origin_sha: fixture-origin\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("workstream.json"),
+            r#"{"upstream_ref":"refs/heads/fixture","upstream_sha":"test-sha","generated_at_utc":"2026-01-02T03:04:05Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(generate().unwrap(), 0);
+        let updated = fs::read_to_string(&readme).unwrap();
+        assert!(updated.starts_with(&original));
+        assert!(updated.contains("Generated at: `2026-01-02`"));
+        assert!(updated
+            .contains("`refs/heads/fixture` @ `test-sha` (generated `2026-01-02T03:04:05Z`)"));
+
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&readme)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+            .unwrap();
+        let modified = fs::metadata(&readme).unwrap().modified().unwrap();
+        assert_eq!(generate().unwrap(), 0);
+        assert_eq!(fs::read_to_string(&readme).unwrap(), updated);
+        assert_eq!(fs::metadata(&readme).unwrap().modified().unwrap(), modified);
+    }
+}

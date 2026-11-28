@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_empty_prompt() {
-        let builder = PromptBuilder::new();
+        let builder = PromptBuilder::default();
         let prompt = builder.build_system_prompt();
         assert!(prompt.is_empty());
     }
@@ -244,20 +244,41 @@ mod tests {
 
     #[test]
     fn test_tools_in_prompt() {
-        let tool = ToolSchema::new(
+        let read_file = ToolSchema::new(
             "read_file",
             "Read a file from disk",
+            JsonSchema::object(
+                [("path".into(), serde_json::json!({"type": "string"}))]
+                    .into_iter()
+                    .collect(),
+                vec!["path".into()],
+            ),
+        );
+        let list_notes =
+            ToolSchema::new("list_notes", "List saved notes", JsonSchema::new("object"));
+        let count_notes = ToolSchema::new(
+            "count_notes",
+            "Count saved notes",
             JsonSchema::new("object"),
         );
-        let builder = PromptBuilder::new().tool(tool);
-        let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("read_file"));
-        assert!(prompt.contains("Read a file from disk"));
+        let prompt = PromptBuilder::new()
+            .skills(vec!["research".into(), "summarise".into()])
+            .tools(vec![read_file, list_notes])
+            .tool(count_notes)
+            .build_system_prompt();
+        assert_eq!(
+            prompt,
+            "## Skills\n\n1. research\n2. summarise\n\n## Available Tools\n\n\
+             - **read_file**: Read a file from disk (required: path)\n\
+             - **list_notes**: List saved notes\n\
+             - **count_notes**: Count saved notes"
+        );
     }
 
     #[test]
     fn test_cache_markers() {
         let builder = PromptBuilder::new().personality("You are helpful.");
+        builder.add_cache_markers(&mut [], 2);
 
         let mut messages = vec![
             Message::system("System prompt"),
