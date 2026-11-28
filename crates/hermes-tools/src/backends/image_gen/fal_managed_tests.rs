@@ -1459,7 +1459,7 @@ async fn image_source_loader_preserves_formats_and_distinguishes_input_errors() 
     let missing = sandbox.path().join("missing.webp");
     for (source, message) in [
         (format!("{}/missing", server.uri()), "HTTP 404"),
-        ("http://[".to_string(), "Could not download source image"),
+        ("https://[".to_string(), "Could not download source image"),
         (
             missing.to_str().unwrap().to_string(),
             "Could not read source image",
