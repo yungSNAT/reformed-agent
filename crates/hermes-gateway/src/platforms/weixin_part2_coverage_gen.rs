@@ -118,17 +118,18 @@ async fn process_inbound_filters() {
 #[tokio::test]
 async fn process_inbound_drops_duplicates() {
     let a = make_adapter("https://ilink.invalid");
+    let dir = tempfile::tempdir().expect("temporary cache");
     let (tx, mut rx) = mpsc::channel(4);
     a.set_inbound_sender(tx).await;
     let msg = serde_json::json!({
         "from_user_id": "u1", "message_id": "dup1", "item_list": text_items("once")
     });
-    WeChatAdapter::process_inbound(a.inner.clone(), msg.clone()).await;
+    WeChatAdapter::process_inbound(a.inner.clone(), msg.clone(), dir.path()).await;
     let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timeout");
     assert_eq!(first.expect("first").text, "once");
-    WeChatAdapter::process_inbound(a.inner.clone(), msg).await;
+    WeChatAdapter::process_inbound(a.inner.clone(), msg, dir.path()).await;
     drop(a);
     let second = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await

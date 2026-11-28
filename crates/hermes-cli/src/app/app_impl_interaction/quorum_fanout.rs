@@ -5,7 +5,8 @@ impl App {
         policy: QuorumPolicy,
     ) -> Result<bool, AgentError> {
         let quorum_contract = self.load_quorum_agent_contract_text();
-        let (voter_models, model_resolution_notes) = self.resolve_quorum_models(&policy).await;
+        let (voter_models, model_resolution_notes) =
+            Self::resolve_quorum_models(&self.current_model, &policy, provider_model_ids).await;
         for note in model_resolution_notes {
             Self::emit_lifecycle_event(&self.stream_handle_shared, note);
         }
