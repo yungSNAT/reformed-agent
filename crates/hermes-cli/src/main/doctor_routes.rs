@@ -6,16 +6,6 @@ const DEFAULT_PATHEXT: Option<&str> = Some(".COM;.EXE;.BAT;.CMD");
 #[cfg(not(windows))]
 const DEFAULT_PATHEXT: Option<&str> = None;
 
-#[cfg(windows)]
-fn env_var_eq(name: &str, expected: &str) -> bool {
-    name.eq_ignore_ascii_case(expected)
-}
-
-#[cfg(not(windows))]
-fn env_var_eq(name: &str, expected: &str) -> bool {
-    name == expected
-}
-
 fn parse_shell_env_assignment(token: &str) -> Option<(&str, &str)> {
     let (name, value) = token.split_once('=')?;
     let mut chars = name.chars();
@@ -70,11 +60,15 @@ fn elite_gate_override_available_with(
     let mut program = None;
     for token in &tokens {
         if let Some((name, value)) = parse_shell_env_assignment(token) {
-            if env_var_eq(name, "PATH") {
-                effective_path = (!value.is_empty()).then_some(std::ffi::OsStr::new(value));
-            } else if env_var_eq(name, "PATHEXT") {
-                let trimmed = value.trim();
-                effective_pathext = (!trimmed.is_empty()).then_some(trimmed);
+            match name {
+                "PATH" => {
+                    effective_path = (!value.is_empty()).then_some(std::ffi::OsStr::new(value));
+                }
+                "PATHEXT" => {
+                    let trimmed = value.trim();
+                    effective_pathext = (!trimmed.is_empty()).then_some(trimmed);
+                }
+                _ => {}
             }
         } else {
             program = Some(token.as_str());

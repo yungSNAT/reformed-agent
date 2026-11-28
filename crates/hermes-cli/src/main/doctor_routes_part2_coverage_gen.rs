@@ -605,4 +605,28 @@ fn elite_gate_override_availability_honours_leading_path_and_pathext_assignments
     assert!(!elite_gate_override_available(&format!(
         "PATH={q_alt} PATHEXT= win-only --json"
     )));
+
+    // Inline shell variable names are case-sensitive in `bash -lc`, even on Windows.
+    assert!(elite_gate_override_available(&format!(
+        "Path={q_empty} orig-only --json"
+    )));
+    assert!(!elite_gate_override_available(&format!(
+        "Path={q_alt} alt-only --json"
+    )));
+    assert!(elite_gate_override_available(&format!(
+        "PATH={q_alt} Pathext= win-only --json"
+    )));
+
+    // Trailing assignments after the command token are arguments, not env overrides.
+    assert!(elite_gate_override_available("orig-only PATH= PATHEXT="));
+
+    // Leading PATHEXT override also applies to explicit paths without extension.
+    let explicit_win = alt_bin.join("win-only");
+    let q_explicit = shlex::try_quote(explicit_win.to_str().unwrap()).unwrap();
+    assert!(elite_gate_override_available(&format!(
+        "PATHEXT=.cmd {q_explicit} --json"
+    )));
+    assert!(!elite_gate_override_available(&format!(
+        "PATHEXT= {q_explicit} --json"
+    )));
 }
