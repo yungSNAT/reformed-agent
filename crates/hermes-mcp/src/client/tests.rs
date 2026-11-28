@@ -1402,16 +1402,16 @@ async fn send_request_replies_to_sampling_request_then_continues_waiting() {
 }
 
 const FIXTURE_PNG: &str =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Xn8cAAAAASUVORK5CYII=";
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQT+wHAAHKARj0Pn3tAAAAAElFTkSuQmCC";
 
 #[test]
 fn cache_mcp_image_block_writes_original_bytes_in_the_requested_format() {
     use base64::Engine as _;
-    use std::path::Path;
+    use std::ffi::OsStr;
 
     let home = TempDir::new().unwrap();
     let cache = home.path().join("images");
-    let gif = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    let gif = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBADs=";
     for (kind, mime_key, mime, data, extension) in [
         ("image", "mimeType", "image/png", FIXTURE_PNG, "png"),
         (
@@ -1424,9 +1424,12 @@ fn cache_mcp_image_block_writes_original_bytes_in_the_requested_format() {
     ] {
         let item = json!({"type": kind, (mime_key): mime, "data": data});
         let media = cache_mcp_image_block(&item, &cache).expect("expected media tag");
-        let path = Path::new(media.strip_prefix("MEDIA:").unwrap());
-        assert_eq!(path.parent(), Some(cache.as_path()));
-        assert_eq!(path.extension().unwrap(), extension);
+        let path = std::fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension() == Some(OsStr::new(extension)))
+            .expect("cached image of the requested format");
+        assert_eq!(media, format!("MEDIA:{}", path.display()));
         assert_eq!(
             std::fs::read(path).unwrap(),
             base64::engine::general_purpose::STANDARD
