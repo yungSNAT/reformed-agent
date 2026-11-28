@@ -2,7 +2,7 @@ use super::*;
 use wiremock::matchers::{body_json, body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn backend(server: &MockServer, cache: PathBuf) -> OpenAiImageGenBackend {
+fn backend(base_url: String, cache: PathBuf) -> OpenAiImageGenBackend {
     OpenAiImageGenBackend {
         client: Client::builder()
             .no_proxy()
@@ -11,7 +11,7 @@ fn backend(server: &MockServer, cache: PathBuf) -> OpenAiImageGenBackend {
             .unwrap(),
         config: OpenAiImageGenConfig {
             api_key: Some("local-image-fixture".into()),
-            base_url: server.uri(),
+            base_url,
             tier_id: "gpt-image-2-low".into(),
             quality: "low".into(),
             output_dir: cache,
@@ -82,7 +82,7 @@ fn krea_error_bodies_keep_messages_and_bound_unstructured_fallbacks() {
     assert_eq!(krea_error_message(&long), "é".repeat(500));
 }
 
-fn compatible_backend(server: &MockServer, cache: PathBuf) -> OpenRouterCompatImageGenBackend {
+fn compatible_backend(base_url: String, cache: PathBuf) -> OpenRouterCompatImageGenBackend {
     OpenRouterCompatImageGenBackend {
         client: Client::builder()
             .no_proxy()
@@ -92,7 +92,7 @@ fn compatible_backend(server: &MockServer, cache: PathBuf) -> OpenRouterCompatIm
         config: OpenRouterCompatImageGenConfig {
             provider: OpenRouterCompatImageProviderKind::Nous,
             api_key: Some("local-compatible-fixture".into()),
-            base_url: server.uri(),
+            base_url,
             model: "fixture-image-model".into(),
             output_dir: cache,
         },
@@ -104,7 +104,7 @@ async fn compatible_image_failures_leave_the_cache_untouched() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
     let cache = directory.path().join("compatible-cache");
-    let mut backend = compatible_backend(&server, cache.clone());
+    let mut backend = compatible_backend(server.uri(), cache.clone());
     assert!(matches!(
         backend.generate(request("  ")).await,
         Err(ToolError::InvalidParams(_))
@@ -163,7 +163,7 @@ async fn compatible_image_diagnostics_distinguish_timeout_and_connection_failure
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
     let cache = directory.path().join("compatible-cache");
-    let mut backend = compatible_backend(&server, cache.clone());
+    let mut backend = compatible_backend(server.uri(), cache.clone());
     backend.client = Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(1))
@@ -204,9 +204,9 @@ async fn image_provider_timeouts_identify_the_operation() {
         .timeout(Duration::from_secs(1))
         .build()
         .unwrap();
-    let mut openai = backend(&server, cache.clone());
+    let mut openai = backend(server.uri(), cache.clone());
     openai.client = client.clone();
-    let mut xai = xai_backend(&server, cache.clone());
+    let mut xai = xai_backend(server.uri(), cache.clone());
     xai.client = client.clone();
     let mut krea = krea_backend(
         KreaTransport::Direct {
@@ -260,7 +260,7 @@ async fn image_provider_failures_distinguish_credentials_and_connection_errors()
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
     let cache = directory.path().join("cache");
-    let mut openai = backend(&server, cache.clone());
+    let mut openai = backend(server.uri(), cache.clone());
     let fixture_key = openai.config.api_key.take();
     assert!(matches!(
         openai.generate(request("Fixture")).await,
@@ -290,7 +290,7 @@ async fn image_provider_failures_distinguish_credentials_and_connection_errors()
     let unavailable = "http://127.0.0.1:0";
     openai.config.api_key = fixture_key;
     openai.config.base_url = unavailable.into();
-    let mut xai = xai_backend(&server, cache.clone());
+    let mut xai = xai_backend(server.uri(), cache.clone());
     xai.config.base_url = unavailable.into();
     krea.config.transport = KreaTransport::Direct {
         api_key: "local-krea-fixture".into(),
@@ -318,6 +318,121 @@ async fn image_provider_failures_distinguish_credentials_and_connection_errors()
         );
     }
     assert!(!cache.exists());
+}
+
+#[tokio::test]
+async fn image_providers_report_incomplete_response_bodies_without_caching() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("cache");
+    let serve = async move {
+        for route in [
+            "/images/generations",
+            "/responses",
+            "/chat/completions",
+            "/v1/images/generations",
+            "/generate/image/krea/krea-2/medium",
+        ] {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream.take(8192));
+            let mut line = String::new();
+            stream.read_line(&mut line).await.unwrap();
+            assert_eq!(line, format!("POST {route} HTTP/1.1\r\n"));
+            let mut body_length = 0;
+            loop {
+                line.clear();
+                assert_ne!(stream.read_line(&mut line).await.unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("content-length") {
+                        body_length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+            }
+
+            assert!((1..=4096).contains(&body_length));
+            stream.read_exact(&mut vec![0; body_length]).await.unwrap();
+            let mut stream = stream.into_inner().into_inner();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\n{")
+                .await
+                .unwrap();
+            stream.shutdown().await.unwrap();
+        }
+    };
+    let server = tokio::spawn(tokio::time::timeout(Duration::from_secs(15), serve));
+
+    let compatible = compatible_backend(base_url.clone(), cache.clone());
+    let codex = OpenAICodexImageGenBackend {
+        client: compatible.client.clone(),
+        config: OpenAICodexImageGenConfig {
+            // The token is a placeholder sent only to the loopback listener above.
+            access_token: Some("fixture-only".into()), // nosemgrep: codacy.yaml.security.hard-coded-tokens
+            base_url: base_url.clone(),
+            chat_model: "fixture-chat-model".into(),
+            tier_id: "gpt-image-2-low".into(),
+            quality: "low".into(),
+            output_dir: cache.clone(),
+        },
+    };
+    let krea = krea_backend(
+        KreaTransport::Direct {
+            api_key: "local-krea-fixture".into(),
+            base_url: base_url.clone(),
+        },
+        cache.clone(),
+    );
+    let cases: [(ImageGenRuntimeBackend, &str); 5] = [
+        (
+            backend(base_url.clone(), cache.clone()).into(),
+            "Failed to read OpenAI image response:",
+        ),
+        (codex.into(), "Failed to read Codex image response:"),
+        (
+            compatible.into(),
+            "Failed to read Nous Portal image response:",
+        ),
+        (
+            xai_backend(base_url, cache.clone()).into(),
+            "Failed to read xAI image response:",
+        ),
+        (krea.into(), "Failed to read Krea submit response:"),
+    ];
+    for (provider, expected) in cases {
+        let error = provider
+            .generate(request("Fixture image"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, ToolError::ExecutionFailed(detail) if detail.starts_with(expected)),
+            "expected {expected:?}, got {error}"
+        );
+        assert!(!cache.exists());
+    }
+    server.await.unwrap().expect("response fixtures timed out");
+}
+
+#[test]
+fn fal_request_validation_rejects_empty_prompts_and_undeclared_edit_models() {
+    let model = "fixture/unlisted-model";
+    let backend = FalImageGenBackend::new("fixture-only".into()).with_model_path(model);
+    assert!(matches!(
+        backend.prepare_request(&request("  ")),
+        Err(ToolError::InvalidParams(detail)) if detail.contains("Prompt is required")
+    ));
+
+    let mut edit = request("Edit the fixture");
+    edit.image_url = Some("https://example.test/reference.png".into());
+    assert!(matches!(
+        backend.prepare_request(&edit),
+        Err(ToolError::InvalidParams(detail))
+            if detail.contains(model) && detail.contains("not declared as image-to-image capable")
+    ));
 }
 
 #[tokio::test]
@@ -355,7 +470,7 @@ async fn compatible_image_edits_forward_the_reference_and_cache_the_download() {
         .mount(&server)
         .await;
 
-    let backend = ImageGenRuntimeBackend::from(compatible_backend(&server, cache.clone()));
+    let backend = ImageGenRuntimeBackend::from(compatible_backend(server.uri(), cache.clone()));
     assert_eq!(backend.capabilities().provider.as_deref(), Some("nous"));
     let mut edit = request("  Edit the fixture  ");
     edit.size = Some("portrait".into());
@@ -711,7 +826,7 @@ async fn malformed_provider_responses_do_not_create_an_image() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
     let cache = directory.path().join("cache");
-    let backend = backend(&server, cache.clone());
+    let backend = backend(server.uri(), cache.clone());
 
     for (prompt, response, expected) in [
         (
@@ -858,7 +973,7 @@ async fn multipart_edit_loads_local_and_remote_input_and_saves_the_result() {
         .mount(&server)
         .await;
 
-    let backend = backend(&server, output_dir.clone());
+    let backend = backend(server.uri(), output_dir.clone());
     let mut edit = request("fixture multipart edit");
     edit.image_url = Some(format!("{}/reference-remote.jpg", server.uri()));
     edit.reference_image_urls = vec![local_reference.to_string_lossy().into_owned()];
@@ -908,10 +1023,10 @@ async fn multipart_edit_loads_local_and_remote_input_and_saves_the_result() {
     server.verify().await;
 }
 
-fn xai_backend(server: &MockServer, cache: PathBuf) -> XaiImageGenBackend {
+fn xai_backend(base_url: String, cache: PathBuf) -> XaiImageGenBackend {
     let mut backend = XaiImageGenBackend::new(XaiImageGenConfig {
         api_key: Some("local-image-fixture".into()),
-        base_url: format!("{}/v1/", server.uri()),
+        base_url: format!("{base_url}/v1/"),
         source: "env".into(),
         model: "fixture-image-model".into(),
         resolution: "2k".into(),
@@ -930,8 +1045,8 @@ async fn image_runtime_reports_each_provider_model_and_reference_limit() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
     let cache = directory.path().join("images");
-    let openai = ImageGenRuntimeBackend::OpenAi(backend(&server, cache.clone()));
-    let xai = ImageGenRuntimeBackend::Xai(xai_backend(&server, cache.clone()));
+    let openai = ImageGenRuntimeBackend::OpenAi(backend(server.uri(), cache.clone()));
+    let xai = ImageGenRuntimeBackend::Xai(xai_backend(server.uri(), cache.clone()));
     let mut krea = krea_backend(
         KreaTransport::Direct {
             api_key: "local-krea-fixture".into(),
@@ -962,7 +1077,7 @@ async fn xai_generation_returns_provider_url_and_edit_saves_the_base64_result() 
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
     let cache = directory.path().join("cache");
-    let backend = xai_backend(&server, cache.clone());
+    let backend = xai_backend(server.uri(), cache.clone());
     let public_url = format!("{}/public/image.png", server.uri());
     Mock::given(method("POST"))
         .and(path("/v1/images/generations"))
@@ -1025,7 +1140,7 @@ async fn xai_validation_and_bad_responses_leave_no_cached_image() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
     let cache = directory.path().join("cache");
-    let mut backend = xai_backend(&server, cache.clone());
+    let mut backend = xai_backend(server.uri(), cache.clone());
     assert!(matches!(
         backend.generate(request(" ")).await,
         Err(ToolError::InvalidParams(reason)) if reason.contains("Prompt is required")

@@ -1428,6 +1428,7 @@ mod tests {
         }
     }
 
+    include!("tests/composer_draft_recovery.rs");
     include!("tests/quorum_contract.rs");
     include!("tests/session_runtime.rs");
     include!("tests/tool_scope.rs");
