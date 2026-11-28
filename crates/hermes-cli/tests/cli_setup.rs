@@ -297,6 +297,124 @@ async fn quick_setup_reuses_anthropic_and_qwen_oauth_without_refreshing() {
     proxy.verify().await;
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn quick_setup_saves_the_gemini_provider_and_keeps_the_key_out_of_config() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let auth_file = sandbox.path().join("gemini-fixture.json");
+    let server = MockServer::start().await;
+    let origin = server.uri();
+    let access = "synthetic-gemini-setup-access";
+    let refresh = "synthetic-gemini-setup-refresh";
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": access,
+            "refresh_token": refresh,
+            "expires_in": 3600,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let stdout = tokio::time::timeout(Duration::from_secs(30), async {
+        let mut child = isolated_hermes::isolated_hermes(sandbox.path())
+            // The fixture server rejects unmatched requests, including the user-info tunnel.
+            .env("PATH", sandbox.path())
+            .env("HTTP_PROXY", &origin)
+            .env("HTTPS_PROXY", &origin)
+            .env("NO_PROXY", "127.0.0.1")
+            .env("HERMES_GEMINI_OAUTH_FILE", &auth_file)
+            .env("HERMES_GEMINI_OAUTH_TOKEN_URL", format!("{origin}/token"))
+            .env("HERMES_GEMINI_CLIENT_ID", "fixture-gemini-client")
+            .env(
+                "HERMES_GEMINI_CLIENT_SECRET",
+                "fixture-gemini-client-secret",
+            )
+            .env("HERMES_GEMINI_PROJECT_ID", "fixture-project")
+            .arg("setup")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("start Gemini setup");
+        let mut menu = BufReader::new(child.stdout.take().unwrap()).lines();
+        let mut input = child.stdin.take().unwrap();
+        select(&mut menu, &mut input, "Quick setup").await;
+        select(&mut menu, &mut input, "Google Gemini CLI").await;
+        input.write_all(b"y\n").await.unwrap();
+        drop(input);
+
+        let authorization = loop {
+            let line = menu
+                .next_line()
+                .await
+                .unwrap()
+                .expect("Gemini authorisation URL");
+            if line.trim().starts_with("https://accounts.google.com/") {
+                break reqwest::Url::parse(line.trim()).unwrap();
+            }
+        };
+        let parameters: std::collections::HashMap<_, _> =
+            authorization.query_pairs().into_owned().collect();
+        let mut callback = reqwest::Url::parse(&parameters["redirect_uri"]).unwrap();
+        assert_eq!(callback.scheme(), "http");
+        assert_eq!(callback.host_str(), Some("127.0.0.1"));
+        assert_eq!(callback.path(), "/oauth2callback");
+        callback
+            .query_pairs_mut()
+            .append_pair("state", &parameters["state"])
+            .append_pair("code", "fixture-authorization");
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
+            .get(callback)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let mut stdout = String::new();
+        menu.into_inner().read_to_string(&mut stdout).await.unwrap();
+        assert!(child.wait().await.unwrap().success(), "{stdout}");
+        stdout
+    })
+    .await
+    .expect("Gemini setup timed out");
+
+    assert!(
+        stdout.contains("Saved Google Gemini OAuth state"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Setup complete!"), "{stdout}");
+    assert!(!stdout.contains(access));
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(auth_file).unwrap()).unwrap();
+    assert_eq!(state["access"], access);
+    assert_eq!(state["project_id"], "fixture-project");
+    let home = sandbox.path().join("hermes");
+    let store = hermes_auth::FileTokenStore::new(home.join("auth/tokens.json"))
+        .await
+        .unwrap();
+    let credential = store.get("google-gemini-cli").await.unwrap();
+    assert_eq!(credential.access_token, access);
+    assert_eq!(credential.refresh_token.as_deref(), Some(refresh));
+    let config_path = home.join("config.yaml");
+    let config = hermes_config::load_user_config_file(&config_path).unwrap();
+    assert!(config.model.unwrap().starts_with("google-gemini-cli:"));
+    let settings = &config.llm_providers["google-gemini-cli"];
+    assert_eq!(
+        settings.base_url.as_deref(),
+        Some(hermes_cli::auth::DEFAULT_GEMINI_CLOUDCODE_BASE_URL)
+    );
+    assert!(settings.api_key.is_none());
+    assert!(!std::fs::read_to_string(config_path)
+        .unwrap()
+        .contains(access));
+    server.verify().await;
+}
+
 async fn run_authenticated_setup(
     mut command: tokio::process::Command,
     proxy: &str,

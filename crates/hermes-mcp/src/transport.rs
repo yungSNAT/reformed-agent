@@ -1779,7 +1779,7 @@ impl McpTransport for HttpSseTransport {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
@@ -2367,7 +2367,7 @@ mod tests {
         answer_once_with_body(listener, reply).await.0
     }
 
-    async fn answer_once_with_body(
+    pub(crate) async fn answer_once_with_body(
         listener: &tokio::net::TcpListener,
         reply: String,
     ) -> (String, String) {

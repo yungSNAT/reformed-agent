@@ -54,7 +54,25 @@ async fn session_handoff_queues_only_enabled_destinations_and_resolves_the_home_
         assert!(!queue.exists());
     }
 
-    command_output(&mut app, "/sethome", &["fixture-room"]).await;
+    let marker = home.join("home-session.json");
+    let status = command_output(&mut app, "/sethome", &[]).await;
+    assert!(status.contains("No home marker set."), "{status}");
+    assert!(!marker.exists());
+    let cleared = command_output(&mut app, "/sethome", &["clear"]).await;
+    assert_eq!(cleared, "Home marker already clear.");
+
+    command_output(&mut app, "/sethome", &[" fixture-room "]).await;
+    let status = command_output(&mut app, "/sethome", &["status"]).await;
+    let (heading, payload) = status.split_once('\n').expect("home marker status");
+    assert_eq!(heading, format!("Home marker file: {}", marker.display()));
+    let saved: serde_json::Value = serde_json::from_str(payload).expect("home marker JSON");
+    assert_eq!(saved["session_id"], app.session_id);
+    assert_eq!(saved["home"], "fixture-room");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&marker).unwrap()).unwrap(),
+        saved
+    );
+
     let path = queue.join(format!("{}-telegram.json", app.session_id));
     let queued = command_output(&mut app, "/handoff", &[" TELEGRAM "]).await;
     assert!(queued.contains("Queued handoff request."));
@@ -78,6 +96,9 @@ async fn session_handoff_queues_only_enabled_destinations_and_resolves_the_home_
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(request["home_channel"], "configured-room");
     assert_eq!(std::fs::read_dir(queue).unwrap().count(), 1);
+    let cleared = command_output(&mut app, "/sethome", &["clear"]).await;
+    assert_eq!(cleared, "Cleared home marker.");
+    assert!(!marker.exists());
 }
 
 #[tokio::test]
@@ -144,12 +165,21 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
     let mut app = App::new(cli).await.expect("build isolated app");
     let (tx, _rx) = mpsc::unbounded_channel::<crate::tui::Event>();
     app.set_stream_handle(Some(tx.into()));
-    let created_on_start = home
-        .join("sessions")
-        .join(format!("{}.json", app.session_id));
+    let sessions = home.join("sessions");
+    let created_on_start = sessions.join(format!("{}.json", app.session_id));
     if created_on_start.exists() {
         std::fs::remove_file(created_on_start).expect("remove the isolated empty startup snapshot");
     }
+    if sessions.exists() {
+        std::fs::remove_dir(&sessions).expect("remove the empty isolated snapshots directory");
+    }
+    let missing = command_output(&mut app, "/snapshot", &[]).await;
+    assert!(missing.contains("No snapshots found"), "{missing}");
+    std::fs::create_dir(&sessions).expect("create empty snapshots directory");
+    assert_eq!(
+        command_output(&mut app, "/snapshot", &["list"]).await,
+        missing
+    );
 
     for (command, args, expected) in [
         ("/branch", &["list"][..], "No snapshots found"),
@@ -173,10 +203,9 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
         let output = command_output(&mut app, command, args).await;
         assert!(output.contains(expected), "{command} {args:?}: {output}");
     }
-    let sessions = home.join("sessions");
-    for (label, reply) in [
-        ("branch-left", "left reply"),
-        ("branch-right", "right reply"),
+    for (label, reply, modified_seconds) in [
+        ("branch-left", "left reply", 1_000),
+        ("branch-right", "right reply", 2_000),
     ] {
         app.messages = vec![
             hermes_core::Message::user("shared question"),
@@ -189,8 +218,22 @@ async fn session_checkpoints_compare_merge_and_rewind_local_messages() {
             .write(true)
             .open(snapshot)
             .unwrap()
-            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+            .set_modified(
+                std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_secs(modified_seconds),
+            )
             .expect("mark original fixture checkpoint as old");
+    }
+    let listed = command_output(&mut app, "/snapshot", &["list"]).await;
+    assert!(listed.starts_with("Session snapshots:"), "{listed}");
+    let newest = listed.lines().nth(1).expect("newest snapshot row");
+    assert!(newest.starts_with("  - branch-right (latest)"), "{listed}");
+    assert_eq!(listed.matches("(latest)").count(), 1, "{listed}");
+    let rollback = command_output(&mut app, "/rollback", &["list"]).await;
+    assert!(rollback.contains("recent snapshots:"), "{rollback}");
+    for label in ["branch-left", "branch-right"] {
+        assert!(listed.contains(label), "{listed}");
+        assert!(rollback.contains(label), "{rollback}");
     }
 
     let diff = command_output(

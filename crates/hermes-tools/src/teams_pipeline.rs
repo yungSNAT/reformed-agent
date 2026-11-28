@@ -1273,3 +1273,6 @@ mod tests;
 #[cfg(test)]
 #[path = "teams_pipeline_coverage_gen.rs"]
 mod coverage_gen_teams_pipeline;
+
+#[cfg(test)]
+pub(crate) use coverage_gen_teams_pipeline::run_exact_test_in_child;

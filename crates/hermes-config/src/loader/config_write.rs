@@ -345,29 +345,187 @@ fn default_container_for(tail: &[String]) -> serde_yaml::Value {
 }
 
 fn save_env_key_value(path: &Path, key: &str, value: &str) -> Result<(), ConfigError> {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
-    let sanitized_value = value.replace('\n', "\\n");
-    let mut lines = Vec::new();
-    let mut replaced = false;
+    let (out, _) = env_text_with(path, key, Some(value))?;
+    // `.env` holds provider keys: a link whose folder is missing is refused.
+    resolve_credential_link_target(path).map_err(io_to_config_error)?;
+    atomic_write_bytes(path, out.as_bytes())
+}
 
+/// The `.env` text at `path` with `key` set once to `value` in place of its first line (a
+/// newline escaped), or with every `key` line removed when `value` is `None`; and whether that
+/// changes anything. A file that cannot be read, other than a missing one, is an error: reading
+/// it as empty would write the one key over every other line.
+fn env_text_with(
+    path: &Path,
+    key: &str,
+    value: Option<&str>,
+) -> Result<(String, bool), ConfigError> {
+    let original = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(io_to_config_error(e)),
+    };
+    let assignment = |value: &str| format!("{key}={}", value.replace('\n', "\\n"));
+    let mut lines = Vec::new();
+    let mut found = false;
     for line in original.lines() {
         if dotenv_assignment(line).is_some_and(|(line_key, _)| line_key == key) {
-            if !replaced {
-                lines.push(format!("{key}={sanitized_value}"));
-                replaced = true;
+            if let Some(value) = value.filter(|_| !found) {
+                lines.push(assignment(value));
             }
+            found = true;
         } else {
             lines.push(line.to_string());
         }
     }
-
-    if !replaced {
-        lines.push(format!("{key}={sanitized_value}"));
+    if let (Some(value), false) = (value, found) {
+        lines.push(assignment(value));
     }
-
     let mut out = lines.join("\n");
     out.push('\n');
-    // `.env` holds provider keys: a link whose folder is missing is refused.
+    Ok((out, value.is_some() || found))
+}
+
+/// Whether `key=value` reads back from a `.env` file as exactly `value` under `key`: no control
+/// character (a newline would start another assignment, a NUL stops every later load), nothing
+/// the start-up sanitiser would split into another assignment and no quotes or `${...}` the
+/// reader would take off or resolve.
+pub fn env_value_round_trips(key: &str, value: &str) -> bool {
+    let line = format!("{key}={value}");
+    is_env_name(key)
+        && !value.chars().any(char::is_control)
+        && value.trim() == value
+        && !(value.starts_with("${") && value.ends_with('}'))
+        && sanitize_env_lines(&line) == line
+        && dotenv_assignment(&line)
+            .is_some_and(|(k, v)| k == key && strip_quotes(v.trim()) == value)
+}
+
+/// Whether `key` is a variable name a `.env` line can hold: `[A-Za-z_][A-Za-z0-9_]*`, as
+/// upstream's `.env` writer requires.
+pub fn is_env_name(key: &str) -> bool {
+    let mut bytes = key.bytes();
+    bytes
+        .next()
+        .is_some_and(|b| b == b'_' || b.is_ascii_alphabetic())
+        && bytes.all(|b| b == b'_' || b.is_ascii_alphanumeric())
+}
+
+/// Variables that steer how the next process runs, which upstream's `.env` writer refuses
+/// (`hermes_cli/config.py` `_ENV_VAR_NAME_DENY_PREFIXES` and `_ENV_VAR_NAME_DENYLIST`, with
+/// `hermes_constants.py` `LAUNCH_ONLY_ENV_KEYS`).
+const ENV_WRITE_DENY_PREFIXES: &[&str] = &["LD_", "DYLD_", "GIT_CONFIG_"];
+const ENV_WRITE_DENYLIST: &[&str] = &[
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONEXECUTABLE",
+    "PYTHONNOUSERSITE", "PYTHONBREAKPOINT", "PYTHONCASEOK", "NODE_OPTIONS", "NODE_PATH",
+    "PERL5OPT", "PERL5LIB", "PERLLIB", "RUBYOPT", "RUBYLIB", "CLASSPATH", "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "GOFLAGS", "RUSTFLAGS", "PATH", "SHELL", "BROWSER",
+    "EDITOR", "VISUAL", "PAGER", "MANPAGER", "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_SHELL",
+    "GIT_SSH", "GIT_ASKPASS", "SSH_ASKPASS", "SUDO_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+    "GIT_PAGER", "GIT_EXTERNAL_DIFF", "GIT_PROXY_COMMAND", "GIT_TEMPLATE_DIR", "GIT_DIR",
+    "BASH_ENV", "ENV", "ZDOTDIR", "PROMPT_COMMAND", "VIMINIT", "EXINIT", "HERMES_HOME",
+    "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_ENV", "HERMES_CONFIG_PATH", "HERMES_ENV_PATH",
+    "HERMES_OPTIONAL_MCPS", "HERMES_YOLO_MODE", "HERMES_ACCEPT_HOOKS", "HERMES_REDACT_SECRETS",
+    "HERMES_INTERACTIVE", "HERMES_EXEC_ASK", "HERMES_GATEWAY_SESSION", "HERMES_CRON_SESSION",
+    "HERMES_SINGLE_QUERY_SESSION", "HERMES_SESSION_KEY", "HERMES_SESSION_PLATFORM",
+    "HERMES_MANAGED_DIR", "GATEWAY_STATUS_REPORT_URL", "HERMES_INSTALL_STATE_DIR",
+];
+
+/// `name` as this platform's environment compares it: upper-cased on Windows, whose variable
+/// names ignore case.
+pub fn env_name_key(name: &str) -> String {
+    env_name_key_on(name, cfg!(windows))
+}
+
+fn env_name_key_on(name: &str, ignores_case: bool) -> String {
+    if ignores_case {
+        name.to_ascii_uppercase()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Whether the `.env` writer may set or remove `key`: a variable name ([`is_env_name`]) that
+/// does not steer the next process. Windows reads variable names in any letter case.
+pub fn env_name_writable(key: &str) -> bool {
+    env_name_writable_on(key, cfg!(windows))
+}
+
+fn env_name_writable_on(key: &str, ignores_case: bool) -> bool {
+    let policy = env_name_key_on(key, ignores_case);
+    is_env_name(key)
+        && !ENV_WRITE_DENY_PREFIXES.iter().any(|p| policy.starts_with(p))
+        && !ENV_WRITE_DENYLIST.contains(&policy.as_str())
+}
+
+/// Sets `key` to `value` in the `.env` file at `path`, or removes it when `value` is `None`, as
+/// `hermes config set` writes it, leaving the file owner-only. A key the writer may not touch
+/// ([`env_name_writable`]) or a value that would not read back as itself
+/// ([`env_value_round_trips`]) is refused before anything is written. Gives whether the file
+/// changed: removing an absent key writes nothing.
+pub fn set_env_file_value(path: &Path, key: &str, value: Option<&str>) -> Result<bool, ConfigError> {
+    if !env_name_writable(key) {
+        return Err(ConfigError::ValidationError(
+            "a .env key must be a variable name ([A-Za-z_][A-Za-z0-9_]*) that does not steer \
+             the next process"
+                .into(),
+        ));
+    }
+    if value.is_some_and(|value| !env_value_round_trips(key, value)) {
+        return Err(ConfigError::ValidationError(format!(
+            "the value for {key} cannot be stored in a .env file"
+        )));
+    }
+    let (out, changed) = env_text_with(path, key, value)?;
+    if !changed {
+        return Ok(false);
+    }
     resolve_credential_link_target(path).map_err(io_to_config_error)?;
-    atomic_write_bytes(path, out.as_bytes())
+    atomic_write_owner_only(path, out.as_bytes())?;
+    Ok(true)
+}
+
+/// The values [`load_dotenv`] sets for `home`, worked out without changing the process
+/// environment, in its order: the home `.env` over the environment, the project `.env` only
+/// where neither sets one (over the environment when there is no home `.env`), and the
+/// administrator-pinned managed `.env` over everything. The home and project files are
+/// sanitised first, as at start-up.
+pub fn dotenv_values_in(home: &Path) -> std::collections::BTreeMap<String, String> {
+    fn read(
+        path: &Path,
+        values: &mut std::collections::BTreeMap<String, String>,
+        fill_only: bool,
+    ) {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return;
+        };
+        for (key, value) in contents.lines().filter_map(dotenv_assignment) {
+            if fill_only && (values.contains_key(key) || std::env::var_os(key).is_some()) {
+                continue;
+            }
+            values.insert(key.to_string(), strip_quotes(value.trim()).to_string());
+        }
+    }
+    let mut values = std::collections::BTreeMap::new();
+    let env_file = home.join(".env");
+    let has_home_env = env_file.exists();
+    if has_home_env {
+        sanitize_env_file_if_needed(&env_file);
+        read(&env_file, &mut values, false);
+    }
+    if let Some(project_env) = std::env::current_dir()
+        .ok()
+        .map(|p| p.join(".env"))
+        .filter(|p| p.exists())
+    {
+        sanitize_env_file_if_needed(&project_env);
+        read(&project_env, &mut values, has_home_env);
+    }
+    if let Some(managed_env) = managed_scope_dir()
+        .map(|dir| dir.join(".env"))
+        .filter(|path| path.exists())
+    {
+        read(&managed_env, &mut values, false);
+    }
+    values
 }

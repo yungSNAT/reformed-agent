@@ -430,6 +430,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn compression_pruning_preserves_recent_and_empty_tool_results() {
+        let compressor = ContextCompressor::new(
+            quiet_config(),
+            aux_with_provider(CannedSummaryProvider::new("unused")),
+        );
+        let old = "old result ".repeat(30);
+        let middle = "middle result ".repeat(20);
+        let recent = "recent result ".repeat(30);
+        let messages = [
+            assistant_with_tool_call("old", "read", "{}"),
+            tool_msg("old", &old),
+            assistant_with_tool_call("empty", "read", "{}"),
+            tool_msg("empty", ""),
+            assistant_with_tool_call("middle", "read", "{}"),
+            tool_msg("middle", &middle),
+            assistant_with_tool_call("recent", "read", "{}"),
+            tool_msg("recent", &recent),
+        ];
+
+        let (narrow, narrow_count) = compressor.prune_old_tool_results(&messages, 2, Some(1));
+        assert_eq!(narrow_count, 2);
+        assert_eq!(narrow[1].content.as_deref(), Some(PRUNED_TOOL_PLACEHOLDER));
+        assert_eq!(narrow[3].content.as_deref(), Some(""));
+        assert_eq!(narrow[5].content.as_deref(), Some(PRUNED_TOOL_PLACEHOLDER));
+        assert_eq!(narrow[7].content.as_deref(), Some(recent.as_str()));
+
+        let (minimum, minimum_count) = compressor.prune_old_tool_results(&messages, 3, Some(1));
+        assert_eq!(minimum_count, 1);
+        assert_eq!(minimum[5].content.as_deref(), Some(middle.as_str()));
+
+        let (roomy, roomy_count) = compressor.prune_old_tool_results(&messages, 2, Some(220));
+        assert_eq!(roomy_count, 1);
+        assert_eq!(roomy[1].content.as_deref(), Some(PRUNED_TOOL_PLACEHOLDER));
+        assert_eq!(roomy[5].content.as_deref(), Some(middle.as_str()));
+        assert_eq!(roomy[7].content.as_deref(), Some(recent.as_str()));
+        assert_eq!(messages[1].content.as_deref(), Some(old.as_str()));
+        let clipped = &messages[1..];
+        let (whole, whole_count) = compressor.prune_old_tool_results(clipped, clipped.len(), Some(1));
+        assert_eq!(whole_count, 0);
+        assert_eq!(whole[0].content.as_deref(), Some(old.as_str()));
+        assert!(
+            compressor
+                .prune_old_tool_results(&[], 2, Some(1))
+                .0
+                .is_empty()
+        );
+    }
+
     // ---------- serialisation ----------
 
     #[test]
@@ -612,6 +661,37 @@ mod tests {
         // Second call within cooldown window short-circuits.
         let err2 = compressor.generate_summary(&turns).await.unwrap_err();
         assert!(matches!(err2, CompressionError::CooldownActive(_)));
+    }
+
+    #[tokio::test]
+    async fn compression_summary_recovers_after_an_empty_response() {
+        let provider = SequencedProvider::new(vec![
+            Ok(" \n ".to_owned()),
+            Ok("Recovered the reading list.".to_owned()),
+        ]);
+        let mut compressor =
+            ContextCompressor::new(quiet_config(), aux_with_provider(provider.clone()));
+        let turns = [msg(MessageRole::User, "Arrange the reading list.")];
+
+        assert_eq!(compressor.generate_summary(&turns).await.unwrap(), None);
+        assert_eq!(
+            compressor.last_summary_error(),
+            Some("empty summary response")
+        );
+        assert!(matches!(
+            compressor.generate_summary(&turns).await,
+            Err(CompressionError::CooldownActive(_))
+        ));
+        assert_eq!(provider.call_count(), 1);
+
+        // Expire the cooldown immediately so the test can check the next attempt.
+        compressor.failure_cooldown_until = Some(Instant::now());
+        assert_eq!(
+            compressor.generate_summary(&turns).await.unwrap(),
+            Some(with_summary_prefix("Recovered the reading list."))
+        );
+        assert_eq!(provider.call_count(), 2);
+        assert_eq!(compressor.last_summary_error(), None);
     }
 
     #[tokio::test]
@@ -868,5 +948,43 @@ mod tests {
         assert!(compressor.last_summary_fallback_used());
         assert!(compressor.last_summary_dropped_count() > 0);
         assert!(compressor.last_summary_error().is_some());
+    }
+
+    #[tokio::test]
+    async fn compression_handoff_preserves_the_first_retained_assistant_reply() {
+        let provider = CannedSummaryProvider::new("The outline is ready.");
+        let config = CompressorConfig {
+            context_length: 1_000,
+            protect_first_n: 2,
+            protect_last_n: 3,
+            ..CompressorConfig::default()
+        };
+        let mut compressor = ContextCompressor::new(config, aux_with_provider(provider.clone()));
+        let messages = vec![
+            msg(MessageRole::System, "Summarise the reading list."),
+            msg(MessageRole::User, "Draft an outline."),
+            msg(MessageRole::Assistant, "Here is the first draft."),
+            msg(MessageRole::User, &"Notes for the draft. ".repeat(120)),
+            msg(MessageRole::Assistant, "Here is the revised outline."),
+            msg(MessageRole::User, "Keep the headings."),
+            msg(MessageRole::Assistant, "The headings are saved."),
+        ];
+
+        let result = compressor.compress(messages, None).await;
+        assert_eq!(provider.call_count(), 1);
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[1].content.as_deref(), Some("Draft an outline."));
+        assert_eq!(result[2].role, MessageRole::Assistant);
+        let handoff = format!(
+            "{}\n\nHere is the revised outline.",
+            with_summary_prefix("The outline is ready.")
+        );
+        assert_eq!(result[2].content.as_deref(), Some(handoff.as_str()));
+        assert_eq!(result[3].content.as_deref(), Some("Keep the headings."));
+        assert_eq!(
+            result[4].content.as_deref(),
+            Some("The headings are saved.")
+        );
+        assert_eq!(compressor.compression_count(), 1);
     }
 }

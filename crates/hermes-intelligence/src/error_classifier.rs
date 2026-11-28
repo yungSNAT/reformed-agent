@@ -197,6 +197,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn classifies_provider_messages_and_recommends_retries() {
+        use ErrorCategory::*;
+        use RetryStrategy::*;
+
+        let classifier = ErrorClassifier::new();
+        let cases = [
+            ("HTTP 401 Unauthorized", AuthFailed, NoRetry),
+            ("maximum context exceeded", ContextTooLong, UseFallbackModel),
+            ("400 bad request", InvalidRequest, NoRetry),
+            ("model at capacity", ModelOverloaded, UseFallbackModel),
+            (
+                "502 bad gateway",
+                ServerError { status_code: 502 },
+                RetryWithBackoff {
+                    max_retries: 2,
+                    base_delay_secs: 2,
+                },
+            ),
+            ("unexpected provider response", Unknown, RetryOnce),
+        ];
+        for (message, category, strategy) in cases {
+            let classified = classifier.classify(&AgentError::LlmApi(message.into()));
+            assert_eq!(classified, category, "{message}");
+            assert_eq!(
+                classifier.recommend_strategy(&classified),
+                strategy,
+                "{message}"
+            );
+        }
+        assert_eq!(
+            classifier.recommend_strategy(&ServerError { status_code: 504 }),
+            NoRetry
+        );
+    }
+
+    #[test]
+    fn classifies_gateway_diagnostics_and_recommends_retries() {
+        use ErrorCategory::*;
+        use RetryStrategy::*;
+
+        let classifier = ErrorClassifier::new();
+        let cases = [
+            (
+                "DNS lookup failed",
+                NetworkError,
+                RetryWithBackoff {
+                    max_retries: 3,
+                    base_delay_secs: 1,
+                },
+            ),
+            ("request timed out", Timeout, RetryOnce),
+            ("unexpected gateway response", Unknown, RetryOnce),
+        ];
+        for (message, category, strategy) in cases {
+            let classified = classifier.classify(&AgentError::Gateway(message.into()));
+            assert_eq!(classified, category, "{message}");
+            assert_eq!(
+                classifier.recommend_strategy(&classified),
+                strategy,
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
     fn test_classify_rate_limited() {
         let classifier = ErrorClassifier::new();
         let err = AgentError::LlmApi("rate_limit exceeded".into());

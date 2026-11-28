@@ -1756,6 +1756,66 @@ fn test_auto_maintenance_prunes_and_vacuums() {
 }
 
 #[test]
+fn auto_maintenance_reports_prune_and_marker_failures_before_retrying() {
+    let home = tempfile::tempdir().unwrap();
+    let store = SessionPersistence::new(home.path());
+    store
+        .persist_session("old", &[Message::user("fixture")], None, None, None, None)
+        .unwrap();
+    mark_session_old(&store, "old", 100);
+    let conn = open_db(&store);
+    conn.execute_batch(
+        "CREATE TRIGGER refuse_fixture_prune BEFORE DELETE ON sessions
+         BEGIN SELECT RAISE(ABORT, 'fixture refused the prune'); END;",
+    )
+    .unwrap();
+
+    let failed_prune = store.maybe_auto_prune_and_vacuum(90, 24, false);
+    assert!(!failed_prune.skipped);
+    assert_eq!(failed_prune.pruned, 0);
+    assert!(failed_prune
+        .error
+        .unwrap()
+        .contains("fixture refused the prune"));
+    let count = |sql| conn.query_row(sql, [], |row| row.get::<_, u32>(0)).unwrap();
+    assert_eq!(count("SELECT COUNT(*) FROM sessions WHERE id = 'old'"), 1);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM messages WHERE session_id = 'old'"),
+        1
+    );
+    assert_eq!(store.get_meta("last_auto_prune").unwrap(), None);
+
+    conn.execute_batch(
+        "DROP TRIGGER refuse_fixture_prune;
+         CREATE TRIGGER refuse_fixture_marker BEFORE INSERT ON state_meta
+         WHEN NEW.key = 'last_auto_prune'
+         BEGIN SELECT RAISE(ABORT, 'fixture refused the marker'); END;",
+    )
+    .unwrap();
+    let failed_marker = store.maybe_auto_prune_and_vacuum(90, 24, false);
+    assert!(!failed_marker.skipped);
+    assert_eq!(failed_marker.pruned, 1);
+    assert!(failed_marker
+        .error
+        .unwrap()
+        .contains("fixture refused the marker"));
+    assert_eq!(count("SELECT COUNT(*) FROM sessions WHERE id = 'old'"), 0);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM messages WHERE session_id = 'old'"),
+        0
+    );
+    assert_eq!(store.get_meta("last_auto_prune").unwrap(), None);
+
+    conn.execute_batch("DROP TRIGGER refuse_fixture_marker;")
+        .unwrap();
+    let retry = store.maybe_auto_prune_and_vacuum(90, 24, false);
+    assert!(!retry.skipped);
+    assert_eq!(retry.pruned, 0);
+    assert!(retry.error.is_none());
+    assert!(store.maybe_auto_prune_and_vacuum(90, 24, false).skipped);
+}
+
+#[test]
 fn test_auto_maintenance_respects_interval_marker() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());
