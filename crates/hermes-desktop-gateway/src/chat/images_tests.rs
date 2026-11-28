@@ -252,3 +252,85 @@ async fn an_unwritable_staging_folder_is_5027() {
         .values()
         .all(|session| session.images().is_empty()));
 }
+
+/// Replacing an already-validated ancestor directory with a symlink to a refused path after
+/// resolution must not redirect the read to the forbidden target (S8).
+#[cfg(unix)]
+#[test]
+fn ancestor_swap_after_resolve_does_not_read_redirected_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let ok_dir = dir.path().join("ok");
+    let nul_dir = dir.path().join("NUL");
+    std::fs::create_dir(&ok_dir).unwrap();
+    std::fs::create_dir(&nul_dir).unwrap();
+    let safe_bytes = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'O', b'K'];
+    let bad_bytes = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'N', b'O'];
+    let shot = ok_dir.join("shot.png");
+    std::fs::write(&shot, safe_bytes).unwrap();
+    std::fs::write(nul_dir.join("shot.png"), bad_bytes).unwrap();
+
+    let found = resolve(shot.to_str().unwrap(), dir.path())
+        .unwrap()
+        .unwrap();
+    std::fs::rename(&ok_dir, dir.path().join("ok_old")).unwrap();
+    std::os::unix::fs::symlink(&nul_dir, &ok_dir).unwrap();
+
+    let bytes = read_image(&found.target).unwrap();
+    assert_eq!(bytes, safe_bytes, "read followed swapped ancestor link");
+}
+
+/// A failing `image.detach` at session capacity must never free a slot for a concurrent attach or
+/// reorder the session's image queue (S9).
+#[tokio::test(flavor = "multi_thread")]
+async fn failing_detach_at_capacity_keeps_queue_order_and_cap() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let home = tempfile::tempdir().unwrap();
+    let request = local_attach(home.path());
+    let chat = Arc::clone(&request.chat);
+    let id = request.params["session_id"].as_str().unwrap().to_string();
+    let session = chat.lock_sessions().get(&id).cloned().unwrap();
+    let png_bytes = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, b'x'];
+    let images_dir = home.path().join("images");
+    for _ in 0..MAX_STAGED_IMAGES {
+        let staged = stage_image_bytes(&images_dir, &png_bytes).unwrap();
+        session.stage_image(staged).unwrap();
+    }
+    let first_path = session.images()[0].path.clone();
+    std::fs::remove_file(&first_path).unwrap();
+    std::fs::create_dir(&first_path).unwrap();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let racing_session = Arc::clone(&session);
+    let racing_stop = Arc::clone(&stop);
+    let raced_over_cap = std::thread::spawn(move || {
+        let mut admitted = false;
+        while !racing_stop.load(Ordering::Relaxed) {
+            let probe = crate::attach::StagedImage {
+                path: std::path::PathBuf::from("probe.png"),
+                mime: "image/png",
+                bytes: 1,
+            };
+            if racing_session.stage_image(probe).is_ok() {
+                admitted = true;
+                break;
+            }
+        }
+        admitted
+    });
+
+    let params = json!({"session_id": id, "path": first_path.display().to_string()})
+        .as_object()
+        .unwrap()
+        .clone();
+    for _ in 0..80 {
+        let err = detach_now(&chat, &params).unwrap_err();
+        assert_eq!(err.0, IMAGE_WRITE_FAILED, "{}", err.1);
+        let queued = session.images();
+        assert_eq!(queued.len(), MAX_STAGED_IMAGES);
+        assert_eq!(queued[0].path, first_path, "queue order changed");
+    }
+    stop.store(true, Ordering::Relaxed);
+    assert!(!raced_over_cap.join().unwrap(), "concurrent attach took slot");
+    std::fs::remove_dir(&first_path).unwrap();
+}

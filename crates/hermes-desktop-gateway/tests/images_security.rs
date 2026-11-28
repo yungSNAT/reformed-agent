@@ -65,7 +65,7 @@ async fn image_attach_refuses_reserved_device_names() {
     let session = client.create().await;
     let folder = tempfile::tempdir().unwrap();
     let mut paths = Vec::new();
-    for name in [
+    for (i, name) in [
         "NUL.png",
         "con.png",
         "Aux.jpg",
@@ -83,19 +83,27 @@ async fn image_attach_refuses_reserved_device_names() {
         "LPT\u{b9}.png",
         "lpt\u{b2}.png",
         "LPT\u{b3}.jpg",
-    ] {
-        let path = folder.path().join(name);
+    ]
+    .iter()
+    .enumerate()
+    {
+        let sub = folder.path().join(format!("f{i}"));
+        let path = sub.join(name);
         #[cfg(not(windows))]
-        std::fs::write(&path, png(name)).unwrap();
+        {
+            std::fs::create_dir(&sub).unwrap();
+            std::fs::write(&path, png(name)).unwrap();
+        }
         paths.push(path.display().to_string());
     }
     paths.push("NUL.png".to_string());
     // Intermediate reserved device components are refused too, even where the folder exists.
-    for dir_name in ["CON", "NUL", "COM1", "COM1.txt"] {
-        let nested = folder.path().join(dir_name).join("shot.png");
+    for (i, dir_name) in ["CON", "NUL", "COM1", "COM1.txt"].iter().enumerate() {
+        let dir = folder.path().join(format!("d{i}")).join(dir_name);
+        let nested = dir.join("shot.png");
         #[cfg(not(windows))]
         {
-            std::fs::create_dir(folder.path().join(dir_name)).unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(&nested, png(dir_name)).unwrap();
         }
         paths.push(nested.display().to_string());
@@ -200,12 +208,20 @@ async fn image_attach_refuses_links_to_refused_paths() {
         let unc_dir = folder.path().join("unc_dir");
         std::os::windows::fs::symlink_dir(r"\\nohost.invalid\share", &unc_dir)
             .expect("a symlink on Windows needs Developer Mode or an elevated shell");
-        let drive_rel = folder.path().join("drive_rel.png");
-        std::os::windows::fs::symlink_file(r"C:..\shot.png", &drive_rel)
-            .expect("a symlink on Windows needs Developer Mode or an elevated shell");
+        let real_dir = folder.path().join("real");
+        std::fs::create_dir(&real_dir).unwrap();
+        std::fs::write(real_dir.join("shot.png"), png("junction")).unwrap();
+        let junc = folder.path().join("junc");
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junc)
+            .arg(&real_dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J failed");
         paths.push(unc_file.display().to_string());
         paths.push(unc_dir.join("a.png").display().to_string());
-        paths.push(drive_rel.display().to_string());
+        paths.push(junc.join("shot.png").display().to_string());
     }
     expect_refused(&mut client, &session, &paths).await;
     assert!(staged_images(started.home.path()).is_empty());
