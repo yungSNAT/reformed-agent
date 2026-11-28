@@ -321,6 +321,119 @@ mod tests {
         assert!(args.contains(&"example.com".to_string()));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ssh_backend_reports_command_and_file_results() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+
+        const CHILD: &str = "HERMES_SSH_BACKEND_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let fixture = root.path().canonicalize().unwrap();
+            let ssh = fixture.join("ssh");
+            std::fs::write(
+                &ssh,
+                r#"#!/bin/sh
+pty=$1
+for argument do command=$argument; done
+case "$command" in
+    "cd '/fixture work' && nohup fixture-command &>/dev/null &")
+        [ "$pty" = '-t' ] || exit 80
+        printf 'café and more'
+        printf 'warning' >&2
+        exit 3
+        ;;
+    "sed -n '2,3p' docs/notes.txt") printf 'second\nthird\n' ;;
+    "cat missing.txt") printf 'fixture path missing' >&2; exit 1 ;;
+    "mkdir -p docs") : > "$HOME/fixture-directory" ;;
+    "cat > docs/notes.txt << 'HERMES_EOF'
+Night heron
+HERMES_EOF")
+        [ -f "$HOME/fixture-directory" ] || exit 82
+        : > "$HOME/fixture-file"
+        ;;
+    "test -e docs/notes.txt") [ -f "$HOME/fixture-file" ] ;;
+    "test -e missing.txt") : > "$HOME/fixture-missing-check"; exit 1 ;;
+    *) printf 'Unexpected arguments: %s\n' "$*" >&2; exit 81 ;;
+esac
+"#,
+            )
+            .unwrap();
+            std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut child = TokioCommand::new(std::env::current_exe().unwrap());
+            child
+                .env_clear()
+                .env("HOME", &fixture)
+                .env("PATH", &fixture)
+                .env(CHILD, "1")
+                .current_dir(&fixture)
+                .kill_on_drop(true)
+                .args([
+                    "--exact",
+                    "ssh::tests::ssh_backend_reports_command_and_file_results",
+                    "--color",
+                    "never",
+                ]);
+            if let Some(path) = std::env::var_os("LLVM_PROFILE_FILE") {
+                child.env("LLVM_PROFILE_FILE", path);
+            }
+            let output = tokio::time::timeout(Duration::from_secs(12), child.output())
+                .await
+                .expect("isolated SSH fixture deadline")
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed; 0 failed"),
+                "isolated SSH fixture exited {}\n{stdout}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let directory = std::env::current_dir().unwrap();
+        assert_eq!(
+            std::env::var_os("PATH").as_deref(),
+            Some(directory.as_os_str())
+        );
+        assert!(directory.join("ssh").is_file());
+        let backend = SshBackend::new("fixture.invalid".to_owned(), 22, None, None, 2, 4);
+        let output = backend
+            .execute_command("fixture-command", None, Some("/fixture work"), true, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                output.exit_code,
+                output.stdout.as_str(),
+                output.stderr.as_str()
+            ),
+            (3, "caf", "warn")
+        );
+        assert_eq!(
+            backend
+                .read_file("docs/notes.txt", Some(1), Some(2))
+                .await
+                .unwrap(),
+            "second\nthird\n"
+        );
+        let failure = backend
+            .read_file("missing.txt", None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(failure, AgentError::Io(message) if message == "Failed to read file 'missing.txt': fixture path missing")
+        );
+        backend
+            .write_file("docs/notes.txt", "Night heron")
+            .await
+            .unwrap();
+        assert!(backend.file_exists("docs/notes.txt").await.unwrap());
+        assert!(!backend.file_exists("missing.txt").await.unwrap());
+        assert!(directory.join("fixture-missing-check").is_file());
+    }
+
     #[test]
     fn test_shlex_quote_local() {
         assert_eq!(shlex_quote_local("simple"), "simple");
