@@ -238,13 +238,10 @@ impl HomeAssistantBackend for HaRestBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[tokio::test]
-    async fn loopback_discovery_filters_states_and_services_without_changing_them() {
-        use wiremock::matchers::{header, method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
+    fn loopback_backend(server: &MockServer) -> HaRestBackend {
         let mut backend = HaRestBackend::new(format!("{}/", server.uri()), "ha-fixture".into());
         backend.client = Client::builder()
             .no_proxy()
@@ -252,6 +249,13 @@ mod tests {
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap();
+        backend
+    }
+
+    #[tokio::test]
+    async fn loopback_discovery_filters_states_and_services_without_changing_them() {
+        let server = MockServer::start().await;
+        let backend = loopback_backend(&server);
         let temperature = json!({
             "entity_id": "sensor.temperature",
             "state": "21",
@@ -310,6 +314,64 @@ mod tests {
         assert!(requests
             .iter()
             .all(|request| request.method.as_str() == "GET"));
+    }
+
+    #[tokio::test]
+    async fn loopback_service_preserves_parameters_and_reports_response_errors() {
+        let server = MockServer::start().await;
+        let backend = loopback_backend(&server);
+        let route = "/api/services/light/inspect";
+        let result = json!([{"entity_id": "light.fixture", "state": "off"}]);
+        Mock::given(method("POST"))
+            .and(path(route))
+            .and(header("authorization", "Bearer ha-fixture"))
+            .and(body_json(
+                json!({"entity_id": "light.fixture", "detail": true}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&result))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let data = json!({"detail": true});
+        let response = backend
+            .call_service("inspect", "light.fixture", Some(&data))
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap(),
+            json!({"status": "ok", "result": result})
+        );
+        server.verify().await;
+        server.reset().await;
+
+        for (template, expected) in [
+            (
+                ResponseTemplate::new(409).set_body_string("fixture is busy"),
+                "HA API error (409 Conflict): fixture is busy",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_string("not a JSON reply"),
+                "Failed to parse HA response:",
+            ),
+        ] {
+            Mock::given(method("POST"))
+                .and(path(route))
+                .and(body_json(json!({"entity_id": "light.fixture"})))
+                .respond_with(template)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let error = backend
+                .call_service("light.inspect", "light.fixture", None)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&error, ToolError::ExecutionFailed(detail) if detail.starts_with(expected)),
+                "{error}"
+            );
+            server.verify().await;
+            server.reset().await;
+        }
     }
 
     #[test]
