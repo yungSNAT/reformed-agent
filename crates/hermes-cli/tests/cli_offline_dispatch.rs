@@ -6,6 +6,89 @@ use std::time::Duration;
 use support::isolated_hermes;
 
 #[tokio::test]
+async fn offline_oneshot_app_and_chat_stdin_print_the_model_reply() {
+    use serde_json::json;
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_partial_json(json!({"model": "deterministic"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "deterministic",
+            "choices": [{"message": {"role": "assistant", "content": "Under the willow bridge"}, "finish_reason": "stop"}]
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(
+        home.join("config.yaml"),
+        json!({
+            "model": "local-test:deterministic",
+            "tools": [],
+            "streaming": {"enabled": false},
+            "llm_providers": {"local-test": {
+                "base_url": server.uri(),
+                "api_key": "fixture-only",
+                "discover_models": false,
+                "models": {"deterministic": {}}
+            }}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let mut oneshot = isolated_hermes(sandbox.path());
+    oneshot
+        .env("HERMES_ONESHOT_APP_RUNTIME", "1")
+        .env("HTTPS_PROXY", "http://127.0.0.1:0")
+        .args(["--oneshot", "Where did the heron nest?"]);
+    let output = tokio::time::timeout(Duration::from_secs(15), oneshot.output())
+        .await
+        .expect("one-shot app query timed out")
+        .unwrap();
+    assert!(output.status.success(), "one-shot app: {output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line == "Under the willow bridge"),
+        "one-shot app: {output:?}"
+    );
+
+    let mut chat = isolated_hermes(sandbox.path());
+    chat.env("HTTPS_PROXY", "http://127.0.0.1:0")
+        .args(["chat", "--query", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = chat.spawn().unwrap();
+    let mut input = child.stdin.take().unwrap();
+    input
+        .write_all(b"Where did the heron nest?\n")
+        .await
+        .unwrap();
+    drop(input);
+    let output = tokio::time::timeout(Duration::from_secs(15), child.wait_with_output())
+        .await
+        .expect("chat stdin query timed out")
+        .unwrap();
+    assert!(output.status.success(), "chat stdin: {output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line == "Under the willow bridge"),
+        "chat stdin: {output:?}"
+    );
+}
+
+#[tokio::test]
 async fn offline_model_completions_list_unique_providers_and_qualified_models() {
     let sandbox = tempfile::tempdir().unwrap();
     let home = sandbox.path().join("hermes");

@@ -47,6 +47,24 @@ fn yaml_values_keep_python_types() {
 }
 
 #[test]
+fn yaml_metadata_preserves_missing_flags_and_signed_counts() {
+    let yaml = load_yaml(
+        "enabled: true\narchived: false\ndescription: null\nbalance: -7\nnotes: [null, false, -1]",
+    )
+    .unwrap();
+
+    assert_eq!(yaml.get("enabled"), Some(&Py::Bool(true)));
+    assert_eq!(yaml.get("archived"), Some(&Py::Bool(false)));
+    assert_eq!(yaml.get("description"), Some(&Py::Null));
+    assert_eq!(yaml.get("balance"), Some(&Py::Int(-7)));
+    assert_eq!(
+        yaml.get("notes"),
+        Some(&Py::List(vec![Py::Null, Py::Bool(false), Py::Int(-1)]))
+    );
+    assert_eq!(yaml.get("absent"), None);
+}
+
+#[test]
 fn yaml_supports_large_integers_beyond_u64() {
     let fm = load_yaml("pos: 99999999999999999999\nneg: -99999999999999999999").unwrap();
     assert_eq!(fm.get("pos"), Some(&Py::Int(99_999_999_999_999_999_999)));

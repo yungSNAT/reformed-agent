@@ -1,0 +1,46 @@
+exit=Some(0)
+--- stdout
+Usage: scripts/sync-upstream.sh [options]
+
+Syncs upstream changes into this fork in a reproducible way.
+
+Options:
+  --repo-root <path>        Repository root (default: script parent)
+  --origin <name>           Origin remote name (default: origin)
+  --upstream <name>         Upstream remote name (default: upstream)
+  --base-branch <name>      Branch to sync (default: main)
+  --mode <mode>             branch-pr (default) | direct-main
+  --strategy <strategy>     merge (default) | cherry-pick
+  --report-dir <path>       Report directory (default: <repo>/.sync-reports)
+  --conflict-label <label>  Label for conflict issues (default: upstream-sync-conflict)
+  --no-conflict-issue       Disable auto issue creation on conflicts
+  --strict-risk-gate        Block sync when high-risk file paths changed upstream
+  --no-strict-risk-gate     Disable strict high-risk path blocking (default)
+  --allow-risk-paths        Override strict risk gate for this run
+  --risk-paths-file <path>  Glob pattern file for high-risk path checks
+  --no-tests                Skip the verification command and fork carry tests
+  --test-cmd <command>      Verification command (default: cargo test -p hermes-gateway)
+  --redteam-gate            Run adversarial red-team gate after verification (default)
+  --no-redteam-gate         Skip adversarial red-team gate
+  --redteam-cmd <command>   Red-team gate command (default: cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate)
+  --elite-gate              Run consolidated elite sync gate (optional)
+  --no-elite-gate           Skip consolidated elite sync gate (default)
+  --elite-cmd <command>     Elite gate command (default: python3 scripts/run-elite-sync-gate.py)
+  --elite-rollback-cmd <c>  Optional rollback command executed by elite gate on failure
+  --no-doc-refresh          Skip generated parity/readme doc refresh
+  --doc-refresh-cmd <cmd>   Override generated docs refresh command
+  --no-pr                   Do not open a PR in branch-pr mode
+  --draft-pr                Open PR as draft in branch-pr mode
+  --pr-labels <csv>         Labels to apply on created PR (default: upstream-sync,parity-sync)
+  --dry-run                 Show what would happen, emit report, and exit
+  -h, --help                Show help
+--- stderr
+--- calls
+--- refs remotes/origin.git
+refs/heads/main <C:fork: carry>
+--- refs repo
+refs/heads/main <C:fork: carry>
+refs/remotes/origin/HEAD <C:fork: carry>
+refs/remotes/origin/main <C:fork: carry>
+--- status
+## main...origin/main

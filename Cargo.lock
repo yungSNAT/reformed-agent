@@ -1830,23 +1830,30 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "futures",
+ "getrandom 0.4.3",
  "hermes-agent",
  "hermes-app-runtime",
  "hermes-config",
  "hermes-core",
  "hermes-provider-runtime",
+ "hermes-tools",
  "libc",
+ "percent-encoding",
  "reqwest",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subtle",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "url",
  "uuid",
  "windows-sys 0.61.2",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -1903,6 +1910,7 @@ version = "0.22.0"
 dependencies = [
  "aes 0.8.4",
  "async-trait",
+ "aws-lc-rs",
  "base64 0.22.1",
  "futures",
  "hermes-config",
@@ -1912,6 +1920,7 @@ dependencies = [
  "hermes-tools",
  "hmac 0.12.1",
  "jiff",
+ "jsonwebtoken",
  "libc",
  "matrix-sdk-crypto",
  "md5",
@@ -2144,6 +2153,7 @@ dependencies = [
  "hermes-tools",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 
@@ -2156,6 +2166,7 @@ dependencies = [
  "bytes",
  "dirs",
  "futures",
+ "hermes-agent",
  "hermes-config",
  "hermes-core",
  "hermes-environments",
@@ -2182,6 +2193,23 @@ dependencies = [
  "uuid",
  "wiremock",
  "yaml_serde",
+]
+
+[[package]]
+name = "hermes-upstream-sync"
+version = "0.22.0"
+dependencies = [
+ "clap",
+ "hermes-py",
+ "hmac 0.12.1",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "jiff",
+ "rusqlite",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

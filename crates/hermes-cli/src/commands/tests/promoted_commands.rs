@@ -984,6 +984,7 @@
                 completion_tokens: 3,
                 total_tokens: 15,
                 estimated_cost: Some(0.0123),
+                cache_read_tokens: 9,
                 ..Default::default()
             }),
             interrupted: false,
@@ -999,6 +1000,7 @@
         let output = latest_ui_assistant_text(&app);
         assert!(output.contains("Last response: 12 prompt / 3 completion / 15 total tokens"));
         assert!(output.contains("Actual session: 12 prompt / 3 completion / 15 total tokens"));
+        assert!(output.contains("15 total tokens, 9 prompt read from cache (75.0%)"));
         assert!(!output.contains("Actual cost"));
         assert!(!output.contains("$0.0123"));
         hermes_core::credits::clear_last_nous_credits_state();
@@ -1115,4 +1117,76 @@
 
         assert_eq!(calls, vec!["node"]);
         assert!(err.to_string().contains("node"));
+    }
+
+    #[tokio::test]
+    async fn local_slash_verbose_reports_the_active_tracing_level() {
+        use tracing::instrument::WithSubscriber;
+
+        struct LogLevel(tracing::Level);
+
+        impl tracing::Subscriber for LogLevel {
+            fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+                *metadata.level() <= self.0
+            }
+
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn event(&self, _: &tracing::Event<'_>) {}
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+        }
+
+        if !crate::isolated_test_profile::enter(
+            "commands::tests::local_slash_verbose_reports_the_active_tracing_level",
+        ) {
+            return;
+        }
+        let home = hermes_config::hermes_home();
+        let mut app = build_test_app_with_stream(&home).await;
+
+        for (level, expected) in [
+            (tracing::Level::INFO, "Verbose mode: ON"),
+            (tracing::Level::DEBUG, "Verbose mode: OFF"),
+        ] {
+            let result = handle_slash_command(&mut app, "/verbose", &[])
+                .with_subscriber(LogLevel(level))
+                .await
+                .expect("execute verbose command");
+            assert_eq!(result, CommandResult::Handled);
+            let text = latest_ui_assistant_text(&app);
+            assert!(text.starts_with(expected), "{text}");
+            assert!(text.contains("Runtime log level changes require restart"), "{text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn local_slash_yolo_restores_approval_after_two_toggles() {
+        if !crate::isolated_test_profile::enter(
+            "commands::tests::local_slash_yolo_restores_approval_after_two_toggles",
+        ) {
+            return;
+        }
+        let home = hermes_config::hermes_home();
+        let mut app = build_test_app_with_stream(&home).await;
+        let mut config = (*app.config).clone();
+        config.approval.require_approval = true;
+        app.config = std::sync::Arc::new(config);
+
+        for (require_approval, expected) in [
+            (false, "YOLO mode: ON"),
+            (true, "YOLO mode: OFF"),
+        ] {
+            let result = handle_slash_command(&mut app, "/yolo", &[])
+                .await
+                .expect("execute approval toggle");
+            assert_eq!(result, CommandResult::Handled);
+            assert_eq!(app.config.approval.require_approval, require_approval);
+            let text = latest_ui_assistant_text(&app);
+            assert!(text.starts_with(expected), "{text}");
+        }
     }

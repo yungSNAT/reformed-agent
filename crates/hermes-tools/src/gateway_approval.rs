@@ -43,25 +43,51 @@ where
     Arc::new(move |text| Box::pin(send(text)))
 }
 
-/// Revocable permission scope shared by the turns of one gateway session generation.
-#[derive(Clone, Debug, Default)]
-pub struct SessionGeneration(Arc<Mutex<bool>>);
+/// Revocable permission scope and spend shared by the turns of one gateway session generation.
+#[derive(Clone, Default)]
+pub struct SessionGeneration {
+    retired: Arc<Mutex<bool>>,
+    /// US dollars spent by this generation's turns.
+    spent_usd: Arc<Mutex<f64>>,
+}
 
 impl SessionGeneration {
     /// Revoke the old scope before clearing session permission state.
     pub fn retire(&self) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        *self.retired.lock().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
     pub(crate) fn while_current<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
-        let retired = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let retired = self.retired.lock().unwrap_or_else(|e| e.into_inner());
         (!*retired).then(action)
+    }
+
+    /// What this generation's turns have spent, in US dollars.
+    pub fn spent_usd(&self) -> f64 {
+        *self.spent_usd.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Count one turn's spend; negative or non-finite values count as nothing.
+    pub fn add_spent_usd(&self, usd: f64) {
+        if usd.is_finite() && usd > 0.0 {
+            *self.spent_usd.lock().unwrap_or_else(|e| e.into_inner()) += usd;
+        }
+    }
+}
+
+impl std::fmt::Debug for SessionGeneration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionGeneration")
+            // `try_lock`: `while_current` holds the flag whilst its action runs.
+            .field("retired", &self.retired.try_lock().map(|flag| *flag).ok())
+            .field("spent_usd", &self.spent_usd())
+            .finish()
     }
 }
 
 impl PartialEq for SessionGeneration {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.retired, &other.retired)
     }
 }
 
@@ -624,5 +650,19 @@ mod tests {
         end_turn("t:turns", Instant::now());
         assert!(authorise(&alice, "rm -rf /tmp/i", &params).await.is_err());
         clear("t:turns");
+    }
+
+    #[test]
+    fn a_generations_spend_is_shared_by_its_turns_and_starts_at_nothing() {
+        let generation = SessionGeneration::default();
+        let turn = generation.clone();
+        turn.add_spent_usd(0.25);
+        turn.add_spent_usd(0.5);
+        turn.add_spent_usd(-1.0);
+        turn.add_spent_usd(f64::NAN);
+        turn.add_spent_usd(f64::INFINITY);
+
+        assert_eq!(generation.spent_usd(), 0.75);
+        assert_eq!(SessionGeneration::default().spent_usd(), 0.0);
     }
 }

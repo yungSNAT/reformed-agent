@@ -31,7 +31,7 @@ audit reports live upstream drift separately from the checks against this pin.
 
 ## Scripts
 
-- `scripts/sync-upstream.sh`
+- `sync-upstream` (`crates/hermes-parity-tools`; `scripts/sync-upstream.sh` runs it)
   - One-shot upstream sync (`fetch -> strategy apply -> test -> push`)
   - Default mode: create a sync branch and open a PR
   - Supports `--draft-pr` for safer review-first PR creation
@@ -45,12 +45,12 @@ audit reports live upstream drift separately from the checks against this pin.
   - Supports strict risk gating via `--strict-risk-gate`
   - Emits timestamped reports under `.sync-reports/`
   - Can auto-create a labeled GitHub issue on conflict
-- `scripts/cron-upstream-sync.sh`
-  - Cron-safe wrapper around `sync-upstream.sh`
-  - Uses a lock file (`~/.hermes/locks/upstream-sync.lock`) to avoid overlap
-  - Reads optional env knobs: `SYNC_STRATEGY`, `REPORT_DIR`, `CONFLICT_LABEL`, `CREATE_CONFLICT_ISSUE`, `STRICT_RISK_GATE`, `ALLOW_RISK_PATHS`, `RISK_PATHS_FILE`
-- `scripts/install-upstream-sync-cron.sh`
-  - Installs/updates a crontab entry with a stable marker
+- `run-upstream-sync-cron` (`crates/hermes-parity-tools`; `scripts/cron-upstream-sync.sh` runs it, and installed crontab lines name that script)
+  - Cron-safe wrapper around `sync-upstream`
+  - Uses a lock file (`~/.hermes/locks/upstream-sync.lock`, or `LOCK_FILE`) to avoid overlap
+  - Reads optional env knobs: `REPO_ROOT`, `SYNC_STRATEGY`, `REPORT_DIR`, `CONFLICT_LABEL`, `CREATE_CONFLICT_ISSUE`, `STRICT_RISK_GATE`, `ALLOW_RISK_PATHS`, `RISK_PATHS_FILE`
+- `install-upstream-sync-cron` (`crates/hermes-parity-tools`)
+  - Installs/updates a crontab entry with a stable marker; the entry runs `scripts/cron-upstream-sync.sh`
 - `scripts/upstream_webhook_sync.py`
   - Webhook listener/worker path with SQLite/SQS/Kafka queue backends
   - Includes per-upstream-commit upkeep issue queue automation (default parent issue: `#43`)
@@ -90,9 +90,13 @@ audit reports live upstream drift separately from the checks against this pin.
 - `run-self-evolution-loop` (`crates/hermes-parity-tools`)
   - Runs a unified intelligence loop across golden parity + eval trend + elite sync gates
   - Emits recommendations and intelligence index under `.sync-reports/self-evolution-loop-<timestamp>.json`
-- `scripts/run-nightly-elite-gate.sh`
+- `run-nightly-elite-gate` (`crates/hermes-parity-tools`)
   - Nightly local validation gate (`cargo test -p hermes-cli` + deterministic replay + security gate v2 + performance autopilot + queue audit)
   - Auto-publishes run summary via `contextlattice -> github -> local` sink chain
+  - Run it from the repository root: `cargo run --locked -q -p hermes-parity-tools -- run-nightly-elite-gate`
+- `install-elite-gate-launchd`, `status-elite-gate-launchd`, `uninstall-elite-gate-launchd` (`crates/hermes-parity-tools`)
+  - Schedule the nightly gate as a macOS launchd user agent (default 03:30 local time), show its state and log tails, or remove it
+  - `cargo run --locked -q -p hermes-parity-tools -- install-elite-gate-launchd --repo-root "$PWD"`
 - `scripts/publish_automation_summary.py`
   - Publishes automation summaries with sink priority:
     - `contextlattice` (default)
@@ -156,13 +160,14 @@ Use this only when you explicitly want automation to push `main` directly.
 Default schedule is every 6 hours at minute 17:
 
 ```bash
-bash scripts/install-upstream-sync-cron.sh
+cargo run --locked -q -p hermes-parity-tools -- install-upstream-sync-cron
 ```
 
-Custom schedule example (daily at 03:10):
+Run it from the repository root, or set `REPO_ROOT`. Custom schedule example
+(daily at 03:10):
 
 ```bash
-bash scripts/install-upstream-sync-cron.sh "10 3 * * *"
+cargo run --locked -q -p hermes-parity-tools -- install-upstream-sync-cron "10 3 * * *"
 ```
 
 Default log path:

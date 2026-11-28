@@ -26,7 +26,7 @@
             "review canary 7f3a: {}",
             "the conversation so far ".repeat(50_000)
         );
-        let child = spawn_background_child(&exe, &task).expect("spawn");
+        let child = spawn_background_child(&exe, &task, None).expect("spawn");
         let output = child.wait_with_output().await.expect("wait");
         assert!(output.status.success(), "{output:?}");
 
@@ -78,6 +78,46 @@
         assert_eq!(mode, 0o700, "background_jobs mode {mode:o}");
     }
 
+    #[tokio::test]
+    async fn background_recovery_records_incomplete_worker_binding_as_failed() {
+        if !crate::isolated_test_profile::enter(
+            "commands::tests::background_recovery_records_incomplete_worker_binding_as_failed",
+        ) {
+            return;
+        }
+        let jobs = background_jobs_dir().unwrap();
+        let status = jobs.join("fixture-review.json");
+        std::fs::write(
+            &status,
+            r#"{"id":"fixture-review","status":"queued","attempts":0,"task":"Review fixture formatting","kanban":{"board":"review"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(recover_queued_background_jobs(1).unwrap(), 1);
+        let failed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let saved = read_json_map(&status);
+                if saved.get("status").and_then(serde_json::Value::as_str) == Some("failed") {
+                    break saved;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("recovery records a terminal failure");
+
+        assert_eq!(failed["id"], "fixture-review");
+        assert_eq!(failed["attempts"], 1);
+        assert!(failed["pid"].is_null());
+        assert!(failed["finished_at"].is_string());
+        assert_eq!(
+            failed["error"],
+            "spawn failed: kanban job record lacks its board, task or id"
+        );
+        assert!(!status.with_extension("log").exists());
+        assert_eq!(recover_queued_background_jobs(1).unwrap(), 0);
+    }
+
     /// The CLI does not start with a jobs folder it cannot make owner-only:
     /// its job files would stay readable by other users while it runs.
     #[cfg(unix)]
@@ -126,4 +166,79 @@
         );
         assert_eq!(read(None, "ignored").unwrap(), None);
         assert!(read(Some("-"), " \n").is_err());
+    }
+
+    /// What `background_child_command` does to the 3 binding variables:
+    /// `None` is a removal, `Some` a value set for the child.
+    fn kanban_env_of(
+        kanban: Option<&crate::kanban::KanbanWorkerBinding>,
+    ) -> Vec<(String, Option<String>)> {
+        let cmd = background_child_command(std::path::Path::new("hermes"), kanban);
+        let mut envs: Vec<(String, Option<String>)> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(key, value)| {
+                let key = key.to_str()?.to_string();
+                key.starts_with("HERMES_KANBAN_").then(|| {
+                    (key, value.map(|v| v.to_string_lossy().into_owned()))
+                })
+            })
+            .collect();
+        envs.sort();
+        envs
+    }
+
+    #[test]
+    fn only_a_kanban_job_child_gets_a_binding() {
+        let removed: Vec<(String, Option<String>)> = [
+            "HERMES_KANBAN_BOARD",
+            "HERMES_KANBAN_RUN_ID",
+            "HERMES_KANBAN_TASK",
+        ]
+        .into_iter()
+        .map(|key| (key.to_string(), None))
+        .collect();
+        // Removed even when this process is itself a bound worker.
+        assert_eq!(kanban_env_of(None), removed);
+        let binding = crate::kanban::KanbanWorkerBinding {
+            board: "main".to_string(),
+            task: "K-0001".to_string(),
+            run: "bg_1".to_string(),
+        };
+        assert_eq!(
+            kanban_env_of(Some(&binding)),
+            vec![
+                ("HERMES_KANBAN_BOARD".to_string(), Some("main".to_string())),
+                ("HERMES_KANBAN_RUN_ID".to_string(), Some("bg_1".to_string())),
+                ("HERMES_KANBAN_TASK".to_string(), Some("K-0001".to_string())),
+                (
+                    "HERMES_KANBAN_WORKER_SCOPE".to_string(),
+                    Some("main/K-0001".to_string())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_recovered_job_takes_its_run_from_its_own_id() {
+        let status = |value: serde_json::Value| value.as_object().unwrap().clone();
+        let bound = kanban_binding_from_status(&status(serde_json::json!({
+            "id": "bg_7",
+            "kanban": {"board": "main", "task": "K-0002", "run": "bg_other"}
+        })))
+        .unwrap()
+        .unwrap();
+        assert_eq!(bound.run, "bg_7");
+        assert_eq!(bound.task, "K-0002");
+        assert_eq!(
+            kanban_binding_from_status(&status(serde_json::json!({"id": "bg_8"}))).unwrap(),
+            None
+        );
+        for broken in [
+            serde_json::json!({"id": "bg_9", "kanban": {"task": "K-0002"}}),
+            serde_json::json!({"id": "bg_9", "kanban": {"board": "main", "task": " "}}),
+            serde_json::json!({"kanban": {"board": "main", "task": "K-0002"}}),
+        ] {
+            assert!(kanban_binding_from_status(&status(broken)).is_err());
+        }
     }

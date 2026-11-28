@@ -181,7 +181,7 @@ fn string_array_formats_items() {
 
 #[test]
 fn read_domains_classifies_and_serialises() {
-    let (_tmp, tests, domains) = setup();
+    let (_tmp, _tests, domains) = setup();
     assert_eq!(domains.len(), 3);
     assert_eq!(domains[0].id, "alpha");
     assert_eq!(domains[0].classification(), "direct_rust_test");
@@ -192,20 +192,18 @@ fn read_domains_classifies_and_serialises() {
     assert_eq!(domains[1].direct, 0);
     assert_eq!(domains[2].classification(), "missing");
 
-    let alpha = domains[0].json(&tests);
+    let alpha = domains[0].json();
     assert!(alpha.contains("\"id\": \"alpha\""));
     assert!(alpha.contains("\"classification\": \"direct_rust_test\""));
-    assert!(alpha.contains("\"evidence_count\": 1"));
-    assert!(!alpha.contains("\"evidence_sample\": []"));
-    assert!(!alpha.contains("\"direct_test_evidence_sample\": []"));
+    assert!(alpha.contains("\"mapped\": true"));
+    assert!(!alpha.contains("evidence"), "{alpha}");
 
-    let beta = domains[1].json(&tests);
+    let beta = domains[1].json();
     assert!(beta.contains("\"classification\": \"domain_contract\""));
-    assert!(beta.contains("\"direct_test_evidence_sample\": []"));
 
-    let gamma = domains[2].json(&tests);
+    let gamma = domains[2].json();
     assert!(gamma.contains("\"mapped\": false"));
-    assert!(gamma.contains("\"evidence_sample\": []"));
+    assert!(gamma.contains("\"classification\": \"missing\""));
 }
 
 #[test]
@@ -241,15 +239,7 @@ fn evaluate_reports_gaps_and_markdown_renders_domains_and_moves() {
         matrix: parse(r#"{"summary":{"commits_behind":3}}"#),
         divergences: parse(r#"{"summary":{"errors":1}}"#),
     };
-    let report = evaluate(
-        root,
-        &tests,
-        &domains,
-        &manifests,
-        &inputs,
-        "2024-01-01T00:00:00Z",
-    )
-    .unwrap();
+    let report = evaluate(root, &domains, &manifests, &inputs).unwrap();
 
     let gate = report.get("audit_gate").unwrap();
     assert!(gate.get("pass") == Some(&Py::Bool(false)));
@@ -290,9 +280,9 @@ fn evaluate_reports_gaps_and_markdown_renders_domains_and_moves() {
     ));
 
     let markdown = render_markdown(&report, &manifests, &domains);
-    assert!(markdown.contains("| `alpha` | `direct_rust_test` | 1 | 1 |"));
-    assert!(markdown.contains("| `beta` | `domain_contract` | 1 | 0 |"));
-    assert!(markdown.contains("| `gamma` | `missing` | 0 | 0 |"));
+    assert!(markdown.contains("| `alpha` | `direct_rust_test` |\n"));
+    assert!(markdown.contains("| `beta` | `domain_contract` |\n"));
+    assert!(markdown.contains("| `gamma` | `missing` |\n"));
     assert!(markdown.contains(
         "- **Cross-version harness budget**: `docs/parity/harness-budget.json`, `docs/parity/harness-budget.md`"
     ));

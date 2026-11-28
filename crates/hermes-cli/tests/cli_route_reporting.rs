@@ -118,6 +118,18 @@ async fn cli_reports_route_health_and_round_trips_autotune_artifacts() {
     let text = run(home, &["route-health", "show"]).await;
     assert!(stdout(&text).contains("Overall=critical entries=5"));
 
+    let slash = run(home, &["--oneshot", "/qos health"]).await;
+    let slash_health: Value = serde_json::from_str(stdout(&slash)).unwrap();
+    assert_eq!(slash_health["summary"], report["summary"]);
+    assert_eq!(slash_health["entries"], report["entries"]);
+
+    let slash = run(home, &["--oneshot", "/qos autotune"]).await;
+    let slash_plan: Value = serde_json::from_str(stdout(&slash)).unwrap();
+    assert_eq!(slash_plan["action"], "plan");
+    assert_eq!(slash_plan["applied"], false);
+    assert_eq!(slash_plan["plan"]["confidence"], "medium");
+    assert!(!overrides.exists());
+
     let plan = run(home, &["route-autotune", "plan"]).await;
     assert!(stdout(&plan).contains("confidence=medium applied=no"));
     assert!(autotune.is_file());
@@ -153,6 +165,17 @@ async fn cli_reports_route_health_and_round_trips_autotune_artifacts() {
     for field in ["ttl_secs", "half_life_secs"] {
         assert_eq!(restored[field], baseline[field], "{field}");
     }
+
+    let slash = run(home, &["--oneshot", "/qos autotune wrong"]).await;
+    assert!(stdout(&slash).contains("Usage: /qos autotune [plan|apply]"));
+    assert!(!autotune.exists());
+    let slash = run(home, &["--oneshot", "/qos autotune apply"]).await;
+    let slash_apply: Value = serde_json::from_str(stdout(&slash)).unwrap();
+    assert_eq!(slash_apply["action"], "apply");
+    assert_eq!(slash_apply["applied"], true);
+    assert_eq!(slash_apply["plan"]["overrides"], apply["plan"]["overrides"]);
+    assert!(overrides.is_file());
+
     assert!(stdout(&run(home, &["route-health", "reset"]).await).contains("report cleared"));
     assert!(!health.exists());
     let cleared = run(home, &["route-learning", "clear", "--json"]).await;
