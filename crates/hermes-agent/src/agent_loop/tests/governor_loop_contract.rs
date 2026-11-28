@@ -130,7 +130,7 @@ async fn interrupt_preserves_only_answered_tool_calls() {
             .messages
             .iter()
             .filter(|message| message.role == MessageRole::Tool)
-            .filter_map(|message| message.tool_call_id.as_deref())
+            .map(|message| message.tool_call_id.as_deref())
             .collect();
         let expected: &[&str] = if interrupt_before_tool {
             &[]
@@ -138,7 +138,8 @@ async fn interrupt_preserves_only_answered_tool_calls() {
             &["fixture-0"]
         };
         assert_eq!(calls, expected);
-        assert_eq!(answers, expected);
+        let expected_answers: Vec<_> = expected.iter().copied().map(Some).collect();
+        assert_eq!(answers, expected_answers);
     }
 }
 
