@@ -125,32 +125,45 @@ fn parse_payload_file_errors() {
         "{text}"
     );
 
-    let no_messages = write_json(dir.path(), "nomsg.json", serde_json::json!({"model": "x"}));
-    let err = parse_resume_payload_file("nomsg".into(), no_messages).unwrap_err();
-    let text = error_text(err);
-    assert!(
-        text.contains("does not contain a valid `messages` array"),
-        "{text}"
-    );
+    for snapshot in [
+        serde_json::json!({"model": "x"}),
+        serde_json::json!({"messages": {}}),
+    ] {
+        let path = write_json(dir.path(), "nomsg.json", snapshot);
+        let err = parse_resume_payload_file("nomsg".into(), path).unwrap_err();
+        let text = error_text(err);
+        assert!(
+            text.starts_with("config:") && text.contains("does not contain a valid `messages` array"),
+            "{text}"
+        );
+    }
 }
 
 #[test]
-fn parse_payload_file_uses_top_level_model_and_resolved_id() {
+fn parse_payload_file_uses_legacy_metadata_and_resolved_id() {
     let dir = tempfile::tempdir().unwrap();
     let path = write_json(
         dir.path(),
         "fallback.json",
         serde_json::json!({
-            "session_info": {"session_id": "  "},
+            "session_info": {
+                "session_id": "  ", "model": "  ", "personality": "  ",
+                "created_at": "  2026-06-05T09:00:00Z  "
+            },
             "model": "  gpt-x  ",
+            "personality": "  fixture-personality  ",
+            "system_prompt": "  ",
             "messages": [{"role": "user", "content": "hi"}]
         }),
     );
     let payload = parse_resume_payload_file("fallback".into(), path.clone()).unwrap();
     assert_eq!(payload.session_id, "fallback");
     assert_eq!(payload.model.as_deref(), Some("gpt-x"));
+    assert_eq!(payload.personality.as_deref(), Some("fixture-personality"));
+    assert_eq!(payload.session_start.as_deref(), Some("2026-06-05T09:00:00Z"));
+    assert_eq!(payload.system_prompt, None);
     assert_eq!(payload.source_path, path);
-    assert_eq!(payload.messages.len(), 1);
+    assert_eq!(payload.messages, vec![hermes_core::Message::user("hi")]);
 }
 
 #[test]
