@@ -276,8 +276,10 @@ mod tests {
     #[test]
     fn feedback_calibrates_refill_rate_and_zeros_tokens() {
         let mut scheduler = SignalAttachmentScheduler::default();
-        scheduler.feedback(Some(42.0), 1);
-        assert_eq!(scheduler.refill_rate, 1.0 / 42.0);
+        scheduler.feedback(Some(32.0), 1);
+        let state = scheduler.state();
+        assert_eq!(state.refill_rate, 1.0 / 32.0);
+        assert_eq!(state.refill_seconds_per_token, 32.0);
         assert_eq!(scheduler.tokens, 0.0);
     }
 
@@ -288,6 +290,10 @@ mod tests {
             last_refill: Instant::now() - Duration::from_secs(365 * 24 * 3600),
             ..Default::default()
         };
+        let state = scheduler.state();
+        assert_eq!(state.tokens, scheduler.capacity);
+        assert_eq!(state.capacity, scheduler.capacity as usize);
+        assert_eq!(scheduler.tokens, 0.0);
         scheduler.refill();
         assert_eq!(scheduler.tokens, scheduler.capacity);
     }

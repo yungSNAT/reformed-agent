@@ -638,23 +638,69 @@ async fn gateway_quick_alias_routes_to_builtin_command() {
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let dm_manager = DmManager::with_pair_behavior();
     let mut cfg = GatewayConfig::default();
-    cfg.quick_commands.insert(
-        "stat".to_string(),
-        QuickCommandConfig {
-            kind: "alias".to_string(),
-            target: Some("/status".to_string()),
-            ..Default::default()
-        },
-    );
+    let cases = [
+        ("stat", "/status", "", "Status information will be shown."),
+        (
+            "later",
+            " /queue ",
+            "review the notes",
+            "🧵 Queued follow-up for the active session: review the notes",
+        ),
+        (
+            "guide",
+            "/steer",
+            "use the draft",
+            "🧭 Steering instruction accepted: use the draft",
+        ),
+        (
+            "modelpick",
+            "/model",
+            "fixture-model",
+            "🔀 Model switch alias parsed: fixture-model",
+        ),
+        (
+            "label",
+            "/title",
+            "Review notes",
+            "🏷 Session title set to: Review notes",
+        ),
+        (
+            "showlabel",
+            "/title",
+            "",
+            "Quick command `showlabel` routed to `/title`.",
+        ),
+        (
+            "empty",
+            " ",
+            "",
+            "Quick command `empty` has no target defined.",
+        ),
+    ];
+    for (name, target, _, _) in cases {
+        cfg.quick_commands.insert(
+            name.to_owned(),
+            QuickCommandConfig {
+                kind: "alias".to_owned(),
+                target: Some(target.to_owned()),
+                ..Default::default()
+            },
+        );
+    }
     let gw = Gateway::new(session_mgr, dm_manager, cfg);
 
-    let reply = gw
-        .resolve_quick_command("/stat")
-        .await
-        .expect("alias command")
-        .expect("alias reply");
-
-    assert!(reply.contains("Status information"));
+    for (name, _, arguments, expected) in cases {
+        let input = if arguments.is_empty() {
+            format!("/{name}")
+        } else {
+            format!("/{name} {arguments}")
+        };
+        let reply = gw
+            .resolve_quick_command(&input)
+            .await
+            .expect("alias command");
+        assert_eq!(reply.as_deref(), Some(expected), "{input}");
+    }
 }
 
 #[test]
