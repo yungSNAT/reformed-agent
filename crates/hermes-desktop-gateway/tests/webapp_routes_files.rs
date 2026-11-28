@@ -83,6 +83,55 @@ fn work_folder(home: &Path, base: &Path) {
     .unwrap();
 }
 
+async fn assert_route_guards(origin: &str, token: &str, route: &str) {
+    // The route serves this path to the credential from the page's own origin, so a 403
+    // below is the guard's, not the route's.
+    let own = call(
+        origin,
+        "GET",
+        route,
+        &[("X-Hermes-Session-Token", token), ("Origin", origin)],
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(own.status(), 200, "{route} from its own origin");
+    let none = call(origin, "GET", route, &[]).send().await.unwrap();
+    assert_eq!(none.status(), 401, "{route} without a credential");
+    let wrong = call(origin, "GET", route, &[("X-Hermes-Session-Token", "wrong")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), 401, "{route} with a wrong credential");
+    let foreign = call(
+        origin,
+        "GET",
+        route,
+        &[
+            ("X-Hermes-Session-Token", token),
+            ("Origin", "http://evil.example"),
+        ],
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(foreign.status(), 403, "{route} from another origin");
+    let rebound = call(
+        origin,
+        "GET",
+        route,
+        &[
+            ("X-Hermes-Session-Token", token),
+            ("Origin", origin),
+            ("Host", "evil.example"),
+        ],
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(rebound.status(), 403, "{route} under another host name");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_route_refuses_a_caller_without_the_credential_or_from_another_origin() {
     let (_dir, base, home, _marker) = work_tree();
@@ -95,59 +144,120 @@ async fn every_route_refuses_a_caller_without_the_credential_or_from_another_ori
         } else {
             base.join(path)
         };
-        let route = &at(route, &target);
-        // The route serves this path to the credential from the page's own origin, so a 403
-        // below is the guard's, not the route's.
-        let own = call(
-            &origin,
-            "GET",
-            route,
-            &[("X-Hermes-Session-Token", &token), ("Origin", &origin)],
-        )
-        .send()
-        .await
-        .unwrap();
-        assert_eq!(own.status(), 200, "{route} from its own origin");
-        let none = call(&origin, "GET", route, &[]).send().await.unwrap();
-        assert_eq!(none.status(), 401, "{route} without a credential");
-        let wrong = call(
-            &origin,
-            "GET",
-            route,
-            &[("X-Hermes-Session-Token", "wrong")],
-        )
-        .send()
-        .await
-        .unwrap();
-        assert_eq!(wrong.status(), 401, "{route} with a wrong credential");
-        let foreign = call(
-            &origin,
-            "GET",
-            route,
-            &[
-                ("X-Hermes-Session-Token", &token),
-                ("Origin", "http://evil.example"),
-            ],
-        )
-        .send()
-        .await
-        .unwrap();
-        assert_eq!(foreign.status(), 403, "{route} from another origin");
-        let rebound = call(
-            &origin,
-            "GET",
-            route,
-            &[
-                ("X-Hermes-Session-Token", &token),
-                ("Origin", &origin),
-                ("Host", "evil.example"),
-            ],
-        )
-        .send()
-        .await
-        .unwrap();
-        assert_eq!(rebound.status(), 403, "{route} under another host name");
+        assert_route_guards(&origin, &token, &at(route, &target)).await;
     }
+}
+
+async fn send_as(
+    who: &str,
+    home: &Path,
+    origin: &str,
+    token: &str,
+    route: &str,
+) -> reqwest::Response {
+    // A native ticket is one-use, so each native request mints its own.
+    let ticket = (who == "native").then(|| native_ticket(home));
+    let headers: Vec<(&str, &str)> = match &ticket {
+        Some(ticket) => vec![("X-Hermes-Gateway-Ticket", ticket.as_str())],
+        None => vec![("X-Hermes-Session-Token", token), ("Origin", origin)],
+    };
+    call(origin, "GET", route, &headers).send().await.unwrap()
+}
+
+async fn assert_working_folder_access(
+    who: &str,
+    base: &Path,
+    home: &Path,
+    origin: &str,
+    token: &str,
+) {
+    let list = send_as(who, home, origin, token, &at("/api/fs/list", base)).await;
+    assert_eq!(list.status(), 200, "{who} lists the working folder");
+    let body: Value = list.json().await.unwrap();
+    let names: Vec<&str> = body["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{who}: {body}"))
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .collect();
+    assert!(names.contains(&"proj"), "{who}: {body}");
+    assert!(!names.contains(&"hermes"), "{who}: {body}");
+
+    let file = send_as(
+        who,
+        home,
+        origin,
+        token,
+        &at("/api/fs/read-data-url", &base.join("proj/a.txt")),
+    )
+    .await;
+    assert_eq!(
+        file.status(),
+        200,
+        "{who} reads a file in the working folder"
+    );
+    let body: Value = file.json().await.unwrap();
+    assert!(
+        body["dataUrl"]
+            .as_str()
+            .is_some_and(|u| u.starts_with("data:")),
+        "{who}: {body}"
+    );
+}
+
+async fn assert_hermes_home_refused(who: &str, home: &Path, origin: &str, token: &str) {
+    // A name no credential rule refuses, so only the Hermes home rule keeps it out.
+    let home_reply = send_as(
+        who,
+        home,
+        origin,
+        token,
+        &at("/api/fs/read-data-url", &home.join("notes.txt")),
+    )
+    .await;
+    assert_eq!(home_reply.status(), 403, "{who} reads the Hermes home");
+    let home_body = home_reply.text().await.unwrap();
+    assert!(
+        !home_body.contains("hermes-home-marker"),
+        "{who} read Hermes home bytes"
+    );
+    let listing = send_as(who, home, origin, token, &at("/api/fs/list", home)).await;
+    assert_eq!(listing.status(), 403, "{who} lists the Hermes home");
+    let list_body = listing.text().await.unwrap();
+    assert!(
+        !list_body.contains("notes.txt"),
+        "{who} listed Hermes home entries"
+    );
+}
+
+async fn assert_git_access(who: &str, base: &Path, home: &Path, origin: &str, token: &str) {
+    let status = send_as(
+        who,
+        home,
+        origin,
+        token,
+        &at("/api/git/status", &base.join("proj")),
+    )
+    .await;
+    assert_eq!(status.status(), 200, "{who} reads repository status");
+    let body: Value = status.json().await.unwrap();
+    assert_eq!(body["branch"], "main", "{who}: {body}");
+    assert_eq!(body["changed"], 1, "{who}: {body}");
+
+    let sha = send_as(
+        who,
+        home,
+        origin,
+        token,
+        &at("/api/git/review/rev-parse", &base.join("proj")),
+    )
+    .await;
+    assert_eq!(sha.status(), 200, "{who} resolves HEAD");
+    let body: Value = sha.json().await.unwrap();
+    assert!(
+        body["sha"].as_str().is_some_and(|s| s.len() == 40),
+        "{who}: {body}"
+    );
 }
 
 /// A signed-in tab and a native client each read the working folder and its repository, never
@@ -157,81 +267,12 @@ async fn a_local_caller_reads_the_working_folder_but_not_the_hermes_home() {
     let (_dir, base, home, marker) = work_tree();
     let (_runtime, origin) = serving(&home);
     work_folder(&home, &base);
-    std::fs::write(home.join("notes.txt"), "private").unwrap();
+    std::fs::write(home.join("notes.txt"), "hermes-home-marker").unwrap();
     let token = credential(&home, &origin).await;
     for who in ["browser", "native"] {
-        // A native ticket is one-use, so each native request mints its own.
-        let get = |route: String| {
-            let ticket = (who == "native").then(|| native_ticket(&home));
-            let headers: Vec<(&str, &str)> = match &ticket {
-                Some(ticket) => vec![("X-Hermes-Gateway-Ticket", ticket.as_str())],
-                None => vec![
-                    ("X-Hermes-Session-Token", token.as_str()),
-                    ("Origin", origin.as_str()),
-                ],
-            };
-            call(&origin, "GET", &route, &headers).send()
-        };
-
-        let list = get(at("/api/fs/list", &base)).await.unwrap();
-        assert_eq!(list.status(), 200, "{who} lists the working folder");
-        let body: Value = list.json().await.unwrap();
-        let names: Vec<&str> = body["entries"]
-            .as_array()
-            .unwrap_or_else(|| panic!("{who}: {body}"))
-            .iter()
-            .filter_map(|e| e["name"].as_str())
-            .collect();
-        assert!(names.contains(&"proj"), "{who}: {body}");
-        assert!(!names.contains(&"hermes"), "{who}: {body}");
-
-        let file = get(at("/api/fs/read-data-url", &base.join("proj/a.txt")))
-            .await
-            .unwrap();
-        assert_eq!(
-            file.status(),
-            200,
-            "{who} reads a file in the working folder"
-        );
-        let body: Value = file.json().await.unwrap();
-        assert!(
-            body["dataUrl"]
-                .as_str()
-                .is_some_and(|u| u.starts_with("data:")),
-            "{who}: {body}"
-        );
-
-        // A name no credential rule refuses, so only the Hermes home rule keeps it out.
-        let secret = get(at("/api/fs/read-data-url", &home.join("notes.txt")))
-            .await
-            .unwrap();
-        assert_eq!(secret.status(), 403, "{who} reads the Hermes home");
-        let text = secret.text().await.unwrap();
-        assert!(!text.contains("private"), "{who}: {text}");
-        let listing = get(at("/api/fs/list", &home)).await.unwrap();
-        let text = listing.text().await.unwrap();
-        assert!(
-            !text.contains("notes.txt"),
-            "{who} lists the Hermes home: {text}"
-        );
-
-        let status = get(at("/api/git/status", &base.join("proj")))
-            .await
-            .unwrap();
-        assert_eq!(status.status(), 200, "{who} reads repository status");
-        let body: Value = status.json().await.unwrap();
-        assert_eq!(body["branch"], "main", "{who}: {body}");
-        assert_eq!(body["changed"], 1, "{who}: {body}");
-
-        let sha = get(at("/api/git/review/rev-parse", &base.join("proj")))
-            .await
-            .unwrap();
-        assert_eq!(sha.status(), 200, "{who} resolves HEAD");
-        let body: Value = sha.json().await.unwrap();
-        assert!(
-            body["sha"].as_str().is_some_and(|s| s.len() == 40),
-            "{who}: {body}"
-        );
+        assert_working_folder_access(who, &base, &home, &origin, &token).await;
+        assert_hermes_home_refused(who, &home, &origin, &token).await;
+        assert_git_access(who, &base, &home, &origin, &token).await;
     }
     assert!(
         !marker.exists(),
