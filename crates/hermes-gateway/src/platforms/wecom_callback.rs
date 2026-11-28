@@ -178,6 +178,7 @@ pub struct WeComCallbackAdapter {
     base: BasePlatformAdapter,
     config: WeComCallbackConfig,
     client: Client,
+    api_base: String,
     stop_signal: Arc<Notify>,
     shutdown_tx: RwLock<Option<tokio::sync::oneshot::Sender<()>>>,
     access_tokens: RwLock<HashMap<String, (String, Instant)>>,
@@ -212,6 +213,7 @@ impl WeComCallbackAdapter {
             base,
             config,
             client,
+            api_base: WECOM_API_BASE.into(),
             stop_signal: Arc::new(Notify::new()),
             shutdown_tx: RwLock::new(None),
             access_tokens: RwLock::new(HashMap::new()),
@@ -339,7 +341,7 @@ impl WeComCallbackAdapter {
         }
         let v = super::helpers::wecom_access_token_reply(
             &self.client,
-            WECOM_API_BASE,
+            &self.api_base,
             &app.corp_id,
             &app.corp_secret,
         )
@@ -439,7 +441,7 @@ impl PlatformAdapter for WeComCallbackAdapter {
         let app = self.resolve_app_for_chat(chat_id);
         let token = self.get_access_token_for_app(app).await?;
         let touser = chat_id.split_once(':').map(|(_, u)| u).unwrap_or(chat_id);
-        let url = format!("{WECOM_API_BASE}/message/send?access_token={token}");
+        let url = format!("{}/message/send?access_token={token}", self.api_base);
         let body = serde_json::json!({
             "touser": touser,
             "msgtype": "text",
@@ -501,8 +503,10 @@ impl PlatformAdapter for WeComCallbackAdapter {
             _ => "file",
         };
 
-        let upload_url =
-            format!("{WECOM_API_BASE}/media/upload?access_token={token}&type={media_type}");
+        let upload_url = format!(
+            "{}/media/upload?access_token={token}&type={media_type}",
+            self.api_base
+        );
         let part = reqwest::multipart::Part::bytes(file_bytes)
             .file_name(file_name.to_string())
             .mime_str(mime)
@@ -539,7 +543,7 @@ impl PlatformAdapter for WeComCallbackAdapter {
                 GatewayError::SendFailed("No media_id in WeCom callback response".into())
             })?;
 
-        let send_url = format!("{WECOM_API_BASE}/message/send?access_token={token}");
+        let send_url = format!("{}/message/send?access_token={token}", self.api_base);
         let agent_id = app.agent_id.parse::<i64>().unwrap_or(0);
         let body = match media_type {
             "image" => serde_json::json!({

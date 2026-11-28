@@ -83,6 +83,114 @@ async fn cached_access_token_is_reused() {
 }
 
 #[tokio::test]
+async fn callback_sends_text_and_uploaded_media_with_the_selected_app_token() {
+    let server = MockServer::start().await;
+    let mut selected = make_app("support", "ww_support", 2);
+    selected.agent_id = "42".to_string();
+    let session = uuid::Uuid::new_v4().simple().to_string();
+    Mock::given(method("GET"))
+        .and(path("/gettoken"))
+        .and(query_param("corpid", selected.corp_id.as_str()))
+        .and(query_param("corpsecret", selected.corp_secret.as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": session,
+            "expires_in": 3600
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut adapter = WeComCallbackAdapter::new(make_config(
+        "127.0.0.1",
+        0,
+        vec![make_app("default", "ww_default", 1), selected],
+    ))
+    .unwrap();
+    adapter.api_base = server.uri();
+    adapter.client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .unwrap();
+
+    Mock::given(method("POST"))
+        .and(path("/message/send"))
+        .and(query_param("access_token", session.as_str()))
+        .and(body_json(serde_json::json!({
+            "touser": "alice",
+            "msgtype": "text",
+            "agentid": 42,
+            "text": { "content": "Your attachments are ready" },
+            "safe": 0
+        })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    adapter
+        .send_message("ww_support:alice", "Your attachments are ready", None)
+        .await
+        .unwrap();
+
+    let directory = tempfile::tempdir().unwrap();
+    for (extension, media_type) in [
+        ("png", "image"),
+        ("wav", "voice"),
+        ("mp4", "video"),
+        ("txt", "file"),
+    ] {
+        let file_name = format!("attachment.{extension}");
+        let file = directory.path().join(&file_name);
+        let contents = format!("Fixture bytes for {file_name}");
+        tokio::fs::write(&file, &contents).await.unwrap();
+        let media_id = format!("uploaded-{media_type}");
+        Mock::given(method("POST"))
+            .and(path("/media/upload"))
+            .and(query_param("access_token", session.as_str()))
+            .and(query_param("type", media_type))
+            .and(body_string_contains(format!(
+                "name=\"media\"; filename=\"{file_name}\""
+            )))
+            .and(body_string_contains(format!("\r\n\r\n{contents}\r\n")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "media_id": media_id })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let media = if media_type == "video" {
+            serde_json::json!({ "media_id": media_id, "title": "Fixture clip" })
+        } else {
+            serde_json::json!({ "media_id": media_id })
+        };
+        Mock::given(method("POST"))
+            .and(path("/message/send"))
+            .and(query_param("access_token", session.as_str()))
+            .and(body_json(serde_json::json!({
+                "touser": "alice",
+                "msgtype": media_type,
+                "agentid": 42,
+                (media_type): media
+            })))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        adapter
+            .send_file(
+                "ww_support:alice",
+                &file.to_string_lossy(),
+                Some("Fixture clip"),
+            )
+            .await
+            .unwrap();
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn send_file_and_image_url_fail_on_missing_file() {
     let adapter = adapter_with_cached_token().await;
     let dir = tempfile::tempdir().unwrap();
