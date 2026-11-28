@@ -267,6 +267,69 @@ fn generic_provider_request_timeout_survives_client_rebuilds() {
     );
 }
 
+#[tokio::test]
+async fn a_stale_generic_client_probes_once_before_completing() {
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let completion_path = "/chat/completions";
+    for delay in [Duration::ZERO, Duration::from_secs(30)] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(completion_path))
+            .respond_with(ResponseTemplate::new(200).set_delay(delay))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(completion_path))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Fixture response"},
+                    "finish_reason": "stop"
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = GenericProvider::new(server.uri(), "fixture-only", "fixture-model")
+            .with_direct_endpoint()
+            .unwrap()
+            .with_request_timeout_seconds(45.0);
+        let stale = Instant::now() - Duration::from_secs(301);
+        *provider.client_refreshed_at.lock().unwrap() = stale;
+
+        let messages = [Message::user("Read the fixture")];
+        for _ in 0..2 {
+            let response = tokio::time::timeout(
+                Duration::from_secs(12),
+                provider.chat_completion(&messages, &[], None, None, None, None),
+            )
+            .await
+            .expect("completion must finish before the delayed probe responds")
+            .unwrap();
+            assert_eq!(
+                response.message.content.as_deref(),
+                Some("Fixture response")
+            );
+        }
+        assert!(*provider.client_refreshed_at.lock().unwrap() > stale);
+        let requests = server.received_requests().await.unwrap();
+        let routes: Vec<_> = requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.url.path()))
+            .collect();
+        assert_eq!(
+            routes,
+            [
+                ("GET", completion_path),
+                ("POST", completion_path),
+                ("POST", completion_path),
+            ]
+        );
+    }
+}
+
 #[test]
 fn generic_provider_ignores_invalid_request_timeout_seconds() {
     for value in [
