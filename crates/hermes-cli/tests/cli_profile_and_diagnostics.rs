@@ -11,10 +11,13 @@ use support::isolated_hermes;
 async fn command(sandbox: &Path, args: &[&str], expected_exit: i32) -> String {
     let output = tokio::time::timeout(
         Duration::from_secs(15),
-        isolated_hermes(sandbox).args(args).output(),
+        isolated_hermes(sandbox)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output(),
     )
     .await
-    .expect("local CLI command timed out")
+    .unwrap_or_else(|_| panic!("{args:?}: local CLI command timed out"))
     .unwrap();
     assert_eq!(
         output.status.code(),
