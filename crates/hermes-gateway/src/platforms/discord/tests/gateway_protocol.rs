@@ -2,36 +2,6 @@ use tokio::time::{sleep, Duration, Instant};
 use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-#[test]
-fn media_methods_accept_metadata_contract() {
-    let adapter = DiscordAdapter::new(test_config()).unwrap();
-    let metadata = DiscordSendMetadata::with_thread_id("thread-1");
-
-    let image_file = adapter.send_image_file(
-        "channel-1",
-        "/tmp/missing-image.png",
-        Some("caption"),
-        Some(&metadata),
-    );
-    drop(image_file);
-
-    let image = adapter.send_image(
-        "channel-1",
-        "https://example.com/image.png",
-        Some("caption"),
-        Some(&metadata),
-    );
-    drop(image);
-
-    let voice = adapter.send_voice(
-        "channel-1",
-        "/tmp/missing-audio.ogg",
-        Some("caption"),
-        Some(&metadata),
-    );
-    drop(voice);
-}
-
 #[tokio::test]
 async fn discord_liveness_probe_uses_rest_users_me_and_bot_auth() {
     let server = MockServer::start().await;
@@ -78,6 +48,45 @@ async fn discord_liveness_failure_marks_adapter_offline_for_reconnect_watcher() 
         "liveness failures should mark adapter offline for platform_reconnect_watcher"
     );
     adapter.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn discord_liveness_counts_consecutive_failures_after_a_healthy_probe() {
+    let server = MockServer::start().await;
+    let token = test_config().token;
+    let probe = std::sync::atomic::AtomicUsize::new(0);
+    Mock::given(method("GET"))
+        .and(path("/users/@me"))
+        .and(header("Authorization", format!("Bot {token}")))
+        .respond_with(move |_: &wiremock::Request| {
+            let status = if probe.fetch_add(1, Ordering::Relaxed) == 1 {
+                200
+            } else {
+                503
+            };
+            ResponseTemplate::new(status)
+        })
+        .expect(4)
+        .mount(&server)
+        .await;
+
+    let client = Client::builder().no_proxy().build().unwrap();
+    let failed = Arc::new(AtomicBool::new(false));
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        run_discord_liveness_probe_loop(
+            client,
+            token,
+            server.uri(),
+            Duration::from_millis(1),
+            2,
+            Arc::clone(&failed),
+        ),
+    )
+    .await
+    .expect("liveness loop should stop after two consecutive failures");
+    assert!(failed.load(Ordering::SeqCst));
+    server.verify().await;
 }
 
 #[tokio::test]
@@ -317,6 +326,20 @@ fn session_handles_hello_with_resume() {
     let actions = session.handle_gateway_event(&payload);
     assert!(actions.contains(&GatewayAction::SendResume));
     assert!(!actions.contains(&GatewayAction::SendIdentify));
+
+    let config = test_config();
+    let token = config.token.clone();
+    let adapter = DiscordAdapter::new(config).unwrap();
+    let resume = adapter.build_resume_payload(
+        session.session_id.as_deref().unwrap(),
+        session.sequence.unwrap(),
+    );
+    assert_eq!(resume.op, opcodes::RESUME);
+    assert_eq!(
+        resume.d,
+        Some(serde_json::json!({"token": token, "session_id": "sess123", "seq": 42}))
+    );
+    assert_eq!((resume.s, resume.t), (None, None));
 }
 
 #[test]

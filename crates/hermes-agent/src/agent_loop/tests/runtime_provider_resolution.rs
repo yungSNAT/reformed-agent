@@ -5,40 +5,6 @@
     #[test]
     fn test_oauth_refresh_config_prefers_provider_config_over_env() {
         let _env_lock = env_test_lock();
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         let mut runtime_providers = HashMap::new();
         runtime_providers.insert(
             "qwen-oauth".to_string(),
@@ -101,40 +67,6 @@
     #[test]
     fn test_runtime_provider_api_key_env_is_resolved() {
         let _env_lock = env_test_lock();
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         let mut runtime_providers = HashMap::new();
         runtime_providers.insert(
             "custom".to_string(),
@@ -200,40 +132,6 @@
     #[test]
     fn test_runtime_provider_api_key_env_supports_anthropic_aliases_and_gemini_oauth() {
         let _env_lock = env_test_lock();
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         let agent = AgentLoop::new(
             AgentConfig::default(),
             Arc::new(ToolRegistry::new()),
@@ -264,40 +162,6 @@
     #[test]
     fn test_oauth_refresh_config_anthropic_defaults_available() {
         let _env_lock = env_test_lock();
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         std::env::remove_var("HERMES_ANTHROPIC_OAUTH_TOKEN_URL");
         std::env::remove_var("HERMES_ANTHROPIC_OAUTH_CLIENT_ID");
         let agent = AgentLoop::new(
@@ -313,40 +177,6 @@
     #[test]
     fn test_oauth_refresh_config_openai_defaults_available() {
         let _env_lock = env_test_lock();
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         std::env::remove_var("HERMES_OPENAI_OAUTH_TOKEN_URL");
         std::env::remove_var("HERMES_OPENAI_OAUTH_CLIENT_ID");
         std::env::remove_var("HERMES_OPENAI_CODEX_OAUTH_TOKEN_URL");
@@ -364,40 +194,6 @@
     #[test]
     fn test_oauth_refresh_config_nous_defaults_available() {
         let _env_lock = env_test_lock();
-        use futures::stream::BoxStream;
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
-
         std::env::remove_var("HERMES_NOUS_OAUTH_TOKEN_URL");
         std::env::remove_var("HERMES_NOUS_OAUTH_CLIENT_ID");
         std::env::remove_var("NOUS_PORTAL_BASE_URL");
@@ -414,40 +210,7 @@
 
     #[test]
     fn test_runtime_provider_stepfun_env_key_and_base_url_defaults() {
-        use futures::stream::BoxStream;
         let _guard = env_test_lock();
-
-        struct DummyProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for DummyProvider {
-            async fn chat_completion(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("dummy"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
-            fn chat_completion_stream(
-                &self,
-                _messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                futures::stream::empty().boxed()
-            }
-        }
 
         let config = AgentConfig::default();
         let agent = AgentLoop::new(
