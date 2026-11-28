@@ -199,6 +199,32 @@ mod tests {
     }
 
     #[test]
+    fn completions_popup_stays_inside_history_at_the_right_edge() {
+        let width = 80;
+        let messages = Rect::new(10, 0, 60, 17);
+        let input = Rect::new(66, 17, 4, 3);
+        let rendered = rendered_frame(width, 20, |frame, colors| {
+            render_completions_popup(
+                frame,
+                &["/fixture-status".to_string()],
+                Some(0),
+                messages,
+                input,
+                colors,
+            );
+        });
+        assert!(rendered.contains("Slash Commands"));
+        assert!(rendered.contains("/fixture-status"));
+        let cells: Vec<_> = rendered.chars().collect();
+        for row in cells.chunks_exact(usize::from(width)) {
+            assert!(row[..usize::from(messages.x)].iter().all(|&c| c == ' '));
+            assert!(row[usize::from(messages.right())..]
+                .iter()
+                .all(|&c| c == ' '));
+        }
+    }
+
+    #[test]
     fn input_box_renders_editing_modes_and_history_search() {
         let area = Rect::new(0, 0, 84, 5);
         let mut state = TuiState {
@@ -1171,18 +1197,74 @@ mod tests {
     }
 
     #[test]
-    fn test_pet_frame_token_returns_species_specific_frame() {
-        let settings = crate::app::PetSettings {
+    fn test_pet_frame_token_cycles_each_species_and_mood() {
+        let cases = [
+            ("boba", "sleepy", ["(-_- )z", "(-_- )Z"]),
+            ("boba", "working", ["(>_< )", "(<_< )"]),
+            ("boba", "hyped", ["(o_o)!", "(!o_o)"]),
+            ("boba", "chill", ["(u_u )", "(u_U )"]),
+            ("boba", "ready", ["(o_o )", "(O_O )"]),
+            ("bytecat", "sleepy", ["= -.-=z", "= -.-=Z"]),
+            ("bytecat", "working", ["=^x^=", "=^_^="]),
+            ("bytecat", "hyped", ["=^o^=!", "=^O^=!"]),
+            ("bytecat", "chill", ["=^.^=~", "=^.-=~"]),
+            ("bytecat", "ready", ["=^.^=", "=^o^="]),
+            ("otter", "sleepy", ["(>< )z", "(>< )Z"]),
+            ("otter", "working", ["(>> )~", "(<< )~"]),
+            ("otter", "hyped", ["(OO )~", "(oo )~"]),
+            ("otter", "chill", ["(~~ )~", "(~_ )~"]),
+            ("otter", "ready", ["(>< )~", "(~>< )"]),
+            ("fox", "sleepy", ["{-- }z", "{-- }Z"]),
+            ("fox", "working", ["{^x }", "{x^ }"]),
+            ("fox", "hyped", ["{^^ }!", "{oo }!"]),
+            ("fox", "chill", ["{.. }", "{._ }"]),
+            ("fox", "ready", ["{^.^}", "{^o^}"]),
+            ("owl", "sleepy", ["(v_v)z", "(v_v)Z"]),
+            ("owl", "working", ["(O_O)", "(0_0)"]),
+            ("owl", "hyped", ["(O0O)!", "(0O0)!"]),
+            ("owl", "chill", ["(o_o)", "(o_O)"]),
+            ("owl", "ready", ["(OvO)", "(oVo)"]),
+            ("capy", "sleepy", ["(._.)z", "(._.)Z"]),
+            ("capy", "working", ["(>_.)", "(._<)"]),
+            ("capy", "hyped", ["(o_.)!", "(._o)!"]),
+            ("capy", "chill", ["(._.)~", "(.._)~"]),
+            ("capy", "ready", ["(._.)", "(o_.)"]),
+            ("unknown", "ready", ["(o_o )", "(O_O )"]),
+        ];
+        for (species, mood, frames) in cases {
+            let settings = crate::app::PetSettings {
+                enabled: true,
+                species: species.to_string(),
+                mood: mood.to_string(),
+                ..crate::app::PetSettings::default()
+            };
+            for (frame, expected) in [(0, frames[0]), (1, frames[1]), (2, frames[0])] {
+                assert_eq!(
+                    pet_frame_token(&settings, frame, false).as_deref(),
+                    Some(expected),
+                    "{species} in {mood} mood, frame {frame}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_pet_frame_token_keeps_sleepy_mood_during_processing() {
+        let mut settings = crate::app::PetSettings {
             enabled: true,
             species: "fox".to_string(),
-            mood: "ready".to_string(),
-            dock: crate::app::PetDock::Right,
-            tick_ms: 400,
+            mood: "chill".to_string(),
+            ..crate::app::PetSettings::default()
         };
-        let frame0 = pet_frame_token(&settings, 0, false).expect("frame");
-        let frame1 = pet_frame_token(&settings, 1, false).expect("frame");
-        assert_ne!(frame0, frame1);
-        assert!(frame0.contains('{'));
+        assert_eq!(
+            pet_frame_token(&settings, 0, true).as_deref(),
+            Some("{^x }")
+        );
+        settings.mood = "sleepy".to_string();
+        assert_eq!(
+            pet_frame_token(&settings, 1, true).as_deref(),
+            Some("{-- }Z")
+        );
     }
 
     #[test]

@@ -35,9 +35,6 @@ fn render_completions_popup(
     let popup_min_width = 36u16.min(popup_max_width);
     let popup_width = (max_item_width as u16 + 8).clamp(popup_min_width, popup_max_width);
     let popup_height = (end.saturating_sub(start) as u16 + 2).max(3);
-    if popup_width == 0 || popup_height == 0 {
-        return;
-    }
     let right_bound = messages_area.x + messages_area.width.saturating_sub(1);
     let mut x = input_area.x.saturating_add(1);
     if x + popup_width > right_bound {
