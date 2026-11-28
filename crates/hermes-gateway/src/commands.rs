@@ -1261,36 +1261,46 @@ mod tests {
 
     #[test]
     fn test_command_approval_resolution_commands() {
-        match handle_command("/approve") {
-            GatewayCommandResult::ResolveCommandApproval {
-                choice,
-                resolve_all,
-            } => {
-                assert_eq!(choice, hermes_tools::approval::ApprovalChoice::Once);
-                assert!(!resolve_all);
-            }
-            other => panic!("Expected ResolveCommandApproval, got {:?}", other),
+        use hermes_tools::approval::ApprovalChoice::{Always, Deny, Once, Session};
+
+        for (command, expected_choice, expected_all) in [
+            ("/approve", Once, false),
+            ("/approve all", Once, true),
+            ("/approve session", Session, false),
+            ("/approve all session", Session, true),
+            ("/approve always", Always, false),
+            ("/deny", Deny, false),
+            ("/deny all", Deny, true),
+        ] {
+            let result = handle_command(command);
+            assert!(
+                matches!(&result, GatewayCommandResult::ResolveCommandApproval { choice, resolve_all }
+                    if choice == &expected_choice && *resolve_all == expected_all),
+                "{command}: {result:?}"
+            );
         }
-        match handle_command("/approve all session") {
-            GatewayCommandResult::ResolveCommandApproval {
-                choice,
-                resolve_all,
-            } => {
-                assert_eq!(choice, hermes_tools::approval::ApprovalChoice::Session);
-                assert!(resolve_all);
-            }
-            other => panic!("Expected ResolveCommandApproval, got {:?}", other),
+    }
+
+    #[test]
+    fn prompt_commands_report_missing_input_and_keep_supplied_text() {
+        for (command, usage) in [
+            ("/queue", "Usage: /queue <prompt>"),
+            ("/steer", "Usage: /steer <prompt>"),
+            ("/btw", "Usage: /btw <prompt>"),
+        ] {
+            assert!(
+                matches!(handle_command(command), GatewayCommandResult::Reply(text) if text == usage)
+            );
         }
-        match handle_command("/deny all") {
-            GatewayCommandResult::ResolveCommandApproval {
-                choice,
-                resolve_all,
-            } => {
-                assert_eq!(choice, hermes_tools::approval::ApprovalChoice::Deny);
-                assert!(resolve_all);
-            }
-            other => panic!("Expected ResolveCommandApproval, got {:?}", other),
-        }
+        assert!(
+            matches!(handle_command("/q review the notes"), GatewayCommandResult::QueuePrompt { prompt } if prompt == "review the notes")
+        );
+        assert!(
+            matches!(handle_command("/steer review the notes"), GatewayCommandResult::SteerPrompt { prompt } if prompt == "review the notes")
+        );
+        assert!(
+            matches!(handle_command("/btw review the notes"), GatewayCommandResult::BtwTask { prompt } if prompt == "review the notes")
+        );
     }
 
     #[test]
@@ -1303,9 +1313,17 @@ mod tests {
             GatewayCommandResult::SwitchProfile { profile, .. } => assert_eq!(profile, "prod"),
             other => panic!("Expected SwitchProfile, got {:?}", other),
         }
-        match handle_command("/rollback 5") {
-            GatewayCommandResult::Rollback { steps } => assert_eq!(steps, 5),
-            other => panic!("Expected Rollback, got {:?}", other),
+        for (command, expected_steps) in [
+            ("/rollback", 2),
+            ("/rollback five", 2),
+            ("/rollback 0", 1),
+            ("/rollback 5", 5),
+        ] {
+            assert!(
+                matches!(handle_command(command), GatewayCommandResult::Rollback { steps }
+                if steps == expected_steps),
+                "{command}"
+            );
         }
     }
 
