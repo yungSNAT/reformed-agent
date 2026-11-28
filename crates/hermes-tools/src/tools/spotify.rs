@@ -1266,6 +1266,86 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn normalize_spotify_id_parses_open_spotify_urls() {
+        assert_eq!(
+            normalize_spotify_id("https://open.spotify.com/track/abc123?si=x", None).unwrap(),
+            "abc123"
+        );
+        assert_eq!(
+            normalize_spotify_id("http://open.spotify.com/track/abc123", Some("track")).unwrap(),
+            "abc123"
+        );
+        assert_eq!(
+            normalize_spotify_id("open.spotify.com/playlist/p1", Some("playlist")).unwrap(),
+            "p1"
+        );
+        assert_eq!(
+            normalize_spotify_id("//open.spotify.com/track/abc123", None).unwrap(),
+            "abc123"
+        );
+        assert_eq!(
+            normalize_spotify_id("https://OPEN.spotify.com:443/track/abc123", None).unwrap(),
+            "abc123"
+        );
+        assert_eq!(
+            normalize_spotify_id("OPEN.spotify.com:443/track/abc123", None).unwrap(),
+            "abc123"
+        );
+        assert_eq!(
+            normalize_spotify_id(
+                "open.spotify.com/track/abc123?redirect=https://evil.example",
+                None
+            )
+            .unwrap(),
+            "abc123"
+        );
+        assert_eq!(
+            normalize_spotify_uri("https://open.spotify.com/track/abc123?si=x", Some("track"))
+                .unwrap(),
+            "spotify:track:abc123"
+        );
+        let err = normalize_spotify_id("https://open.spotify.com/album/a1", Some("track"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Expected a Spotify track, got album."));
+    }
+
+    #[test]
+    fn normalize_spotify_id_rejects_non_spotify_authorities() {
+        let non_spotify = [
+            "https://evil.example/open.spotify.com/track/abc123",
+            "https://open.spotify.com.evil.example/track/abc123",
+            "https://sub.open.spotify.com/track/abc123",
+            "https://open.spotify.com@evil.example/track/abc123",
+            "https://user@open.spotify.com/track/abc123",
+            "https://:pass@open.spotify.com/track/abc123",
+            "mailto:user@open.spotify.com/track/abc123",
+            "ftp://open.spotify.com/track/abc123",
+            "//evil.example/open.spotify.com/track/abc123",
+            "evil.example/open.spotify.com/track/abc123",
+            "/open.spotify.com/track/abc123",
+            "///open.spotify.com/track/abc123",
+            "https:///open.spotify.com/track/abc123",
+            r"https://open.spotify.com\@evil.example/track/abc123",
+            r"\open.spotify.com/track/abc123",
+            "http://[::1",
+            "open.spotify.com:badport/track/abc123",
+        ];
+        for candidate in non_spotify {
+            assert_eq!(
+                normalize_spotify_id(candidate, None).unwrap(),
+                candidate,
+                "must not parse {candidate:?} as a Spotify URL"
+            );
+        }
+        assert_eq!(
+            normalize_spotify_uri("https://evil.example/open.spotify.com/track/abc123", None)
+                .unwrap(),
+            "https://evil.example/open.spotify.com/track/abc123"
+        );
+    }
 }
 
 #[cfg(test)]
