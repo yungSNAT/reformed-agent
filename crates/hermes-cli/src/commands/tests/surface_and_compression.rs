@@ -150,6 +150,7 @@
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
+        let _cron_provider = EnvVarGuard::set("HERMES_CRON_PROVIDER", "local");
         let mut app = build_test_app_with_stream(tmp.path()).await;
 
         let empty = handle_slash_command(&mut app, "/suggestions", &[])
@@ -171,6 +172,42 @@
         let listed = latest_ui_assistant_text(&app);
         assert!(listed.contains("Suggested automations"));
         assert!(listed.contains("Important-mail monitor"));
+
+        let store = hermes_cron::SuggestionStore::default();
+        assert!(store.path().starts_with(tmp.path()));
+        let original = std::fs::read(store.path()).expect("read fixture suggestions");
+
+        for (args, expected) in [
+            (&["catalog"][..], "No new catalog automations"),
+            (&["accept"][..], "Usage: /suggestions accept <number|id>"),
+            (&["accept", "missing"][..], "No pending suggestion matches 'missing'"),
+            (&["dismiss"][..], "Usage: /suggestions dismiss <number|id>"),
+            (&["dismiss", "missing"][..], "No pending suggestion matches 'missing'"),
+        ] {
+            let result = handle_slash_command(&mut app, "/suggestions", args)
+                .await
+                .expect("handle suggestion request");
+            assert_eq!(result, CommandResult::Handled);
+            let output = latest_ui_assistant_text(&app);
+            assert!(output.contains(expected), "{args:?}: {output}");
+        }
+        assert_eq!(std::fs::read(store.path()).unwrap(), original);
+
+        let mut fixture: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        let job = &mut fixture["suggestions"][0]["job_spec"];
+        assert_eq!(job["name"], "Morning briefing");
+        job["deliver"] = serde_json::json!("unavailable");
+        let unsupported = serde_json::to_vec(&fixture).unwrap();
+        std::fs::write(store.path(), &unsupported).unwrap();
+        let result = handle_slash_command(&mut app, "/suggestions", &["accept", "1"])
+            .await
+            .expect("handle unsupported delivery target");
+        assert_eq!(result, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app)
+            .contains("cannot be scheduled: unsupported deliver target `unavailable`"));
+        assert_eq!(std::fs::read(store.path()).unwrap(), unsupported);
+        assert!(app.cron_scheduler.list_jobs().await.is_empty());
+        std::fs::write(store.path(), original).unwrap();
 
         handle_slash_command(&mut app, "/suggestions", &["accept", "1"])
             .await
