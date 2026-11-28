@@ -11,6 +11,7 @@ use super::{allowed, run_cli};
 use crate::chat::Chat;
 
 mod edge;
+mod security;
 fn texts(items: &[Value]) -> Vec<&str> {
     items
         .iter()
