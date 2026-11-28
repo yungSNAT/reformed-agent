@@ -111,6 +111,64 @@ async fn a_json_line_under_header_framing_names_the_mode() {
 }
 
 #[tokio::test]
+async fn header_framing_reports_invalid_lengths_and_json() {
+    for (mut frame, expected) in [
+        (
+            b"Content-Length: unknown\r\n\r\n".as_slice(),
+            "Invalid Content-Length:",
+        ),
+        (
+            b"Content-Type: application/json\r\n\r\n".as_slice(),
+            "Missing Content-Length header",
+        ),
+        (
+            b"Content-Length: 1\r\n\r\n{".as_slice(),
+            "JSON parse error:",
+        ),
+    ] {
+        let error = read_content_length_message(&mut frame, 64)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, McpError::Protocol { code: -32700, message } if message.starts_with(expected)),
+            "expected {expected:?}, got {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn stdio_framing_reports_disconnects_during_a_message() {
+    let mut header = b"Content-Length: 8".as_slice();
+    assert!(matches!(
+        read_content_length_message(&mut header, 64).await,
+        Err(McpError::ConnectionClosed)
+    ));
+    let mut body = b"Content-Length: 8\r\n\r\n{".as_slice();
+    assert!(matches!(
+        read_content_length_message(&mut body, 64).await,
+        Err(McpError::ConnectionError(message)) if message.starts_with("Read body failed:")
+    ));
+    let mut line = br#"{"id":1}"#.as_slice();
+    assert!(matches!(
+        read_stdio_line(&mut line, &mut Vec::new(), 64).await,
+        Err(McpError::ConnectionClosed)
+    ));
+}
+
+#[tokio::test]
+async fn framing_detection_keeps_the_message_after_leading_whitespace() {
+    let mut reader = BufReader::with_capacity(2, b"  \r\n{\"id\":1}\n".as_slice());
+    assert_eq!(
+        sniff_content_length_framing(&mut reader).await.unwrap(),
+        Some(false)
+    );
+    let message = read_stdio_line(&mut reader, &mut Vec::new(), 64)
+        .await
+        .unwrap();
+    assert_eq!(message["id"], 1);
+}
+
+#[tokio::test]
 async fn header_framing_caps_a_header_line_and_the_header_count() {
     let (mut writer, reader) = duplex(1 << 16);
     let mut reader = BufReader::new(reader);
