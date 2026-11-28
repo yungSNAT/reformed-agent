@@ -723,7 +723,7 @@ fn format_background_delegation_notification(output: &str) -> String {
 mod tests {
     use super::*;
     use futures::stream::{BoxStream, StreamExt};
-    use hermes_core::{JsonSchema, LlmResponse, StreamChunk, ToolSchema};
+    use hermes_core::{JsonSchema, LlmResponse, StreamChunk, ToolSchema, UsageStats};
     use std::sync::{Arc, Mutex};
 
     // Minimal test provider that returns a deterministic assistant response
@@ -762,7 +762,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn omitted_toolset_inherits_parent_advertised_tools() {
+    async fn omitted_toolset_inherits_parent_tools_and_reports_child_usage() {
         struct RecordingProvider {
             seen_tools: Arc<Mutex<Vec<Vec<String>>>>,
         }
@@ -784,7 +784,13 @@ mod tests {
                     .push(tools.iter().map(|tool| tool.name.clone()).collect());
                 Ok(LlmResponse {
                     message: Message::assistant("done"),
-                    usage: None,
+                    usage: Some(UsageStats {
+                        // Fixture usage counts returned by the fake model.
+                        prompt_tokens: 11, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+                        completion_tokens: 7, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+                        total_tokens: 18,  // nosemgrep: codacy.yaml.security.hard-coded-tokens
+                        ..UsageStats::default()
+                    }),
                     model: "recording".into(),
                     finish_reason: Some("stop".into()),
                 })
@@ -839,8 +845,36 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(parsed["status"], "completed");
+        assert_eq!(parsed["usage"]["prompt_tokens"], 11);
+        assert_eq!(parsed["usage"]["completion_tokens"], 7);
+        assert_eq!(parsed["usage"]["total_tokens"], 18);
+
+        let id = parsed["sub_agent_id"].as_str().unwrap();
+        let path = tmp.path().join("subagents").join(format!("{id}.json"));
+        let lineage: SubAgentLineage =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(lineage.prompt_tokens, Some(11));
+        assert_eq!(lineage.completion_tokens, Some(7));
+
         let seen = seen_tools.lock().expect("seen tools lock");
         assert_eq!(seen.as_slice(), &[vec!["terminal".to_string()]]);
+    }
+
+    #[test]
+    fn initial_messages_append_only_nonempty_context() {
+        let task = "Summarise the local notes";
+        for (context, expected) in [
+            (None, task),
+            (Some(" \n\t"), task),
+            (
+                Some("Project outline"),
+                "Summarise the local notes\n\n[Context]\nProject outline",
+            ),
+        ] {
+            let messages = initial_messages(task, context);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].content.as_deref(), Some(expected));
+        }
     }
 
     #[tokio::test]

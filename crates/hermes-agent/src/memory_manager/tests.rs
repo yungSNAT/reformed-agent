@@ -661,6 +661,87 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_fusion_prefetch_respects_trace_settings() {
+        const CHILD: &str = "REFORMED_MEMORY_FUSION_TRACE_TEST";
+        if let Ok(mode) = std::env::var(CHILD) {
+            let home = PathBuf::from(std::env::var_os("HERMES_HOME").unwrap());
+            let trace = home.join("logs").join("memory-fusion-trace.jsonl");
+            let mut manager = MemoryManager::new();
+            manager.add_provider(Arc::new(
+                TestProvider::new("other").with_prefetch("September release notes"),
+            ));
+            manager.add_provider(Arc::new(
+                TestProvider::new("builtin").with_prefetch("Rust notes on Cargo profiles"),
+            ));
+            let queries = ["Rust build notes", "Cargo profile notes"];
+            for query in queries {
+                let result = manager.prefetch_all(query, "review-session");
+                assert!(result.contains("Rust notes on Cargo profiles"));
+                assert_eq!(result.contains("September release notes"), mode == "off");
+            }
+            if mode == "off" {
+                assert!(!trace.exists());
+                return;
+            }
+            assert_eq!(
+                memory_fusion_weights(),
+                HashMap::from([("builtin".to_string(), 1.5)])
+            );
+            let raw = std::fs::read_to_string(trace).unwrap();
+            let rows: Vec<Value> = raw
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(rows.len(), queries.len());
+            for (row, query) in rows.iter().zip(queries) {
+                assert_eq!(row["query"], query);
+                assert_eq!(row["considered"], 2);
+                assert_eq!(row["min_confidence"], 0.25);
+                assert_eq!(row["selected"].as_array().unwrap().len(), 1);
+                assert_eq!(row["selected"][0]["provider"], "builtin");
+            }
+            return;
+        }
+
+        let test = "memory_manager::tests::test_memory_fusion_prefetch_respects_trace_settings";
+        for mode in ["on", "off"] {
+            let home = tempfile::tempdir().unwrap();
+            // Re-run this libtest fixture with a separate home and environment.
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
+            command
+                .env_clear()
+                .env(CHILD, mode)
+                .env("HERMES_HOME", home.path())
+                .env("HERMES_MEMORY_FUSION", mode)
+                .env("HERMES_MEMORY_GRAPH_DEPTH", "1")
+                .env("HERMES_MEMORY_FUSION_TRACE", " YES ")
+                .env("HERMES_MEMORY_FUSION_MIN_CONFIDENCE", "0.25")
+                .env("HERMES_MEMORY_FUSION_TOP_K", "1")
+                .env("HERMES_MEMORY_FUSION_WEIGHTS", "Builtin=1.5,, =1,nan=NaN,bad=-1")
+                .args(["--exact", test, "--color", "never"]);
+            if let Some(mut profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+                let template = profile.to_string_lossy();
+                if !template.contains("%p") && !template.contains("%m") {
+                    profile.push(".%p.profraw");
+                }
+                command.env("LLVM_PROFILE_FILE", profile);
+            }
+            for name in ["TMPDIR", "SystemRoot"] {
+                if let Some(value) = std::env::var_os(name) {
+                    command.env(name, value);
+                }
+            }
+            let output = command.output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains(&format!("test {test} ... ok")),
+                "{mode}\n{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
     fn test_query_terms_filters_short_tokens() {
         let terms = query_terms("go rust dl tokio memory");
         assert_eq!(terms, vec!["rust", "tokio", "memory"]);
