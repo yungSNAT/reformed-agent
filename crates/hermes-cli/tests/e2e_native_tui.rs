@@ -33,6 +33,14 @@ fn start_in_pty(
     args: &[&str],
     allow_loopback: bool,
 ) -> (Child, File, libc::tcflag_t) {
+    start_command_in_pty(isolated_pty_command(sandbox, args, allow_loopback))
+}
+
+fn isolated_pty_command(
+    sandbox: &Path,
+    args: &[&str],
+    allow_loopback: bool,
+) -> tokio::process::Command {
     let mut command = support::isolated_hermes(sandbox);
     command
         .env("HTTP_PROXY", "http://127.0.0.1:1")
@@ -41,7 +49,7 @@ fn start_in_pty(
     if allow_loopback {
         command.env("NO_PROXY", "127.0.0.1");
     }
-    start_command_in_pty(command)
+    command
 }
 
 fn start_command_in_pty(mut command: tokio::process::Command) -> (Child, File, libc::tcflag_t) {
@@ -354,11 +362,22 @@ llm_providers:
 async fn native_tui_streams_a_loopback_turn_and_persists_the_full_reply() {
     let provider = MockServer::start().await;
     let prompt = "Read back the synthetic fixture";
-    let reply = "QuartzEcho from the loopback fixture.";
+    let mut first_delta = String::from("```\n");
+    for row in 1..=40 {
+        let label = if (10..=20).contains(&row) {
+            "AsterHistory"
+        } else {
+            "Fixture row"
+        };
+        first_delta.push_str(&format!("{label} {row:02}\n"));
+    }
+    first_delta.push_str("```\nQuartzEcho");
+    let final_delta = " from the loopback fixture.";
+    let reply = format!("{first_delta}{final_delta}");
     let mut stream = String::new();
     for choice in [
-        json!({"index": 0, "delta": {"role": "assistant", "content": "QuartzEcho"}}),
-        json!({"index": 0, "delta": {"content": " from the loopback fixture."}}),
+        json!({"index": 0, "delta": {"role": "assistant", "content": first_delta}}),
+        json!({"index": 0, "delta": {"content": final_delta}}),
         json!({"index": 0, "delta": {}, "finish_reason": "stop"}),
     ] {
         let chunk = json!({
@@ -401,9 +420,11 @@ streaming:
     )
     .unwrap();
 
-    let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["--ignore-rules"], true);
-    read_until(&mut terminal, b"\x1b[?1049h").await;
+    let mut command = isolated_pty_command(sandbox.path(), &["--ignore-rules"], true);
+    command.env("HERMES_TUI_MOUSE", "1");
+    let (mut child, mut terminal, initial_flags) = start_command_in_pty(command);
+    let startup = read_until(&mut terminal, b"\x1b[?1006h").await;
+    assert!(startup.windows(8).any(|bytes| bytes == b"\x1b[?1049h"));
     write!(terminal, "\x1b[200~{prompt}\x1b[201~\r").unwrap();
     // Separate frames can insert cursor escapes between the two deltas.
     let rendered = read_until(&mut terminal, b"from the loopback fixture.").await;
@@ -425,7 +446,7 @@ streaming:
                             let content = message["content"].as_str()?;
                             matches!(role, "User" | "Assistant").then_some((role, content))
                         });
-                        conversation.eq([("User", prompt), ("Assistant", reply)])
+                        conversation.eq([("User", prompt), ("Assistant", reply.as_str())])
                     })
                 });
             if saved {
@@ -436,6 +457,28 @@ streaming:
     })
     .await
     .expect("completed provider turn is saved in the isolated session");
+
+    let dimensions = libc::winsize {
+        ws_row: 16,
+        ws_col: 100,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // The child owns the slave as its controlling terminal, so this sends SIGWINCH.
+    assert_eq!(
+        unsafe { libc::ioctl(terminal.as_raw_fd(), libc::TIOCSWINSZ, &dimensions) },
+        0,
+        "{}",
+        io::Error::last_os_error()
+    );
+    read_until(&mut terminal, b"\x1b[2J").await;
+
+    // Send SGR wheel events through the same PTY as keyboard input.
+    terminal.write_all(&b"\x1b[<64;5;6M".repeat(22)).unwrap();
+    // The terminal diff can split a line with cursor moves between changed spans.
+    read_until(&mut terminal, b"AsterHist").await;
+    terminal.write_all(&b"\x1b[<65;5;6M".repeat(22)).unwrap();
+    read_until(&mut terminal, b"Quartz").await;
 
     terminal.write_all(b"\x1b[200~/undo\x1b[201~\r!").unwrap();
     let edited = format!("{prompt}!");

@@ -426,6 +426,169 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_tool_edits_preserve_the_cron_job_and_resume_recomputes_its_schedule() {
+        const CHILD: &str = "HERMES_CRON_BACKEND_EDIT_TEST_HOME";
+        let Some(home) = std::env::var_os(CHILD) else {
+            let profile = tempdir().expect("fixture home");
+            let mut child =
+                std::process::Command::new(std::env::current_exe().expect("test binary"));
+            child
+                .env_clear()
+                .env(CHILD, profile.path())
+                .env("HERMES_HOME", profile.path())
+                .env("HERMES_MANAGED_DIR", profile.path().join("managed"))
+                .args([
+                    "--exact",
+                    "backend::tests::invalid_tool_edits_preserve_the_cron_job_and_resume_recomputes_its_schedule",
+                ]);
+            if let Some(path) = std::env::var_os("LLVM_PROFILE_FILE") {
+                child.env(
+                    "LLVM_PROFILE_FILE",
+                    std::path::absolute(path).expect("absolute LLVM profile path"),
+                );
+            }
+            let output = child.output().expect("isolated backend test");
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+                "{output:?}"
+            );
+            return;
+        };
+        let data_dir = std::path::PathBuf::from(home).join("cron");
+        let scheduler = Arc::new(cron_scheduler_for_data_dir(data_dir.clone()));
+        let backend = ScheduledCronjobBackend::new(scheduler.clone());
+        for (context, workdir, schedule, message) in [
+            (
+                Some(json!(["missing"])),
+                None,
+                "0 * * * *",
+                "job 'missing' not found",
+            ),
+            (
+                Some(json!(["job", 0])),
+                None,
+                "0 * * * *",
+                "values must be strings",
+            ),
+            (
+                Some(json!(false)),
+                None,
+                "0 * * * *",
+                "must be a string, array",
+            ),
+            (
+                None,
+                Some(json!(42)),
+                "0 * * * *",
+                "workdir must be an absolute path",
+            ),
+            (None, None, "invalid", "invalid cron job"),
+        ] {
+            let error = backend
+                .create(
+                    "report",
+                    schedule,
+                    "summarise",
+                    None,
+                    context.as_ref(),
+                    None,
+                    None,
+                    workdir.as_ref(),
+                )
+                .await
+                .expect_err("invalid creation");
+            assert!(matches!(error, ToolError::InvalidParams(s) if s.contains(message)));
+        }
+        assert_eq!(scheduler.list_jobs().await.len(), 0);
+
+        let created = backend
+            .create(
+                "report",
+                "0 * * * *",
+                "summarise",
+                Some("reports"),
+                Some(&json!(" ")),
+                None,
+                None,
+                Some(&json!(" ")),
+            )
+            .await
+            .expect("create job");
+        let created: Value = serde_json::from_str(&created).expect("created job");
+        let id = created["id"].as_str().expect("job ID");
+        backend.pause(id).await.expect("pause job");
+        let error = backend.pause(id).await.expect_err("job is already paused");
+        assert!(matches!(error, ToolError::ExecutionFailed(s) if s.contains("is paused")));
+
+        let error = backend
+            .update(
+                id,
+                Some("15 * * * *"),
+                Some("replacement"),
+                Some(true),
+                Some(&json!("missing")),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect_err("unknown context source");
+        assert!(
+            matches!(error, ToolError::InvalidParams(s) if s.contains("job 'missing' not found"))
+        );
+        let unchanged = scheduler.get_job(id).await.expect("unchanged job");
+        assert_eq!(unchanged.status, JobStatus::Paused);
+        assert_eq!(unchanged.schedule, "0 * * * *");
+        assert_eq!(unchanged.prompt, "summarise");
+        let reopened = cron_scheduler_for_data_dir(data_dir);
+        reopened
+            .load_persisted_jobs()
+            .await
+            .expect("load paused job");
+        let saved = reopened.get_job(id).await.expect("saved paused job");
+        assert_eq!(saved.status, unchanged.status);
+        assert_eq!(saved.schedule, unchanged.schedule);
+        assert_eq!(saved.prompt, unchanged.prompt);
+
+        let before_update = jiff::Timestamp::now();
+        backend
+            .update(
+                id,
+                Some("15 * * * *"),
+                None,
+                Some(true),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("resume job with amended schedule");
+        let after_update = jiff::Timestamp::now();
+        reopened
+            .load_persisted_jobs()
+            .await
+            .expect("load resumed job");
+        let saved = reopened.get_job(id).await.expect("saved job");
+        assert_eq!(saved.status, JobStatus::Active);
+        assert_eq!(saved.schedule, "15 * * * *");
+        let next_run = saved.next_run.expect("resume must schedule the next run");
+        let utc = next_run.to_zoned(jiff::tz::TimeZone::UTC);
+        assert_eq!((utc.minute(), utc.second()), (15, 0));
+        assert!(next_run > before_update);
+        assert!(next_run <= after_update + jiff::SignedDuration::from_secs(3_600));
+        assert_eq!(saved.skills, Some(vec!["reports".into()]));
+        assert_eq!(saved.context_from, None);
+        assert_eq!(saved.workdir, None);
+
+        let error = backend.remove("missing").await.expect_err("unknown job");
+        assert!(
+            matches!(error, ToolError::ExecutionFailed(s) if s == "cron job not found: missing")
+        );
+    }
+
+    #[tokio::test]
     async fn create_and_update_context_from_roundtrip() {
         let backend = make_backend();
         let scheduler = backend.scheduler().clone();

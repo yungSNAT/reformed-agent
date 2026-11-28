@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write as _;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
@@ -90,6 +91,86 @@ fn publish_automation_summary_keeps_empty_env_defaults_empty() {
     assert_eq!(parsed["metadata"]["summary_kind"], "");
 }
 
+#[cfg(unix)]
+#[test]
+fn publish_automation_summary_only_falls_back_when_github_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let fixture_bin = root.join("bin");
+    let empty_bin = root.join("empty-bin");
+    fs::create_dir(&fixture_bin).unwrap();
+    fs::create_dir(&empty_bin).unwrap();
+    let gh = fixture_bin.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+set -eu
+[ "$#" = 5 ] && [ "$1 $2 $3 $4 $5" = 'issue comment 42 --body-file -' ] || exit 70
+case "$FIXTURE_GH_MODE" in
+    success) /bin/cat > comment.md ;;
+    rejected) printf '%s\n' 'fixture comment rejected' >&2; exit 1 ;;
+    silent) exit 17 ;;
+    *) exit 71 ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+    let markdown = "## Sync result\n\nFixtures reconciled.\n";
+
+    for (mode, expected) in [
+        ("success", "commented"),
+        ("rejected", "fixture comment rejected"),
+        ("silent", "gh_exit_17"),
+        ("missing", "gh_cli_missing"),
+    ] {
+        let repo = root.join(mode);
+        fs::create_dir(&repo).unwrap();
+        let bin_dir = if mode == "missing" {
+            &empty_bin
+        } else {
+            &fixture_bin
+        };
+        let fallback = repo.join("fallback.md");
+        let out = Command::new(bin())
+            .env_clear()
+            .env("PATH", bin_dir)
+            .env("FIXTURE_GH_MODE", mode)
+            .envs(Some("LLVM_PROFILE_FILE").zip(std::env::var_os("LLVM_PROFILE_FILE")))
+            .args(["publish-automation-summary", "--repo-root"])
+            .arg(&repo)
+            .args(["--sink-order", "github,local", "--github-issue", "42"])
+            .arg("--local-path")
+            .arg(&fallback)
+            .args(["--preformatted-markdown", markdown, "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{mode}: {out:?}");
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["ok"], true, "{mode}");
+        let attempts = report["attempts"].as_array().unwrap();
+        assert_eq!(attempts[0]["sink"], "github", "{mode}");
+        assert_eq!(attempts[0]["detail"], expected, "{mode}");
+        if mode == "success" {
+            assert_eq!(report["primary_sink"], "github");
+            assert_eq!(attempts.len(), 1);
+            assert_eq!(
+                fs::read_to_string(repo.join("comment.md")).unwrap(),
+                markdown
+            );
+            assert!(!fallback.exists());
+        } else {
+            assert_eq!(report["primary_sink"], "local", "{mode}");
+            assert_eq!(attempts.len(), 2, "{mode}");
+            assert!(fs::read_to_string(&fallback)
+                .unwrap()
+                .contains(markdown.trim_end()));
+        }
+    }
+}
+
 #[test]
 fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -169,21 +250,21 @@ fn publish_automation_summary_handles_stdout_json_hyphen_flags_and_py_metadata()
     assert!(!help_text.contains("super-secret-env-token-12345"));
 }
 
-#[test]
-fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path();
-    let report = root.join(".sync-reports/elite.json");
-
-    let pass = Command::new(bin())
+fn elite_sync_gate(root: &Path, report: &Path, redteam: &str, chaos: &str) -> Command {
+    let mut command = Command::new(bin());
+    command
+        .env_clear()
+        .env("HOME", root)
+        .env("USERPROFILE", root)
+        .current_dir(root)
         .args([
             "run-elite-sync-gate",
             "--repo-root",
             root.to_str().expect("utf8"),
             "--redteam-cmd",
-            "true",
+            redteam,
             "--chaos-cmd",
-            "true",
+            chaos,
             "--hotpath-cmd",
             "true",
             "--parity-diff-cmd",
@@ -201,7 +282,31 @@ fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
             "--report-path",
             report.to_str().expect("utf8"),
             "--json",
-        ])
+        ]);
+    for key in ["PATH", "SystemRoot"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        let profile = std::path::PathBuf::from(profile);
+        let profile = if profile.starts_with("%t") {
+            profile
+        } else {
+            std::path::absolute(profile).expect("absolute coverage profile path")
+        };
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    command
+}
+
+#[test]
+fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let report = root.join(".sync-reports/elite.json");
+
+    let pass = elite_sync_gate(root, &report, "true", "true")
         .output()
         .expect("run");
     assert_eq!(
@@ -214,33 +319,7 @@ fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
     assert_eq!(p_json["ok"], true);
     assert_eq!(p_json["summary"]["passed_sections"], 8);
 
-    let fail = Command::new(bin())
-        .args([
-            "run-elite-sync-gate",
-            "--repo-root",
-            root.to_str().expect("utf8"),
-            "--redteam-cmd",
-            "false",
-            "--chaos-cmd",
-            "true",
-            "--hotpath-cmd",
-            "true",
-            "--parity-diff-cmd",
-            "true",
-            "--surface-coverage-cmd",
-            "true",
-            "--eval-trend-cmd",
-            "true",
-            "--release-security-cmd",
-            "true",
-            "--performance-autopilot-cmd",
-            "true",
-            "--rollback-cmd",
-            "true",
-            "--report-path",
-            report.to_str().expect("utf8"),
-            "--json",
-        ])
+    let fail = elite_sync_gate(root, &report, "false", "true")
         .output()
         .expect("run");
     assert_eq!(fail.status.code(), Some(1));
@@ -248,6 +327,90 @@ fn elite_sync_gate_aggregates_pass_and_rollback_on_failure() {
     assert_eq!(f_json["ok"], false);
     assert_eq!(f_json["summary"]["failed_sections"], 1);
     assert_eq!(f_json["rollback"]["ok"], true);
+}
+
+#[cfg(unix)]
+#[test]
+fn elite_sync_gate_compares_chaos_baseline_and_current_reports() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().canonicalize().expect("canonical tempdir");
+    let baseline = root.join("Croft Manor baseline.json");
+    let current = root.join("current.json");
+    let missing_baseline = root.join("missing.json");
+    let report = root.join(".sync-reports/elite gate.json");
+    let compare_report = root.join(".sync-reports/elite gate-chaos-compare.json");
+    let chaos_cmd = "printf '%s\\n' 'report=current.json'";
+    let compare_cmd = format!(
+        "'{}' compare-adapter-chaos-reports",
+        bin().replace('\'', "'\\''")
+    );
+    let scenario_report = |outcome: &str| {
+        serde_json::json!({
+            "passed": true,
+            "scenario_runs": [{"scenario": "adapter", "actual": {"outcome": outcome}}],
+        })
+        .to_string()
+    };
+    fs::write(&baseline, scenario_report("success")).expect("write baseline");
+    fs::write(&current, scenario_report("success")).expect("write current report");
+
+    let run = |baseline: &Path, chaos: &str, exit_code| -> Value {
+        let output = elite_sync_gate(&root, &report, "true", chaos)
+            .args(["--chaos-baseline", baseline.to_str().expect("utf8")])
+            .args(["--chaos-compare-cmd", &compare_cmd])
+            .output()
+            .expect("run gate");
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).expect("gate report");
+        assert_eq!(report["summary"]["total_sections"], 9);
+        assert_eq!(report["summary"]["failed_sections"], exit_code);
+        report
+    };
+
+    for (baseline, chaos) in [(&baseline, "true"), (&missing_baseline, chaos_cmd)] {
+        let gate = run(baseline, chaos, 1);
+        let compare = &gate["sections"]["chaos_compare"];
+        assert_eq!(compare["ok"], false);
+        assert_eq!(
+            compare["reason"],
+            "baseline report missing or current chaos report unavailable"
+        );
+        assert!(!compare_report.exists());
+    }
+
+    for (outcome, exit_code, regression_types) in [
+        ("success", 0, &[][..]),
+        ("error", 1, &["outcome_regression"][..]),
+    ] {
+        fs::write(&current, scenario_report(outcome)).expect("write current report");
+        let gate = run(&baseline, chaos_cmd, exit_code);
+        let compare = &gate["sections"]["chaos_compare"];
+        assert_eq!(gate["ok"], exit_code == 0);
+        assert_eq!(compare["exit_code"], exit_code);
+        assert_eq!(
+            compare["report_path"],
+            compare_report.to_str().expect("utf8")
+        );
+
+        let saved: Value =
+            serde_json::from_slice(&fs::read(&compare_report).expect("read comparison"))
+                .expect("comparison report");
+        assert_eq!(saved["baseline"], baseline.to_str().expect("utf8"));
+        assert_eq!(saved["current"], current.to_str().expect("utf8"));
+        assert_eq!(saved["ok"], exit_code == 0);
+        let types: Vec<_> = saved["regressions"]
+            .as_array()
+            .expect("regressions")
+            .iter()
+            .map(|regression| regression["type"].as_str().expect("regression type"))
+            .collect();
+        assert_eq!(types, regression_types);
+    }
 }
 
 #[test]
