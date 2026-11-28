@@ -49,8 +49,10 @@ that needs manual coding.
 The listener and worker use a durable local SQLite queue in
 `.sync-queue/upstream-events.db`. Existing `--backend sqlite` and
 `UPSTREAM_SYNC_BACKEND=sqlite` settings still work. SQS and Kafka settings
-are rejected at startup. Set the backend to SQLite before restarting either
-service if an older configuration named a retired backend.
+are rejected at startup. If an older configuration used SQS or Kafka, pause
+new intake and use the previous release to finish or account for every pending
+delivery before upgrading. Set the backend to SQLite before restarting either
+service.
 
 ## End-to-End Flow
 
