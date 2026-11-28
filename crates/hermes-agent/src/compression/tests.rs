@@ -457,16 +457,20 @@ mod tests {
         assert_eq!(narrow[5].content.as_deref(), Some(PRUNED_TOOL_PLACEHOLDER));
         assert_eq!(narrow[7].content.as_deref(), Some(recent.as_str()));
 
+        let (minimum, minimum_count) = compressor.prune_old_tool_results(&messages, 3, Some(1));
+        assert_eq!(minimum_count, 1);
+        assert_eq!(minimum[5].content.as_deref(), Some(middle.as_str()));
+
         let (roomy, roomy_count) = compressor.prune_old_tool_results(&messages, 2, Some(220));
         assert_eq!(roomy_count, 1);
         assert_eq!(roomy[1].content.as_deref(), Some(PRUNED_TOOL_PLACEHOLDER));
         assert_eq!(roomy[5].content.as_deref(), Some(middle.as_str()));
         assert_eq!(roomy[7].content.as_deref(), Some(recent.as_str()));
         assert_eq!(messages[1].content.as_deref(), Some(old.as_str()));
-        assert_eq!(
-            compressor.prune_old_tool_results(&messages, messages.len(), Some(1)).1,
-            0
-        );
+        let clipped = &messages[1..];
+        let (whole, whole_count) = compressor.prune_old_tool_results(clipped, clipped.len(), Some(1));
+        assert_eq!(whole_count, 0);
+        assert_eq!(whole[0].content.as_deref(), Some(old.as_str()));
         assert!(
             compressor
                 .prune_old_tool_results(&[], 2, Some(1))
