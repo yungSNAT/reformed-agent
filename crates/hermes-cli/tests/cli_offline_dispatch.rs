@@ -291,11 +291,12 @@ async fn offline_insights_counts_recent_sessions_for_the_selected_source() {
     ] {
         fs::write(sessions.join(name), session.to_string()).unwrap();
     }
+    let old = SystemTime::now() - Duration::from_secs(14 * 24 * 60 * 60);
     OpenOptions::new()
         .write(true)
         .open(sessions.join("old.json"))
         .unwrap()
-        .set_times(FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
+        .set_times(FileTimes::new().set_modified(old))
         .unwrap();
     fs::write(sessions.join("malformed.json"), "{").unwrap();
     fs::create_dir(sessions.join("directory.json")).unwrap();
@@ -317,14 +318,20 @@ async fn offline_insights_counts_recent_sessions_for_the_selected_source() {
         "Estimated cost: $0.1250",
         "Averages per session:",
         "Messages: 1.5",
+        "Tokens:   7",
     ] {
-        assert!(text.contains(expected), "missing {expected:?} in {text}");
+        assert!(
+            text.lines().any(|line| line.trim_start() == expected),
+            "missing {expected:?} in {text}"
+        );
     }
     let model = text
         .lines()
         .find(|line| line.starts_with("  fixture-model"))
         .unwrap();
-    assert!(model.ends_with("2 session(s)"));
+    assert!(model
+        .split_whitespace()
+        .eq(["fixture-model", "2", "session(s)"]));
     assert!(!text.contains("ignored-model"));
     assert!(!text.contains("unknown-source-model"));
 }
@@ -332,13 +339,15 @@ async fn offline_insights_counts_recent_sessions_for_the_selected_source() {
 #[tokio::test]
 async fn offline_dump_exports_the_selected_snapshot_and_reports_output_errors() {
     use serde_json::{json, Value};
-    use std::fs;
+    use std::fs::{self, FileTimes, OpenOptions};
+    use std::time::SystemTime;
 
     let sandbox = tempfile::tempdir().unwrap();
     let sessions = sandbox.path().join("hermes/sessions");
     fs::create_dir_all(&sessions).unwrap();
+    let requested = sessions.join("fixture.json");
     fs::write(
-        sessions.join("fixture.json"),
+        &requested,
         json!({
             "session_info": {
                 "session_id": "fixture-session",
@@ -348,6 +357,22 @@ async fn offline_dump_exports_the_selected_snapshot_and_reports_output_errors() 
                 {"role": "System", "content": "Keep the sample local"},
                 {"role": "User", "content": "Summarise the sample"}
             ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let earlier = SystemTime::now() - Duration::from_secs(60);
+    OpenOptions::new()
+        .write(true)
+        .open(requested)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(earlier))
+        .unwrap();
+    fs::write(
+        sessions.join("newer.json"),
+        json!({
+            "session_info": {"session_id": "newer-session"},
+            "messages": [{"role": "User", "content": "A different sample"}]
         })
         .to_string(),
     )
