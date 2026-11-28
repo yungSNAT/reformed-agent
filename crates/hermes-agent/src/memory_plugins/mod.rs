@@ -214,6 +214,21 @@ mod tests {
                 .env("PATH", home.path())
                 .current_dir(home.path())
                 .args(["--exact", &test]);
+            if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+                let profile = std::path::PathBuf::from(profile);
+                let profile = if profile.starts_with("%t") {
+                    if let Some(temp) = std::env::var_os("TMPDIR").filter(|path| !path.is_empty()) {
+                        command.env(
+                            "TMPDIR",
+                            std::path::absolute(temp).expect("absolute temporary directory"),
+                        );
+                    }
+                    profile
+                } else {
+                    std::path::absolute(profile).expect("absolute LLVM profile path")
+                };
+                command.env("LLVM_PROFILE_FILE", profile);
+            }
             #[cfg(windows)]
             if let Some(system_root) = std::env::var_os("SystemRoot") {
                 command.env("SystemRoot", system_root);
