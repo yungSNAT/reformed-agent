@@ -282,6 +282,7 @@ fn read_swarm_pass_cap() -> usize {
 fn latest_quorum_artifact_path(app: &App) -> Option<PathBuf> {
     let dir = app.state_root.join("quorum");
     let entries = std::fs::read_dir(&dir).ok()?;
+    let session_prefix = format!("{}-", app.session_id);
     let mut best_session: Option<(SystemTime, PathBuf)> = None;
     let mut best_any: Option<(SystemTime, PathBuf)> = None;
     for entry in entries.flatten() {
@@ -294,11 +295,10 @@ fn latest_quorum_artifact_path(app: &App) -> Option<PathBuf> {
             .ok()
             .and_then(|m| m.modified().ok())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        if let Some((best_time, _)) = &best_any {
-            if modified > *best_time {
-                best_any = Some((modified, path.clone()));
-            }
-        } else {
+        if best_any
+            .as_ref()
+            .is_none_or(|(best_time, _)| modified > *best_time)
+        {
             best_any = Some((modified, path.clone()));
         }
 
@@ -306,15 +306,12 @@ fn latest_quorum_artifact_path(app: &App) -> Option<PathBuf> {
             .file_name()
             .and_then(|v| v.to_str())
             .unwrap_or_default();
-        if !file_name.starts_with(&format!("{}-", app.session_id)) {
-            continue;
-        }
-        if let Some((best_time, _)) = &best_session {
-            if modified > *best_time {
-                best_session = Some((modified, path.clone()));
-            }
-        } else {
-            best_session = Some((modified, path.clone()));
+        if file_name.starts_with(&session_prefix)
+            && best_session
+                .as_ref()
+                .is_none_or(|(best_time, _)| modified > *best_time)
+        {
+            best_session = Some((modified, path));
         }
     }
     best_session.or(best_any).map(|(_, path)| path)
