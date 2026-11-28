@@ -639,19 +639,46 @@
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
 
-        let result =
-            handle_image_command(&mut app, &["/tmp/example-image.png"]).expect("image queue");
+        let result = handle_image_command(&mut app, &[]).expect("image status");
         assert_eq!(result, CommandResult::Handled);
-        assert_eq!(app.pending_image_hint(), Some("/tmp/example-image.png"));
-        assert!(latest_ui_assistant_text(&app).contains("Image hint queued"));
+        assert!(latest_ui_assistant_text(&app).contains("No pending image hint."));
+
+        let missing = tmp.path().join("missing.png");
+        let missing = missing.to_str().expect("fixture path");
+        let result = handle_image_command(&mut app, &[missing]).expect("queue missing image");
+        assert_eq!(result, CommandResult::Handled);
+        assert_eq!(app.pending_image_hint(), Some(missing));
+        assert!(latest_ui_assistant_text(&app).contains("(path not found right now)"));
+
+        let result = handle_image_command(&mut app, &[" "]).expect("blank image path");
+        assert_eq!(result, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).contains("Usage: /image <path> | /image clear"));
+        assert_eq!(app.pending_image_hint(), Some(missing));
+
+        let existing = tmp.path().join("fixture image.png");
+        std::fs::File::create(&existing).expect("create fixture");
+        let existing = existing.to_str().expect("fixture path");
+        let result = handle_image_command(&mut app, &[existing]).expect("queue existing image");
+        assert_eq!(result, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).contains(&format!("Image hint queued: `{existing}`.")));
+
+        let result = handle_image_command(&mut app, &[]).expect("pending image status");
+        assert_eq!(result, CommandResult::Handled);
+        assert!(latest_ui_assistant_text(&app).contains(&format!("Pending image hint: {existing}")));
 
         let prepared = app.prepare_user_message("analyze the screenshot");
-        assert!(prepared.starts_with("[IMAGE_HINT] path=/tmp/example-image.png"));
+        assert_eq!(
+            prepared,
+            format!("[IMAGE_HINT] path={existing}\nanalyze the screenshot")
+        );
         assert!(app.pending_image_hint().is_none());
 
+        handle_image_command(&mut app, &[missing]).expect("requeue image hint");
+        assert_eq!(app.pending_image_hint(), Some(missing));
         let cleared = handle_image_command(&mut app, &["clear"]).expect("image clear");
         assert_eq!(cleared, CommandResult::Handled);
         assert!(latest_ui_assistant_text(&app).contains("Cleared pending image hint"));
+        assert!(app.pending_image_hint().is_none());
     }
 
     #[tokio::test]
