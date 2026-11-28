@@ -797,8 +797,8 @@ mod tests {
         let named = format!("k1={public}");
         let home = tempfile::tempdir().unwrap();
         let cwd = std::env::current_dir().unwrap();
-        let exe = cwd.join(std::env::args_os().next().expect("Cargo test executable"));
-        assert!(exe.is_file(), "Cargo test executable is missing: {exe:?}");
+        // Re-run this Cargo test binary with an isolated environment.
+        let exe = std::env::current_exe().expect("Cargo test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
         for (case, value) in [
             ("unlabelled", public.as_str()),
             ("named", named.as_str()),

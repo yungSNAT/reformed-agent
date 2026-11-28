@@ -32,18 +32,26 @@ async fn oneshot_diff_reads_the_terminal_workspace_and_reports_dispatch_errors()
     std::fs::write(workspace.join("field notes.txt"), "Park survey\n").unwrap();
     std::fs::write(workspace.join("other.txt"), "Separate notes\n").unwrap();
 
-    let mut git = std::process::Command::new("git");
+    let mut git = tokio::process::Command::new("git");
     git.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", sandbox.path())
         .env("USERPROFILE", sandbox.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", sandbox.path().join("gitconfig"))
-        .current_dir(&workspace);
+        .current_dir(&workspace)
+        .kill_on_drop(true);
+    #[cfg(windows)]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         git.env("SystemRoot", system_root);
     }
-    let init = git.args(["init", "-q", "--template="]).output().unwrap();
+    let init = tokio::time::timeout(
+        Duration::from_secs(30),
+        git.args(["init", "-q", "--template="]).output(),
+    )
+    .await
+    .expect("fixture git init timed out")
+    .expect("initialise fixture git repository");
     assert!(
         init.status.success(),
         "{}",
