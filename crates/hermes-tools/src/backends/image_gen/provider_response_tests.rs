@@ -371,7 +371,8 @@ async fn image_providers_report_incomplete_response_bodies_without_caching() {
     let codex = OpenAICodexImageGenBackend {
         client: compatible.client.clone(),
         config: OpenAICodexImageGenConfig {
-            access_token: Some("fixture-only".into()),
+            // The token is a placeholder sent only to the loopback listener above.
+            access_token: Some("fixture-only".into()), // nosemgrep: codacy.yaml.security.hard-coded-tokens
             base_url: base_url.clone(),
             chat_model: "fixture-chat-model".into(),
             tier_id: "gpt-image-2-low".into(),
