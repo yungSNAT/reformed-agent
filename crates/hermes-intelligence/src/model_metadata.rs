@@ -526,12 +526,9 @@ pub fn build_model_switch_preflight_warning(
 }
 
 fn estimate_message_tokens_rough(message: &serde_json::Value) -> u64 {
-    let Some(content) = message.get("content") else {
+    let Some(parts) = message.get("content").and_then(serde_json::Value::as_array) else {
         return estimate_tokens_rough(&message.to_string());
     };
-    if !content.is_array() {
-        return estimate_tokens_rough(&message.to_string());
-    }
 
     let mut envelope = message.clone();
     if let Some(obj) = envelope.as_object_mut() {
@@ -541,18 +538,10 @@ fn estimate_message_tokens_rough(message: &serde_json::Value) -> u64 {
         );
     }
 
-    estimate_tokens_rough(&envelope.to_string()) + estimate_content_tokens_rough(content)
+    estimate_tokens_rough(&envelope.to_string()) + estimate_content_tokens_rough(parts)
 }
 
-fn estimate_content_tokens_rough(content: &serde_json::Value) -> u64 {
-    if let Some(text) = content.as_str() {
-        return estimate_tokens_rough(text);
-    }
-
-    let Some(parts) = content.as_array() else {
-        return estimate_tokens_rough(&content.to_string());
-    };
-
+fn estimate_content_tokens_rough(parts: &[serde_json::Value]) -> u64 {
     parts
         .iter()
         .map(|part| {
@@ -830,6 +819,34 @@ mod tests {
         assert_eq!(estimate_tokens_rough("hello world"), 3); // 11 chars -> 3
         assert_eq!(estimate_tokens_rough("hi"), 1); // 2 chars -> ceiling(5/4) = 1
         assert_eq!(estimate_tokens_rough("你好世界"), 1); // 4 Unicode chars -> 1
+    }
+
+    #[test]
+    fn estimates_text_and_unknown_blocks_in_mixed_content() {
+        let message = serde_json::json!({
+            "role": "user",
+            "content": ["plain", {"text": "abcdefgh"}, {"note": true}, {"type": "input_image"}]
+        });
+        let envelope = serde_json::json!({"role": "user", "content": ""});
+        assert_eq!(
+            estimate_messages_tokens_rough(&[message]),
+            estimate_tokens_rough(&envelope.to_string()) + 8 + IMAGE_TOKEN_ESTIMATE
+        );
+    }
+
+    #[test]
+    fn estimates_whole_messages_for_non_array_content() {
+        for message in [
+            serde_json::json!({"role": "user", "content": "plain text"}),
+            serde_json::json!({"role": "user", "content": null}),
+            serde_json::json!({"role": "user"}),
+        ] {
+            let serialised = message.to_string();
+            assert_eq!(
+                estimate_messages_tokens_rough(&[message]),
+                estimate_tokens_rough(&serialised)
+            );
+        }
     }
 
     #[test]
