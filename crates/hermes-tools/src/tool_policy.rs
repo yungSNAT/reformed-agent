@@ -1087,6 +1087,7 @@ mod tests {
     #[test]
     fn policy_annotations_preserve_plain_text_and_array_results() {
         let reason = "fixture policy decision";
+        let warning = Value::String(reason.to_owned());
         for result in ["fixture result", r#"["fixture result"]"#] {
             let audit: Value =
                 serde_json::from_str(&annotate_policy_audit(result, reason)).unwrap();
@@ -1109,12 +1110,9 @@ mod tests {
                     simulation["_tool_policy_simulation"],
                     serde_json::json!({"mode": "simulate", "would_block": would_block, "reason": reason, "code": code})
                 );
-                let expected_warning = would_block.then_some(reason);
                 assert_eq!(
-                    simulation
-                        .get("_tool_policy_warning")
-                        .and_then(Value::as_str),
-                    expected_warning
+                    simulation.get("_tool_policy_warning"),
+                    would_block.then_some(&warning)
                 );
             }
         }
