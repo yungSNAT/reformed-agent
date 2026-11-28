@@ -1,6 +1,70 @@
 use super::*;
 
 #[tokio::test]
+async fn quick_aliases_preserve_arguments_and_report_resolution() {
+    let cases = [
+        (
+            "later",
+            " /queue ",
+            "review the notes",
+            "🧵 Queued follow-up for the active session: review the notes",
+        ),
+        (
+            "guide",
+            "/steer",
+            "use the draft",
+            "🧭 Steering instruction accepted: use the draft",
+        ),
+        (
+            "modelpick",
+            "/model",
+            "fixture-model",
+            "🔀 Model switch alias parsed: fixture-model",
+        ),
+        (
+            "label",
+            "/title",
+            "Review notes",
+            "🏷 Session title set to: Review notes",
+        ),
+        (
+            "showlabel",
+            "/title",
+            "",
+            "Quick command `showlabel` routed to `/title`.",
+        ),
+        (
+            "empty",
+            " ",
+            "",
+            "Quick command `empty` has no target defined.",
+        ),
+    ];
+    let mut config = GatewayConfig::default();
+    for (name, target, _, _) in cases {
+        config.quick_commands.insert(
+            name.to_owned(),
+            QuickCommandConfig {
+                kind: "alias".to_owned(),
+                target: Some(target.to_owned()),
+                ..Default::default()
+            },
+        );
+    }
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let gateway = Gateway::with_defaults(sessions, config);
+
+    for (name, _, arguments, expected) in cases {
+        let input = format!("/{name} {arguments}");
+        let reply = gateway
+            .resolve_quick_command(input.trim_end())
+            .await
+            .unwrap();
+        assert_eq!(reply.as_deref(), Some(expected), "{input}");
+    }
+}
+
+#[tokio::test]
 async fn smart_routing_keeps_an_explicit_session_model_and_uses_defaults_for_new_sessions() {
     let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
     let gateway = Gateway::new(
