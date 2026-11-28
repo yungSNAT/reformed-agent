@@ -775,27 +775,35 @@ mod tests {
         let payload = signed_skill_payload(&skill).unwrap();
         let base64 = base64::engine::general_purpose::STANDARD;
         if let Ok(case) = std::env::var(CHILD) {
-            let signature = format!(
-                "ed25519:{}",
-                base64.encode(signing.sign(&payload).to_bytes())
-            );
-            let result = verify_skill_signature(&skill, &signature);
-            if case == "configured" {
-                result.unwrap();
+            let encoded = base64.encode(signing.sign(&payload).to_bytes());
+            let signature = if case == "named" {
+                format!("ed25519:k1:{encoded}")
             } else {
+                format!("ed25519:{encoded}")
+            };
+            let result = verify_skill_signature(&skill, &signature);
+            if case == "empty" {
                 assert!(matches!(
                     result,
                     Err(SkillError::HubError(message)) if message.contains("is empty; refusing unsigned trust")
                 ));
+            } else {
+                result.unwrap();
             }
             return;
         }
 
         let public = base64.encode(signing.verifying_key().as_bytes());
+        let named = format!("k1={public}");
         let home = tempfile::tempdir().unwrap();
         let cwd = std::env::current_dir().unwrap();
-        let exe = cwd.join(std::env::args_os().next().expect("test executable"));
-        for (case, value) in [("configured", public.as_str()), ("empty", "")] {
+        let exe = cwd.join(std::env::args_os().next().expect("Cargo test executable"));
+        assert!(exe.is_file(), "Cargo test executable is missing: {exe:?}");
+        for (case, value) in [
+            ("unlabelled", public.as_str()),
+            ("named", named.as_str()),
+            ("empty", ""),
+        ] {
             let mut child = tokio::process::Command::new(&exe);
             child
                 .env_clear()
