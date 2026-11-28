@@ -762,8 +762,9 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_verify_skill_signature_ed25519_ok() {
+    #[tokio::test]
+    async fn verify_skill_signature_reads_isolated_trust_config() {
+        const CHILD: &str = "HERMES_TEST_SKILLS_HUB_TRUST_CHILD";
         let skill = Skill {
             name: "test".to_string(),
             content: "hello".to_string(),
@@ -772,16 +773,59 @@ mod tests {
         };
         let signing = SigningKey::from_bytes(&[7u8; 32]);
         let payload = signed_skill_payload(&skill).unwrap();
-        let signature = signing.sign(&payload);
-        let parsed = ParsedSignature {
-            key_id: Some("k1".to_string()),
-            signature,
-        };
-        let trusted = vec![TrustedHubKey {
-            key_id: Some("k1".to_string()),
-            key: signing.verifying_key(),
-        }];
-        assert!(verify_skill_signature_with_keys(&skill, &parsed, &trusted).is_ok());
+        let base64 = base64::engine::general_purpose::STANDARD;
+        if let Ok(case) = std::env::var(CHILD) {
+            let signature = format!(
+                "ed25519:{}",
+                base64.encode(signing.sign(&payload).to_bytes())
+            );
+            let result = verify_skill_signature(&skill, &signature);
+            if case == "configured" {
+                result.unwrap();
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(SkillError::HubError(message)) if message.contains("is empty; refusing unsigned trust")
+                ));
+            }
+            return;
+        }
+
+        let public = base64.encode(signing.verifying_key().as_bytes());
+        let home = tempfile::tempdir().unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        let exe = cwd.join(std::env::args_os().next().expect("test executable"));
+        for (case, value) in [("configured", public.as_str()), ("empty", "")] {
+            let mut child = tokio::process::Command::new(&exe);
+            child
+                .env_clear()
+                .env(CHILD, case)
+                .env(HUB_TRUSTED_KEYS_ENV, value)
+                .env("HOME", home.path())
+                .env("USERPROFILE", home.path())
+                .current_dir(home.path())
+                .kill_on_drop(true)
+                .args([
+                    "--exact",
+                    "hub::tests::verify_skill_signature_reads_isolated_trust_config",
+                ]);
+            if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+                child.env("LLVM_PROFILE_FILE", cwd.join(profile));
+            }
+            if let Some(root) = std::env::var_os("SystemRoot") {
+                child.env("SystemRoot", root);
+            }
+            let output = tokio::time::timeout(std::time::Duration::from_secs(20), child.output())
+                .await
+                .expect("skills hub trust fixture timed out")
+                .expect("run skills hub trust fixture");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{case}: {stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     #[test]
