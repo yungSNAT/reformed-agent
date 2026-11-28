@@ -706,7 +706,8 @@ mod tests {
         let test = "memory_manager::tests::test_memory_fusion_prefetch_respects_trace_settings";
         for mode in ["on", "off"] {
             let home = tempfile::tempdir().unwrap();
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            // Re-run this libtest fixture with a separate home and environment.
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
             command
                 .env_clear()
                 .env(CHILD, mode)

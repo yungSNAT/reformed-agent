@@ -785,9 +785,10 @@ mod tests {
                 Ok(LlmResponse {
                     message: Message::assistant("done"),
                     usage: Some(UsageStats {
-                        prompt_tokens: 11,
-                        completion_tokens: 7,
-                        total_tokens: 18,
+                        // Fixture usage counts returned by the fake model.
+                        prompt_tokens: 11, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+                        completion_tokens: 7, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+                        total_tokens: 18,  // nosemgrep: codacy.yaml.security.hard-coded-tokens
                         ..UsageStats::default()
                     }),
                     model: "recording".into(),
