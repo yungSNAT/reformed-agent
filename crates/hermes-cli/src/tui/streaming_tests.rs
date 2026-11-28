@@ -94,6 +94,33 @@ fn streaming_counts_each_character_once_and_applies_controls() {
 }
 
 #[test]
+fn streaming_raw_deltas_record_only_one_first_token() {
+    if !crate::isolated_test_profile::enter(
+        "tui::tests::streaming_raw_deltas_record_only_one_first_token",
+    ) {
+        return;
+    }
+    let mut app = build_test_app(&hermes_config::hermes_home());
+    let mut state = TuiState {
+        processing_started_at: Some(Instant::now()),
+        ..TuiState::default()
+    };
+    for delta in ["café", " ready"] {
+        assert!(process_stream_lane_event(
+            &mut app,
+            &mut state,
+            Event::StreamDelta(delta.to_owned())
+        ));
+    }
+    assert_eq!(state.stream_buffer, "café ready");
+    assert_eq!(state.stream_chunk_count, 2);
+    assert_eq!(state.stream_char_count, 10);
+    assert!(state.saw_first_token);
+    assert_eq!(state.recent_activity.len(), 1);
+    assert!(state.recent_activity[0].contains("first token in "));
+}
+
+#[test]
 fn streaming_tracks_tools_thinking_phases_fallbacks_and_usage() {
     if !crate::isolated_test_profile::enter(
         "tui::tests::streaming_tracks_tools_thinking_phases_fallbacks_and_usage",
@@ -210,4 +237,25 @@ fn streaming_tracks_tools_thinking_phases_fallbacks_and_usage() {
         assert!(activity.contains(expected), "{activity}");
     }
     assert!(!activity.contains("t=20"));
+
+    send(
+        &mut app,
+        &mut state,
+        serde_json::json!({"ui_event": "tool_complete", "tool": " fixture_write "}),
+    );
+    assert!(state.active_tools.is_empty());
+    assert!(state
+        .recent_activity
+        .last()
+        .unwrap()
+        .ends_with("✓ fixture_write"));
+
+    send(
+        &mut app,
+        &mut state,
+        serde_json::json!({"ui_event": "moa_reference", "text": "Reference without a label."}),
+    );
+    assert!(state
+        .live_thinking
+        .contains("MoA reference reference: Reference without a label."));
 }
