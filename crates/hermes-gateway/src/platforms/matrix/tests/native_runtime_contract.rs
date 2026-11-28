@@ -351,6 +351,71 @@ async fn native_runtime_reuses_whoami_device_and_reconciles_generated_keys() {
 }
 
 #[tokio::test]
+async fn native_outgoing_dispatch_sends_keys_and_room_requests() {
+    use matrix_sdk_crypto::types::requests::RoomMessageRequest;
+    use ruma::events::room::message::RoomMessageEventContent;
+
+    let server = MockServer::start().await;
+    let mut adapter = adapter_for_matrix_fixture(&server);
+    adapter.native_decrypt = Some(MatrixNativeDecryptConfig {
+        device_id_override: Some("FIXTUREDEVICE".into()),
+    });
+    let runtime = adapter.ensure_native_runtime().await.unwrap().unwrap();
+    let peer_keys = BTreeMap::from([(
+        ruma::user_id!("@peer:test").to_owned(),
+        BTreeMap::from([(
+            ruma::device_id!("PEERDEVICE").to_owned(),
+            OneTimeKeyAlgorithm::SignedCurve25519,
+        )]),
+    )]);
+    let transaction = ruma::TransactionId::new();
+    let content = RoomMessageEventContent::text_plain("Working notes");
+    let requests = [
+        (
+            AnyOutgoingRequest::from(claim_keys::v3::Request::new(peer_keys)),
+            Mock::given(method("POST"))
+                .and(path("/_matrix/client/v3/keys/claim"))
+                .and(body_partial_json(json!({
+                    "one_time_keys": {"@peer:test": {"PEERDEVICE": "signed_curve25519"}},
+                }))),
+            json!({"one_time_keys": {}}),
+        ),
+        (
+            AnyOutgoingRequest::from(upload_signatures::v3::Request::new(BTreeMap::new())),
+            Mock::given(method("POST"))
+                .and(path("/_matrix/client/v3/keys/signatures/upload"))
+                .and(body_json(json!({}))),
+            json!({"failures": {}}),
+        ),
+        (
+            AnyOutgoingRequest::from(RoomMessageRequest {
+                room_id: ruma::room_id!("!room:test").to_owned(),
+                txn_id: transaction.clone(),
+                content: Box::new(content.into()),
+            }),
+            Mock::given(method("PUT"))
+                .and(path_regex(format!(
+                    r"^/_matrix/client/v3/rooms/(?:!|%21)room(?::|%3[Aa])test/send/m\.room\.message/{transaction}$"
+                )))
+                .and(body_json(json!({"msgtype": "m.text", "body": "Working notes"}))),
+            json!({"event_id": "$fixture"}),
+        ),
+    ];
+    for (request, mock, response) in requests {
+        mock.and(header("Authorization", "Bearer matrix-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .expect(1)
+            .mount(&server)
+            .await;
+        adapter
+            .send_native_outgoing_request(&runtime, &transaction, &request)
+            .await
+            .unwrap();
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn native_to_device_delivers_an_event_and_reports_homeserver_failures() {
     let server = MockServer::start().await;
     let mut adapter = adapter_for_matrix_fixture(&server);

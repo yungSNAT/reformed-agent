@@ -251,7 +251,8 @@ impl MatrixAdapter {
             }
 
             for request in requests {
-                self.send_native_outgoing_request(runtime, request).await?;
+                self.send_native_outgoing_request(runtime, request.request_id(), request.request())
+                    .await?;
             }
         }
         Ok(())
@@ -260,10 +261,10 @@ impl MatrixAdapter {
     async fn send_native_outgoing_request(
         &self,
         runtime: &Arc<MatrixNativeDecryptRuntime>,
-        request: matrix_sdk_crypto::types::requests::OutgoingRequest,
+        request_id: &ruma::TransactionId,
+        request: &AnyOutgoingRequest,
     ) -> Result<(), GatewayError> {
-        let request_id = request.request_id();
-        match request.request() {
+        match request {
             AnyOutgoingRequest::KeysUpload(req) => {
                 let request = self.build_ruma_request(req.clone(), "keys/upload")?;
                 let response = self.execute_ruma_request(request, "keys/upload").await?;
