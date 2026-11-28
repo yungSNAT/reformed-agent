@@ -8,17 +8,19 @@ use std::time::Duration;
 use tokio::process::Command;
 
 fn fixture() -> tempfile::TempDir {
-    let built_wrapper = Path::new(env!("CARGO_BIN_EXE_hermes-ultra"));
-    let target_dir = built_wrapper.parent().unwrap().canonicalize().unwrap();
-    tempfile::Builder::new()
+    let built_wrapper = Path::new(env!("CARGO_BIN_EXE_hermes-ultra"))
+        .canonicalize()
+        .unwrap();
+    let root = tempfile::Builder::new()
         .prefix("ultra-wrapper-")
-        .tempdir_in(target_dir)
-        .unwrap()
+        .tempdir_in(built_wrapper.parent().unwrap())
+        .unwrap();
+    std::fs::hard_link(built_wrapper, root.path().join("hermes-ultra")).unwrap();
+    root
 }
 
 fn isolated_wrapper(root: &Path) -> Command {
     let wrapper = root.join("hermes-ultra");
-    std::fs::copy(env!("CARGO_BIN_EXE_hermes-ultra"), &wrapper).unwrap();
     let mut command = Command::new(wrapper);
     command
         .current_dir(root)
