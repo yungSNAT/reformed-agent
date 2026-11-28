@@ -217,7 +217,8 @@ ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH" "${REPO_ROOT}/.s
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_GATE" "0"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "${DEFAULT_ELITE_CMD}"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_ROLLBACK_CMD" ""
-for legacy in "${LEGACY_ELITE_CMD}" "${LEGACY_ELITE_CMD_QUOTED}" "${DEFAULT_ELITE_CMD}"; do
+for legacy in "${LEGACY_ELITE_CMD}" "${LEGACY_ELITE_CMD_QUOTED}" \
+  "'${LEGACY_ELITE_CMD}'" "\"${LEGACY_ELITE_CMD}\"" "${DEFAULT_ELITE_CMD}"; do
   if grep -Fxq "UPSTREAM_SYNC_ELITE_CMD=${legacy}" "${ENV_FILE}"; then
     replace_env_value "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "${legacy}" "${DEFAULT_ELITE_CMD}"
   fi

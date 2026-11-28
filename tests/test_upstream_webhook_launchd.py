@@ -138,21 +138,17 @@ class WebhookLaunchdTests(unittest.TestCase):
             run(install)
             self.assertEqual(run(read_settings), expected)
 
-            config.write_text(
-                "UPSTREAM_SYNC_ELITE_CMD=python3 scripts/run-elite-sync-gate.py\n"
-                "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH='custom report path'\n",
-            )
-            run(install)
             expected[0] = ""
             expected[2] = "custom report path"
-            self.assertEqual(run(read_settings), expected)
-
-            config.write_text(
-                "UPSTREAM_SYNC_ELITE_CMD=python3\\ scripts/run-elite-sync-gate.py\n"
-                "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH='custom report path'\n",
-            )
-            run(install)
-            self.assertEqual(run(read_settings), expected)
+            legacy = "python3 scripts/run-elite-sync-gate.py"
+            for assignment in (legacy, legacy.replace(" ", "\\ "), f"'{legacy}'", f'"{legacy}"'):
+                with self.subTest(assignment=assignment):
+                    config.write_text(
+                        f"UPSTREAM_SYNC_ELITE_CMD={assignment}\n"
+                        "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH='custom report path'\n",
+                    )
+                    run(install)
+                    self.assertEqual(run(read_settings), expected)
 
             config.write_text(
                 f"UPSTREAM_SYNC_ELITE_CMD={default_elite_cmd}\n"
