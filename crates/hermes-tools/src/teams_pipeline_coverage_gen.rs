@@ -169,19 +169,22 @@ fn errors_keep_their_category_and_original_message() {
     }
 }
 
-fn run_exact_test_in_child(name: &str, configure: impl FnOnce(&mut std::process::Command)) {
-    let (_, module) = module_path!().split_once("::").unwrap();
+pub(crate) fn run_exact_test_in_child(
+    test: &str,
+    configure: impl FnOnce(&mut std::process::Command),
+) {
+    let (_, test_name) = test.split_once("::").unwrap();
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-    command
-        .arg("--exact")
-        .arg(format!("{module}::{name}"))
-        .arg("--nocapture");
+    command.arg("--exact").arg(test_name).arg("--nocapture");
     configure(&mut command);
     let output = command.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        output.status.success() && stdout.lines().any(|line| line == "running 1 test"),
-        "isolated test {name} failed or did not run:\n{stdout}\n{}",
+        output.status.success()
+            && stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed;")),
+        "isolated test {test} failed or did not run:\n{stdout}\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -218,7 +221,10 @@ fn store_path_uses_explicit_then_environment_then_temporary_home() {
         ("blank", " \t "),
     ] {
         run_exact_test_in_child(
-            "store_path_uses_explicit_then_environment_then_temporary_home",
+            concat!(
+                module_path!(),
+                "::store_path_uses_explicit_then_environment_then_temporary_home"
+            ),
             |command| {
                 command
                     .env(MODE, mode)
@@ -489,7 +495,10 @@ async fn ffmpeg_outcomes_use_only_a_temporary_executable() {
 
     for (mode, path) in [("missing", &empty_bin), ("stub", &bin)] {
         run_exact_test_in_child(
-            "ffmpeg_outcomes_use_only_a_temporary_executable",
+            concat!(
+                module_path!(),
+                "::ffmpeg_outcomes_use_only_a_temporary_executable"
+            ),
             |command| {
                 command
                     .env(MODE, mode)

@@ -473,30 +473,25 @@ mod tests {
     #[test]
     fn provider_inventory_reports_presence_and_capabilities_in_an_isolated_home() {
         let home = tempdir().unwrap();
-        let (_, module) = module_path!().split_once("::").unwrap();
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .env_clear()
-            .env(INVENTORY_FIXTURE, "1")
-            .env("HOME", home.path())
-            .env("USERPROFILE", home.path())
-            .env("HERMES_HOME", home.path())
-            .env("HERMES_AUTH_PROVIDER_POOL", " , openrouter, nous")
-            .env("OPENROUTER_API_KEY", INVENTORY_VALUE)
-            .env("AWS_PROFILE", "fixture")
-            .envs(
-                ["LLVM_PROFILE_FILE", "SystemRoot", "WINDIR"]
-                    .into_iter()
-                    .filter_map(|name| std::env::var_os(name).map(|value| (name, value))),
-            )
-            .args(["--ignored", "--exact"])
-            .arg(format!("{module}::isolated_auth_provider_inventory"))
-            .output()
-            .unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success() && stdout.contains("1 passed"),
-            "{stdout}\n{stderr}"
+        crate::teams_pipeline::run_exact_test_in_child(
+            concat!(module_path!(), "::isolated_auth_provider_inventory"),
+            |command| {
+                command
+                    .env_clear()
+                    .env(INVENTORY_FIXTURE, "1")
+                    .env("HOME", home.path())
+                    .env("USERPROFILE", home.path())
+                    .env("HERMES_HOME", home.path())
+                    .env("HERMES_AUTH_PROVIDER_POOL", " , openrouter, nous")
+                    .env("OPENROUTER_API_KEY", INVENTORY_VALUE)
+                    .env("AWS_PROFILE", "fixture")
+                    .envs(
+                        ["LLVM_PROFILE_FILE", "SystemRoot", "WINDIR"]
+                            .into_iter()
+                            .filter_map(|name| std::env::var_os(name).map(|value| (name, value))),
+                    )
+                    .arg("--ignored");
+            },
         );
     }
 

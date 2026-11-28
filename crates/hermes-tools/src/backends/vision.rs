@@ -585,24 +585,19 @@ mod tests {
 
     #[test]
     fn vision_uses_provider_defaults_in_an_isolated_environment() {
-        let (_, module) = module_path!().split_once("::").unwrap();
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .env_clear()
-            .env(ISOLATED_DEFAULTS, "1")
-            .envs(
-                ["LLVM_PROFILE_FILE", "SystemRoot", "WINDIR"]
-                    .into_iter()
-                    .filter_map(|name| std::env::var_os(name).map(|value| (name, value))),
-            )
-            .args(["--ignored", "--exact"])
-            .arg(format!("{module}::isolated_vision_provider_defaults"))
-            .output()
-            .unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success() && stdout.contains("1 passed"),
-            "{stdout}\n{stderr}"
+        crate::teams_pipeline::run_exact_test_in_child(
+            concat!(module_path!(), "::isolated_vision_provider_defaults"),
+            |command| {
+                command
+                    .env_clear()
+                    .env(ISOLATED_DEFAULTS, "1")
+                    .envs(
+                        ["LLVM_PROFILE_FILE", "SystemRoot", "WINDIR"]
+                            .into_iter()
+                            .filter_map(|name| std::env::var_os(name).map(|value| (name, value))),
+                    )
+                    .arg("--ignored");
+            },
         );
     }
 
