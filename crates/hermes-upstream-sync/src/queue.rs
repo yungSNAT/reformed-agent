@@ -1,6 +1,4 @@
-//! Queue backends. SQLite is the default and the only one ported so far; the
-//! listener and worker see a backend only through these traits, so SQS or
-//! Kafka can be added beside it.
+//! Durable local SQLite queue for the webhook listener and worker.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

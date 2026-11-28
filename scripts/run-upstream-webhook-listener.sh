@@ -52,10 +52,6 @@ EXPECTED_REPO="${UPSTREAM_SYNC_EXPECTED_REPO:-NousResearch/hermes-agent}"
 EXPECTED_REF="${UPSTREAM_SYNC_EXPECTED_REF:-refs/heads/main}"
 
 SQLITE_PATH="${UPSTREAM_SYNC_SQLITE_PATH:-${REPO_ROOT}/.sync-queue/upstream-events.db}"
-SQS_QUEUE_URL="${UPSTREAM_SYNC_SQS_QUEUE_URL:-}"
-SQS_REGION="${UPSTREAM_SYNC_SQS_REGION:-${AWS_REGION:-}}"
-KAFKA_BOOTSTRAP="${UPSTREAM_SYNC_KAFKA_BOOTSTRAP:-127.0.0.1:9092}"
-KAFKA_TOPIC="${UPSTREAM_SYNC_KAFKA_TOPIC:-hermes-upstream-sync}"
 
 ARGS=(
   listen
@@ -67,26 +63,11 @@ ARGS=(
   --backend "${BACKEND}"
 )
 
-case "${BACKEND}" in
-  sqlite)
-    ARGS+=(--sqlite-path "${SQLITE_PATH}")
-    ;;
-  sqs)
-    [[ -n "${SQS_QUEUE_URL}" ]] || {
-      echo "UPSTREAM_SYNC_SQS_QUEUE_URL is required for sqs backend" >&2
-      exit 2
-    }
-    ARGS+=(--sqs-queue-url "${SQS_QUEUE_URL}")
-    [[ -n "${SQS_REGION}" ]] && ARGS+=(--sqs-region "${SQS_REGION}")
-    ;;
-  kafka)
-    ARGS+=(--kafka-bootstrap "${KAFKA_BOOTSTRAP}" --kafka-topic "${KAFKA_TOPIC}")
-    ;;
-  *)
-    echo "Unsupported UPSTREAM_SYNC_BACKEND='${BACKEND}' (expected sqlite|sqs|kafka)" >&2
-    exit 2
-    ;;
-esac
+if [[ "${BACKEND}" != "sqlite" ]]; then
+  echo "Unsupported UPSTREAM_SYNC_BACKEND='${BACKEND}' (expected sqlite)" >&2
+  exit 2
+fi
+ARGS+=(--sqlite-path "${SQLITE_PATH}")
 
 cd "${REPO_ROOT}"
 exec python3 "${REPO_ROOT}/scripts/upstream_webhook_sync.py" "${ARGS[@]}"

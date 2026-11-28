@@ -1,19 +1,18 @@
-import json
+import contextlib
+import io
+import os
 import sqlite3
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from scripts.upstream_webhook_sync import (
-    KafkaConsumerWrapper,
-    KafkaPublisher,
     SqliteQueue,
-    SqsConsumer,
-    SqsPublisher,
     SyncEvent,
+    build_parser,
+    main,
 )
 
 
@@ -83,54 +82,33 @@ class WebhookQueueTests(unittest.TestCase):
                 for connection in connections:
                     connection.close()
 
-    def test_sqs_round_trip_keeps_the_delivery_key_and_explicit_ack(self):
-        event = push_event("sqs-delivery")
-        queue_url = "https://example.test/queue.fifo"
-        client = Mock()
-        boto3 = SimpleNamespace(client=Mock(return_value=client))
-        with patch.dict(sys.modules, {"boto3": boto3}):
-            publisher = SqsPublisher(queue_url, "ap-southeast-2")
-            consumer = SqsConsumer(queue_url, "ap-southeast-2")
+    def test_retired_backends_are_rejected_by_both_subcommands(self):
+        parser = build_parser()
+        for command in ("listen", "worker"):
+            for backend in ("sqs", "kafka"):
+                with self.subTest(command=command, backend=backend):
+                    with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                        parser.parse_args([command, "--backend", backend])
+                    self.assertEqual(error.exception.code, 2)
 
-        self.assertTrue(publisher.enqueue(event))
-        sent = client.send_message.call_args.kwargs
-        self.assertEqual(sent["QueueUrl"], queue_url)
-        self.assertEqual(sent["MessageGroupId"], "upstream-sync")
-        self.assertEqual(sent["MessageDeduplicationId"], event.delivery_id)
-        client.receive_message.return_value = {
-            "Messages": [{"Body": sent["MessageBody"], "ReceiptHandle": "test-receipt"}]
-        }
-        self.assertEqual(consumer.receive(30), (event, "test-receipt"))
-        self.assertEqual(client.receive_message.call_args.kwargs["WaitTimeSeconds"], 20)
-        client.delete_message.assert_not_called()
-        consumer.ack("test-receipt")
-        client.delete_message.assert_called_once_with(QueueUrl=queue_url, ReceiptHandle="test-receipt")
-
-    def test_kafka_round_trip_waits_for_publish_and_retains_explicit_commit(self):
-        event = push_event("kafka-delivery")
-        producer = Mock()
-        consumer = Mock()
-        kafka = SimpleNamespace(
-            KafkaProducer=Mock(return_value=producer),
-            KafkaConsumer=Mock(return_value=consumer),
-        )
-        with patch.dict(sys.modules, {"kafka": kafka}):
-            publisher = KafkaPublisher("broker.test:9092", "upstream")
-            reader = KafkaConsumerWrapper("broker.test:9092", "upstream", "sync-worker")
-
-        self.assertTrue(publisher.enqueue(event))
-        producer.send.return_value.get.assert_called_once_with(timeout=10)
-        args, sent = producer.send.call_args
-        self.assertEqual(args, ("upstream",))
-        serializers = kafka.KafkaProducer.call_args.kwargs
-        self.assertEqual(serializers["key_serializer"](sent["key"]), b"kafka-delivery")
-        encoded = serializers["value_serializer"](sent["value"])
-        configuration = kafka.KafkaConsumer.call_args.kwargs
-        self.assertFalse(configuration["enable_auto_commit"])
-        record = SimpleNamespace(value=configuration["value_deserializer"](encoded))
-        self.assertEqual(record.value, json.loads(event.to_json()))
-        consumer.poll.return_value = {"fixture-partition": [record]}
-        self.assertEqual(reader.poll(), (event, record))
-        consumer.commit.assert_not_called()
-        reader.ack()
-        consumer.commit.assert_called_once_with()
+    def test_retired_backend_environment_is_rejected_before_startup(self):
+        with (
+            patch("scripts.upstream_webhook_sync.serve_webhook") as serve,
+            patch("scripts.upstream_webhook_sync.worker_loop") as work,
+        ):
+            for command in ("listen", "worker"):
+                for backend in ("sqs", "kafka"):
+                    for arguments in ([], ["--backend", "sqlite"]):
+                        with self.subTest(command=command, backend=backend, arguments=arguments):
+                            stderr = io.StringIO()
+                            with (
+                                patch.dict(os.environ, {"UPSTREAM_SYNC_BACKEND": backend}),
+                                patch.object(sys, "argv", ["upstream_webhook_sync.py", command, *arguments]),
+                                contextlib.redirect_stderr(stderr),
+                                self.assertRaises(SystemExit) as error,
+                            ):
+                                main()
+                            self.assertEqual(error.exception.code, 2)
+                            self.assertIn("UPSTREAM_SYNC_BACKEND must be sqlite", stderr.getvalue())
+            serve.assert_not_called()
+            work.assert_not_called()

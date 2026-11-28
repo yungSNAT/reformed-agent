@@ -44,20 +44,15 @@ that needs manual coding.
     - `conflict`: merge/cherry-pick conflict
     - `dead`: repeated transient failures exhausted retries
 
-## Queue Backends
+## Queue
 
-Backends are selectable with `--backend`:
-
-- `sqlite` (default)
-  - No external dependency
-  - Durable local queue in `.sync-queue/upstream-events.db`
-  - Good default for single-host deployment
-- `sqs` (optional)
-  - Requires `boto3`
-  - Uses SQS queue URL
-- `kafka` (optional)
-  - Requires `kafka-python`
-  - Uses topic and consumer group
+The listener and worker use a durable local SQLite queue in
+`.sync-queue/upstream-events.db`. Existing `--backend sqlite` and
+`UPSTREAM_SYNC_BACKEND=sqlite` settings still work. SQS and Kafka settings
+are rejected at startup. If an older configuration used SQS or Kafka, pause
+new intake and use the previous release to finish or account for every pending
+delivery before upgrading. Set the backend to SQLite before restarting either
+service.
 
 ## End-to-End Flow
 
@@ -299,5 +294,4 @@ Summary publishing behavior:
 
 - Keep strict risk gate enabled for unattended runs.
 - Do not auto-bypass risk gates in production.
-- For high throughput, use SQS/Kafka and scale workers horizontally.
 - Keep retry count modest (`--max-attempts`) to avoid repeated unsafe retries.

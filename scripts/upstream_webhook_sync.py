@@ -5,10 +5,7 @@ Webhook-driven upstream sync orchestration.
 Implements:
 1) GitHub webhook receiver for upstream push notifications
 2) Queue-backed worker that runs scripts/sync-upstream.sh
-3) Queue backends:
-   - sqlite (default, no extra dependencies)
-   - sqs (optional boto3)
-   - kafka (optional kafka-python)
+3) Durable local SQLite queue
 
 This keeps unattended syncs reproducible while still allowing strict risk gates
 to block sensitive upstream changes for human/agent implementation work.
@@ -75,22 +72,6 @@ class SyncEvent:
     compare_url: str
     pushed_at: str
     payload: dict[str, Any]
-
-    def to_json(self) -> str:
-        return json.dumps(
-            {
-                "delivery_id": self.delivery_id,
-                "event_name": self.event_name,
-                "repository": self.repository,
-                "ref": self.ref,
-                "before_sha": self.before_sha,
-                "after_sha": self.after_sha,
-                "compare_url": self.compare_url,
-                "pushed_at": self.pushed_at,
-                "payload": self.payload,
-            },
-            sort_keys=True,
-        )
 
 
 @dataclass
@@ -238,131 +219,6 @@ class SqliteQueue:
                 (target_status, error, utc_now_iso(), item_id),
             )
             conn.commit()
-
-
-class SqsPublisher:
-    def __init__(self, queue_url: str, region: str | None) -> None:
-        try:
-            import boto3  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError(
-                "SQS backend requires boto3. Install with: pip install boto3"
-            ) from exc
-        self.client = boto3.client("sqs", region_name=region)
-        self.queue_url = queue_url
-
-    def enqueue(self, event: SyncEvent) -> bool:
-        self.client.send_message(
-            QueueUrl=self.queue_url,
-            MessageBody=event.to_json(),
-            MessageGroupId="upstream-sync",
-            MessageDeduplicationId=event.delivery_id,
-        )
-        return True
-
-
-class SqsConsumer:
-    def __init__(self, queue_url: str, region: str | None) -> None:
-        try:
-            import boto3  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError(
-                "SQS backend requires boto3. Install with: pip install boto3"
-            ) from exc
-        self.client = boto3.client("sqs", region_name=region)
-        self.queue_url = queue_url
-
-    def receive(self, wait_seconds: int = 20) -> tuple[SyncEvent, str] | None:
-        resp = self.client.receive_message(
-            QueueUrl=self.queue_url,
-            MaxNumberOfMessages=1,
-            WaitTimeSeconds=max(0, min(wait_seconds, 20)),
-            VisibilityTimeout=120,
-        )
-        msgs = resp.get("Messages") or []
-        if not msgs:
-            return None
-
-        msg = msgs[0]
-        body = json.loads(msg["Body"])
-        event = SyncEvent(
-            delivery_id=body["delivery_id"],
-            event_name=body["event_name"],
-            repository=body["repository"],
-            ref=body["ref"],
-            before_sha=body["before_sha"],
-            after_sha=body["after_sha"],
-            compare_url=body["compare_url"],
-            pushed_at=body["pushed_at"],
-            payload=body.get("payload", {}),
-        )
-        return event, msg["ReceiptHandle"]
-
-    def ack(self, receipt_handle: str) -> None:
-        self.client.delete_message(QueueUrl=self.queue_url, ReceiptHandle=receipt_handle)
-
-
-class KafkaPublisher:
-    def __init__(self, bootstrap: str, topic: str) -> None:
-        try:
-            from kafka import KafkaProducer  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError(
-                "Kafka backend requires kafka-python. Install with: pip install kafka-python"
-            ) from exc
-        self.topic = topic
-        self.producer = KafkaProducer(
-            bootstrap_servers=[bootstrap],
-            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            key_serializer=lambda k: k.encode("utf-8"),
-        )
-
-    def enqueue(self, event: SyncEvent) -> bool:
-        payload = json.loads(event.to_json())
-        self.producer.send(self.topic, key=event.delivery_id, value=payload).get(timeout=10)
-        return True
-
-
-class KafkaConsumerWrapper:
-    def __init__(self, bootstrap: str, topic: str, group_id: str) -> None:
-        try:
-            from kafka import KafkaConsumer  # type: ignore
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError(
-                "Kafka backend requires kafka-python. Install with: pip install kafka-python"
-            ) from exc
-        self.consumer = KafkaConsumer(
-            topic,
-            bootstrap_servers=[bootstrap],
-            group_id=group_id,
-            enable_auto_commit=False,
-            auto_offset_reset="latest",
-            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-        )
-
-    def poll(self, timeout_ms: int = 1000) -> tuple[SyncEvent, Any] | None:
-        batch = self.consumer.poll(timeout_ms=timeout_ms, max_records=1)
-        for _, records in batch.items():
-            if not records:
-                continue
-            rec = records[0]
-            body = rec.value
-            event = SyncEvent(
-                delivery_id=body["delivery_id"],
-                event_name=body["event_name"],
-                repository=body["repository"],
-                ref=body["ref"],
-                before_sha=body["before_sha"],
-                after_sha=body["after_sha"],
-                compare_url=body["compare_url"],
-                pushed_at=body["pushed_at"],
-                payload=body.get("payload", {}),
-            )
-            return event, rec
-        return None
-
-    def ack(self) -> None:
-        self.consumer.commit()
 
 
 def verify_github_signature(body: bytes, secret: str, signature_header: str | None) -> bool:
@@ -1400,15 +1256,8 @@ def serve_webhook(args: argparse.Namespace) -> int:
     expected_ref = args.expected_ref
     secret = args.webhook_secret or os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 
-    if args.backend == "sqlite":
-        queue = SqliteQueue(args.sqlite_path)
-        enqueue = queue.enqueue
-    elif args.backend == "sqs":
-        pub = SqsPublisher(args.sqs_queue_url, args.sqs_region)
-        enqueue = pub.enqueue
-    else:
-        pub = KafkaPublisher(args.kafka_bootstrap, args.kafka_topic)
-        enqueue = pub.enqueue
+    queue = SqliteQueue(args.sqlite_path)
+    enqueue = queue.enqueue
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
@@ -1518,277 +1367,14 @@ def worker_loop(args: argparse.Namespace) -> int:
     assist_cmd = args.assist_cmd or os.environ.get("UPSTREAM_SYNC_ASSIST_CMD", "")
     assist_cmd = assist_cmd.strip() or None
 
-    if args.backend == "sqlite":
-        queue = SqliteQueue(args.sqlite_path)
-        while True:
-            item = queue.claim_next()
-            if item is None:
-                time.sleep(args.poll_interval_sec)
-                continue
-            rc, output, report_path = run_sync_for_event(
-                event=item.event,
-                repo_root=repo_root,
-                report_dir=report_dir,
-                strategy=args.strategy,
-                strict_risk_gate=args.strict_risk_gate,
-                allow_risk_paths=args.allow_risk_paths,
-                conflict_label=args.conflict_label,
-                skip_tests=args.no_tests,
-                no_pr=args.no_pr,
-                draft_pr=args.draft_pr,
-                pr_labels=args.pr_labels,
-                run_redteam_gate=not args.no_redteam_gate,
-                redteam_cmd=args.redteam_cmd,
-                run_elite_gate=args.elite_gate,
-                elite_cmd=args.elite_cmd,
-                elite_rollback_cmd=args.elite_rollback_cmd,
-                timeout_sec=args.sync_timeout_sec,
-            )
-            outcome = parse_report_status(report_path)
-            upkeep_result = maybe_create_upkeep_commit_issues(
-                repo_root=repo_root,
-                report_dir=report_dir,
-                event=item.event,
-                enabled=upkeep_enabled,
-                labels=upkeep_labels,
-                parent_issue=args.upkeep_commit_parent_issue,
-                state_path=upkeep_state_path,
-                max_commits_per_event=args.upkeep_commit_max_per_event,
-                allow_python_test_surfaces=args.allow_python_test_surfaces,
-            )
-            if rc == 0:
-                upstream_ref = (
-                    item.event.after_sha
-                    if item.event.after_sha and git_ref_exists(repo_root, item.event.after_sha)
-                    else args.parity_upstream_ref
-                )
-                drift_result = maybe_check_cli_surface_drift(
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=item.event,
-                    upstream_ref=upstream_ref,
-                    parent_issue=args.parity_parent_issue,
-                    open_parity_issue=open_parity_issue,
-                    parity_labels=parity_labels,
-                    enabled=parity_drift_enabled,
-                )
-                global_drift_result = maybe_check_global_parity_drift(
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=item.event,
-                    parent_issue=args.global_parity_parent_issue,
-                    open_parity_issue=(not args.no_global_parity_open_issues),
-                    parity_labels=[
-                        v.strip() for v in str(args.global_parity_labels).split(",") if v.strip()
-                    ],
-                    enabled=(not args.disable_global_parity_check),
-                    max_queue_commits=args.global_parity_max_queue_commits,
-                )
-                note = (
-                    f"{outcome}; cli_drift={'detected' if drift_result.get('has_drift') else 'none'}; "
-                    f"global_drift={'detected' if global_drift_result.get('has_drift') else 'none'}; "
-                    f"upkeep_created={upkeep_result.get('created', 0)}"
-                )
-                summary_result = maybe_publish_worker_summary(
-                    args=args,
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=item.event,
-                    outcome=outcome,
-                    sync_rc=rc,
-                    report_path=report_path,
-                    drift_result=drift_result,
-                    global_drift_result=global_drift_result,
-                    upkeep_result=upkeep_result,
-                )
-                if drift_result.get("created_issue_url"):
-                    note += f"; issue={drift_result['created_issue_url']}"
-                if global_drift_result.get("created_issue_url"):
-                    note += f"; global_issue={global_drift_result['created_issue_url']}"
-                if summary_result.get("ok"):
-                    note += f"; summary_sink={summary_result.get('primary_sink', '')}"
-                queue.mark_done(item.id, status="done", note=note)
-                continue
-
-            if outcome in {"risk_blocked", "conflict"}:
-                summary_result = maybe_publish_worker_summary(
-                    args=args,
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=item.event,
-                    outcome=outcome,
-                    sync_rc=rc,
-                    report_path=report_path,
-                    upkeep_result=upkeep_result,
-                )
-                note = f"{outcome}; upkeep_created={upkeep_result.get('created', 0)}"
-                if summary_result.get("ok"):
-                    note += f"; summary_sink={summary_result.get('primary_sink', '')}"
-                queue.mark_done(
-                    item.id,
-                    status=outcome,
-                    note=note,
-                )
-                maybe_run_assist_hook(assist_cmd, item.event, report_path, outcome, repo_root)
-                continue
-
-            queue.mark_retry_or_dead(
-                item.id, attempts=item.attempts, max_attempts=args.max_attempts, error=output[-1000:]
-            )
-            if item.attempts >= args.max_attempts:
-                maybe_publish_worker_summary(
-                    args=args,
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=item.event,
-                    outcome="dead",
-                    sync_rc=rc,
-                    report_path=report_path,
-                    upkeep_result=upkeep_result,
-                )
-                maybe_run_assist_hook(
-                    assist_cmd, item.event, report_path, "dead", repo_root
-                )
-        return 0
-
-    if args.backend == "sqs":
-        consumer = SqsConsumer(args.sqs_queue_url, args.sqs_region)
-        while True:
-            message = consumer.receive(wait_seconds=20)
-            if message is None:
-                continue
-            event, receipt_handle = message
-            rc, output, report_path = run_sync_for_event(
-                event=event,
-                repo_root=repo_root,
-                report_dir=report_dir,
-                strategy=args.strategy,
-                strict_risk_gate=args.strict_risk_gate,
-                allow_risk_paths=args.allow_risk_paths,
-                conflict_label=args.conflict_label,
-                skip_tests=args.no_tests,
-                no_pr=args.no_pr,
-                draft_pr=args.draft_pr,
-                pr_labels=args.pr_labels,
-                run_redteam_gate=not args.no_redteam_gate,
-                redteam_cmd=args.redteam_cmd,
-                run_elite_gate=args.elite_gate,
-                elite_cmd=args.elite_cmd,
-                elite_rollback_cmd=args.elite_rollback_cmd,
-                timeout_sec=args.sync_timeout_sec,
-            )
-            outcome = parse_report_status(report_path)
-            upkeep_result = maybe_create_upkeep_commit_issues(
-                repo_root=repo_root,
-                report_dir=report_dir,
-                event=event,
-                enabled=upkeep_enabled,
-                labels=upkeep_labels,
-                parent_issue=args.upkeep_commit_parent_issue,
-                state_path=upkeep_state_path,
-                max_commits_per_event=args.upkeep_commit_max_per_event,
-                allow_python_test_surfaces=args.allow_python_test_surfaces,
-            )
-            drift_result: dict[str, Any] | None = None
-            global_drift_result: dict[str, Any] | None = None
-            summary_result: dict[str, Any] | None = None
-            if rc == 0:
-                upstream_ref = (
-                    event.after_sha
-                    if event.after_sha and git_ref_exists(repo_root, event.after_sha)
-                    else args.parity_upstream_ref
-                )
-                drift_result = maybe_check_cli_surface_drift(
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=event,
-                    upstream_ref=upstream_ref,
-                    parent_issue=args.parity_parent_issue,
-                    open_parity_issue=open_parity_issue,
-                    parity_labels=parity_labels,
-                    enabled=parity_drift_enabled,
-                )
-                global_drift_result = maybe_check_global_parity_drift(
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=event,
-                    parent_issue=args.global_parity_parent_issue,
-                    open_parity_issue=(not args.no_global_parity_open_issues),
-                    parity_labels=[
-                        v.strip() for v in str(args.global_parity_labels).split(",") if v.strip()
-                    ],
-                    enabled=(not args.disable_global_parity_check),
-                    max_queue_commits=args.global_parity_max_queue_commits,
-                )
-                if drift_result.get("has_drift"):
-                    LOG.warning(
-                        "CLI surface drift detected for delivery=%s artifact=%s",
-                        event.delivery_id,
-                        drift_result.get("artifact_path", ""),
-                    )
-                if global_drift_result.get("has_drift"):
-                    LOG.warning(
-                        "Global parity drift detected for delivery=%s artifact=%s",
-                        event.delivery_id,
-                        global_drift_result.get("artifact_path", ""),
-                    )
-                summary_result = maybe_publish_worker_summary(
-                    args=args,
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=event,
-                    outcome=outcome,
-                    sync_rc=rc,
-                    report_path=report_path,
-                    drift_result=drift_result,
-                    global_drift_result=global_drift_result,
-                    upkeep_result=upkeep_result,
-                )
-            elif outcome in {"risk_blocked", "conflict"}:
-                summary_result = maybe_publish_worker_summary(
-                    args=args,
-                    repo_root=repo_root,
-                    report_dir=report_dir,
-                    event=event,
-                    outcome=outcome,
-                    sync_rc=rc,
-                    report_path=report_path,
-                    upkeep_result=upkeep_result,
-                )
-            # In SQS mode: acknowledge terminal states. Let visibility timeout retry transient failures.
-            if rc == 0 or outcome in {"risk_blocked", "conflict"}:
-                consumer.ack(receipt_handle)
-            if upkeep_result.get("created"):
-                LOG.info(
-                    "upkeep commit issues created=%s delivery=%s",
-                    upkeep_result.get("created"),
-                    event.delivery_id,
-                )
-            if summary_result and summary_result.get("ok"):
-                LOG.info(
-                    "summary sink=%s delivery=%s",
-                    summary_result.get("primary_sink", ""),
-                    event.delivery_id,
-                )
-            if outcome in {"risk_blocked", "conflict"}:
-                maybe_run_assist_hook(assist_cmd, event, report_path, outcome, repo_root)
-            elif rc != 0:
-                LOG.warning("sync failed for delivery=%s; will retry via visibility timeout", event.delivery_id)
-        return 0
-
-    # kafka
-    consumer = KafkaConsumerWrapper(
-        bootstrap=args.kafka_bootstrap,
-        topic=args.kafka_topic,
-        group_id=args.kafka_group_id,
-    )
+    queue = SqliteQueue(args.sqlite_path)
     while True:
-        message = consumer.poll(timeout_ms=1000)
-        if message is None:
+        item = queue.claim_next()
+        if item is None:
+            time.sleep(args.poll_interval_sec)
             continue
-        event, _rec = message
-        rc, _output, report_path = run_sync_for_event(
-            event=event,
+        rc, output, report_path = run_sync_for_event(
+            event=item.event,
             repo_root=repo_root,
             report_dir=report_dir,
             strategy=args.strategy,
@@ -1810,7 +1396,7 @@ def worker_loop(args: argparse.Namespace) -> int:
         upkeep_result = maybe_create_upkeep_commit_issues(
             repo_root=repo_root,
             report_dir=report_dir,
-            event=event,
+            event=item.event,
             enabled=upkeep_enabled,
             labels=upkeep_labels,
             parent_issue=args.upkeep_commit_parent_issue,
@@ -1818,19 +1404,16 @@ def worker_loop(args: argparse.Namespace) -> int:
             max_commits_per_event=args.upkeep_commit_max_per_event,
             allow_python_test_surfaces=args.allow_python_test_surfaces,
         )
-        drift_result: dict[str, Any] | None = None
-        global_drift_result: dict[str, Any] | None = None
-        summary_result: dict[str, Any] | None = None
         if rc == 0:
             upstream_ref = (
-                event.after_sha
-                if event.after_sha and git_ref_exists(repo_root, event.after_sha)
+                item.event.after_sha
+                if item.event.after_sha and git_ref_exists(repo_root, item.event.after_sha)
                 else args.parity_upstream_ref
             )
             drift_result = maybe_check_cli_surface_drift(
                 repo_root=repo_root,
                 report_dir=report_dir,
-                event=event,
+                event=item.event,
                 upstream_ref=upstream_ref,
                 parent_issue=args.parity_parent_issue,
                 open_parity_issue=open_parity_issue,
@@ -1840,7 +1423,7 @@ def worker_loop(args: argparse.Namespace) -> int:
             global_drift_result = maybe_check_global_parity_drift(
                 repo_root=repo_root,
                 report_dir=report_dir,
-                event=event,
+                event=item.event,
                 parent_issue=args.global_parity_parent_issue,
                 open_parity_issue=(not args.no_global_parity_open_issues),
                 parity_labels=[
@@ -1849,23 +1432,16 @@ def worker_loop(args: argparse.Namespace) -> int:
                 enabled=(not args.disable_global_parity_check),
                 max_queue_commits=args.global_parity_max_queue_commits,
             )
-            if drift_result.get("has_drift"):
-                LOG.warning(
-                    "CLI surface drift detected for delivery=%s artifact=%s",
-                    event.delivery_id,
-                    drift_result.get("artifact_path", ""),
-                )
-            if global_drift_result.get("has_drift"):
-                LOG.warning(
-                    "Global parity drift detected for delivery=%s artifact=%s",
-                    event.delivery_id,
-                    global_drift_result.get("artifact_path", ""),
-                )
+            note = (
+                f"{outcome}; cli_drift={'detected' if drift_result.get('has_drift') else 'none'}; "
+                f"global_drift={'detected' if global_drift_result.get('has_drift') else 'none'}; "
+                f"upkeep_created={upkeep_result.get('created', 0)}"
+            )
             summary_result = maybe_publish_worker_summary(
                 args=args,
                 repo_root=repo_root,
                 report_dir=report_dir,
-                event=event,
+                event=item.event,
                 outcome=outcome,
                 sync_rc=rc,
                 report_path=report_path,
@@ -1873,36 +1449,54 @@ def worker_loop(args: argparse.Namespace) -> int:
                 global_drift_result=global_drift_result,
                 upkeep_result=upkeep_result,
             )
-        elif outcome in {"risk_blocked", "conflict"}:
+            if drift_result.get("created_issue_url"):
+                note += f"; issue={drift_result['created_issue_url']}"
+            if global_drift_result.get("created_issue_url"):
+                note += f"; global_issue={global_drift_result['created_issue_url']}"
+            if summary_result.get("ok"):
+                note += f"; summary_sink={summary_result.get('primary_sink', '')}"
+            queue.mark_done(item.id, status="done", note=note)
+            continue
+
+        if outcome in {"risk_blocked", "conflict"}:
             summary_result = maybe_publish_worker_summary(
                 args=args,
                 repo_root=repo_root,
                 report_dir=report_dir,
-                event=event,
+                event=item.event,
                 outcome=outcome,
                 sync_rc=rc,
                 report_path=report_path,
                 upkeep_result=upkeep_result,
             )
-        # Commit offsets for terminal states; for transient failures we keep offset
-        # uncommitted so another worker run can retry.
-        if rc == 0 or outcome in {"risk_blocked", "conflict"}:
-            consumer.ack()
-        if upkeep_result.get("created"):
-            LOG.info(
-                "upkeep commit issues created=%s delivery=%s",
-                upkeep_result.get("created"),
-                event.delivery_id,
+            note = f"{outcome}; upkeep_created={upkeep_result.get('created', 0)}"
+            if summary_result.get("ok"):
+                note += f"; summary_sink={summary_result.get('primary_sink', '')}"
+            queue.mark_done(
+                item.id,
+                status=outcome,
+                note=note,
             )
-        if summary_result and summary_result.get("ok"):
-            LOG.info(
-                "summary sink=%s delivery=%s",
-                summary_result.get("primary_sink", ""),
-                event.delivery_id,
+            maybe_run_assist_hook(assist_cmd, item.event, report_path, outcome, repo_root)
+            continue
+
+        queue.mark_retry_or_dead(
+            item.id, attempts=item.attempts, max_attempts=args.max_attempts, error=output[-1000:]
+        )
+        if item.attempts >= args.max_attempts:
+            maybe_publish_worker_summary(
+                args=args,
+                repo_root=repo_root,
+                report_dir=report_dir,
+                event=item.event,
+                outcome="dead",
+                sync_rc=rc,
+                report_path=report_path,
+                upkeep_result=upkeep_result,
             )
-        if outcome in {"risk_blocked", "conflict"}:
-            maybe_run_assist_hook(assist_cmd, event, report_path, outcome, repo_root)
-    return 0
+            maybe_run_assist_hook(
+                assist_cmd, item.event, report_path, "dead", repo_root
+            )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1917,22 +1511,13 @@ def build_parser() -> argparse.ArgumentParser:
     listen.add_argument("--webhook-secret", default="", help="GitHub webhook secret")
     listen.add_argument("--expected-repo", default=DEFAULT_UPSTREAM_REPO)
     listen.add_argument("--expected-ref", default=DEFAULT_UPSTREAM_REF)
-    listen.add_argument("--backend", choices=["sqlite", "sqs", "kafka"], default="sqlite")
+    listen.add_argument("--backend", choices=["sqlite"], default="sqlite")
     listen.add_argument("--sqlite-path", default=".sync-queue/upstream-events.db")
-    listen.add_argument("--sqs-queue-url", default=os.environ.get("UPSTREAM_SYNC_SQS_QUEUE_URL", ""))
-    listen.add_argument("--sqs-region", default=os.environ.get("AWS_REGION", ""))
-    listen.add_argument("--kafka-bootstrap", default=os.environ.get("UPSTREAM_SYNC_KAFKA_BOOTSTRAP", "127.0.0.1:9092"))
-    listen.add_argument("--kafka-topic", default=os.environ.get("UPSTREAM_SYNC_KAFKA_TOPIC", "hermes-upstream-sync"))
 
     worker = sub.add_parser("worker", help="Run queue worker and execute sync")
     worker.add_argument("--repo-root", default=str(pathlib.Path(__file__).resolve().parent.parent))
-    worker.add_argument("--backend", choices=["sqlite", "sqs", "kafka"], default="sqlite")
+    worker.add_argument("--backend", choices=["sqlite"], default="sqlite")
     worker.add_argument("--sqlite-path", default=".sync-queue/upstream-events.db")
-    worker.add_argument("--sqs-queue-url", default=os.environ.get("UPSTREAM_SYNC_SQS_QUEUE_URL", ""))
-    worker.add_argument("--sqs-region", default=os.environ.get("AWS_REGION", ""))
-    worker.add_argument("--kafka-bootstrap", default=os.environ.get("UPSTREAM_SYNC_KAFKA_BOOTSTRAP", "127.0.0.1:9092"))
-    worker.add_argument("--kafka-topic", default=os.environ.get("UPSTREAM_SYNC_KAFKA_TOPIC", "hermes-upstream-sync"))
-    worker.add_argument("--kafka-group-id", default=os.environ.get("UPSTREAM_SYNC_KAFKA_GROUP", "hermes-upstream-worker"))
     worker.add_argument("--poll-interval-sec", type=int, default=10)
     worker.add_argument("--max-attempts", type=int, default=3)
     worker.add_argument("--sync-timeout-sec", type=int, default=1800)
@@ -2163,23 +1748,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if (os.environ.get("UPSTREAM_SYNC_BACKEND") or "sqlite") != "sqlite":
+        parser.error("UPSTREAM_SYNC_BACKEND must be sqlite")
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
     )
 
     if args.cmd == "listen":
-        if args.backend == "sqs" and not args.sqs_queue_url:
-            parser.error("--sqs-queue-url is required for SQS backend")
-        if args.backend == "kafka" and (not args.kafka_bootstrap or not args.kafka_topic):
-            parser.error("--kafka-bootstrap and --kafka-topic are required for Kafka backend")
         return serve_webhook(args)
 
     if args.cmd == "worker":
-        if args.backend == "sqs" and not args.sqs_queue_url:
-            parser.error("--sqs-queue-url is required for SQS backend")
-        if args.backend == "kafka" and (not args.kafka_bootstrap or not args.kafka_topic):
-            parser.error("--kafka-bootstrap and --kafka-topic are required for Kafka backend")
         return worker_loop(args)
 
     parser.error(f"unsupported command: {args.cmd}")

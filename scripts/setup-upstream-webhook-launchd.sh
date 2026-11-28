@@ -220,20 +220,7 @@ print_config_summary() {
   echo "  runtime role: ${UPSTREAM_SYNC_RUNTIME_ROLE:-dev}"
   echo "  allowed host: ${UPSTREAM_SYNC_ALLOWED_HOSTNAME:-<unset>} (current: ${CURRENT_HOST_FULL})"
   echo "  webhook secret: $(mask_secret "${GITHUB_WEBHOOK_SECRET:-}")"
-  case "${UPSTREAM_SYNC_BACKEND:-sqlite}" in
-    sqlite)
-      echo "  sqlite path: ${UPSTREAM_SYNC_SQLITE_PATH:-<unset>}"
-      ;;
-    sqs)
-      echo "  sqs queue:   ${UPSTREAM_SYNC_SQS_QUEUE_URL:-<unset>}"
-      echo "  sqs region:  ${UPSTREAM_SYNC_SQS_REGION:-<unset>}"
-      ;;
-    kafka)
-      echo "  kafka bootstrap: ${UPSTREAM_SYNC_KAFKA_BOOTSTRAP:-<unset>}"
-      echo "  kafka topic:     ${UPSTREAM_SYNC_KAFKA_TOPIC:-<unset>}"
-      echo "  kafka group:     ${UPSTREAM_SYNC_KAFKA_GROUP_ID:-<unset>}"
-      ;;
-  esac
+  echo "  sqlite path: ${UPSTREAM_SYNC_SQLITE_PATH:-<unset>}"
   echo "  listener plist: ${LISTENER_PLIST} $( [[ -f "${LISTENER_PLIST}" ]] && echo '[present]' || echo '[missing]' )"
   echo "  worker plist:   ${WORKER_PLIST} $( [[ -f "${WORKER_PLIST}" ]] && echo '[present]' || echo '[missing]' )"
 }
@@ -244,13 +231,10 @@ validate_config() {
   local allowed_host="${UPSTREAM_SYNC_ALLOWED_HOSTNAME:-}"
   local ok=1
 
-  case "${backend}" in
-    sqlite|sqs|kafka) ;;
-    *)
-      echo "Config error: UPSTREAM_SYNC_BACKEND must be sqlite|sqs|kafka (got '${backend}')." >&2
-      ok=0
-      ;;
-  esac
+  if [[ "${backend}" != "sqlite" ]]; then
+    echo "Config error: UPSTREAM_SYNC_BACKEND must be sqlite (got '${backend}')." >&2
+    ok=0
+  fi
 
   if [[ "${role}" != "dev" ]]; then
     echo "Config error: UPSTREAM_SYNC_RUNTIME_ROLE must be 'dev' for this launchd stack." >&2
@@ -268,26 +252,10 @@ validate_config() {
     echo "Warning: GITHUB_WEBHOOK_SECRET is unset. Signature verification is disabled." >&2
   fi
 
-  case "${backend}" in
-    sqlite)
-      if [[ -z "${UPSTREAM_SYNC_SQLITE_PATH:-}" ]]; then
-        echo "Config error: UPSTREAM_SYNC_SQLITE_PATH is required for sqlite backend." >&2
-        ok=0
-      fi
-      ;;
-    sqs)
-      if [[ -z "${UPSTREAM_SYNC_SQS_QUEUE_URL:-}" ]]; then
-        echo "Config error: UPSTREAM_SYNC_SQS_QUEUE_URL is required for sqs backend." >&2
-        ok=0
-      fi
-      ;;
-    kafka)
-      if [[ -z "${UPSTREAM_SYNC_KAFKA_BOOTSTRAP:-}" || -z "${UPSTREAM_SYNC_KAFKA_TOPIC:-}" ]]; then
-        echo "Config error: UPSTREAM_SYNC_KAFKA_BOOTSTRAP and UPSTREAM_SYNC_KAFKA_TOPIC are required for kafka backend." >&2
-        ok=0
-      fi
-      ;;
-  esac
+  if [[ -z "${UPSTREAM_SYNC_SQLITE_PATH:-}" ]]; then
+    echo "Config error: UPSTREAM_SYNC_SQLITE_PATH is required for sqlite backend." >&2
+    ok=0
+  fi
 
   [[ "${ok}" -eq 1 ]]
 }
@@ -332,35 +300,6 @@ if [[ "${INTERACTIVE}" == "1" ]]; then
       unset prompt_secret
     fi
   fi
-
-  load_env
-  case "${UPSTREAM_SYNC_BACKEND:-sqlite}" in
-    sqs)
-      if [[ -z "${UPSTREAM_SYNC_SQS_QUEUE_URL:-}" ]]; then
-        read -r -p "Enter UPSTREAM_SYNC_SQS_QUEUE_URL: " prompt_sqs
-        if [[ -n "${prompt_sqs}" ]]; then
-          set_env_value "${ENV_FILE}" "UPSTREAM_SYNC_SQS_QUEUE_URL" "${prompt_sqs}"
-          unset prompt_sqs
-        fi
-      fi
-      ;;
-    kafka)
-      if [[ -z "${UPSTREAM_SYNC_KAFKA_BOOTSTRAP:-}" ]]; then
-        read -r -p "Enter UPSTREAM_SYNC_KAFKA_BOOTSTRAP: " prompt_bootstrap
-        if [[ -n "${prompt_bootstrap}" ]]; then
-          set_env_value "${ENV_FILE}" "UPSTREAM_SYNC_KAFKA_BOOTSTRAP" "${prompt_bootstrap}"
-          unset prompt_bootstrap
-        fi
-      fi
-      if [[ -z "${UPSTREAM_SYNC_KAFKA_TOPIC:-}" ]]; then
-        read -r -p "Enter UPSTREAM_SYNC_KAFKA_TOPIC: " prompt_topic
-        if [[ -n "${prompt_topic}" ]]; then
-          set_env_value "${ENV_FILE}" "UPSTREAM_SYNC_KAFKA_TOPIC" "${prompt_topic}"
-          unset prompt_topic
-        fi
-      fi
-      ;;
-  esac
 fi
 
 load_env
