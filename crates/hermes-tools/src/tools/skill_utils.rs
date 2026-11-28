@@ -602,26 +602,38 @@ mod tests {
             "required_environment_variables".into(),
             serde_json::json!([
                 {
-                    "name": "TENOR_API_KEY",
-                    "prompt": "Tenor API key",
-                    "help": "Get a key",
-                    "required_for": "full functionality"
-                }
+                    "name": " SURVEY_STYLE ",
+                    "prompt": "Choose a survey style",
+                    "help": "Use compact or detailed",
+                    "required_for": "formatting reports"
+                },
+                " SURVEY_FORMAT ",
+                " ",
+                {"prompt": "Missing environment variable name"},
+                {"name": " "},
+                false
             ]),
         );
         fm.insert(
             "prerequisites".into(),
-            serde_json::json!({"env_vars": ["LEGACY_KEY", "TENOR_API_KEY"]}),
+            serde_json::json!({"env_vars": [" LEGACY_MODE ", "SURVEY_STYLE", " ", null]}),
         );
 
         let vars = extract_required_environment_variables(&fm);
-        assert_eq!(vars.len(), 2);
-        assert_eq!(vars[0].name, "TENOR_API_KEY");
-        assert_eq!(vars[0].prompt.as_deref(), Some("Tenor API key"));
-        assert_eq!(vars[1].name, "LEGACY_KEY");
+        assert_eq!(
+            vars.iter().map(|var| var.name.as_str()).collect::<Vec<_>>(),
+            ["SURVEY_STYLE", "SURVEY_FORMAT", "LEGACY_MODE"]
+        );
+        assert_eq!(vars[0].prompt.as_deref(), Some("Choose a survey style"));
+        assert_eq!(vars[0].help.as_deref(), Some("Use compact or detailed"));
+        assert_eq!(vars[0].required_for.as_deref(), Some("formatting reports"));
         assert_eq!(
             vars[1].prompt.as_deref(),
-            Some("Enter value for LEGACY_KEY")
+            Some("Enter value for SURVEY_FORMAT")
+        );
+        assert_eq!(
+            vars[2].prompt.as_deref(),
+            Some("Enter value for LEGACY_MODE")
         );
     }
 
@@ -670,9 +682,24 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_conditions_platform() {
+    fn test_extract_conditions_and_legacy_platform() {
         let mut fm = HashMap::new();
         fm.insert("platform".into(), Value::String("darwin".into()));
+        fm.insert(
+            "conditions".into(),
+            serde_json::json!([
+                {"type": "platform", "value": "linux"},
+                {"type": "env", "value": "SURVEY_MODE"},
+                {"type": "env_var", "value": "SURVEY_FORMAT"},
+                {"type": "file_exists", "value": "notes.txt"},
+                {"type": "file", "value": "index.md"},
+                {"type": "command", "value": "editor"},
+                {"type": "cmd", "value": "viewer"},
+                {"type": "user-defined", "value": "review"},
+                {},
+                null
+            ]),
+        );
         let skill = SkillInfo {
             name: "test".into(),
             path: PathBuf::from("/tmp"),
@@ -680,10 +707,25 @@ mod tests {
             frontmatter: fm,
             body: String::new(),
         };
-        let conds = extract_skill_conditions(&skill);
-        assert_eq!(conds.len(), 1);
-        assert_eq!(conds[0].kind, ConditionKind::Platform);
-        assert_eq!(conds[0].value, "darwin");
+        let conditions = extract_skill_conditions(&skill)
+            .into_iter()
+            .map(|condition| (condition.kind, condition.value))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            conditions,
+            [
+                (ConditionKind::Platform, "linux".into()),
+                (ConditionKind::EnvVar, "SURVEY_MODE".into()),
+                (ConditionKind::EnvVar, "SURVEY_FORMAT".into()),
+                (ConditionKind::FileExists, "notes.txt".into()),
+                (ConditionKind::FileExists, "index.md".into()),
+                (ConditionKind::Command, "editor".into()),
+                (ConditionKind::Command, "viewer".into()),
+                (ConditionKind::Custom, "review".into()),
+                (ConditionKind::Custom, String::new()),
+                (ConditionKind::Platform, "darwin".into()),
+            ]
+        );
     }
 
     #[test]
