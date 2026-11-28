@@ -201,6 +201,70 @@ fn compaction_archives_old_tool_results_before_it_summarises() {
 }
 
 #[test]
+fn compaction_keeps_a_nonempty_memory_note_in_the_prompt() {
+    struct CompressionMemory {
+        note: &'static str,
+        seen: Arc<Mutex<Vec<Value>>>,
+    }
+
+    impl crate::memory_manager::MemoryProviderPlugin for CompressionMemory {
+        fn name(&self) -> &str {
+            "test-compression-memory"
+        }
+
+        fn on_pre_compress(&self, messages: &[Value]) -> String {
+            *self.seen.lock().unwrap() = messages.to_vec();
+            self.note.to_owned()
+        }
+    }
+
+    let history = [
+        Message::user("Describe the outline for the essay."),
+        Message::assistant("Start with a short introduction and cover two examples."),
+        Message::user("Use the first example as the opening."),
+        Message::assistant("The outline now starts with the first example."),
+    ];
+    let expected = serde_json::to_value(&history).unwrap();
+
+    for note in ["Keep the essay's first example.", " \n"] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = crate::memory_manager::MemoryManager::new();
+        manager.add_provider(Arc::new(CompressionMemory {
+            note,
+            seen: seen.clone(),
+        }));
+        let agent = AgentLoop::new(
+            AgentConfig {
+                isolated: true,
+                ..Default::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(PromptRecorder::default()),
+        )
+        .with_memory(Arc::new(Mutex::new(manager)));
+        let mut ctx =
+            ContextManager::with_compressor(100, crate::context::ContextCompressor::new(2));
+        for message in &history {
+            ctx.add_message(message.clone());
+        }
+
+        agent.auto_compress_if_over_threshold(&mut ctx);
+
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            expected.as_array().unwrap()
+        );
+        let mut archived = history.to_vec();
+        if !note.trim().is_empty() {
+            let note = Message::system(note);
+            assert!(ctx.get_messages().contains(&note));
+            archived.push(note);
+        }
+        assert_eq!(ctx.compressed_transcripts(), &[archived]);
+    }
+}
+
+#[test]
 fn a_cold_prune_keeps_the_persisted_user_message_override() {
     let _env = env_test_lock();
     let saved: Vec<_> = ["TERMINAL_ENV", "TERMINAL_BACKEND"]

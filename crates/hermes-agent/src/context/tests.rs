@@ -46,11 +46,39 @@ mod tests {
         assert_eq!(cm.get_messages().last().unwrap().role, MessageRole::User);
     }
 
+    #[test]
+    fn truncation_keeps_essential_messages_even_when_the_budget_is_too_small() {
+        let messages = [
+            Message::system("System prompt"),
+            Message::assistant("Earlier answer"),
+            Message::user("What is next?"),
+            Message::assistant("Check the outline."),
+        ];
+        let mut context = ContextManager::new(1000);
+        for message in &messages {
+            context.add_message(message.clone());
+        }
+        let mut budget = BudgetConfig {
+            max_result_size_chars: 1000,
+            max_aggregate_chars: 1000,
+        };
+        context.truncate_to_budget(&budget);
+        assert_eq!(context.get_messages(), &messages);
+
+        budget.max_aggregate_chars = 1;
+        context.truncate_to_budget(&budget);
+        assert_eq!(
+            context.get_messages(),
+            &[messages[0].clone(), messages[2].clone(), messages[3].clone()]
+        );
+    }
+
     // ---- ContextCompressor tests ----
 
     #[test]
     fn test_compressor_no_op_when_small() {
         let compressor = ContextCompressor::new(4);
+        assert!(compressor.compress(&[]).is_empty());
         let msgs = vec![
             Message::system("You are helpful"),
             Message::user("Hi"),
@@ -59,6 +87,27 @@ mod tests {
         let result = compressor.compress(&msgs);
         // Only 3 messages total, recent_count=4 covers all, middle is empty => no-op.
         assert_eq!(result.len(), msgs.len());
+    }
+
+    #[test]
+    fn compaction_counts_blank_older_messages_and_keeps_the_newest_turn() {
+        let compressor = ContextCompressor::new(1);
+        let latest = Message::user("What is next?");
+        let compressed = compressor.compress(&[
+            Message::assistant(" "),
+            Message::assistant(""),
+            latest.clone(),
+        ]);
+        let [summary, turn] = compressed.as_slice() else {
+            panic!("expected a summary and the newest turn, got {compressed:?}");
+        };
+        assert_eq!(summary.role, MessageRole::System);
+        assert!(summary
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("2 message(s) were compressed."));
+        assert_eq!(turn, &latest);
     }
 
     #[test]
@@ -353,13 +402,21 @@ mod tests {
 
     #[test]
     fn test_build_summary_truncates() {
-        let msgs: Vec<Message> = (0..100)
-            .map(|i| Message::user(format!("Message number {i} with some extra content")))
+        let passage = "河".repeat(190);
+        let msgs: Vec<Message> = (0..5)
+            .flat_map(|i| {
+                [
+                    Message::user(format!("Question {i} {passage}")),
+                    Message::assistant(format!("Answer {i} {passage}")),
+                    Message::tool_result(format!("call-{i}"), format!("Result {i} {passage}")),
+                ]
+            })
             .collect();
         let summary = ContextCompressor::build_summary(&msgs);
-        // Summary must be capped at ~2048 chars.
-        assert!(summary.len() <= 2100, "summary should be roughly capped");
         assert!(summary.contains("[Conversation summary]"));
+        assert!(summary.contains("Tool outputs and execution state:"));
+        assert_eq!(summary.chars().count(), 2048 + 3);
+        assert!(summary.ends_with("..."));
     }
 
     // ---- SOUL.md and SystemPromptBuilder tests ----
