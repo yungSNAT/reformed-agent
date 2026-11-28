@@ -667,6 +667,14 @@ const TEST_BIN_SUB: &str = "/bin";
 const TEST_HOME_CMD: &str = r"\\bin\\home-only";
 #[cfg(not(windows))]
 const TEST_HOME_CMD: &str = "/bin/home-only";
+#[cfg(windows)]
+const TEST_ORIG_SUB: &str = r"\\orig-only";
+#[cfg(not(windows))]
+const TEST_ORIG_SUB: &str = "/orig-only";
+#[cfg(windows)]
+const TEST_ALT_SUB: &str = r"\\alt-only";
+#[cfg(not(windows))]
+const TEST_ALT_SUB: &str = "/alt-only";
 
 #[test]
 fn elite_gate_override_availability_expands_shell_vars_in_env_prefixes() {
@@ -691,26 +699,28 @@ fn elite_gate_override_availability_expands_shell_vars_in_env_prefixes() {
     let q_alt = shlex::try_quote(alt_bin.to_str().unwrap()).unwrap();
     let q_empty = shlex::try_quote(empty_bin.to_str().unwrap()).unwrap();
 
-    assert!(elite_gate_override_available(
-        "PATH=\"$PATH\" orig-only --json"
-    ));
-    assert!(elite_gate_override_available(&format!(
-        "PATH=\"$HOME{TEST_BIN_SUB}{TEST_PATH_SEP}$PATH\" home-only --json"
-    )));
-    assert!(elite_gate_override_available(&format!(
-        "PATH=\"$HOME{TEST_BIN_SUB}{TEST_PATH_SEP}$PATH\" orig-only --json"
-    )));
-    assert!(elite_gate_override_available(&format!(
-        "PATH=\"${{HOME}}{TEST_BIN_SUB}{TEST_PATH_SEP}${{PATH}}\" home-only --json"
-    )));
-    assert!(elite_gate_override_available(&format!(
-        "CUSTOM_DIR={q_alt} PATH=\"$CUSTOM_DIR{TEST_PATH_SEP}$PATH\" alt-only --json"
-    )));
-    assert!(elite_gate_override_available(&format!(
-        "PATH={q_empty} CUSTOM_DIR={q_alt} PATH=\"$PATH{TEST_PATH_SEP}$CUSTOM_DIR\" alt-only --json"
-    )));
-    assert!(elite_gate_override_available(&format!(
-        "\"$HOME{TEST_HOME_CMD}\" --json"
+    for ok_cmd in [
+        "PATH=\"$PATH\" orig-only --json".to_string(),
+        format!("PATH=$HOME{TEST_BIN_SUB}{TEST_PATH_SEP}$PATH home-only --json"),
+        format!("PATH=${{HOME}}{TEST_BIN_SUB}{TEST_PATH_SEP}${{PATH}} home-only --json"),
+        format!("PATH=\"$HOME{TEST_BIN_SUB}{TEST_PATH_SEP}$PATH\" orig-only --json"),
+        format!("_CUSTOM_DIR={q_alt} PATH=\"$_CUSTOM_DIR{TEST_PATH_SEP}$PATH\" alt-only --json"),
+        format!(
+            "PATH={q_empty} CUSTOM_DIR={q_alt} PATH=\"$PATH{TEST_PATH_SEP}$CUSTOM_DIR\" alt-only --json"
+        ),
+        format!("\"$HOME{TEST_HOME_CMD}\" --json"),
+        format!("PATH={q_empty} \"$PATH{TEST_ORIG_SUB}\" --json"),
+        "PATH=\"$1$PATH\" orig-only --json".to_string(),
+        "PATH=\"${123}$PATH\" orig-only --json".to_string(),
+        "FOO=\"$/literal\" orig-only \"$CUSTOM_DIR\"".to_string(),
+    ] {
+        assert!(
+            elite_gate_override_available(&ok_cmd),
+            "expected available: {ok_cmd}"
+        );
+    }
+    assert!(!elite_gate_override_available(&format!(
+        "CUSTOM_DIR={q_alt} \"$CUSTOM_DIR{TEST_ALT_SUB}\" --json"
     )));
 }
 
@@ -733,9 +743,17 @@ fn elite_gate_override_availability_handles_shell_quoting_and_invalid_expansions
         r#"PATH="\$PATH" orig-only --json"#,
         r"PATH=\$PATH orig-only --json",
         "PATH=\"$UNSET_VAR\" orig-only --json",
-        "PATH=\"$1/bin\" orig-only --json",
-        "PATH=\"${UNCLOSED\" orig-only --json",
-        "PATH=\"${123}\" orig-only --json",
+        "FOO=\"${UNCLOSED\" orig-only --json",
+        "FOO=\"${UNCLOSED\" orig-only \"}\"",
+        "PATH=\"${UNCLOSED:$PATH\" orig-only --json",
+        "orig-only \"${UNCLOSED\"",
+        "FOO=\"${}\" orig-only --json",
+        "orig-only \"${}\"",
+        "FOO=\"${123abc}\" orig-only --json",
+        "'FOO=bar' orig-only --json",
+        "\"FOO\"=bar orig-only --json",
+        "FOO-BAR=1 orig-only --json",
+        "\"\" --json",
         r"orig-only \",
         "orig-only \"unterminated",
         "",
@@ -779,6 +797,9 @@ fn elite_gate_override_availability_with_windows_pathext_resolves_and_overrides(
     assert!(win_check(&format!("PATH={q_alt} win-only --json")));
     assert!(win_check(&format!(
         "PATH={q_alt} PATHEXT=\"$PATHEXT\" win-only --json"
+    )));
+    assert!(!win_check(&format!(
+        "PATH={q_alt} PATHEXT=cmd win-only --json"
     )));
     assert!(!win_check(&format!(
         "PATH={q_alt} PATHEXT=.exe win-only --json"

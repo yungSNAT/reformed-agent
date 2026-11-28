@@ -19,40 +19,70 @@ fn is_shell_ident(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn parse_shell_env_assignment(token: &str) -> Option<(&str, &str)> {
-    token
-        .split_once('=')
-        .filter(|(name, _)| is_shell_ident(name))
+fn split_raw_env_assignment(s: &str) -> Option<(&str, &str)> {
+    let eq = s.find('=')?;
+    let name = &s[..eq];
+    is_shell_ident(name).then_some((name, &s[eq + 1..]))
 }
 
-fn expand_shell_var(
-    rest: &str,
-    lookup: &dyn Fn(&str) -> Option<String>,
-) -> Option<(String, usize)> {
+enum VarExpansion {
+    Expanded(String, usize),
+    Literal,
+    Invalid,
+}
+
+fn expand_braced_var(rest: &str, lookup: &dyn Fn(&str) -> Option<String>) -> VarExpansion {
+    let len = rest
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        .count();
+    if len == 0 || !rest[len..].starts_with('}') {
+        return VarExpansion::Invalid;
+    }
+    let name = &rest[..len];
+    if is_shell_ident(name) {
+        VarExpansion::Expanded(lookup(name).unwrap_or_default(), len + 2)
+    } else if name.bytes().all(|b| b.is_ascii_digit()) {
+        VarExpansion::Expanded(String::new(), len + 2)
+    } else {
+        VarExpansion::Invalid
+    }
+}
+
+fn expand_shell_var(rest: &str, lookup: &dyn Fn(&str) -> Option<String>) -> VarExpansion {
     if let Some(braced) = rest.strip_prefix('{') {
-        let end = braced.find('}')?;
-        let name = &braced[..end];
-        return is_shell_ident(name).then(|| (lookup(name).unwrap_or_default(), end + 2));
+        return expand_braced_var(braced, lookup);
+    }
+    if rest.bytes().next().is_some_and(|b| b.is_ascii_digit()) {
+        return VarExpansion::Expanded(String::new(), 1);
     }
     let len = rest
         .bytes()
         .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
         .count();
     let name = &rest[..len];
-    is_shell_ident(name).then(|| (lookup(name).unwrap_or_default(), len))
+    if is_shell_ident(name) {
+        VarExpansion::Expanded(lookup(name).unwrap_or_default(), len)
+    } else {
+        VarExpansion::Literal
+    }
 }
 
 fn push_shell_dollar(
     rest: &str,
     out: &mut String,
     lookup: &dyn Fn(&str) -> Option<String>,
-) -> usize {
-    if let Some((val, used)) = expand_shell_var(rest, lookup) {
-        out.push_str(&val);
-        1 + used
-    } else {
-        out.push('$');
-        1
+) -> Option<usize> {
+    match expand_shell_var(rest, lookup) {
+        VarExpansion::Expanded(val, used) => {
+            out.push_str(&val);
+            Some(1 + used)
+        }
+        VarExpansion::Literal => {
+            out.push('$');
+            Some(1)
+        }
+        VarExpansion::Invalid => None,
     }
 }
 
@@ -84,7 +114,7 @@ fn advance_shell_word(
         }
         (0, b'\\') => push_shell_escape(&s[i + 1..], false, out),
         (b'"', b'\\') => push_shell_escape(&s[i + 1..], true, out),
-        (0 | b'"', b'$') => Some(push_shell_dollar(&s[i + 1..], out, lookup)),
+        (0 | b'"', b'$') => push_shell_dollar(&s[i + 1..], out, lookup),
         _ => s[i..].chars().next().map(|ch| {
             out.push(ch);
             ch.len_utf8()
@@ -92,14 +122,10 @@ fn advance_shell_word(
     }
 }
 
-fn next_shell_word<'a>(
-    input: &'a str,
+fn read_shell_word<'a>(
+    s: &'a str,
     lookup: &dyn Fn(&str) -> Option<String>,
-) -> Option<Option<(String, &'a str)>> {
-    let s = input.trim_start();
-    if s.is_empty() {
-        return Some(None);
-    }
+) -> Option<(String, &'a str)> {
     let (bytes, mut i, mut out, mut quote) = (s.as_bytes(), 0, String::new(), 0u8);
     while i < bytes.len() {
         if quote == 0 && bytes[i].is_ascii_whitespace() {
@@ -107,7 +133,7 @@ fn next_shell_word<'a>(
         }
         i += advance_shell_word(s, i, &mut quote, &mut out, lookup)?;
     }
-    (quote == 0).then_some(Some((out, &s[i..])))
+    (quote == 0).then_some((out, &s[i..]))
 }
 
 struct ShellLookupEnv<'a> {
@@ -120,10 +146,7 @@ struct ShellLookupEnv<'a> {
 }
 
 impl ShellLookupEnv<'_> {
-    fn resolve(&self, name: &str) -> Option<String> {
-        if let Some(val) = self.overrides.get(name) {
-            return Some(val.clone());
-        }
+    fn resolve_outer(&self, name: &str) -> Option<String> {
         if name == "PATH" {
             return self
                 .base_path
@@ -131,6 +154,13 @@ impl ShellLookupEnv<'_> {
                 .map(ToOwned::to_owned);
         }
         (self.env_lookup)(name)
+    }
+
+    fn resolve_for_prefix(&self, name: &str) -> Option<String> {
+        self.overrides
+            .get(name)
+            .cloned()
+            .or_else(|| self.resolve_outer(name))
     }
 
     fn apply_override(&mut self, name: &str, value: &str) {
@@ -180,6 +210,9 @@ fn resolve_program_candidate(
     path: Option<&std::ffi::OsStr>,
     pathext: Option<&str>,
 ) -> bool {
+    if program.is_empty() {
+        return false;
+    }
     let candidate = std::path::Path::new(program);
     if candidate.components().count() > 1 {
         candidate_matches_with_pathext(candidate, pathext)
@@ -211,19 +244,26 @@ fn elite_gate_override_available_with(
     let mut program = None;
     let mut rest = cmdline;
     loop {
-        let Some(next) = next_shell_word(rest, &|name| env.resolve(name)) else {
+        let s = rest.trim_start();
+        if s.is_empty() {
+            break;
+        }
+        if program.is_none() {
+            if let Some((name, val_src)) = split_raw_env_assignment(s) {
+                let Some((value, tail)) = read_shell_word(val_src, &|k| env.resolve_for_prefix(k))
+                else {
+                    return false;
+                };
+                env.apply_override(name, &value);
+                rest = tail;
+                continue;
+            }
+        }
+        let Some((token, tail)) = read_shell_word(s, &|k| env.resolve_outer(k)) else {
             return false;
         };
-        let Some((token, tail)) = next else {
-            break;
-        };
         rest = tail;
-        if program.is_some() {
-            continue;
-        }
-        if let Some((name, value)) = parse_shell_env_assignment(&token) {
-            env.apply_override(name, value);
-        } else {
+        if program.is_none() {
             program = Some(token);
         }
     }
