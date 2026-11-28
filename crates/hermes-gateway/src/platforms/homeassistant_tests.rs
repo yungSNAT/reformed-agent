@@ -143,7 +143,7 @@ async fn a_silent_peer_is_dropped_half_a_heartbeat_after_the_ping() {
         .heartbeat = Duration::from_millis(200);
     // The server never reads after the handshake, so it never answers a ping.
     let server = tokio::spawn(async move {
-        let ws = accept_handshake(&listener, true).await;
+        let ws = accept_handshake(&listener, HandshakeReply::Accepted).await;
         tokio::time::sleep(Duration::from_secs(3)).await;
         drop(ws);
     });
@@ -191,7 +191,9 @@ async fn non_pong_frame_after_ping_resets_heartbeat() {
     // Peek for ping 1 and unwrap the TcpStream after send_text so tungstenite
     // never queues or flushes an automatic Frame::pong back to the listener.
     let server = tokio::spawn(async move {
-        let mut ws = accept_handshake(&listener, true).await.expect("handshake");
+        let mut ws = accept_handshake(&listener, HandshakeReply::Accepted)
+            .await
+            .expect("handshake");
         let n = ws.get_ref().peek(&mut [0u8; 1]).await.expect("peek ping");
         assert!(n > 0, "peer closed before first ping");
         send_text(&mut ws, serde_json::json!({"type": "pong"})).await;
@@ -276,10 +278,15 @@ async fn send_text(ws: &mut WebSocketStream<TcpStream>, value: Value) {
         .expect("send");
 }
 
-/// Accept one client and run Home Assistant's handshake; `auth_ok` false answers `auth_invalid`.
+enum HandshakeReply {
+    Accepted,
+    InvalidToken,
+    RejectedSubscription,
+}
+
 async fn accept_handshake(
     listener: &TcpListener,
-    auth_ok: bool,
+    reply: HandshakeReply,
 ) -> Option<WebSocketStream<TcpStream>> {
     let (stream, _) = listener.accept().await.expect("accept");
     let mut ws = tokio_tungstenite::accept_async(stream)
@@ -289,7 +296,7 @@ async fn accept_handshake(
     let auth = recv_text(&mut ws).await;
     assert_eq!(auth["type"], "auth");
     assert_eq!(auth["access_token"], SENTINEL);
-    if !auth_ok {
+    if matches!(reply, HandshakeReply::InvalidToken) {
         send_text(&mut ws, serde_json::json!({"type": "auth_invalid"})).await;
         return None;
     }
@@ -299,7 +306,11 @@ async fn accept_handshake(
     assert_eq!(sub["event_type"], "state_changed");
     send_text(
         &mut ws,
-        serde_json::json!({"id": sub["id"], "type": "result", "success": true}),
+        serde_json::json!({
+            "id": sub["id"],
+            "type": "result",
+            "success": matches!(reply, HandshakeReply::Accepted)
+        }),
     )
     .await;
     Some(ws)
@@ -333,7 +344,9 @@ async fn listener_forwards_watched_events_and_reconnects() {
     let (adapter, mut rx) = adapter_with_inbox(cfg).await;
     adapter.start().await.expect("start");
 
-    let mut ws = accept_handshake(&listener, true).await.expect("handshake");
+    let mut ws = accept_handshake(&listener, HandshakeReply::Accepted)
+        .await
+        .expect("handshake");
     send_text(&mut ws, light_event("sensor.cpu", "1", "2")).await;
     send_text(&mut ws, light_event("light.hall", "off", "on")).await;
     let msg = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -346,7 +359,9 @@ async fn listener_forwards_watched_events_and_reconnects() {
 
     // Home Assistant restarts: the adapter reconnects, authenticates and resubscribes.
     drop(ws);
-    let mut ws = accept_handshake(&listener, true).await.expect("reconnect");
+    let mut ws = accept_handshake(&listener, HandshakeReply::Accepted)
+        .await
+        .expect("reconnect");
     send_text(&mut ws, light_event("light.hall", "on", "off")).await;
     let msg = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
@@ -364,13 +379,61 @@ async fn rejected_token_is_an_auth_error() {
     let mut cfg = config(serde_json::json!({"watch_all": true}));
     cfg.base_url = url;
     let (adapter, _rx) = adapter_with_inbox(cfg).await;
-    let server = tokio::spawn(async move { accept_handshake(&listener, false).await });
+    let server =
+        tokio::spawn(
+            async move { accept_handshake(&listener, HandshakeReply::InvalidToken).await },
+        );
     let Err(err) = adapter.inner.connect().await else {
         panic!("auth rejected token was accepted");
     };
     assert!(matches!(err, GatewayError::Auth(_)), "{err:?}");
     assert!(!err.to_string().contains(SENTINEL), "token leaked: {err}");
     server.await.expect("server");
+}
+
+#[tokio::test]
+async fn a_rejected_state_subscription_fails_the_handshake() {
+    let (listener, url) = listener_on_localhost().await;
+    let mut cfg = config(serde_json::json!({"watch_all": true}));
+    cfg.base_url = url;
+    let (adapter, _inbox) = adapter_with_inbox(cfg).await;
+
+    let (result, _peer) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            adapter.inner.connect(),
+            accept_handshake(&listener, HandshakeReply::RejectedSubscription)
+        )
+    })
+    .await
+    .expect("subscription fixture finished");
+    assert!(matches!(
+        result,
+        Err(GatewayError::Platform(message)) if message.starts_with("HA WebSocket subscribe failed:")
+    ));
+}
+
+#[tokio::test]
+async fn watched_event_delivery_recovers_after_a_missing_or_closed_inbox() {
+    let cfg = config(serde_json::json!({"watch_all": true, "cooldown_seconds": 0}));
+    let adapter = HomeAssistantAdapter::new(cfg).expect("adapter");
+    let frame = light_event("light.hall", "off", "on");
+    let event = &frame["event"];
+    assert!(!adapter.handle_event(event).await.unwrap());
+
+    let (tx, inbox) = mpsc::channel(1);
+    adapter.set_inbound_sender(tx).await;
+    drop(inbox);
+    assert!(matches!(
+        adapter.handle_event(event).await,
+        Err(GatewayError::Platform(message)) if message.starts_with("HomeAssistant inbound channel closed:")
+    ));
+
+    let (tx, mut inbox) = mpsc::channel(1);
+    adapter.set_inbound_sender(tx).await;
+    assert!(adapter.handle_event(event).await.unwrap());
+    let message = inbox.try_recv().unwrap();
+    assert_eq!(message.chat_id, EVENTS_CHAT_ID);
+    assert_eq!(message.text, "[Home Assistant] Hall: turned on");
 }
 
 #[tokio::test]
