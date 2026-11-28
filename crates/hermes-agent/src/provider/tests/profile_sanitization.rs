@@ -100,7 +100,11 @@ fn moonshot_tool_schema_supplies_a_parameter_object_for_missing_properties() {
     use serde_json::json;
 
     let empty_parameters = json!({"type": "object", "properties": {}});
-    for params in [json!(null), json!({"type": "string", "properties": []})] {
+    for params in [
+        json!(null),
+        json!({"type": "object"}),
+        json!({"type": "string", "properties": []}),
+    ] {
         assert_eq!(sanitize_moonshot_tool_parameters(&params), empty_parameters);
     }
 }
