@@ -984,7 +984,12 @@ fn parse_open_spotify_url(cleaned: &str) -> Option<reqwest::Url> {
         (cleaned, false)
     };
     let authority = authority_tail.split(['/', '?', '#']).next().unwrap_or("");
-    if authority.is_empty() || authority.contains('\\') {
+    if authority.is_empty()
+        || authority.contains(['\\', '@'])
+        || authority
+            .bytes()
+            .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+    {
         return None;
     }
     let parsed = if has_scheme {
@@ -993,8 +998,6 @@ fn parse_open_spotify_url(cleaned: &str) -> Option<reqwest::Url> {
         reqwest::Url::parse(&format!("https://{authority_tail}")).ok()?
     };
     (matches!(parsed.scheme(), "http" | "https")
-        && parsed.username().is_empty()
-        && parsed.password().is_none()
         && parsed
             .host_str()
             .is_some_and(|host| host.eq_ignore_ascii_case("open.spotify.com")))
@@ -1296,38 +1299,35 @@ mod tests {
 
     #[test]
     fn normalize_spotify_id_parses_open_spotify_urls() {
-        assert_eq!(
-            normalize_spotify_id("https://open.spotify.com/track/abc123?si=x", None).unwrap(),
-            "abc123"
-        );
-        assert_eq!(
-            normalize_spotify_id("http://open.spotify.com/track/abc123", Some("track")).unwrap(),
-            "abc123"
-        );
-        assert_eq!(
-            normalize_spotify_id("open.spotify.com/playlist/p1", Some("playlist")).unwrap(),
-            "p1"
-        );
-        assert_eq!(
-            normalize_spotify_id("//open.spotify.com/track/abc123", None).unwrap(),
-            "abc123"
-        );
-        assert_eq!(
-            normalize_spotify_id("https://OPEN.spotify.com:443/track/abc123", None).unwrap(),
-            "abc123"
-        );
-        assert_eq!(
-            normalize_spotify_id("OPEN.spotify.com:443/track/abc123", None).unwrap(),
-            "abc123"
-        );
-        assert_eq!(
-            normalize_spotify_id(
+        for (input, expected_type, expected) in [
+            ("https://open.spotify.com/track/abc123?si=x", None, "abc123"),
+            ("https://open.spotify.com/track/abc123#frag", None, "abc123"),
+            (
+                "http://open.spotify.com/track/abc123",
+                Some("track"),
+                "abc123",
+            ),
+            ("open.spotify.com/playlist/p1", Some("playlist"), "p1"),
+            ("//open.spotify.com/track/abc123", None, "abc123"),
+            ("https://OPEN.spotify.com:443/track/abc123", None, "abc123"),
+            ("OPEN.spotify.com:443/track/abc123", None, "abc123"),
+            (
                 "open.spotify.com/track/abc123?redirect=https://evil.example",
-                None
-            )
-            .unwrap(),
-            "abc123"
-        );
+                None,
+                "abc123",
+            ),
+            (
+                "https://open.spotify.com/track",
+                None,
+                "https://open.spotify.com/track",
+            ),
+        ] {
+            assert_eq!(
+                normalize_spotify_id(input, expected_type).unwrap(),
+                expected,
+                "input={input:?}"
+            );
+        }
         assert_eq!(
             normalize_spotify_uri("https://open.spotify.com/track/abc123?si=x", Some("track"))
                 .unwrap(),
@@ -1345,9 +1345,12 @@ mod tests {
             "https://evil.example/open.spotify.com/track/abc123",
             "https://open.spotify.com.evil.example/track/abc123",
             "https://sub.open.spotify.com/track/abc123",
+            "https://open.spotify.com./track/abc123",
             "https://open.spotify.com@evil.example/track/abc123",
             "https://user@open.spotify.com/track/abc123",
             "https://:pass@open.spotify.com/track/abc123",
+            "https://@open.spotify.com/track/abc123",
+            "@open.spotify.com/track/abc123",
             "mailto:user@open.spotify.com/track/abc123",
             "ftp://open.spotify.com/track/abc123",
             "//evil.example/open.spotify.com/track/abc123",
@@ -1355,6 +1358,11 @@ mod tests {
             "/open.spotify.com/track/abc123",
             "///open.spotify.com/track/abc123",
             "https:///open.spotify.com/track/abc123",
+            "https://\t/open.spotify.com/track/abc123",
+            "https://\r\n/open.spotify.com/track/abc123",
+            "//\t/open.spotify.com/track/abc123",
+            "//\n/open.spotify.com/track/abc123",
+            "https:// /open.spotify.com/track/abc123",
             r"https://open.spotify.com\@evil.example/track/abc123",
             r"\open.spotify.com/track/abc123",
             "http://[::1",
