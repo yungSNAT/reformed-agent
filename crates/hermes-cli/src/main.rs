@@ -71,8 +71,6 @@ use hermes_config::{
 };
 use hermes_core::AgentError;
 use hermes_core::ParseMode;
-#[cfg(feature = "gateway-telegram")]
-use hermes_core::PlatformAdapter;
 use hermes_core::{MessageRole, StreamChunk};
 use hermes_cron::{
     cron_scheduler_for_data_dir, CronCompletionEvent, CronError, CronScheduler, DeliverTarget,
@@ -122,10 +120,7 @@ use hermes_gateway::platforms::slack::{SlackAdapter, SlackConfig};
 #[cfg(feature = "gateway-sms")]
 use hermes_gateway::platforms::sms::{SmsAdapter, SmsConfig};
 #[cfg(feature = "gateway-telegram")]
-use hermes_gateway::platforms::telegram::{
-    IncomingMessage as TelegramIncomingMessage, PollResult as TelegramPollResult, TelegramAdapter,
-    TelegramConfig, TelegramTextBatcher,
-};
+use hermes_gateway::platforms::telegram::{TelegramAdapter, TelegramConfig};
 #[cfg(feature = "gateway-webhook")]
 use hermes_gateway::platforms::webhook::{WebhookAdapter, WebhookConfig, WebhookPayload};
 #[cfg(feature = "gateway-wecom")]

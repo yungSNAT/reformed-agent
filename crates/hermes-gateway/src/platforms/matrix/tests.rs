@@ -548,6 +548,180 @@ fn test_parse_decrypt_ffi_output_accepts_matrix_message_shape() {
     assert!(out.relates_to.is_none());
 }
 
+#[test]
+fn decrypt_bridge_preserves_edits_and_relation_metadata() {
+    for (reply, body, event_type, is_edit, relation) in [
+        (
+            r#"{
+                "relates_to":{"rel_type":"m.replace","event_id":"$first"},
+                "m.new_content":{"body":" revised "},
+                "body":"original"
+            }"#,
+            "revised",
+            "m.room.message",
+            true,
+            Some(("m.replace", "$first", None)),
+        ),
+        (
+            r#"{
+                "body":"original",
+                "content":{
+                    "m.relates_to":{"rel_type":"m.replace","event_id":"$second"},
+                    "m.new_content":{"body":"nested revision"}
+                }
+            }"#,
+            "nested revision",
+            "m.room.message",
+            true,
+            Some(("m.replace", "$second", None)),
+        ),
+        (
+            r#"{"is_edit":true,"body":"legacy edit"}"#,
+            "legacy edit",
+            "m.room.message",
+            true,
+            None,
+        ),
+        (
+            r#"{"is_edit":true,"content":{"body":"legacy wrapped edit"}}"#,
+            "legacy wrapped edit",
+            "m.room.message",
+            true,
+            None,
+        ),
+        (
+            r#"{
+                "event_type":"m.reaction",
+                "body":"acknowledged",
+                "m.relates_to":{"rel_type":"m.annotation","event_id":"$first","key":"✔"}
+            }"#,
+            "acknowledged",
+            "m.reaction",
+            false,
+            Some(("m.annotation", "$first", Some("✔"))),
+        ),
+        (
+            r#"{
+                "content":{
+                    "m.relates_to":{"rel_type":"m.replace"},
+                    "m.new_content":{"body":"fallback"}
+                }
+            }"#,
+            "fallback",
+            "m.room.message",
+            false,
+            None,
+        ),
+        (
+            "plain bridge reply",
+            "plain bridge reply",
+            "m.room.message",
+            false,
+            None,
+        ),
+    ] {
+        let out = MatrixAdapter::parse_decrypt_ffi_output(reply).unwrap();
+        assert_eq!(out.body, body, "{reply}");
+        assert_eq!(out.event_type, event_type, "{reply}");
+        assert_eq!(out.is_edit, is_edit, "{reply}");
+        assert_eq!(
+            out.relates_to.as_ref().map(|r| (
+                r.rel_type.as_str(),
+                r.event_id.as_str(),
+                r.key.as_deref()
+            )),
+            relation,
+            "{reply}"
+        );
+    }
+
+    for (reply, error) in [
+        ("", "empty stdout from decrypt FFI"),
+        (
+            r#"{"error":"message unavailable","body":"ignored"}"#,
+            "decrypt FFI error: message unavailable",
+        ),
+        (
+            r#"{"content":{"body":" "}}"#,
+            "decrypt FFI JSON missing non-empty body",
+        ),
+    ] {
+        assert_eq!(
+            MatrixAdapter::parse_decrypt_ffi_output(reply).unwrap_err(),
+            error,
+            "{reply}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn decrypt_ffi_config_loads_environment_options() {
+    const CHILD_CASE: &str = "HERMES_TEST_MATRIX_DECRYPT_FFI_CASE";
+    let cases = [
+        (None, None, None, None),
+        (Some(" "), None, None, None),
+        (Some("fixture-bridge"), None, None, Some((&[][..], 1_500))),
+        (
+            Some(" fixture-bridge "),
+            Some(r#"["--room","Croft Manor"," "]"#),
+            Some("250"),
+            Some((&["--room", "Croft Manor"][..], 250)),
+        ),
+        (
+            Some("fixture-bridge"),
+            Some("[invalid   --legacy"),
+            Some("0"),
+            Some((&["[invalid", "--legacy"][..], 1_500)),
+        ),
+        (
+            Some("fixture-bridge"),
+            Some(" "),
+            Some("invalid"),
+            Some((&[][..], 1_500)),
+        ),
+    ];
+    if let Ok(case) = std::env::var(CHILD_CASE) {
+        let (_, _, _, expected) = cases[case.parse::<usize>().expect("case index")];
+        let actual = MatrixDecryptFfiConfig::from_env();
+        if let Some((args, timeout)) = expected {
+            let config = actual.expect("nonblank bridge command");
+            assert_eq!(config.command, "fixture-bridge");
+            assert_eq!(config.args, args);
+            assert_eq!(config.timeout, Duration::from_millis(timeout));
+        } else {
+            assert!(actual.is_none());
+        }
+        return;
+    }
+
+    let executable = std::env::current_exe().expect("test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
+    for (index, (command, args, timeout, _)) in cases.into_iter().enumerate() {
+        let mut child = tokio::process::Command::new(&executable);
+        child
+            .env_clear()
+            .env(CHILD_CASE, index.to_string())
+            .envs(Some(DECRYPT_FFI_COMMAND_ENV).zip(command))
+            .envs(Some(DECRYPT_FFI_ARGS_ENV).zip(args))
+            .envs(Some(DECRYPT_FFI_TIMEOUT_ENV).zip(timeout))
+            .envs(Some("SystemRoot").zip(std::env::var_os("SystemRoot")))
+            .envs(Some("LLVM_PROFILE_FILE").zip(std::env::var_os("LLVM_PROFILE_FILE")))
+            .kill_on_drop(true)
+            .args([
+                "--exact",
+                "platforms::matrix::tests::decrypt_ffi_config_loads_environment_options",
+            ]);
+        let output = tokio::time::timeout(Duration::from_secs(10), child.output())
+            .await
+            .expect("isolated Matrix test timeout")
+            .expect("isolated Matrix test");
+        assert!(
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+            "case {index}: {output:?}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn test_parse_sync_encrypted_event_uses_ffi_bridge() {

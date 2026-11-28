@@ -78,6 +78,46 @@
         assert_eq!(mode, 0o700, "background_jobs mode {mode:o}");
     }
 
+    #[tokio::test]
+    async fn background_recovery_records_incomplete_worker_binding_as_failed() {
+        if !crate::isolated_test_profile::enter(
+            "commands::tests::background_recovery_records_incomplete_worker_binding_as_failed",
+        ) {
+            return;
+        }
+        let jobs = background_jobs_dir().unwrap();
+        let status = jobs.join("fixture-review.json");
+        std::fs::write(
+            &status,
+            r#"{"id":"fixture-review","status":"queued","attempts":0,"task":"Review fixture formatting","kanban":{"board":"review"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(recover_queued_background_jobs(1).unwrap(), 1);
+        let failed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let saved = read_json_map(&status);
+                if saved.get("status").and_then(serde_json::Value::as_str) == Some("failed") {
+                    break saved;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("recovery records a terminal failure");
+
+        assert_eq!(failed["id"], "fixture-review");
+        assert_eq!(failed["attempts"], 1);
+        assert!(failed["pid"].is_null());
+        assert!(failed["finished_at"].is_string());
+        assert_eq!(
+            failed["error"],
+            "spawn failed: kanban job record lacks its board, task or id"
+        );
+        assert!(!status.with_extension("log").exists());
+        assert_eq!(recover_queued_background_jobs(1).unwrap(), 0);
+    }
+
     /// The CLI does not start with a jobs folder it cannot make owner-only:
     /// its job files would stay readable by other users while it runs.
     #[cfg(unix)]

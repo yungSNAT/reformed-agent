@@ -426,6 +426,60 @@ mod tests {
         assert!(html.ends_with("</head>"));
     }
 
+    #[tokio::test]
+    async fn bundle_assets_are_served_with_their_media_types() {
+        let dist = tempfile::tempdir().unwrap();
+        std::fs::write(dist.path().join("index.html"), "<html></html>").unwrap();
+        std::fs::create_dir(dist.path().join("assets")).unwrap();
+        let boot = Bootstrap { profile: "default" };
+        let bytes = b"bundle asset";
+        for (name, media_type) in [
+            ("help.htm", "text/html; charset=utf-8"),
+            ("app.mjs", "text/javascript; charset=utf-8"),
+            ("theme.css", "text/css; charset=utf-8"),
+            ("app.js.map", "application/json"),
+            ("app.webmanifest", "application/manifest+json"),
+            ("logo.svg", "image/svg+xml"),
+            ("logo.PNG", "image/png"),
+            ("cover.jpeg", "image/jpeg"),
+            ("intro.gif", "image/gif"),
+            ("cover.webp", "image/webp"),
+            ("cover.avif", "image/avif"),
+            ("app.ico", "image/x-icon"),
+            ("body.woff", "font/woff"),
+            ("body.woff2", "font/woff2"),
+            ("heading.ttf", "font/ttf"),
+            ("heading.otf", "font/otf"),
+            ("worker.wasm", "application/wasm"),
+            ("licence.txt", "text/plain; charset=utf-8"),
+            ("intro.mp3", "audio/mpeg"),
+            ("alert.wav", "audio/wav"),
+            ("intro.ogg", "audio/ogg"),
+            ("guide.mp4", "video/mp4"),
+            ("guide.webm", "video/webm"),
+            ("data.bin", "application/octet-stream"),
+        ] {
+            let relative = format!("assets/{name}");
+            std::fs::write(dist.path().join(&relative), bytes).unwrap();
+            let response = serve(Some(dist.path()), &format!("/{relative}"), &boot);
+            assert_eq!(response.status(), StatusCode::OK, "{name}");
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                media_type,
+                "{name}"
+            );
+            assert_eq!(
+                response.headers()["x-content-type-options"],
+                "nosniff",
+                "{name}"
+            );
+            let body = axum::body::to_bytes(response.into_body(), bytes.len())
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), bytes, "{name}");
+        }
+    }
+
     #[test]
     fn a_link_swapped_in_while_serving_never_leaks_outside_bytes() {
         let dir = tempfile::tempdir().unwrap();

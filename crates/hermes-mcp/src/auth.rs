@@ -143,10 +143,8 @@ impl OAuthConfig {
     /// &client_secret=...
     /// &scope=...
     /// ```
-    async fn fetch_token(&self) -> Result<OAuthToken, McpError> {
+    async fn fetch_token(&self, client: &reqwest::Client) -> Result<String, McpError> {
         info!("Fetching OAuth2 access token from {}", self.token_url);
-
-        let client = reqwest::Client::new();
 
         let mut params = vec![
             ("grant_type", "client_credentials".to_string()),
@@ -186,16 +184,8 @@ impl OAuthConfig {
             .await
             .map_err(|e| McpError::Auth(format!("Failed to parse token response: {}", e)))?;
 
-        Ok(OAuthToken {
-            access_token: token_response.access_token,
-        })
+        Ok(token_response.access_token)
     }
-}
-
-/// Cached OAuth token with expiration information.
-#[derive(Debug, Clone)]
-struct OAuthToken {
-    access_token: String,
 }
 
 /// Response from an OAuth2 token endpoint.
@@ -225,8 +215,7 @@ fn default_token_type() -> String {
 impl McpAuthProvider for OAuthConfig {
     async fn get_token(&self) -> Result<String, McpError> {
         debug!("Getting OAuth token via client credentials flow");
-        let token = self.fetch_token().await?;
-        Ok(token.access_token)
+        self.fetch_token(&reqwest::Client::new()).await
     }
 
     fn provider_type(&self) -> &str {
@@ -313,5 +302,95 @@ mod tests {
         assert_eq!(deserialized.client_id, "id");
         assert_eq!(deserialized.scopes, vec!["read"]);
         assert_eq!(deserialized.audience, Some("api".to_string()));
+    }
+
+    async fn exchange_with_fixture(
+        status: &str,
+        body: &str,
+        configure: impl FnOnce(OAuthConfig) -> OAuthConfig,
+    ) -> (Result<String, McpError>, String) {
+        use crate::transport::tests::answer_once_with_body;
+        use tokio::net::TcpListener;
+        use tokio::time::{timeout, Duration};
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let endpoint = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let token_url = format!("http://{}/token", endpoint.local_addr().unwrap());
+        let config = configure(OAuthConfig::new(
+            "fixture-client",
+            "fixture-secret",
+            "about:blank",
+            token_url,
+        ));
+        let reply = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let (result, (head, form)) = timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                config.fetch_token(&client),
+                answer_once_with_body(&endpoint, reply)
+            )
+        })
+        .await
+        .expect("loopback token exchange timed out");
+        assert!(head.starts_with("post /token http/1.1"));
+        assert!(head.contains("content-type: application/x-www-form-urlencoded"));
+        (result, form)
+    }
+
+    #[tokio::test]
+    async fn oauth_exchange_uses_only_the_loopback_endpoint() {
+        let (result, form) = exchange_with_fixture(
+            "200 OK",
+            r#"{"access_token":"fixture-access","expires_in":3600}"#,
+            |config| {
+                config
+                    .with_scope("read")
+                    .with_scope("write")
+                    .with_audience("fixture-api")
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap(), "fixture-access");
+        let mut fields = form.split('&').collect::<Vec<_>>();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            [
+                "audience=fixture-api",
+                "client_id=fixture-client",
+                "client_secret=fixture-secret",
+                "grant_type=client_credentials",
+                "scope=read+write",
+            ]
+        );
+        for (status, body, expected) in [
+            (
+                "403 Forbidden",
+                "fixture denial",
+                "Token endpoint returned 403 Forbidden: fixture denial",
+            ),
+            (
+                "200 OK",
+                r#"{"expires_in":3600}"#,
+                "Failed to parse token response:",
+            ),
+        ] {
+            let (result, form) = exchange_with_fixture(status, body, |config| config).await;
+            let error = result.expect_err("expected a token exchange error");
+            assert!(
+                matches!(&error, McpError::Auth(message) if message.starts_with(expected)),
+                "{error}"
+            );
+            assert!(!form.contains("scope=") && !form.contains("audience="));
+        }
+
+        let config = OAuthConfig::new("fixture-client", "fixture-secret", "about:blank", "invalid");
+        let error = config.get_token().await.expect_err("invalid endpoint URL");
+        assert!(
+            matches!(&error, McpError::Auth(message) if message.starts_with("Token request failed:")),
+            "{error}"
+        );
     }
 }

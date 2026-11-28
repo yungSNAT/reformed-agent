@@ -1019,8 +1019,21 @@ fn test_route_learning_persists_across_agent_restarts() {
         Arc::new(ToolRegistry::new()),
         Arc::new(DummyProvider),
     );
-    agent.update_route_learning(None, Some("openai:gpt-4o"), 1200, true);
     let persisted_path = route_learning_state_path(&cfg);
+    std::fs::create_dir_all(&persisted_path).expect("block writing the state file");
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        agent.update_route_learning(None, Some("openai:gpt-4o"), 1200, true);
+    });
+    assert!(persisted_path.is_dir());
+    let in_memory = agent.route_learning_snapshot(None, Some("openai:gpt-4o"));
+    assert_eq!(in_memory["stats"]["samples"], 1);
+
+    std::fs::remove_dir(&persisted_path).expect("unblock writing the state file");
+    agent.update_route_learning(None, Some("openai:gpt-4o"), 1400, true);
     assert!(
         persisted_path.exists(),
         "route-learning state file must exist"
@@ -1033,7 +1046,7 @@ fn test_route_learning_persists_across_agent_restarts() {
     );
     let snapshot = reloaded.route_learning_snapshot(None, Some("openai:gpt-4o"));
     assert_eq!(snapshot["key"], "openai:gpt-4o");
-    assert!(snapshot["stats"]["samples"].as_u64().unwrap_or(0) >= 1);
+    assert_eq!(snapshot["stats"]["samples"], 2);
 }
 
 #[test]

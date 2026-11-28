@@ -376,6 +376,93 @@
     }
 
     #[test]
+    fn objective_evaluation_recovers_from_corrupt_json() {
+        let home = tempfile::tempdir().unwrap();
+        let agent = AgentLoop::new(
+            AgentConfig {
+                hermes_home: Some(home.path().to_str().unwrap().to_string()),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DummyProvider),
+        );
+        let alpha = home.path().join("alpha");
+        let trend = alpha.join("objective_eval_trend.json");
+        assert_eq!(agent.objective_eval_trend_path(), trend);
+        std::fs::create_dir(&alpha).unwrap();
+        std::fs::write(&trend, "{").unwrap();
+
+        agent
+            .append_objective_eval_sample("obj-survey", "advancing", "new sample")
+            .unwrap();
+
+        let recovered: Value = serde_json::from_slice(&std::fs::read(trend).unwrap()).unwrap();
+        let samples = recovered["samples"].as_array().unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0]["objective_id"], "obj-survey");
+        assert_eq!(samples[0]["objective_state"], "advancing");
+        assert_eq!(samples[0]["score"], 1.0);
+        assert_eq!(samples[0]["note"], "new sample");
+    }
+
+    #[test]
+    fn objective_storage_reports_io_errors_and_preserves_existing_paths() {
+        let home = tempfile::tempdir().unwrap();
+        let agent = AgentLoop::new(
+            AgentConfig {
+                hermes_home: Some(home.path().to_str().unwrap().to_string()),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DummyProvider),
+        );
+        let alpha = home.path().join("alpha");
+        let trend = alpha.join("objective_eval_trend.json");
+        let ledger = alpha.join("objective_runtime_ledger.jsonl");
+        assert_eq!(agent.objective_eval_trend_path(), trend);
+        assert_eq!(agent.objective_runtime_ledger_path(), ledger);
+        let objective = [Message::system(format!("{SESSION_OBJECTIVE_PREFIX}Review survey results"))];
+
+        std::fs::write(&alpha, "existing alpha file").unwrap();
+        for result in [
+            agent.append_objective_eval_sample("obj-survey", "flat", "local sample"),
+            agent.append_objective_runtime_ledger(&objective, "No progress yet", 1),
+        ] {
+            let error = result.unwrap_err();
+            assert!(
+                matches!(&error, AgentError::Io(message) if message.contains("create ") && message.contains("alpha")),
+                "{error}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&alpha).unwrap(), "existing alpha file");
+
+        std::fs::remove_file(&alpha).unwrap();
+        std::fs::create_dir_all(&trend).unwrap();
+        std::fs::create_dir(&ledger).unwrap();
+        let trend_marker = trend.join("keep.txt");
+        std::fs::write(&trend_marker, "existing trend directory").unwrap();
+        let error = agent
+            .append_objective_eval_sample("obj-survey", "flat", "local sample")
+            .unwrap_err();
+        assert!(
+            matches!(&error, AgentError::Io(message) if message.contains("write ") && message.contains("objective_eval_trend.json")),
+            "{error}"
+        );
+
+        let ledger_marker = ledger.join("keep.txt");
+        std::fs::write(&ledger_marker, "existing ledger directory").unwrap();
+        let error = agent
+            .append_objective_runtime_ledger(&objective, "No progress yet", 1)
+            .unwrap_err();
+        assert!(
+            matches!(&error, AgentError::Io(message) if message.contains("open ") && message.contains("objective_runtime_ledger.jsonl")),
+            "{error}"
+        );
+        assert_eq!(std::fs::read_to_string(trend_marker).unwrap(), "existing trend directory");
+        assert_eq!(std::fs::read_to_string(ledger_marker).unwrap(), "existing ledger directory");
+    }
+
+    #[test]
     fn max_delegate_depth_resolves_env_then_config_with_floor() {
         let _guard = env_test_lock();
         let _env = EnvVarGuard::set("HERMES_MAX_DELEGATE_DEPTH", "99");
@@ -1127,6 +1214,67 @@
             .filter_map(|block| block["id"].as_str())
             .collect();
         assert_eq!(replayed, ["call_a"]);
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_after_the_pre_model_hook_keeps_the_user_message() {
+        use crate::plugins::{Plugin, PluginContext, PluginMeta};
+
+        struct InterruptBeforeModel(crate::interrupt::InterruptController);
+
+        #[async_trait::async_trait]
+        impl Plugin for InterruptBeforeModel {
+            fn meta(&self) -> PluginMeta {
+                PluginMeta {
+                    name: "interrupt-before-model".into(),
+                    version: "0.1.0".into(),
+                    description: "Requests cancellation from the pre-model hook".into(),
+                    author: None,
+                }
+            }
+
+            async fn initialize(&self) -> Result<(), AgentError> {
+                Ok(())
+            }
+
+            async fn shutdown(&self) -> Result<(), AgentError> {
+                Ok(())
+            }
+
+            fn register(&self, context: &mut PluginContext) {
+                let interrupt = self.0.clone();
+                context.on(
+                    HookType::PreLlmCall,
+                    Arc::new(move |_| {
+                        interrupt.interrupt(None);
+                        HookResult::Ok
+                    }),
+                );
+            }
+        }
+
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), Arc::new(DummyProvider));
+        let interruption = Arc::new(InterruptBeforeModel(agent.interrupt.clone()));
+        let mut plugins = PluginManager::new();
+        plugins.register(interruption.clone());
+        plugins.initialize_all().await.unwrap();
+        let agent = agent.with_plugins(Arc::new(Mutex::new(plugins)));
+        let user = Message::user("Summarise the field notes");
+        let result = agent.run(vec![user.clone()], None).await.unwrap();
+        interruption.shutdown().await.unwrap();
+
+        assert!(result.interrupted);
+        assert!(!result.finished_naturally);
+        assert!(result.messages.contains(&user));
+        assert!(!result.messages.iter().any(|message| {
+            matches!(message.role, MessageRole::Assistant | MessageRole::Tool)
+        }));
     }
 
     #[test]
