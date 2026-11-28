@@ -202,11 +202,31 @@ mod tests {
 
     #[test]
     fn session_type_serde() {
-        let st = SessionType::Dm;
-        let json = serde_json::to_string(&st).unwrap();
-        assert_eq!(json, "\"dm\"");
-        let back: SessionType = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, SessionType::Dm);
+        for (session, name) in [
+            (SessionType::Dm, "dm"),
+            (SessionType::Group, "group"),
+            (SessionType::Thread, "thread"),
+        ] {
+            let json = serde_json::to_string(&session).unwrap();
+            assert_eq!(json, format!("\"{name}\""));
+            assert_eq!(session.to_string(), name);
+            assert_eq!(serde_json::from_str::<SessionType>(&json).unwrap(), session);
+        }
+    }
+
+    #[test]
+    fn standalone_reset_policies_validate() {
+        let daily = SessionResetPolicy::Daily { at_hour: 25 };
+        assert_eq!(daily.validate(), SessionResetPolicy::Daily { at_hour: 0 });
+
+        let idle = SessionResetPolicy::Idle {
+            timeout_minutes: 45,
+        };
+        assert_eq!(idle.validate(), idle);
+        assert_eq!(
+            SessionResetPolicy::None.validate(),
+            SessionResetPolicy::None
+        );
     }
 
     #[test]

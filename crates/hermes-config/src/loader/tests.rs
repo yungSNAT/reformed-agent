@@ -5,6 +5,16 @@ use crate::managed_gateway::test_lock::ENV_LOCK;
 
 mod terminal_bridge_contract;
 
+#[test]
+fn yaml_expansion_preserves_invalid_and_unclosed_references() {
+    let mut value: serde_yaml::Value =
+        serde_yaml::from_str("note: '${lowercase} ${} ${BAD-NAME} ${UNFINISHED'")
+            .expect("YAML string with literal references");
+    let expected = value.clone();
+    expand_env_vars_in_yaml(&mut value);
+    assert_eq!(value, expected);
+}
+
 fn clear_terminal_env_bridge_vars() {
     for (_, env_key) in terminal_config_env_bridge_pairs() {
         // SAFETY: tests serialize env mutation with ENV_LOCK.
