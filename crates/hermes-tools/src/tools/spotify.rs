@@ -972,6 +972,38 @@ fn infer_context_type(value: &str) -> Option<&'static str> {
     }
 }
 
+fn parse_open_spotify_url(cleaned: &str) -> Option<reqwest::Url> {
+    let (authority_tail, has_scheme) = if let Some(rest) = cleaned.strip_prefix("//") {
+        (rest, false)
+    } else if let Some(idx) = cleaned
+        .find("://")
+        .filter(|&idx| !cleaned[..idx].contains(['/', '?', '#']))
+    {
+        (&cleaned[idx + 3..], true)
+    } else {
+        (cleaned, false)
+    };
+    let authority = authority_tail.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty()
+        || authority.contains(['\\', '@'])
+        || authority
+            .bytes()
+            .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+    {
+        return None;
+    }
+    let parsed = if has_scheme {
+        reqwest::Url::parse(cleaned).ok()?
+    } else {
+        reqwest::Url::parse(&format!("https://{authority_tail}")).ok()?
+    };
+    (matches!(parsed.scheme(), "http" | "https")
+        && parsed
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("open.spotify.com")))
+    .then_some(parsed)
+}
+
 fn normalize_spotify_id(value: &str, expected_type: Option<&str>) -> Result<String, ToolError> {
     let cleaned = value.trim();
     if cleaned.is_empty() {
@@ -993,24 +1025,22 @@ fn normalize_spotify_id(value: &str, expected_type: Option<&str>) -> Result<Stri
             return Ok(parts[1].to_string());
         }
     }
-    if cleaned.contains("open.spotify.com") {
-        if let Ok(parsed) = reqwest::Url::parse(cleaned) {
-            let parts: Vec<&str> = parsed
-                .path_segments()
-                .map(|segments| segments.filter(|part| !part.is_empty()).collect())
-                .unwrap_or_default();
-            if parts.len() >= 2 {
-                let item_type = parts[0];
-                let item_id = parts[1];
-                if let Some(expected) = expected_type {
-                    if item_type != expected {
-                        return Err(ToolError::InvalidParams(format!(
-                            "Expected a Spotify {expected}, got {item_type}."
-                        )));
-                    }
+    if let Some(parsed) = parse_open_spotify_url(cleaned) {
+        let parts: Vec<&str> = parsed
+            .path_segments()
+            .map(|segments| segments.filter(|part| !part.is_empty()).collect())
+            .unwrap_or_default();
+        if parts.len() >= 2 {
+            let item_type = parts[0];
+            let item_id = parts[1];
+            if let Some(expected) = expected_type {
+                if item_type != expected {
+                    return Err(ToolError::InvalidParams(format!(
+                        "Expected a Spotify {expected}, got {item_type}."
+                    )));
                 }
-                return Ok(item_id.to_string());
             }
+            return Ok(item_id.to_string());
         }
     }
     Ok(cleaned.to_string())
@@ -1264,6 +1294,91 @@ mod tests {
                 "spotify_albums",
                 "spotify_library"
             ]
+        );
+    }
+
+    #[test]
+    fn normalize_spotify_id_parses_open_spotify_urls() {
+        for (input, expected_type, expected) in [
+            ("https://open.spotify.com/track/abc123?si=x", None, "abc123"),
+            ("https://open.spotify.com/track/abc123#frag", None, "abc123"),
+            (
+                "http://open.spotify.com/track/abc123",
+                Some("track"),
+                "abc123",
+            ),
+            ("open.spotify.com/playlist/p1", Some("playlist"), "p1"),
+            ("//open.spotify.com/track/abc123", None, "abc123"),
+            ("https://OPEN.spotify.com:443/track/abc123", None, "abc123"),
+            ("OPEN.spotify.com:443/track/abc123", None, "abc123"),
+            (
+                "open.spotify.com/track/abc123?redirect=https://evil.example",
+                None,
+                "abc123",
+            ),
+            (
+                "https://open.spotify.com/track",
+                None,
+                "https://open.spotify.com/track",
+            ),
+        ] {
+            assert_eq!(
+                normalize_spotify_id(input, expected_type).unwrap(),
+                expected,
+                "input={input:?}"
+            );
+        }
+        assert_eq!(
+            normalize_spotify_uri("https://open.spotify.com/track/abc123?si=x", Some("track"))
+                .unwrap(),
+            "spotify:track:abc123"
+        );
+        let err = normalize_spotify_id("https://open.spotify.com/album/a1", Some("track"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Expected a Spotify track, got album."));
+    }
+
+    #[test]
+    fn normalize_spotify_id_rejects_non_spotify_authorities() {
+        let non_spotify = [
+            "https://evil.example/open.spotify.com/track/abc123",
+            "https://open.spotify.com.evil.example/track/abc123",
+            "https://sub.open.spotify.com/track/abc123",
+            "https://open.spotify.com./track/abc123",
+            "https://open.spotify.com@evil.example/track/abc123",
+            "https://user@open.spotify.com/track/abc123",
+            "https://:pass@open.spotify.com/track/abc123",
+            "https://@open.spotify.com/track/abc123",
+            "@open.spotify.com/track/abc123",
+            "mailto:user@open.spotify.com/track/abc123",
+            "ftp://open.spotify.com/track/abc123",
+            "//evil.example/open.spotify.com/track/abc123",
+            "evil.example/open.spotify.com/track/abc123",
+            "/open.spotify.com/track/abc123",
+            "///open.spotify.com/track/abc123",
+            "https:///open.spotify.com/track/abc123",
+            "https://\t/open.spotify.com/track/abc123",
+            "https://\r\n/open.spotify.com/track/abc123",
+            "//\t/open.spotify.com/track/abc123",
+            "//\n/open.spotify.com/track/abc123",
+            "https:// /open.spotify.com/track/abc123",
+            r"https://open.spotify.com\@evil.example/track/abc123",
+            r"\open.spotify.com/track/abc123",
+            "http://[::1",
+            "open.spotify.com:badport/track/abc123",
+        ];
+        for candidate in non_spotify {
+            assert_eq!(
+                normalize_spotify_id(candidate, None).unwrap(),
+                candidate,
+                "must not parse {candidate:?} as a Spotify URL"
+            );
+        }
+        assert_eq!(
+            normalize_spotify_uri("https://evil.example/open.spotify.com/track/abc123", None)
+                .unwrap(),
+            "https://evil.example/open.spotify.com/track/abc123"
         );
     }
 }
