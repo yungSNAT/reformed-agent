@@ -2,5 +2,7 @@
 
 #[cfg(unix)]
 pub(crate) mod connections;
+#[cfg(unix)]
+pub(crate) mod files;
 pub(crate) mod startup;
 pub(crate) mod store;
