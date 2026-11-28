@@ -165,8 +165,11 @@ mod local {
         (dir, runtime, socket)
     }
 
+    static SLOT_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_local_mode_ticket_connection_is_served() {
+        let _guard = SLOT_TEST.lock().await;
         let (_dir, _runtime, mut socket) = dial().await;
         // The capability gate passes for every method: none answers 4030.
         for (method, params) in requests() {
@@ -279,41 +282,68 @@ mod local {
         .expect("child survived WebSocket close");
     }
 
+    async fn start_sleeper(socket: &mut Socket, id: u64, file: &Path) -> i32 {
+        let tmp = file.with_extension("tmp");
+        let cmd = format!(
+            "sleep 300 & echo $! > '{}' && mv '{}' '{}'; wait",
+            tmp.display(),
+            tmp.display(),
+            file.display()
+        );
+        let req =
+            json!({"jsonrpc": "2.0", "id": id, "method": "shell.exec", "params": {"command": cmd}});
+        socket.send(Message::text(req.to_string())).await.unwrap();
+        wait_pid(file).await
+    }
+
+    async fn call_until_not_busy(socket: &mut Socket, method: &str, params: Value) -> Value {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let reply = call(socket, method, params.clone()).await;
+                if reply["error"]["code"] != 4090 {
+                    return reply;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("slots did not free after WebSocket close")
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn closing_the_websocket_kills_a_running_shell_child_and_frees_its_slot() {
+        let _guard = SLOT_TEST.lock().await;
         let (_dir, home, runtime) = start_local();
-        let mut socket = dial_on(&home, &runtime).await;
+        let mut s1 = dial_on(&home, &runtime).await;
+        let mut s2 = dial_on(&home, &runtime).await;
+        let mut s3 = dial_on(&home, &runtime).await;
         let work = tempfile::tempdir().unwrap();
-        let p1_file = work.path().join("p1");
-        let p2_file = work.path().join("p2");
-        for (id, file) in [(11, &p1_file), (12, &p2_file)] {
-            let tmp = file.with_extension("tmp");
-            let cmd = format!(
-                "sleep 300 & echo $! > '{}' && mv '{}' '{}'; wait",
-                tmp.display(),
-                tmp.display(),
-                file.display()
-            );
-            let req = json!({"jsonrpc": "2.0", "id": id, "method": "shell.exec", "params": {"command": cmd}});
-            socket.send(Message::text(req.to_string())).await.unwrap();
-        }
         let mut cleanup = Cleanup(Vec::new());
-        let p1 = wait_pid(&p1_file).await;
-        cleanup.0.push(p1);
-        let p2 = wait_pid(&p2_file).await;
-        cleanup.0.push(p2);
-        assert!(pid_alive(p1) && pid_alive(p2));
-        // Both connection slots are occupied; a 3rd shell.exec on this socket is refused busy.
-        let busy = call(&mut socket, "shell.exec", json!({"command": "echo third"})).await;
+        // Fill all 4 PER_PROCESS slots across 2 connections (2 per connection).
+        for (id, name) in [(11, "p1"), (12, "p2")] {
+            let pid = start_sleeper(&mut s1, id, &work.path().join(name)).await;
+            cleanup.0.push(pid);
+        }
+        for (id, name) in [(13, "p3"), (14, "p4")] {
+            let pid = start_sleeper(&mut s2, id, &work.path().join(name)).await;
+            cleanup.0.push(pid);
+        }
+        assert!(cleanup.0.iter().all(|&pid| pid_alive(pid)));
+        // All 4 process slots are held, so even a 3rd connection gets 4090 busy.
+        let busy = call(&mut s3, "shell.exec", json!({"command": "echo fifth"})).await;
         assert_eq!(busy["error"]["code"], 4090, "{busy}");
-        // Closing the WebSocket drops the in-flight RPC futures, killing both children and
+        // Closing both WebSockets drops their in-flight RPC futures, killing all 4 children and
         // releasing their slots.
-        let _ = socket.close(None).await;
-        drop(socket);
-        wait_dead(p1).await;
-        wait_dead(p2).await;
-        let mut socket2 = dial_on(&home, &runtime).await;
-        let ok = call(&mut socket2, "shell.exec", json!({"command": "echo freed"})).await;
+        let _ = s1.close(None).await;
+        let _ = s2.close(None).await;
+        drop(s1);
+        drop(s2);
+        for &pid in &cleanup.0 {
+            wait_dead(pid).await;
+        }
+        // Clear so Drop never signals an already-dead, potentially-reused PID.
+        cleanup.0.clear();
+        let ok = call_until_not_busy(&mut s3, "shell.exec", json!({"command": "echo freed"})).await;
         assert_eq!(
             ok["result"],
             json!({"stdout": "freed\n", "stderr": "", "code": 0}),

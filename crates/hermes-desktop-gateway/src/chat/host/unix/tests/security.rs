@@ -38,6 +38,17 @@ fn a_renamed_root_replaced_by_a_symlink_never_lists_external_entries() {
     assert!(open_root(&work).is_none());
 }
 
+#[cfg(target_os = "linux")]
+struct ChildGuard(std::process::Child);
+
+#[cfg(target_os = "linux")]
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// S3: pidfd-pinned sweeping never signals a process in another session or a PID whose original
 /// process has already been replaced.
 #[cfg(target_os = "linux")]
@@ -45,18 +56,20 @@ fn a_renamed_root_replaced_by_a_symlink_never_lists_external_entries() {
 fn a_pidfd_sweep_never_signals_a_replaced_or_foreign_session_process() {
     use super::super::supervise::{kill_pinned_if_in_session, open_pidfd};
 
-    let mut victim = std::process::Command::new("sleep")
-        .arg("60")
-        .spawn()
-        .unwrap();
-    let victim_pid = i32::try_from(victim.id()).unwrap();
+    let mut victim = ChildGuard(
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap(),
+    );
+    let victim_pid = i32::try_from(victim.0.id()).unwrap();
     // Pin the real process and re-read its real /proc/<pid>/stat against a non-matching session:
     // must refuse to signal and leave the victim running.
     let killed = kill_pinned_if_in_session(victim_pid, "0", open_pidfd, |p| {
         std::fs::read_to_string(format!("/proc/{p}/stat")).ok()
     });
     assert!(!killed);
-    assert!(victim.try_wait().unwrap().is_none(), "foreign child died");
+    assert!(victim.0.try_wait().unwrap().is_none(), "foreign child died");
 
     // Process exits between pidfd_open and stat re-read -> read_stat returns None.
     assert!(!kill_pinned_if_in_session(
@@ -70,8 +83,7 @@ fn a_pidfd_sweep_never_signals_a_replaced_or_foreign_session_process() {
     assert!(!kill_pinned_if_in_session(-1, "42", open_pidfd, |_| {
         unreachable!("pin returned None")
     }));
-    let _ = victim.kill();
-    let _ = victim.wait();
+    drop(victim);
 
     // PID replacement after pinning: pin a child, kill and reap it, then feed a matching stat
     // line claiming a replacement process now occupies the same numeric PID. pidfd_send_signal
