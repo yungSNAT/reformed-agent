@@ -95,11 +95,14 @@ class WebhookLaunchdTests(unittest.TestCase):
                 '"$UPSTREAM_SYNC_SUMMARY_LOCAL_PATH" "$UPSTREAM_SYNC_ELITE_CMD"',
                 "settings", str(config),
             ]
+            default_elite_cmd = (
+                "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate"
+            )
             expected = [
                 str(repo / ".sync-queue" / "upstream-events.db"),
                 repo.name,
                 str(repo / ".sync-reports" / "upstream-sync-summary-fallback.log"),
-                "python3 scripts/run-elite-sync-gate.py",
+                default_elite_cmd,
                 "",
             ]
 
@@ -120,8 +123,22 @@ class WebhookLaunchdTests(unittest.TestCase):
             expected[2] = "custom report path"
             self.assertEqual(run(read_settings), expected)
 
+            config.write_text(
+                "UPSTREAM_SYNC_ELITE_CMD=python3\\ scripts/run-elite-sync-gate.py\n"
+                "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH='custom report path'\n",
+            )
+            run(install)
+            self.assertEqual(run(read_settings), expected)
+
+            config.write_text(
+                f"UPSTREAM_SYNC_ELITE_CMD={default_elite_cmd}\n"
+                "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH='custom report path'\n",
+            )
+            run(install)
+            self.assertEqual(run(read_settings), expected)
+
             with config.open("a") as existing:
-                existing.write("UPSTREAM_SYNC_ELITE_CMD=python3 scripts/run-elite-sync-gate.py\n")
+                existing.write(f"UPSTREAM_SYNC_ELITE_CMD={default_elite_cmd}\n")
                 existing.write("UPSTREAM_SYNC_ELITE_CMD='custom gate command'\n")
             run(install)
             expected[3] = "custom gate command"

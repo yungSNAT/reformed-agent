@@ -199,7 +199,7 @@ print_config_summary() {
   echo "  strategy:  ${UPSTREAM_SYNC_STRATEGY:-merge}"
   echo "  strict gate: ${UPSTREAM_SYNC_STRICT_RISK_GATE:-1}"
   echo "  elite gate: ${UPSTREAM_SYNC_ELITE_GATE:-0}"
-  echo "  elite cmd: ${UPSTREAM_SYNC_ELITE_CMD:-python3 scripts/run-elite-sync-gate.py}"
+  echo "  elite cmd: ${UPSTREAM_SYNC_ELITE_CMD:-cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate}"
   echo "  elite rollback cmd: ${UPSTREAM_SYNC_ELITE_ROLLBACK_CMD:-<unset>}"
   echo "  parity drift check disabled: ${UPSTREAM_SYNC_DISABLE_PARITY_DRIFT_CHECK:-0}"
   echo "  parity upstream ref: ${UPSTREAM_SYNC_PARITY_UPSTREAM_REF:-upstream/main}"

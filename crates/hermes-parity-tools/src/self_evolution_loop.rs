@@ -16,7 +16,8 @@ use crate::script_helpers::{
 const DEFAULT_GOLDEN_CMD: &str = "python3 scripts/run-golden-parity-harness.py --auto-issue";
 const DEFAULT_EVAL_CMD: &str =
     "cargo run --locked -q -p hermes-parity-tools -- run-eval-trend-gate --allow-missing-baseline --json";
-const DEFAULT_ELITE_CMD: &str = "python3 scripts/run-elite-sync-gate.py --json";
+const DEFAULT_ELITE_CMD: &str =
+    "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --json";
 
 #[derive(Args, Debug)]
 pub struct SelfEvolutionLoopArgs {

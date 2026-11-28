@@ -30,8 +30,8 @@
   - `hermes verify-provenance <path> --strict --json`
 
 6. ELITE-12 `#97`
-- Unified gate script:
-  - `scripts/run-elite-sync-gate.py`
+- Unified gate command:
+  - `cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate`
 - Optional sync/webhook wiring for elite gate.
 
 7. ELITE-13 `#98`
@@ -72,7 +72,8 @@ cargo test -p hermes-cli cli_parse_ -- --nocapture
 cargo test -p hermes-cli provenance_ -- --nocapture
 cargo test -p hermes-tools tool_policy_hot_path_benchmark_report -- --nocapture
 cargo test -p hermes-tools policy_counters_track_dispatch_outcomes -- --nocapture
-python3 -m py_compile scripts/run-redteam-gate.py scripts/run-adapter-chaos-harness.py scripts/run-elite-sync-gate.py scripts/compare-adapter-chaos-reports.py scripts/upstream_webhook_sync.py
+python3 -m py_compile scripts/run-redteam-gate.py scripts/run-adapter-chaos-harness.py scripts/compare-adapter-chaos-reports.py scripts/upstream_webhook_sync.py
+cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --repo-root . --json
 ```
 
 ## Operational Acceptance

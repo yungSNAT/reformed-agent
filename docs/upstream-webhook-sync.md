@@ -141,7 +141,7 @@ python3 scripts/upstream_webhook_sync.py worker \
   --pr-labels upstream-sync,parity-sync \
   --redteam-cmd "cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate" \
   --elite-gate \
-  --elite-cmd "python3 scripts/run-elite-sync-gate.py" \
+  --elite-cmd "cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate" \
   --elite-rollback-cmd "git reset --hard origin/main"
 ```
 
@@ -262,7 +262,7 @@ Relevant env keys in `~/.hermes-agent-ultra/upstream-webhook-sync.env`:
 
 - `UPSTREAM_SYNC_DISABLE_PARITY_DRIFT_CHECK=0|1`
 - `UPSTREAM_SYNC_ELITE_GATE=0|1`
-- `UPSTREAM_SYNC_ELITE_CMD=python3 scripts/run-elite-sync-gate.py`
+- `UPSTREAM_SYNC_ELITE_CMD="cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate"`
 - `UPSTREAM_SYNC_ELITE_ROLLBACK_CMD=<optional rollback command>`
 - `UPSTREAM_SYNC_PARITY_UPSTREAM_REF=upstream/main`
 - `UPSTREAM_SYNC_PARITY_PARENT_ISSUE=13`

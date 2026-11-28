@@ -60,7 +60,7 @@ audit reports live upstream drift separately from the checks against this pin.
 - `run-zero-copy-hotpath-bench` (`crates/hermes-parity-tools`)
   - Runs zero-copy policy hot-path benchmark test and captures ns/eval evidence
   - Emits JSON diagnostics under `.sync-reports/zero-copy-hotpath-<timestamp>.json`
-- `scripts/run-elite-sync-gate.py`
+- `run-elite-sync-gate` (`crates/hermes-parity-tools`)
   - Runs red-team + adapter chaos + zero-copy hot-path + differential parity + eval trend + security gate v2 + performance autopilot as one gate
   - Emits JSON diagnostics under `.sync-reports/elite-sync-gate-<timestamp>.json`
 - `cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root .`
@@ -120,7 +120,7 @@ bash scripts/sync-upstream.sh --draft-pr --pr-labels "upstream-sync,parity-sync,
 bash scripts/sync-upstream.sh --redteam-cmd "cargo run --locked -q -p hermes-parity-tools -- run-redteam-gate --suite scripts/redteam-cases.json"
 cargo run --locked -q -p hermes-parity-tools -- run-adapter-chaos-harness --repo-root .
 cargo run --locked -q -p hermes-parity-tools -- run-zero-copy-hotpath-bench --repo-root .
-python3 scripts/run-elite-sync-gate.py --repo-root .
+cargo run --locked -q -p hermes-parity-tools -- run-elite-sync-gate --repo-root .
 cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/main --local-mode worktree
 cargo run --locked -q -p hermes-parity-tools -- run-self-evolution-loop --repo-root . --json
 cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard --repo-root .
