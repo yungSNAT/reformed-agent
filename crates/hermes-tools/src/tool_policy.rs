@@ -1085,6 +1085,42 @@ mod tests {
     }
 
     #[test]
+    fn policy_annotations_preserve_plain_text_and_array_results() {
+        let reason = "fixture policy decision";
+        for result in ["fixture result", r#"["fixture result"]"#] {
+            let audit: Value =
+                serde_json::from_str(&annotate_policy_audit(result, reason)).unwrap();
+            assert_eq!(audit["result"], result);
+            assert_eq!(audit["_tool_policy_warning"], reason);
+
+            for (would_block, code) in [
+                (true, "simulation_would_block"),
+                (false, "simulation_allow"),
+            ] {
+                let simulation: Value = serde_json::from_str(&annotate_policy_simulation(
+                    result,
+                    reason,
+                    would_block,
+                    None,
+                ))
+                .unwrap();
+                assert_eq!(simulation["result"], result);
+                assert_eq!(
+                    simulation["_tool_policy_simulation"],
+                    serde_json::json!({"mode": "simulate", "would_block": would_block, "reason": reason, "code": code})
+                );
+                let expected_warning = would_block.then_some(reason);
+                assert_eq!(
+                    simulation
+                        .get("_tool_policy_warning")
+                        .and_then(Value::as_str),
+                    expected_warning
+                );
+            }
+        }
+    }
+
+    #[test]
     fn policy_from_env_uses_preset_defaults() {
         let _env_lock = ENV_LOCK.lock().unwrap();
         let mode_orig = std::env::var("HERMES_TOOL_POLICY_MODE").ok();
