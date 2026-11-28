@@ -231,7 +231,7 @@ impl McpClient {
                     }
                     continue;
                 }
-                if let Some(media_tag) = cache_mcp_image_block(item) {
+                if let Some(media_tag) = cache_mcp_image_block(item, &mcp_image_cache_dir()) {
                     parts.push(media_tag);
                 }
             }
