@@ -667,12 +667,18 @@ fn parse_ed25519_signature(signature: &str) -> Result<ParsedSignature, SkillErro
 
 fn trusted_hub_public_keys_from_env() -> Result<Vec<TrustedHubKey>, SkillError> {
     let raw = std::env::var(HUB_TRUSTED_KEYS_ENV).unwrap_or_default();
+    parse_trusted_hub_public_keys(&raw)
+}
+
+fn parse_trusted_hub_public_keys(raw: &str) -> Result<Vec<TrustedHubKey>, SkillError> {
     if raw.trim().is_empty() {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
     for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-        let (key_id, key_raw) = if let Some((id, value)) = entry.split_once('=') {
+        let (key_id, key_raw) = if let Some((id, value)) =
+            entry.split_once('=').filter(|(_, value)| !value.is_empty())
+        {
             (Some(id.trim().to_string()), value.trim())
         } else {
             (None, entry)
@@ -840,6 +846,47 @@ mod tests {
     fn test_parse_ed25519_signature_invalid() {
         assert!(parse_ed25519_signature("deadbeef").is_err());
         assert!(parse_ed25519_signature("ed25519:not-base64").is_err());
+        assert!(matches!(
+            parse_ed25519_signature("ed25519:YQ=="),
+            Err(SkillError::HubError(message)) if message == "ed25519 signature must be 64 bytes"
+        ));
+    }
+
+    #[test]
+    fn trusted_hub_config_accepts_padded_keys_and_labels() {
+        let public = [
+            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+            0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+            0xf7, 0x07, 0x51, 0x1a,
+        ];
+        let base64 = base64::engine::general_purpose::STANDARD.encode(public);
+        let hex: String = public.iter().map(|byte| format!("{byte:02x}")).collect();
+        let keys = parse_trusted_hub_public_keys(&format!(
+            "  {base64}, , preview = {base64}, stable={hex} "
+        ))
+        .unwrap();
+        assert_eq!(keys.len(), 3);
+        for (key, label) in keys.iter().zip([None, Some("preview"), Some("stable")]) {
+            assert_eq!(key.key_id.as_deref(), label);
+            assert_eq!(key.key.as_bytes(), &public);
+        }
+    }
+
+    #[test]
+    fn trusted_hub_config_rejects_malformed_entries() {
+        assert!(parse_trusted_hub_public_keys("  ").unwrap().is_empty());
+        assert!(matches!(
+            parse_trusted_hub_public_keys("stable="),
+            Err(SkillError::HubError(message)) if message.starts_with("Invalid trusted key entry")
+        ));
+
+        let mut invalid_public = [0u8; 32];
+        invalid_public[0] = 2;
+        let base64 = base64::engine::general_purpose::STANDARD.encode(invalid_public);
+        assert!(matches!(
+            parse_trusted_hub_public_keys(&format!("stable={base64}")),
+            Err(SkillError::HubError(message)) if message.starts_with("Invalid Ed25519 verifying key")
+        ));
     }
 
     #[test]
