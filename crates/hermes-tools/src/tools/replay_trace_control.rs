@@ -920,12 +920,13 @@ mod tests {
         let (env, handler) = handler_with_home();
         std::fs::create_dir_all(&env.replay_dir).expect("mkdir replay");
         let log = env.replay_dir.join("session-a.jsonl");
+        let malformed = "é".repeat(PREVIEW_CHARS + 1);
         std::fs::write(
             &log,
             [
                 json!({"seq":1,"event":"start","trace_id":"trace-a-00000001","prev_hash":"seed","event_hash":"a","payload":{"turn":1,"prompt":"ok"}}).to_string(),
                 json!({"seq":2,"event":"tool","trace_id":"trace-a-00000002","prev_hash":"a","event_hash":"b","payload":{"turn":1,"command":"echo token=supersecret123"}}).to_string(),
-                "{not-json".to_string(),
+                malformed,
             ]
             .join("\n"),
         )
@@ -939,6 +940,10 @@ mod tests {
         )
         .expect("tail json");
         assert_eq!(tail["rows"].as_array().expect("rows").len(), 3);
+        assert_eq!(
+            tail["rows"][2]["preview"],
+            format!("{}...", "é".repeat(PREVIEW_CHARS))
+        );
         assert!(!tail.to_string().contains("supersecret123"));
         assert!(tail.to_string().contains("<redacted>"));
 
@@ -1168,5 +1173,83 @@ mod tests {
         assert_eq!(diff["only_in_left_hashes"], json!(["aaa", "bbb"]));
         assert_eq!(diff["only_in_right_hashes"], json!(["ccc"]));
         assert_eq!(diff["hash_samples_truncated"], false);
+    }
+
+    #[tokio::test]
+    async fn diff_reports_missing_exports_and_caps_hash_samples() {
+        let home = tempfile::tempdir().unwrap();
+        let handler = ReplayTraceControlHandler::with_replay_dir(home.path().to_path_buf());
+        let exports = home.path().join("exports");
+        std::fs::create_dir(&exports).unwrap();
+        let count = MAX_DIFF_HASH_SAMPLES + 2;
+        let hashes: Vec<_> = (0..count).map(|idx| format!("event-{idx:03}")).collect();
+        let rows: Vec<_> = hashes
+            .iter()
+            .map(|hash| json!({"event_hash": hash}))
+            .collect();
+        std::fs::write(exports.join("many.json"), json!({"rows": rows}).to_string()).unwrap();
+
+        for (left, right) in [("empty.json", "many.json"), ("many.json", "empty.json")] {
+            let result = handler
+                .execute(json!({"action": "diff", "left_path": left, "right_path": right}))
+                .await;
+            assert!(matches!(
+                result,
+                Err(ToolError::ExecutionFailed(message))
+                    if message.starts_with("read ") && message.ends_with("empty.json: file not found")
+            ));
+        }
+
+        std::fs::write(exports.join("empty.json"), br#"{"rows":[]}"#).unwrap();
+        for (left, right, side, other) in [
+            ("many.json", "empty.json", "left", "right"),
+            ("empty.json", "many.json", "right", "left"),
+        ] {
+            let raw = handler
+                .execute(json!({"action": "diff", "left_path": left, "right_path": right}))
+                .await
+                .unwrap();
+            let diff: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(diff[format!("only_in_{side}")], count);
+            assert_eq!(diff[format!("only_in_{other}")], 0);
+            assert_eq!(
+                diff[format!("only_in_{side}_hashes")],
+                json!(hashes[..MAX_DIFF_HASH_SAMPLES])
+            );
+            assert_eq!(diff["hash_samples_truncated"], true);
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_replay_export_leaves_source_and_destination_intact() {
+        let home = tempfile::tempdir().unwrap();
+        let handler = ReplayTraceControlHandler::with_replay_dir(home.path().to_path_buf());
+        let source = home.path().join("fixture.jsonl");
+        let row = br#"{"seq":1,"event":"start"}"#;
+        std::fs::write(&source, row).unwrap();
+        let exports = home.path().join("exports");
+        let blocked_parent = exports.join("blocked");
+        let blocked_output = exports.join("occupied.json");
+        std::fs::create_dir_all(&blocked_output).unwrap();
+        std::fs::write(&blocked_parent, b"existing file").unwrap();
+
+        for (output, prefix, name) in [
+            ("blocked/child.json", "create export dir ", "blocked"),
+            ("occupied.json", "write ", "occupied.json"),
+        ] {
+            let result = handler
+                .execute(
+                    json!({"action": "export", "session_id": "fixture", "output_path": output}),
+                )
+                .await;
+            assert!(matches!(
+                result,
+                Err(ToolError::ExecutionFailed(message))
+                    if message.starts_with(prefix) && message.contains(name)
+            ));
+        }
+        assert_eq!(std::fs::read(source).unwrap(), row);
+        assert_eq!(std::fs::read(blocked_parent).unwrap(), b"existing file");
+        assert!(std::fs::read_dir(blocked_output).unwrap().next().is_none());
     }
 }
