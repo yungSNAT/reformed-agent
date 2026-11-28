@@ -121,12 +121,22 @@ fn skills_cli_sync_and_opt_out_preserve_local_edits() {
     let bundled = root.join("bundled");
     write_skill(&bundled.join("heron-notes"), "# Heron v1");
     write_skill(&bundled.join("wren-notes"), "# Wren v1");
+    write_skill(&bundled.join("lapwing-notes"), "# Bundled lapwing");
+    let lapwing_dir = root.join("skills/lapwing-notes");
+    let local_lapwing = "# Local lapwing";
+    write_skill(&lapwing_dir, local_lapwing);
+    let lapwing = lapwing_dir.join("SKILL.md");
 
     let copied = success_text(skills(root, &["sync"]).assert());
     assert!(copied.contains("2 new"), "{copied}");
+    assert!(
+        copied.contains("Collisions kept: lapwing-notes"),
+        "{copied}"
+    );
     let heron = root.join("skills/heron-notes/SKILL.md");
     let wren = root.join("skills/wren-notes/SKILL.md");
     assert_eq!(fs::read_to_string(&heron).unwrap(), "# Heron v1");
+    assert_eq!(fs::read_to_string(&lapwing).unwrap(), local_lapwing);
     fs::write(&wren, "# Local wren").unwrap();
     write_skill(&bundled.join("heron-notes"), "# Heron v2");
 
@@ -159,11 +169,23 @@ fn skills_cli_sync_and_opt_out_preserve_local_edits() {
     assert!(removed.contains("Removed: heron-notes"), "{removed}");
     assert!(!heron.exists());
     assert_eq!(fs::read_to_string(&wren).unwrap(), "# Local wren");
+    assert_eq!(fs::read_to_string(&lapwing).unwrap(), local_lapwing);
+
+    let kept = success_text(skills(root, &["opt-out", "--remove", "--yes"]).assert());
+    assert!(
+        kept.contains("No pristine bundled skills to remove"),
+        "{kept}"
+    );
+    assert!(kept.contains("Kept 1 skill(s)."), "{kept}");
+    assert!(!heron.exists());
+    assert_eq!(fs::read_to_string(&wren).unwrap(), "# Local wren");
+    assert_eq!(fs::read_to_string(&lapwing).unwrap(), local_lapwing);
 
     skills(root, &["opt-in", "--sync"]).assert().success();
     assert!(!marker.exists());
     assert_eq!(fs::read_to_string(&heron).unwrap(), "# Heron v2");
     assert_eq!(fs::read_to_string(&wren).unwrap(), "# Local wren");
+    assert_eq!(fs::read_to_string(&lapwing).unwrap(), local_lapwing);
 }
 
 #[test]
