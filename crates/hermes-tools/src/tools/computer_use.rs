@@ -582,6 +582,140 @@ mod tests {
         assert_eq!(calls[1].1["mode"], "som");
     }
 
+    #[tokio::test]
+    async fn desktop_actions_forward_the_expected_driver_requests() {
+        let backend = Arc::new(RecordingBackend::default());
+        let handler = ComputerUseHandler::new(backend.clone());
+        let cases = [
+            (
+                json!({"action": "capture", "app": " "}),
+                "get_window_state",
+                json!({"mode": "som"}),
+            ),
+            (
+                json!({"action": "capture", "app": "Fixture Viewer", "mode": "ax", "max_elements": 8}),
+                "get_window_state",
+                json!({"app": "Fixture Viewer", "mode": "ax", "max_elements": 8}),
+            ),
+            (
+                json!({"action": "double_click", "coordinate": [10, 20], "modifiers": ["shift"]}),
+                "click",
+                json!({"button": "left", "click_count": 2, "coordinate": [10, 20], "modifiers": ["shift"]}),
+            ),
+            (
+                json!({"action": "right_click", "element": 3}),
+                "click",
+                json!({"button": "right", "element": 3}),
+            ),
+            (
+                json!({"action": "middle_click", "element": 4}),
+                "click",
+                json!({"button": "middle", "element": 4}),
+            ),
+            (
+                json!({"action": "drag", "from_coordinate": [10, 20], "to_coordinate": [30, 40]}),
+                "drag",
+                json!({"from_coordinate": [10, 20], "to_coordinate": [30, 40]}),
+            ),
+            (
+                json!({"action": "drag", "from_element": 3, "to_element": 4}),
+                "drag",
+                json!({"from_element": 3, "to_element": 4}),
+            ),
+            (
+                json!({"action": "scroll", "amount": 2, "coordinate": [20, 30]}),
+                "scroll",
+                json!({"direction": "down", "amount": 2, "coordinate": [20, 30]}),
+            ),
+            (
+                json!({"action": "key", "keys": "tab"}),
+                "hotkey",
+                json!({"keys": "tab"}),
+            ),
+            (
+                json!({"action": "set_value", "element": 3, "value": "note"}),
+                "set_value",
+                json!({"element": 3, "value": "note"}),
+            ),
+            (json!({"action": "list_apps"}), "list_apps", json!({})),
+            (
+                json!({"action": "focus_app", "app": "Fixture Viewer", "raise_window": false}),
+                "launch_app",
+                json!({"app": "Fixture Viewer", "raise_window": false}),
+            ),
+            (
+                json!({"action": "doctor", "include": ["accessibility"], "skip": ["capture"]}),
+                "health_report",
+                json!({"include": ["accessibility"], "skip": ["capture"]}),
+            ),
+            (
+                json!({"action": "call_tool", "tool": "list_apps"}),
+                "list_apps",
+                json!({}),
+            ),
+            (
+                json!({"action": "call_tool", "tool": "get_window_state", "arguments": {"mode": "ax", "max_elements": 4}}),
+                "get_window_state",
+                json!({"mode": "ax", "max_elements": 4}),
+            ),
+        ];
+        for (params, tool, arguments) in cases {
+            let action = params["action"].as_str().unwrap().to_owned();
+            let result = handler.execute(params).await.expect(&action);
+            let result: Value = serde_json::from_str(&result).unwrap();
+            assert_eq!(result["action"], action);
+            assert_eq!(result["ok"], true, "{action}");
+            assert_eq!(
+                result["result"]["structuredContent"]["tool"], tool,
+                "{action}"
+            );
+            let calls = std::mem::take(&mut *backend.calls.lock().await);
+            assert_eq!(calls, vec![(tool.to_owned(), arguments)], "{action}");
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_desktop_requests_stop_before_reaching_the_driver() {
+        let backend = Arc::new(RecordingBackend::default());
+        let handler = ComputerUseHandler::new(backend.clone());
+        for (params, expected) in [
+            (json!({"action": " "}), "Missing 'action' parameter"),
+            (
+                json!({"action": "click", "button": "primary"}),
+                "Unsupported mouse button",
+            ),
+            (
+                json!({"action": "scroll", "direction": "diagonal"}),
+                "Unsupported scroll direction",
+            ),
+            (
+                json!({"action": "click", "coordinate": "10,20"}),
+                "must be [x, y]",
+            ),
+            (
+                json!({"action": "drag", "to_coordinate": [10]}),
+                "two integer values",
+            ),
+            (
+                json!({"action": "call_tool", "tool": "list_apps", "arguments": []}),
+                "must be an object",
+            ),
+            (
+                json!({"action": "fixture-unsupported"}),
+                "Unsupported computer_use action",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    handler.execute(params).await,
+                    Err(ToolError::InvalidParams(message)) if message.contains(expected)
+                ),
+                "expected validation error containing {expected:?}"
+            );
+        }
+        assert!(backend.calls.lock().await.is_empty());
+    }
+
     #[test]
     fn hard_blocks_destructive_keys_and_shell_pastes_before_backend() {
         assert!(build_computer_use_call("key", &json!({"keys": "cmd+shift+q"})).is_err());
