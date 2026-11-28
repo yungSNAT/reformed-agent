@@ -395,6 +395,17 @@ fn load_resume_payload_follows_compression_tip_snapshot() {
         payload.messages[0].content.as_deref(),
         Some("post-compression reply")
     );
+
+    std::fs::rename(&payload.source_path, sessions_dir.join("cont.json.backup"))
+        .expect("move the continuation snapshot aside");
+    let fallback = load_resume_payload(&cli, Some("root")).expect("load original snapshot");
+    assert_eq!(fallback.resolved_id, "root");
+    assert_eq!(fallback.session_id, "root");
+    assert_eq!(fallback.source_path, sessions_dir.join("root.json"));
+    assert_eq!(
+        fallback.messages,
+        vec![hermes_core::Message::user("pre-compression turn")]
+    );
 }
 
 #[test]
