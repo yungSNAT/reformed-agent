@@ -12,11 +12,26 @@ const FILES: [(&str, &str); 13] = [
     ("workstreams.json", r#"{"states": {}}"#),
     ("intents.json", r#"{"summary": {}}"#),
     ("adapters.json", r#"{"summary": {}}"#),
-    ("shared_class.json", r#"{}"#),
-    ("shared_backlog.json", r#"{"summary": {}}"#),
+    ("shared_class.json", r#"{"items": []}"#),
+    (
+        "shared_backlog.json",
+        r#"{"summary": {"deferred_review": 0}}"#,
+    ),
     ("divergence.json", r#"{"summary": {}}"#),
     ("queue.json", r#"{"summary": {"by_disposition": {}}}"#),
-    ("coverage.json", r#"{"summary": {}, "audit_gate": {}}"#),
+    (
+        "coverage.json",
+        r#"{
+            "summary": {
+                "tracked_behavior_rows": 0,
+                "covered_behavior_rows": 0,
+                "coverage_manifest_deferred_entries": 0,
+                "coverage_manifest_not_rechecked_entries": 0
+            },
+            "audit_gate": {},
+            "coverage_manifests": []
+        }"#,
+    ),
     ("harness.json", r#"{"summary": {}, "gate": {}}"#),
     ("behavioral.json", r#"{"summary": {}, "gate": {}}"#),
     ("deep.json", r#"{"summary": {}, "gate": {}}"#),
@@ -176,10 +191,7 @@ fn reports_read_succeeds_with_valid_fixtures() {
     let dir = tempfile::tempdir().expect("tempdir");
     write_all(dir.path());
     let args = args_for(dir.path());
-    let reports = match Reports::read(dir.path(), &args) {
-        Ok(reports) => reports,
-        Err(error) => panic!("unexpected error: {error}"),
-    };
+    let reports = Reports::read(dir.path(), &args).expect("read valid fixtures");
     assert!(matches!(get(&reports.thresholds, "program"), Py::Str(s) if s == "demo"));
     assert!(get(&reports.queue, "summary").is_dict());
     assert!(get(&reports.harness, "gate").is_dict());
@@ -290,4 +302,77 @@ fn run_fails_when_report_shape_invalid() {
     let err = run(args).expect_err("must fail");
     assert_eq!(err, "harness.json: gate must be an object");
     assert!(!dir.path().join("out.json").exists());
+}
+
+#[test]
+fn proof_metrics_reject_incomplete_deferral_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_all(root);
+    let mut reports = Reports::read(root, &args_for(root)).expect("read valid fixtures");
+    let valid_classification = std::mem::replace(
+        &mut reports.shared_classification,
+        py::loads(r#"{"items": [{"classification": "deferred"}]}"#).unwrap(),
+    );
+    assert_eq!(
+        metrics::calculate(root, &reports).unwrap_err(),
+        "report is missing review_date"
+    );
+
+    reports.shared_classification = valid_classification;
+    reports.shared_backlog = py::loads(r#"{"summary": {}}"#).unwrap();
+    assert_eq!(
+        metrics::calculate(root, &reports).unwrap_err(),
+        "report is missing deferred_review"
+    );
+}
+
+#[test]
+fn proof_metrics_reject_overflow_subtracting_deferred_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_all(root);
+    let mut reports = Reports::read(root, &args_for(root)).expect("read valid fixtures");
+    reports.coverage = Py::dict([(
+        "summary",
+        Py::dict([
+            ("tracked_behavior_rows", Py::Int(i128::MIN)),
+            ("covered_behavior_rows", Py::Int(0)),
+            ("coverage_manifest_deferred_entries", Py::Int(1)),
+            ("coverage_manifest_not_rechecked_entries", Py::Int(0)),
+        ]),
+    )]);
+    assert_eq!(
+        metrics::calculate(root, &reports).unwrap_err(),
+        "coverage count exceeds the integer range"
+    );
+}
+
+#[test]
+fn proof_reports_write_error_before_creating_second_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_all(root);
+    fs::create_dir(root.join("out.json")).unwrap();
+    let error = run(args_for(root)).unwrap_err();
+    assert!(error.contains("out.json"), "{error}");
+    assert!(root.join("out.json").is_dir());
+    assert!(!root.join("out.md").exists());
+}
+
+#[test]
+fn proof_markdown_omits_ticket_summary_when_unavailable() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_all(root);
+    fs::write(
+        root.join("queue.json"),
+        r#"{"summary": {"total_commits": 2, "by_disposition": {}, "by_target_ticket": null}}"#,
+    )
+    .unwrap();
+
+    assert_eq!(run(args_for(root)), Ok(0));
+    let markdown = fs::read_to_string(root.join("out.md")).unwrap();
+    assert!(markdown.contains("Upstream missing commits tracked: `2`."));
+    assert!(!markdown.contains("By target ticket"));
 }
