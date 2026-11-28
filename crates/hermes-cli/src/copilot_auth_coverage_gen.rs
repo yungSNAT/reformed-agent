@@ -3,6 +3,16 @@ use serde_json::json;
 use wiremock::matchers::{body_string, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+type DeviceFixture = (reqwest::Client, Cow<'static, str>, String, String);
+
+tokio::task_local! {
+    static DEVICE_FIXTURE: DeviceFixture;
+}
+
+pub(super) fn device_fixture_or(default: DeviceFixture) -> DeviceFixture {
+    DEVICE_FIXTURE.try_with(Clone::clone).unwrap_or(default)
+}
+
 #[test]
 fn encode_keeps_unreserved_characters_unchanged() {
     let input = "ABCXYZabcxyz0123456789-_.~";
@@ -126,12 +136,19 @@ async fn request_device_flow(server: &MockServer) -> Result<String, AgentError> 
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("loopback client");
-    tokio::time::timeout(
-        Duration::from_secs(35),
-        complete_device_flow(&client, &server.uri(), "fixture-client", "fixture scope"),
-    )
-    .await
-    .expect("device flow fixture completed")
+    let fixture = (
+        client,
+        server.uri().into(),
+        "fixture-client".into(),
+        "fixture scope".into(),
+    );
+    DEVICE_FIXTURE
+        .scope(fixture, async {
+            tokio::time::timeout(Duration::from_secs(35), start_copilot_device_flow())
+                .await
+                .expect("device flow fixture completed")
+        })
+        .await
 }
 
 #[tokio::test]

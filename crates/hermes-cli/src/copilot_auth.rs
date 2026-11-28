@@ -5,6 +5,7 @@
 //!
 //! After authorization, set `GITHUB_COPILOT_TOKEN` (or add to `$HERMES_HOME/.env`).
 
+use std::borrow::Cow;
 use std::time::Duration;
 
 use hermes_core::AgentError;
@@ -75,7 +76,11 @@ pub async fn start_copilot_device_flow() -> Result<String, AgentError> {
         .build()
         .map_err(|e| AgentError::Io(e.to_string()))?;
 
-    complete_device_flow(&http, "https://github.com", &client_id, &scope).await
+    let github_base = Cow::Borrowed("https://github.com");
+    #[cfg(test)]
+    let (http, github_base, client_id, scope) =
+        coverage_gen_copilot_auth::device_fixture_or((http, github_base, client_id, scope));
+    complete_device_flow(&http, &github_base, &client_id, &scope).await
 }
 
 async fn complete_device_flow(
