@@ -1403,3 +1403,151 @@ fn codex_capabilities_advertise_reference_inputs() {
     assert!(caps.supports_image_input());
     assert_eq!(caps.max_reference_images, CODEX_MAX_SOURCE_IMAGES);
 }
+
+#[tokio::test]
+async fn image_source_loader_preserves_formats_and_distinguishes_input_errors() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let sandbox = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"fixture".to_vec())
+                .insert_header("content-type", "image/bmp"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/missing"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let remote = load_image_source_bytes(&client, &server.uri())
+        .await
+        .unwrap();
+    assert_eq!(remote.filename, "image.png");
+    assert_eq!(remote.mime, "image/bmp");
+    assert_eq!(remote.bytes, b"fixture");
+    let local = sandbox.path().join("sample.gif");
+    std::fs::write(&local, b"local fixture").unwrap();
+    let loaded = load_image_source_bytes(&client, local.to_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(loaded.filename, "sample.gif");
+    assert_eq!(loaded.mime, "image/gif");
+    assert_eq!(loaded.bytes, b"local fixture");
+
+    for (source, message) in [
+        (" \t", "must be a non-empty URL"),
+        ("data:image/webp;base64", "did not contain base64 data"),
+        ("data:image/webp;base64,!", "was not valid base64"),
+    ] {
+        let result = load_image_source_bytes(&client, source).await;
+        assert!(matches!(result, Err(ToolError::InvalidParams(text)) if text.contains(message)));
+    }
+    let missing = sandbox.path().join("missing.webp");
+    for (source, message) in [
+        (format!("{}/missing", server.uri()), "HTTP 404"),
+        ("https://[".to_string(), "Could not download source image"),
+        (
+            missing.to_str().unwrap().to_string(),
+            "Could not read source image",
+        ),
+    ] {
+        let result = load_image_source_bytes(&client, &source).await;
+        assert!(matches!(result, Err(ToolError::ExecutionFailed(text)) if text.contains(message)));
+    }
+    server.verify().await;
+}
+
+#[test]
+fn xai_image_references_preserve_aspect_and_local_file_format() {
+    for (input, ratio, display) in [
+        (" portrait ", "9:16", "portrait"),
+        ("4:3", "4:3", "4:3"),
+        ("3:4", "3:4", "3:4"),
+        ("3:2", "3:2", "3:2"),
+        ("2:3", "2:3", "2:3"),
+    ] {
+        assert_eq!(xai_aspect_from_tool_size(Some(input)), ratio);
+        assert_eq!(xai_tool_aspect_from_xai(ratio), display);
+    }
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let reference = sandbox.path().join("reference.gif");
+    std::fs::write(&reference, b"GIF").unwrap();
+    let fields = xai_image_fields(&mut [reference.to_str().unwrap().to_string()]).unwrap();
+    assert_eq!(
+        fields,
+        [json!({"url": "data:image/gif;base64,R0lG", "type": "image_url"})]
+    );
+    let missing = sandbox.path().join("missing.gif");
+    let error = xai_image_fields(&mut [missing.to_str().unwrap().to_string()]).unwrap_err();
+    assert!(
+        matches!(error, ToolError::ExecutionFailed(text) if text.contains("Could not read xAI source image"))
+    );
+}
+
+#[tokio::test]
+async fn generated_image_response_handles_nested_urls_and_invalid_cache_inputs() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let sandbox = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/fixture"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"generated fixture".to_vec())
+                .insert_header("content-type", "image/webp"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let nested = json!({
+        "b64_json": " ",
+        "url": "",
+        "file_output": {"public_url": format!("{}/fixture", server.uri())}
+    });
+    let saved = save_provider_image_from_response(&client, &nested, sandbox.path(), "fixture")
+        .await
+        .unwrap();
+    assert_eq!(
+        saved.extension().and_then(|value| value.to_str()),
+        Some("webp")
+    );
+    assert_eq!(std::fs::read(&saved).unwrap(), b"generated fixture");
+    server.verify().await;
+
+    let result = save_provider_image_from_response(&client, &json!({}), sandbox.path(), "fixture")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(result, ToolError::ExecutionFailed(text) if text.contains("neither b64_json nor URL"))
+    );
+    let result = save_codex_image_b64("!", sandbox.path(), "fixture").unwrap_err();
+    assert!(
+        matches!(result, ToolError::ExecutionFailed(text) if text.contains("was not valid base64"))
+    );
+    let result = save_codex_image_b64("R0lG", &saved, "fixture").unwrap_err();
+    assert!(
+        matches!(result, ToolError::ExecutionFailed(text) if text.contains("Could not create Codex image cache directory"))
+    );
+}

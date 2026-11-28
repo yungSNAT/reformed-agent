@@ -241,6 +241,181 @@ async fn offline_model_completions_list_unique_providers_and_qualified_models() 
 }
 
 #[tokio::test]
+async fn offline_insights_counts_recent_sessions_for_the_selected_source() {
+    use serde_json::json;
+    use std::fs::{self, FileTimes, OpenOptions};
+    use std::time::SystemTime;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let mut command = isolated_hermes(sandbox.path());
+    command.args(["insights", "--days", "7", "--source", "cli"]);
+    let empty = tokio::time::timeout(Duration::from_secs(15), command.output())
+        .await
+        .expect("insights without sessions timed out")
+        .unwrap();
+    assert!(empty.status.success(), "{empty:?}");
+    assert!(String::from_utf8_lossy(&empty.stdout).contains("No sessions directory found."));
+
+    let sessions = sandbox.path().join("hermes/sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let first = json!({
+        "source": "cli",
+        "model": "fixture-model",
+        "messages": [{"role": "user", "content": "Record one sample"}],
+        "usage": {"input_tokens": 6, "output_tokens": 3, "cost": 12.5}
+    });
+    let second = json!({
+        "source": "cli",
+        "model": "fixture-model",
+        "messages": [
+            {"role": "user", "content": "Read the sample"},
+            {"role": "assistant", "content": "One sample"}
+        ],
+        "usage": {"output_tokens": 5}
+    });
+    let ignored = json!({
+        "source": "telegram",
+        "model": "ignored-model",
+        "usage": {"input_tokens": 100, "output_tokens": 100}
+    });
+    for (name, session) in [
+        ("first.json", &first),
+        ("second.json", &second),
+        (
+            "unknown-source.json",
+            &json!({"model": "unknown-source-model"}),
+        ),
+        ("other-source.json", &ignored),
+        ("old.json", &first),
+        ("notes.txt", &first),
+    ] {
+        fs::write(sessions.join(name), session.to_string()).unwrap();
+    }
+    let old = SystemTime::now() - Duration::from_secs(14 * 24 * 60 * 60);
+    OpenOptions::new()
+        .write(true)
+        .open(sessions.join("old.json"))
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(old))
+        .unwrap();
+    fs::write(sessions.join("malformed.json"), "{").unwrap();
+    fs::create_dir(sessions.join("directory.json")).unwrap();
+
+    let output = tokio::time::timeout(Duration::from_secs(15), command.output())
+        .await
+        .expect("insights report timed out")
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    for expected in [
+        "Usage Insights (last 7 days)",
+        "Filter: source=cli",
+        "Sessions:       2",
+        "Messages:       3",
+        "Input tokens:   6",
+        "Output tokens:  8",
+        "Total tokens:   14",
+        "Estimated cost: $0.1250",
+        "Averages per session:",
+        "Messages: 1.5",
+        "Tokens:   7",
+    ] {
+        assert!(
+            text.lines().any(|line| line.trim_start() == expected),
+            "missing {expected:?} in {text}"
+        );
+    }
+    let model = text
+        .lines()
+        .find(|line| line.starts_with("  fixture-model"))
+        .unwrap();
+    assert!(model
+        .split_whitespace()
+        .eq(["fixture-model", "2", "session(s)"]));
+    assert!(!text.contains("ignored-model"));
+    assert!(!text.contains("unknown-source-model"));
+}
+
+#[tokio::test]
+async fn offline_dump_exports_the_selected_snapshot_and_reports_output_errors() {
+    use serde_json::{json, Value};
+    use std::fs::{self, FileTimes, OpenOptions};
+    use std::time::SystemTime;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let sessions = sandbox.path().join("hermes/sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let requested = sessions.join("fixture.json");
+    fs::write(
+        &requested,
+        json!({
+            "session_info": {
+                "session_id": "fixture-session",
+                "model": "fixture:local"
+            },
+            "messages": [
+                {"role": "System", "content": "Keep the sample local"},
+                {"role": "User", "content": "Summarise the sample"}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let earlier = SystemTime::now() - Duration::from_secs(60);
+    OpenOptions::new()
+        .write(true)
+        .open(requested)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(earlier))
+        .unwrap();
+    fs::write(
+        sessions.join("newer.json"),
+        json!({
+            "session_info": {"session_id": "newer-session"},
+            "messages": [{"role": "User", "content": "A different sample"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let saved = sandbox.path().join("exports/session.json");
+    let mut command = isolated_hermes(sandbox.path());
+    command.args(["dump", "fixture"]).arg(&saved);
+    let output = tokio::time::timeout(Duration::from_secs(15), command.output())
+        .await
+        .expect("session dump timed out")
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("Wrote dump to "));
+    let contents = fs::read(&saved).unwrap();
+    let export: Value = serde_json::from_slice(&contents).unwrap();
+    assert_eq!(export["session_id"], "fixture-session");
+    assert_eq!(export["resolved_id"], "fixture");
+    assert_eq!(export["model"], "fixture:local");
+    assert_eq!(export["system_prompt"], "Keep the sample local");
+    assert_eq!(export["messages"][1]["content"], "Summarise the sample");
+
+    for (target, diagnostic) in [
+        (
+            saved.join("blocked.json"),
+            "Failed to create dump output directory",
+        ),
+        (sandbox.path().join("exports"), "Failed to write dump"),
+    ] {
+        let mut command = isolated_hermes(sandbox.path());
+        command.args(["dump", "fixture"]).arg(target);
+        let output = tokio::time::timeout(Duration::from_secs(15), command.output())
+            .await
+            .expect("session dump failure timed out")
+            .unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(diagnostic), "{stderr}");
+    }
+    assert_eq!(fs::read(saved).unwrap(), contents);
+}
+
+#[tokio::test]
 async fn offline_systems_replay_reports_damaged_traces_and_exports_json() {
     let sandbox = tempfile::tempdir().unwrap();
     let replay = sandbox.path().join("hermes/logs/replay");
