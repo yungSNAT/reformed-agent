@@ -33,6 +33,23 @@ fn overview_truncates_by_characters_at_a_sentence_boundary() {
 fn overview_takes_body_lines_from_a_heading_paragraph() {
     assert_eq!(extract_overview("# Title\nBody line\n\nNext"), "Body line");
     assert_eq!(extract_overview("# Only\n\n:::tip\nx\n:::\n\nReal"), "Real");
+    assert!(extract_overview("# Only\n\n```text\nexample\n```\n\n~~~\nexample\n~~~").is_empty());
+}
+
+#[test]
+fn docs_paths_follow_catalogue_nesting() {
+    for (path, source, expected) in [
+        ("notes", "built-in", "bundled/notes/notes-notes"),
+        ("notes/edit", "optional", "optional/notes/notes-edit"),
+        (
+            "notes/import/plain",
+            "optional",
+            "optional/notes/notes-import-plain",
+        ),
+        ("notes/import/plain/deep", "built-in", ""),
+    ] {
+        assert_eq!(docs_page_path(path, source), expected, "{path}");
+    }
 }
 
 #[test]
