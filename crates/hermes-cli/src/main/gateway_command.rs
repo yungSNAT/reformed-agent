@@ -358,44 +358,9 @@ async fn run_gateway(
                                 }),
                             )
                             .await;
-                        let platform_for_review = ctx.platform.clone();
-                        let chat_for_review = ctx.chat_id.clone();
-                        let thread_for_review = ctx.thread_id.clone();
-                        let deferred_queue = ctx.deferred_post_delivery_messages.clone();
-                        let deferred_released = ctx.deferred_post_delivery_released.clone();
-                        let gateway_for_review_cb = gateway_for_review.clone();
-                        let review_cb: Arc<dyn Fn(&str) + Send + Sync> =
-                            Arc::new(move |text: &str| {
-                                if let (Some(queue), Some(released)) =
-                                    (deferred_queue.as_ref(), deferred_released.as_ref())
-                                {
-                                    if !released.load(Ordering::Acquire) {
-                                        if let Ok(mut guard) = queue.lock() {
-                                            guard.push(text.to_string());
-                                            return;
-                                        }
-                                    }
-                                }
-                                let gw = gateway_for_review_cb.clone();
-                                let platform = platform_for_review.clone();
-                                let chat_id = chat_for_review.clone();
-                                let thread_id = thread_for_review.clone();
-                                let msg = text.to_string();
-                                tokio::spawn(async move {
-                                    let _ = gw
-                                        .send_notify_message_threaded(
-                                            &platform,
-                                            &chat_id,
-                                            &msg,
-                                            None,
-                                            thread_id.as_deref(),
-                                        )
-                                        .await;
-                                });
-                            });
                         let background_review_callback =
                             gateway_memory_notifications_enabled(config.as_ref())
-                                .then_some(review_cb);
+                                .then_some(gateway_for_review.post_delivery_notify_callback(&ctx));
                         let gateway_for_status = gateway_for_review.clone();
                         let gateway_for_status_hook = gateway_for_review.clone();
                         let platform_for_status = ctx.platform.clone();
@@ -643,44 +608,9 @@ async fn run_gateway(
                                 }),
                             )
                             .await;
-                        let platform_for_review = ctx.platform.clone();
-                        let chat_for_review = ctx.chat_id.clone();
-                        let thread_for_review = ctx.thread_id.clone();
-                        let deferred_queue = ctx.deferred_post_delivery_messages.clone();
-                        let deferred_released = ctx.deferred_post_delivery_released.clone();
-                        let gateway_for_review_cb = gateway_for_review.clone();
-                        let review_cb: Arc<dyn Fn(&str) + Send + Sync> =
-                            Arc::new(move |text: &str| {
-                                if let (Some(queue), Some(released)) =
-                                    (deferred_queue.as_ref(), deferred_released.as_ref())
-                                {
-                                    if !released.load(Ordering::Acquire) {
-                                        if let Ok(mut guard) = queue.lock() {
-                                            guard.push(text.to_string());
-                                            return;
-                                        }
-                                    }
-                                }
-                                let gw = gateway_for_review_cb.clone();
-                                let platform = platform_for_review.clone();
-                                let chat_id = chat_for_review.clone();
-                                let thread_id = thread_for_review.clone();
-                                let msg = text.to_string();
-                                tokio::spawn(async move {
-                                    let _ = gw
-                                        .send_notify_message_threaded(
-                                            &platform,
-                                            &chat_id,
-                                            &msg,
-                                            None,
-                                            thread_id.as_deref(),
-                                        )
-                                        .await;
-                                });
-                            });
                         let background_review_callback =
                             gateway_memory_notifications_enabled(config.as_ref())
-                                .then_some(review_cb);
+                                .then_some(gateway_for_review.post_delivery_notify_callback(&ctx));
                         let gateway_for_status = gateway_for_review.clone();
                         let gateway_for_status_hook = gateway_for_review.clone();
                         let platform_for_status = ctx.platform.clone();

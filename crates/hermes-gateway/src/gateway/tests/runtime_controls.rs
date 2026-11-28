@@ -1335,55 +1335,84 @@ async fn gateway_context_handler_receives_structured_runtime_context() {
 #[tokio::test]
 async fn gateway_deferred_post_delivery_messages_flush_after_main_reply() {
     let sent = Arc::new(Mutex::new(Vec::new()));
-    let adapter = Arc::new(TestAdapter {
-        messages: sent.clone(),
+    let adapter = Arc::new(ThreadOptionTestAdapter {
+        sends: sent.clone(),
     });
 
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let mut dm_manager = DmManager::with_pair_behavior();
     dm_manager.authorize_user("user1");
-    let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
-    gw.register_adapter("test", adapter).await;
-    gw.set_message_handler_with_context(Arc::new(|_messages, ctx| {
+    let gw = Arc::new(Gateway::new(
+        session_mgr,
+        dm_manager,
+        GatewayConfig::default(),
+    ));
+    gw.register_adapter("thread-option-test", adapter).await;
+    let callback = Arc::new(Mutex::new(None));
+    let callback_for_handler = callback.clone();
+    let weak_gateway = Arc::downgrade(&gw);
+    gw.set_message_handler_with_context(Arc::new(move |_messages, ctx| {
+        let gateway = weak_gateway.upgrade().unwrap();
+        let callback_for_handler = callback_for_handler.clone();
         Box::pin(async move {
-            let pending = ctx
-                .deferred_post_delivery_messages
-                .expect("deferred queue should be present");
             let released = ctx
                 .deferred_post_delivery_released
+                .as_ref()
                 .expect("release flag should be present");
             assert!(
                 !released.load(std::sync::atomic::Ordering::Acquire),
                 "release must remain false before main reply delivery"
             );
-            pending
-                .lock()
-                .unwrap()
-                .push("💾 deferred-memory-update".to_string());
+            let notify = gateway.post_delivery_notify_callback(&ctx);
+            notify("💾 deferred-memory-update");
+            *callback_for_handler.lock().unwrap() = Some(notify);
             Ok("main-response".to_string())
         })
     }))
     .await;
 
     let incoming = IncomingMessage {
-        platform: "test".into(),
+        platform: "thread-option-test".into(),
         chat_id: "chat1".into(),
         user_id: "user1".into(),
         text: "hello".into(),
         message_id: None,
-        thread_id: None,
+        thread_id: Some("topic".into()),
         is_dm: true,
     };
     assert!(gw.route_message(&incoming).await.is_ok());
 
-    let msgs = sent.lock().unwrap();
-    let ordered: Vec<String> = msgs.iter().map(|(_, t)| t.clone()).collect();
+    let ordered: Vec<_> = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, text, _, _)| text.clone())
+        .collect();
     assert_eq!(
         ordered,
         vec![
             "main-response".to_string(),
             "💾 deferred-memory-update".to_string()
         ]
+    );
+    let notify = callback.lock().unwrap().take().unwrap();
+    notify("💾 late-memory-update");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while sent.lock().unwrap().len() < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("late notification should be delivered");
+    let messages = sent.lock().unwrap();
+    assert_eq!(
+        messages[2],
+        (
+            "chat1".to_string(),
+            "💾 late-memory-update".to_string(),
+            Some("topic".to_string()),
+            true
+        )
     );
 }
 
@@ -1522,22 +1551,19 @@ async fn gateway_streaming_flushes_deferred_after_stream_finishes() {
     let gw = Arc::new(Gateway::new(session_mgr, dm_manager, cfg));
     gw.register_adapter("test", adapter).await;
 
-    gw.set_streaming_handler_with_context(Arc::new(|_messages, ctx, _on_chunk| {
+    let weak_gateway = Arc::downgrade(&gw);
+    gw.set_streaming_handler_with_context(Arc::new(move |_messages, ctx, _on_chunk| {
+        let gateway = weak_gateway.upgrade().unwrap();
         Box::pin(async move {
-            let pending = ctx
-                .deferred_post_delivery_messages
-                .expect("deferred queue should be present");
             let released = ctx
                 .deferred_post_delivery_released
+                .as_ref()
                 .expect("release flag should be present");
             assert!(
                 !released.load(std::sync::atomic::Ordering::Acquire),
                 "release must stay false while stream handler is running"
             );
-            pending
-                .lock()
-                .unwrap()
-                .push("💾 stream-bg-review".to_string());
+            gateway.post_delivery_notify_callback(&ctx)("💾 stream-bg-review");
             Ok("stream-final".to_string())
         })
     }))
