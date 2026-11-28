@@ -82,6 +82,46 @@ async fn quorum_and_claim_commands_persist_policy_without_dispatching_a_turn() {
 }
 
 #[tokio::test]
+async fn quorum_models_resolve_and_persist_offline_catalogue_choices() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::quorum_models_resolve_and_persist_offline_catalogue_choices",
+    ) {
+        return;
+    }
+    let mut app = build_test_app_with_stream(&hermes_config::hermes_home()).await;
+    app.current_model = "moa:default".into();
+    handle_quorum_command(&mut app, &["on"]).await.unwrap();
+    handle_quorum_command(
+        &mut app,
+        &[
+            "models",
+            "defaul, moa:zzzzzzzz, MOA:DEFAULT, :missing-provider, moa:, fixture-provider:independent",
+        ],
+    )
+    .await
+    .unwrap();
+
+    let policy = load_quorum_policy().unwrap();
+    assert!(policy.enabled);
+    assert_eq!(policy.models, ["moa:default", "fixture-provider:independent"]);
+    let notice = latest_ui_assistant_text(&app);
+    assert!(notice.contains("moa:defaul -> moa:default"), "{notice}");
+    assert!(notice.contains("moa:zzzzzzzz -> moa:default (close: (none))"), "{notice}");
+    assert!(app.messages.iter().any(|message| {
+        message.role == hermes_core::MessageRole::System
+            && message.content.as_deref().is_some_and(|text| {
+                text.starts_with("[QUORUM_MODE] ")
+                    && text.contains("moa:default, fixture-provider:independent")
+            })
+    }));
+    assert!(!app.quorum_armed_once);
+
+    handle_quorum_command(&mut app, &["models", ", "]).await.unwrap();
+    assert!(load_quorum_policy().unwrap().models.is_empty());
+    assert_eq!(latest_ui_assistant_text(&app), "Quorum models updated: (none)");
+}
+
+#[tokio::test]
 async fn quorum_artifact_status_prefers_the_latest_from_the_current_session() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::quorum_artifact_status_prefers_the_latest_from_the_current_session",

@@ -1,3 +1,43 @@
+#[cfg(feature = "gateway-telegram")]
+#[tokio::test]
+async fn telegram_registration_keeps_the_stopped_polling_sidecar_alive_until_cancelled() {
+    if !crate::isolated_test_profile::enter(
+        "tests::telegram_registration_keeps_the_stopped_polling_sidecar_alive_until_cancelled",
+    ) {
+        return;
+    }
+    let mut platform = make_platform(true, Some("telegram-registration-fixture"));
+    platform
+        .extra
+        .insert("polling".into(), serde_json::json!(false));
+    platform.extra.insert(
+        "webhook_secret".into(),
+        serde_json::json!("fixture-webhook-value"),
+    );
+    let config = hermes_config::GatewayConfig {
+        platforms: [("telegram".into(), platform)].into_iter().collect(),
+        ..Default::default()
+    };
+    let gateway = make_gateway();
+    let mut sidecars = Vec::new();
+    register_gateway_adapters(&config, gateway.clone(), &mut sidecars)
+        .await
+        .expect("register Telegram");
+    assert_eq!(sidecars.len(), 1);
+    let mut poller = sidecars.pop().expect("Telegram polling sidecar");
+    let adapter = gateway.get_adapter("telegram").await.expect("adapter");
+    assert!(!adapter.is_running());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut poller)
+            .await
+            .is_err(),
+        "the sidecar must wait for the adapter to start"
+    );
+    assert!(!adapter.is_running());
+    poller.abort();
+    assert!(poller.await.expect_err("cancelled sidecar").is_cancelled());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn gateway_registration_skips_incomplete_configs_and_keeps_configured_adapters() {
