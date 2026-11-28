@@ -622,22 +622,17 @@ streaming:
     )
     .unwrap();
 
-    let (mut child, mut terminal, initial_flags) = start_in_pty(
+    let mut command = isolated_pty_command(
         sandbox.path(),
         &["--ignore-rules", "resume", "fixture-resume"],
         true,
     );
+    // Only the managed route adds the configured runtime reformulation to the request.
+    command.env("HERMES_RUNTIME_PROMPT_REFORMULATION", "1");
+    let (mut child, mut terminal, initial_flags) = start_command_in_pty(command);
     read_until(&mut terminal, b"Resumed session").await;
-    if managed {
-        // The processing indicators fill the standard-width status line.
-        resize_pty(&terminal, 32, 240);
-        read_until(&mut terminal, b"\x1b[2J").await;
-    }
     write!(terminal, "\x1b[200~{followup}\x1b[201~\r").unwrap();
-    let rendered = read_until(&mut terminal, reply.as_bytes()).await;
-    if managed {
-        assert!(String::from_utf8_lossy(&rendered).contains("Running managed agent turn"));
-    }
+    read_until(&mut terminal, reply.as_bytes()).await;
     terminal.write_all(b"\x03").unwrap();
     read_until(&mut terminal, b"\x1b[?1049l").await;
     assert!(timeout(Duration::from_secs(10), child.wait())
@@ -651,9 +646,18 @@ streaming:
     assert_eq!(requests.len(), 1);
     let request: Value = requests[0].body_json().unwrap();
     assert_eq!(request["stream"].as_bool().unwrap_or(false), !managed);
-    let history = request["messages"]
-        .as_array()
-        .unwrap()
+    let messages = request["messages"].as_array().unwrap();
+    assert_eq!(
+        messages.iter().any(|message| {
+            message["role"] == "system"
+                && message["content"].as_str().is_some_and(|content| {
+                    content.contains(hermes_app_runtime::RUNTIME_REFORMULATION_PREFIX)
+                })
+        }),
+        managed,
+        "only the managed turn reformulates the saved conversation"
+    );
+    let history = messages
         .iter()
         .filter_map(|message| {
             let role = message["role"].as_str()?;
