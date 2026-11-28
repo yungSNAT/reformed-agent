@@ -356,6 +356,106 @@ async fn registry_and_github_calls_report_transport_errors_without_network() {
     );
 }
 
+#[tokio::test]
+async fn skills_index_search_ranks_matches_and_resolves_install_sources() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/index"))
+        .and(header("accept", "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "skills": [
+                {"name": "calendar", "source": "lobehub", "identifier": "lobehub/calendar"},
+                {"name": "calendar", "source": "official", "identifier": "unavailable"},
+                {
+                    "name": "tern-calendar", "source": "github", "identifier": "test/tern-calendar",
+                    "repo": "test/tern-calendar", "path": "skills/tern"
+                },
+                {
+                    "name": "calendar", "source": "official", "identifier": "official/calendar",
+                    "path": "skills/calendar"
+                },
+                {"name": "birding", "source": "clawhub", "identifier": "birding"}
+            ]
+        })))
+        .expect(5)
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let url = format!("{}/index", server.uri());
+    let results = search_registry_index(client.get(&url), "calendar", 2)
+        .await
+        .unwrap();
+    let identifiers = results
+        .iter()
+        .map(|hit| hit.identifier.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(identifiers, ["official/calendar", "lobehub/calendar"]);
+
+    let exact = resolve_registry_index(client.get(&url), " CALENDAR ", None)
+        .await
+        .unwrap();
+    assert_eq!(exact.identifier, "official/calendar");
+    assert!(matches!(
+        exact.install_source,
+        RegistryInstallSource::GitRepo(ref source)
+            if source.repo == OFFICIAL_SKILLS_REPO && source.skill_dir == "skills/calendar"
+    ));
+
+    let scoped = resolve_registry_index(client.get(&url), "calendar", Some("LobeHub"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        scoped.install_source,
+        RegistryInstallSource::LobeRegistry { slug } if slug == "calendar"
+    ));
+
+    let fuzzy = resolve_registry_index(client.get(&url), "tern", None)
+        .await
+        .unwrap();
+    assert_eq!(fuzzy.identifier, "test/tern-calendar");
+    assert_config_error(
+        resolve_registry_index(client.get(&url), "missing", None).await,
+        "Skill 'missing' was not found in multi-registry index.",
+    );
+}
+
+#[tokio::test]
+async fn skills_index_search_reports_http_and_json_errors() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for (route, response, message) in [
+        (
+            "/unavailable",
+            ResponseTemplate::new(503).set_body_string("registry maintenance"),
+            "Skills index lookup failed (503 Service Unavailable): registry maintenance",
+        ),
+        (
+            "/invalid",
+            ResponseTemplate::new(200).set_body_json(json!({"skills": "invalid schema"})),
+            "Invalid skills index response:",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let url = format!("{}{route}", server.uri());
+        assert_config_error(
+            search_registry_index(client.get(&url), "calendar", 2).await,
+            message,
+        );
+    }
+}
+
 /// Re-runs one test of this module alone in a child test process with the isolation marker set,
 /// because these tests change process-wide state. Returns true in the parent (which then returns)
 /// once the child passed, and false inside the child, which runs the test body.
