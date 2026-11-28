@@ -580,4 +580,97 @@ mod tests {
         assert_eq!(cfg.base_url, "https://vision.local/v1");
         assert_eq!(cfg.model, "local-vision-model");
     }
+
+    const ISOLATED_DEFAULTS: &str = "HERMES_TEST_VISION_ISOLATED_DEFAULTS";
+
+    #[test]
+    fn vision_uses_provider_defaults_in_an_isolated_environment() {
+        crate::teams_pipeline::run_exact_test_in_child(
+            concat!(module_path!(), "::isolated_vision_provider_defaults"),
+            |command| {
+                command
+                    .env_clear()
+                    .env(ISOLATED_DEFAULTS, "1")
+                    .envs(
+                        ["LLVM_PROFILE_FILE", "SystemRoot", "WINDIR"]
+                            .into_iter()
+                            .filter_map(|name| std::env::var_os(name).map(|value| (name, value))),
+                    )
+                    .arg("--ignored");
+            },
+        );
+    }
+
+    #[test]
+    #[ignore = "run with a clean environment by the parent test"]
+    fn isolated_vision_provider_defaults() {
+        assert_eq!(std::env::var(ISOLATED_DEFAULTS).as_deref(), Ok("1"));
+        let providers = [
+            (
+                " Open_Router ",
+                "OPENROUTER_API_KEY",
+                "https://openrouter.ai/api/v1",
+                "openai/gpt-4o",
+            ),
+            (
+                "NousResearch",
+                "HERMES_MOA_API_KEY",
+                "https://inference-api.nousresearch.com/v1",
+                "openai/gpt-4o",
+            ),
+            (
+                "google_ai_studio",
+                "GOOGLE_API_KEY",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "gemini-2.5-flash",
+            ),
+            (
+                "grok",
+                "XAI_API_KEY",
+                "https://api.x.ai/v1",
+                "grok-2-vision-1212",
+            ),
+            (
+                "z_ai",
+                "Z_AI_API_KEY",
+                "https://api.z.ai/api/paas/v4",
+                "glm-4.5v",
+            ),
+            (
+                "gmi",
+                "GMI_API_KEY",
+                "https://api.gmi-serving.com/v1",
+                "google/gemini-2.5-flash",
+            ),
+        ];
+        for (provider, key, base_url, model) in providers {
+            std::env::set_var("AUXILIARY_VISION_PROVIDER", provider);
+            std::env::set_var(key, "vision-fixture-value");
+            let backend = OpenAiVisionBackend::from_env().expect(provider);
+            assert_eq!(backend.base_url, base_url, "{provider}");
+            assert_eq!(backend.model, model, "{provider}");
+            assert!(
+                backend.api_key == "vision-fixture-value",
+                "{provider} credential mismatch"
+            );
+            std::env::remove_var(key);
+        }
+
+        std::env::set_var("AUXILIARY_VISION_PROVIDER", "fixture-unknown");
+        assert!(matches!(
+            OpenAiVisionBackend::from_env(),
+            Err(ToolError::ExecutionFailed(message)) if message.contains("Unsupported vision provider `fixture-unknown`")
+        ));
+        std::env::set_var("AUXILIARY_VISION_PROVIDER", "gemini");
+        assert!(matches!(
+            OpenAiVisionBackend::from_env(),
+            Err(ToolError::ExecutionFailed(message)) if message.contains("No API key configured for vision provider `gemini`")
+        ));
+        std::env::set_var("AUXILIARY_VISION_PROVIDER", "huggingface");
+        std::env::set_var("HUGGINGFACE_API_KEY", "vision-fixture-value");
+        assert!(matches!(
+            OpenAiVisionBackend::from_env(),
+            Err(ToolError::ExecutionFailed(message)) if message.contains("No vision model configured for provider `huggingface`")
+        ));
+    }
 }
