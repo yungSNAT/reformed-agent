@@ -820,6 +820,7 @@ mod tests {
             if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
                 child.env("LLVM_PROFILE_FILE", cwd.join(profile));
             }
+            #[cfg(windows)]
             if let Some(root) = std::env::var_os("SystemRoot") {
                 child.env("SystemRoot", root);
             }
