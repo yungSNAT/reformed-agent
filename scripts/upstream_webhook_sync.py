@@ -73,6 +73,7 @@ class SyncEvent:
     pushed_at: str
     payload: dict[str, Any]
 
+
 @dataclass
 class QueueItem:
     id: int
@@ -1747,6 +1748,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if (os.environ.get("UPSTREAM_SYNC_BACKEND") or "sqlite") != "sqlite":
+        parser.error("UPSTREAM_SYNC_BACKEND must be sqlite")
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",

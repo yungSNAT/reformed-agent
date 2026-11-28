@@ -15,6 +15,30 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 @unittest.skipUnless(os.name == "posix", "launchd wrappers require Bash")
 class WebhookLaunchdTests(unittest.TestCase):
+    def test_wrappers_refuse_retired_backends_before_starting_python(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch).resolve()
+            python = root / "python3"
+            python.write_text('#!/bin/sh\n: > "${0%/*}/python.called"\n')
+            python.chmod(0o700)
+            env = {
+                "PATH": f"{root}{os.pathsep}{os.defpath}",
+                "REPO_ROOT": str(root),
+                "UPSTREAM_SYNC_ENV_FILE": str(root / "unused"),
+                "UPSTREAM_SYNC_DISABLE_DEV_GUARD": "1",
+            }
+            for role in ("listener", "worker"):
+                wrapper = SCRIPTS / f"run-upstream-webhook-{role}.sh"
+                for backend in ("sqs", "kafka"):
+                    with self.subTest(role=role, backend=backend):
+                        result = subprocess.run(
+                            ["bash", str(wrapper)], env={**env, "UPSTREAM_SYNC_BACKEND": backend},
+                            capture_output=True, text=True, timeout=15, check=False,
+                        )
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertIn("expected sqlite", result.stderr)
+                        self.assertFalse((root / "python.called").exists())
+
     def test_guided_setup_preserves_literal_overrides(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch).resolve()
@@ -172,7 +196,9 @@ class WebhookLaunchdTests(unittest.TestCase):
             for backend in ("sqs", "kafka"):
                 with self.subTest(backend=backend):
                     config.write_text(f"UPSTREAM_SYNC_BACKEND={backend}\n")
-                    result = subprocess.run(install, env=env, capture_output=True, text=True, timeout=15)
+                    result = subprocess.run(
+                        install, env=env, capture_output=True, text=True, timeout=15, check=False,
+                    )
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn("UPSTREAM_SYNC_BACKEND must be sqlite", result.stderr)
                     self.assertFalse(calls.exists())

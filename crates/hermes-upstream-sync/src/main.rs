@@ -115,6 +115,11 @@ fn main() -> ExitCode {
 }
 
 fn listen(args: ListenArgs) -> Result<(), (u8, String)> {
+    if std::env::var_os("UPSTREAM_SYNC_BACKEND")
+        .is_some_and(|backend| !backend.is_empty() && backend != "sqlite")
+    {
+        return Err((2, "UPSTREAM_SYNC_BACKEND must be sqlite".to_string()));
+    }
     let config = listen::ListenConfig {
         host: args.host,
         port: args.port,

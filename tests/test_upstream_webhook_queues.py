@@ -1,6 +1,9 @@
 import contextlib
 import io
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,3 +90,20 @@ class WebhookQueueTests(unittest.TestCase):
                     with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                         parser.parse_args([command, "--backend", backend])
                     self.assertEqual(error.exception.code, 2)
+
+    def test_retired_backend_environment_is_rejected_before_startup(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "upstream_webhook_sync.py"
+        with tempfile.TemporaryDirectory() as scratch:
+            queue = Path(scratch) / "queue.sqlite"
+            for command in ("listen", "worker"):
+                for backend in ("sqs", "kafka"):
+                    for arguments in ([], ["--backend", "sqlite"]):
+                        with self.subTest(command=command, backend=backend, arguments=arguments):
+                            result = subprocess.run(
+                                [sys.executable, str(script), command, "--sqlite-path", str(queue), *arguments],
+                                env={**os.environ, "UPSTREAM_SYNC_BACKEND": backend},
+                                capture_output=True, text=True, timeout=10, check=False,
+                            )
+                            self.assertEqual(result.returncode, 2, result.stderr)
+                            self.assertIn("UPSTREAM_SYNC_BACKEND must be sqlite", result.stderr)
+                            self.assertFalse(queue.exists())

@@ -15,6 +15,7 @@ fn listen(dir: &std::path::Path, port: u16) -> Command {
     command
         .args(["listen", "--port", &port.to_string(), "--sqlite-path"])
         .arg(dir.join("q.db"))
+        .env_remove("UPSTREAM_SYNC_BACKEND")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
@@ -65,6 +66,25 @@ fn refuses_to_start_when_the_secret_is_absent_or_empty() {
         !dir.path().join("q.db").exists(),
         "refused before opening the queue"
     );
+}
+
+#[test]
+fn refuses_retired_backends_before_opening_the_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    for backend in ["sqs", "kafka"] {
+        for arguments in [&[][..], &["--backend", "sqlite"][..]] {
+            let output = listen(dir.path(), 1)
+                .env_remove("GITHUB_WEBHOOK_SECRET")
+                .env("UPSTREAM_SYNC_BACKEND", backend)
+                .args(arguments)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(2));
+            assert!(String::from_utf8_lossy(&output.stderr)
+                .contains("UPSTREAM_SYNC_BACKEND must be sqlite"));
+            assert!(!dir.path().join("q.db").exists());
+        }
+    }
 }
 
 #[cfg(unix)]
