@@ -1,5 +1,5 @@
 use super::*;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn test_config(base: &str) -> WeixinConfig {
@@ -36,10 +36,19 @@ async fn bodies_for(server: &MockServer, p: &str) -> Vec<Value> {
 }
 
 async fn deliver(config: WeixinConfig, msg: Value) -> Option<IncomingMessage> {
+    let dir = tempfile::tempdir().expect("temporary cache");
+    deliver_with_cache(config, msg, dir.path()).await
+}
+
+async fn deliver_with_cache(
+    config: WeixinConfig,
+    msg: Value,
+    cache_dir: &Path,
+) -> Option<IncomingMessage> {
     let a = WeChatAdapter::new(config).expect("adapter");
     let (tx, mut rx) = mpsc::channel(4);
     a.set_inbound_sender(tx).await;
-    WeChatAdapter::process_inbound(a.inner.clone(), msg).await;
+    WeChatAdapter::process_inbound(a.inner.clone(), msg, cache_dir).await;
     drop(a);
     tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
@@ -272,6 +281,7 @@ fn image_aes_key_and_media_map() {
 #[tokio::test]
 async fn media_line_for_item_failure_paths_return_none() {
     let a = make_adapter("https://ilink.invalid");
+    let dir = tempfile::tempdir().expect("temporary cache");
     let items = [
         serde_json::json!({ "type": 2, "image_item": { "media": {} } }),
         serde_json::json!({ "type": 2 }),
@@ -283,18 +293,152 @@ async fn media_line_for_item_failure_paths_return_none() {
         serde_json::json!({ "no_type": true }),
     ];
     for item in &items {
-        assert!(WeChatAdapter::media_line_for_item(&a.inner, item)
-            .await
-            .is_none());
+        assert!(
+            WeChatAdapter::media_line_for_item(&a.inner, item, dir.path())
+                .await
+                .is_none()
+        );
     }
     let list = vec![serde_json::json!({
         "type": 2,
         "image_item": { "media": {} },
         "ref_msg": { "message_item": { "type": 5, "video_item": { "media": {} } } }
     })];
-    assert!(WeChatAdapter::collect_media_lines(&a.inner, &list)
-        .await
-        .is_empty());
+    assert!(
+        WeChatAdapter::collect_media_lines(&a.inner, &list, dir.path())
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn inbound_files_deliver_text_and_cached_attachments() {
+    let server = MockServer::start().await;
+    let key: [u8; 16] = rand::random();
+    let plaintext = b"Library survey notes";
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .and(query_param("encrypted_query_param", "notes"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(aes128_ecb_encrypt(plaintext, &key)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let quoted = b"Referenced appendix";
+    Mock::given(method("GET"))
+        .and(path("/appendix"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(quoted.to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().expect("temporary cache");
+    let cache_dir = dir.path().join("media");
+    let message = deliver_with_cache(
+        test_config(&server.uri()),
+        json!({
+            "from_user_id": "u1",
+            "item_list": [
+                { "type": 1, "text_item": { "text": "Survey" } },
+                {
+                    "type": 4,
+                    "file_item": {
+                        "file_name": "croft-manor-notes.txt",
+                        "media": {
+                            "encrypt_query_param": "notes",
+                            "aes_key": base64::engine::general_purpose::STANDARD.encode(key)
+                        }
+                    },
+                    "ref_msg": {
+                        "message_item": {
+                            "type": 4,
+                            "file_item": {
+                                "file_name": "appendix",
+                                "media": { "full_url": format!("{}/appendix", server.uri()) }
+                            }
+                        }
+                    }
+                }
+            ]
+        }),
+        &cache_dir,
+    )
+    .await
+    .expect("message delivered");
+
+    let files: Vec<_> = std::fs::read_dir(&cache_dir)
+        .expect("cache directory")
+        .map(|entry| entry.expect("cache entry").path())
+        .collect();
+    assert_eq!(files.len(), 2);
+    let attachment = files
+        .iter()
+        .find(|p| p.extension().is_some_and(|e| e == "txt"))
+        .unwrap();
+    let quoted_attachment = files
+        .iter()
+        .find(|p| p.extension().is_some_and(|e| e == "bin"))
+        .unwrap();
+    assert_eq!(std::fs::read(attachment).unwrap(), plaintext);
+    assert_eq!(std::fs::read(quoted_attachment).unwrap(), quoted);
+    assert_eq!(
+        message.text,
+        format!(
+            "Survey\n[文件 croft-manor-notes.txt: {}]\n[文件 appendix: {}]",
+            attachment.to_string_lossy(),
+            quoted_attachment.to_string_lossy()
+        )
+    );
+}
+
+#[tokio::test]
+async fn inbound_media_preserves_downloaded_bytes_and_skips_an_unavailable_cache() {
+    let server = MockServer::start().await;
+    let bytes = b"opaque media bytes";
+    Mock::given(method("GET"))
+        .and(path("/media"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.to_vec()))
+        .expect(4)
+        .mount(&server)
+        .await;
+    let adapter = make_adapter(&server.uri());
+    let full_url = format!("{}/media", server.uri());
+    let dir = tempfile::tempdir().expect("temporary cache");
+
+    for (item_type, item_field, extension, label) in [
+        (2, "image_item", "jpg", "图片"),
+        (5, "video_item", "mp4", "视频"),
+        (3, "voice_item", "silk", "语音"),
+    ] {
+        let item = json!({
+            "type": item_type,
+            (item_field): { "media": { "full_url": full_url } }
+        });
+        let cache = dir.path().join(extension);
+        let line = WeChatAdapter::media_line_for_item(&adapter.inner, &item, &cache)
+            .await
+            .expect("attachment line");
+        let entries = std::fs::read_dir(cache).expect("cache directory");
+        let files: Vec<_> = entries
+            .map(|entry| entry.expect("cache entry").path())
+            .collect();
+        assert_eq!(files.len(), 1);
+        let file = &files[0];
+        assert_eq!(file.extension().unwrap(), extension);
+        assert_eq!(std::fs::read(file).unwrap(), bytes);
+        assert_eq!(line, format!("[{label}: {}]", file.to_string_lossy()));
+    }
+
+    let unavailable = dir.path().join("occupied");
+    std::fs::write(&unavailable, b"original").unwrap();
+    let item = json!({ "type": 2, "image_item": { "media": { "full_url": full_url } } });
+    assert!(
+        WeChatAdapter::media_line_for_item(&adapter.inner, &item, &unavailable)
+            .await
+            .is_none()
+    );
+    assert_eq!(std::fs::read(unavailable).unwrap(), b"original");
 }
 
 #[tokio::test]

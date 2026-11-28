@@ -498,16 +498,19 @@ impl WeChatAdapter {
             .map(String::from)
     }
 
-    fn write_media_cache(ext: &str, data: &[u8]) -> Result<String, std::io::Error> {
-        let dir = hermes_config::hermes_home().join("cache").join("weixin");
-        std::fs::create_dir_all(&dir)?;
+    fn write_media_cache(dir: &Path, ext: &str, data: &[u8]) -> Result<String, std::io::Error> {
+        std::fs::create_dir_all(dir)?;
         let name = format!("{}{}", Uuid::new_v4().simple(), ext);
         let p = dir.join(name);
         std::fs::write(&p, data)?;
         Ok(p.to_string_lossy().to_string())
     }
 
-    async fn media_line_for_item(inner: &WeixinInner, item: &Value) -> Option<String> {
+    async fn media_line_for_item(
+        inner: &WeixinInner,
+        item: &Value,
+        cache_dir: &Path,
+    ) -> Option<String> {
         let typ = item.get("type").and_then(|v| v.as_i64())? as i32;
         let res = match typ {
             ITEM_IMAGE => {
@@ -575,12 +578,10 @@ impl WeChatAdapter {
         match res {
             Ok(data) => {
                 let line = match typ {
-                    ITEM_IMAGE => {
-                        Self::write_media_cache(".jpg", &data).map(|p| format!("[图片: {p}]"))
-                    }
-                    ITEM_VIDEO => {
-                        Self::write_media_cache(".mp4", &data).map(|p| format!("[视频: {p}]"))
-                    }
+                    ITEM_IMAGE => Self::write_media_cache(cache_dir, ".jpg", &data)
+                        .map(|p| format!("[图片: {p}]")),
+                    ITEM_VIDEO => Self::write_media_cache(cache_dir, ".mp4", &data)
+                        .map(|p| format!("[视频: {p}]")),
                     ITEM_FILE => {
                         let name = item
                             .get("file_item")
@@ -592,11 +593,11 @@ impl WeChatAdapter {
                             .and_then(|e| e.to_str())
                             .map(|e| format!(".{e}"))
                             .unwrap_or_else(|| ".bin".into());
-                        Self::write_media_cache(&ext, &data).map(|p| format!("[文件 {name}: {p}]"))
+                        Self::write_media_cache(cache_dir, &ext, &data)
+                            .map(|p| format!("[文件 {name}: {p}]"))
                     }
-                    ITEM_VOICE => {
-                        Self::write_media_cache(".silk", &data).map(|p| format!("[语音: {p}]"))
-                    }
+                    ITEM_VOICE => Self::write_media_cache(cache_dir, ".silk", &data)
+                        .map(|p| format!("[语音: {p}]")),
                     _ => return None,
                 };
                 match line {
@@ -614,14 +615,18 @@ impl WeChatAdapter {
         }
     }
 
-    async fn collect_media_lines(inner: &WeixinInner, item_list: &[Value]) -> Vec<String> {
+    async fn collect_media_lines(
+        inner: &WeixinInner,
+        item_list: &[Value],
+        cache_dir: &Path,
+    ) -> Vec<String> {
         let mut out = Vec::new();
         for item in item_list {
-            if let Some(line) = Self::media_line_for_item(inner, item).await {
+            if let Some(line) = Self::media_line_for_item(inner, item, cache_dir).await {
                 out.push(line);
             }
             if let Some(ref_item) = item.get("ref_msg").and_then(|r| r.get("message_item")) {
-                if let Some(line) = Self::media_line_for_item(inner, ref_item).await {
+                if let Some(line) = Self::media_line_for_item(inner, ref_item, cache_dir).await {
                     out.push(line);
                 }
             }
@@ -909,7 +914,7 @@ impl WeChatAdapter {
         false
     }
 
-    async fn process_inbound(inner: Arc<WeixinInner>, message: Value) {
+    async fn process_inbound(inner: Arc<WeixinInner>, message: Value, cache_dir: &Path) {
         let sender = message
             .get("from_user_id")
             .and_then(|v| v.as_str())
@@ -969,7 +974,7 @@ impl WeChatAdapter {
             .cloned()
             .unwrap_or_default();
         let mut text = Self::extract_text(&item_list);
-        let media_lines = Self::collect_media_lines(&inner, &item_list).await;
+        let media_lines = Self::collect_media_lines(&inner, &item_list, cache_dir).await;
         if !media_lines.is_empty() {
             if !text.is_empty() {
                 text.push('\n');
@@ -1037,7 +1042,10 @@ impl WeChatAdapter {
                                     let inner2 = inner.clone();
                                     let mv = m.clone();
                                     tokio::spawn(async move {
-                                        Self::process_inbound(inner2, mv).await;
+                                        let cache_dir = hermes_config::hermes_home()
+                                            .join("cache")
+                                            .join("weixin");
+                                        Self::process_inbound(inner2, mv, &cache_dir).await;
                                     });
                                 }
                             }
