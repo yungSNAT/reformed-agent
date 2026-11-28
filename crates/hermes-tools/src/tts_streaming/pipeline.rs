@@ -498,18 +498,11 @@ mod tests {
 
     // ---------- PCM sink integration -----------------------------------
 
+    #[derive(Default)]
     struct RecordingPcmSink {
         chunks: Mutex<Vec<(String, Bytes)>>,
         sentence_ends: Mutex<Vec<String>>,
-    }
-
-    impl RecordingPcmSink {
-        fn new() -> Self {
-            Self {
-                chunks: Mutex::new(Vec::new()),
-                sentence_ends: Mutex::new(Vec::new()),
-            }
-        }
+        stop_after_chunk: std::sync::OnceLock<Arc<AtomicBool>>,
     }
 
     #[async_trait]
@@ -519,6 +512,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((sentence.to_string(), chunk));
+            if let Some(stop) = self.stop_after_chunk.get() {
+                stop.store(true, Ordering::SeqCst);
+            }
             Ok(())
         }
         async fn on_sentence_end(&self, sentence: &str) -> Result<(), ToolError> {
@@ -533,7 +529,7 @@ mod tests {
     #[tokio::test]
     async fn pcm_sink_receives_chunks_per_sentence() {
         let sink = Arc::new(VecSentenceSink::new());
-        let pcm = Arc::new(RecordingPcmSink::new());
+        let pcm = Arc::new(RecordingPcmSink::default());
         let backend = Arc::new(FakeStreamingBackend::with_chunks(vec![
             vec![
                 Bytes::from_static(&[1u8; 8]),
@@ -572,9 +568,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stop_handle_aborts_audio_forwarding() {
+    async fn stop_before_feed_discards_text_and_audio() {
         let sink = Arc::new(VecSentenceSink::new());
-        let pcm = Arc::new(RecordingPcmSink::new());
+        let pcm = Arc::new(RecordingPcmSink::default());
         let backend = Arc::new(FakeStreamingBackend::with_chunks(vec![vec![
             Bytes::from_static(&[0u8; 4]),
             Bytes::from_static(&[0u8; 4]),
@@ -592,13 +588,76 @@ mod tests {
             .feed(TextDelta::chunk("Long enough blocked sentence here. "))
             .await
             .unwrap();
+        pipeline.poll_force_flush().await.unwrap();
         pipeline.feed(TextDelta::End).await.unwrap();
         let outcome = pipeline.finish().await.unwrap();
 
-        // The stop flag was set before any feed; no sentences should have
-        // been emitted at all.
         assert_eq!(outcome.stats.sentences_emitted, 0);
+        assert!(sink.snapshot().is_empty());
         assert!(pcm.chunks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stopping_mid_sentence_keeps_text_and_counts_only_forwarded_audio() {
+        let sink = Arc::new(VecSentenceSink::new());
+        let pcm = Arc::new(RecordingPcmSink::default());
+        let backend = Arc::new(FakeStreamingBackend::with_chunks(vec![vec![
+            Bytes::from_static(b"first"),
+            Bytes::from_static(b"second"),
+        ]]));
+        let pipeline = TtsStreamingPipeline::builder()
+            .with_sentence_sink(sink.clone())
+            .with_pcm_sink(pcm.clone())
+            .with_streaming_backend(backend)
+            .build()
+            .unwrap();
+        pcm.stop_after_chunk.set(pipeline.stop_handle()).unwrap();
+
+        let text = "Keep this sentence in the transcript";
+        pipeline.feed(TextDelta::chunk(text)).await.unwrap();
+        let outcome = pipeline.finish().await.unwrap();
+
+        assert_eq!(sink.take(), [text]);
+        assert!(sink.snapshot().is_empty());
+        assert_eq!(
+            *pcm.chunks.lock().unwrap(),
+            [(text.to_string(), Bytes::from_static(b"first"))]
+        );
+        assert_eq!(*pcm.sentence_ends.lock().unwrap(), [text]);
+        assert_eq!(outcome.stats.sentences_emitted, 1);
+        assert_eq!(outcome.stats.pcm_chunks_forwarded, 1);
+        assert_eq!(outcome.stats.pcm_bytes_forwarded, 5);
+        assert!(outcome.stats.aborted);
+    }
+
+    #[tokio::test]
+    async fn audio_markdown_stripping_respects_the_builder_setting() {
+        let text = "Read **this** aloud";
+        for (strip_markdown, expected) in [(true, "Read this aloud"), (false, text)] {
+            let sink = Arc::new(VecSentenceSink::new());
+            let backend = Arc::new(FakeStreamingBackend::with_chunks(vec![Vec::new()]));
+            let pipeline = TtsStreamingPipeline::builder()
+                .with_sentence_sink(sink.clone())
+                .with_pcm_sink(Arc::new(RecordingPcmSink::default()))
+                .with_streaming_backend(backend.clone())
+                .strip_markdown_before_audio(strip_markdown)
+                .build()
+                .unwrap();
+            pipeline.feed(TextDelta::chunk(text)).await.unwrap();
+            pipeline.finish().await.unwrap();
+
+            assert_eq!(sink.snapshot(), [text]);
+            assert_eq!(*backend.seen_texts.lock().unwrap(), [expected]);
+        }
+    }
+
+    #[test]
+    fn building_the_pipeline_requires_a_sentence_sink() {
+        assert!(matches!(
+            TtsStreamingPipelineBuilder::default().build(),
+            Err(ToolError::InvalidParams(message))
+                if message == "TtsStreamingPipeline requires a sentence sink"
+        ));
     }
 
     #[tokio::test]
