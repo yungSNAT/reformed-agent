@@ -1491,6 +1491,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_and_managed_runs_use_context_without_changing_the_saved_prompt() {
+        for reject_requests in [false, true] {
+            let executor = Arc::new(BlockingTestExecutor::default());
+            executor.release.add_permits(2);
+            let provider = Arc::new(RecordingManagedProvider {
+                reject_requests,
+                ..RecordingManagedProvider::default()
+            });
+            let (scheduler, dir) =
+                make_executor_scheduler_with_provider(executor.clone(), provider.clone());
+            let mut source = CronJob::new("0 * * * *", "Collect the digest");
+            source.last_output = Some("Field notes are ready".into());
+            let source_id = scheduler.create_job(source).await.unwrap();
+            let mut target = CronJob::new("0 * * * *", "Summarise the digest");
+            target.context_from = Some(vec![source_id]);
+            let target_id = scheduler.create_job(target).await.unwrap();
+
+            scheduler.start().await;
+            scheduler.start().await;
+            assert!(scheduler.is_running().await);
+            assert_eq!(provider.reconcile_count(), 3);
+
+            scheduler.run_job(&target_id).await.expect("manual run");
+            assert!(scheduler.fire_managed_job(&target_id, None).await.unwrap());
+            tokio::time::timeout(StdDuration::from_secs(5), async {
+                while scheduler.running_job_ids.lock().await.contains(&target_id) {
+                    sleep(StdDuration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("managed run finished");
+            scheduler.stop().await;
+            assert!(!scheduler.is_running().await);
+            assert_eq!(provider.reconcile_count(), 4);
+
+            let prompts = executor.recorded_prompts();
+            assert_eq!(prompts.len(), 2);
+            assert_eq!(prompts[0], prompts[1]);
+            assert!(prompts[0].contains("Field notes are ready"));
+            assert!(prompts[0].ends_with("Summarise the digest"));
+            let stored = scheduler.get_job(&target_id).await.unwrap();
+            assert_eq!(stored.prompt, "Summarise the digest");
+            assert_eq!(stored.run_count, 1);
+            let persistence = FileJobPersistence::with_dir(dir.path().to_path_buf());
+            assert!(persistence.load_jobs().await.unwrap().contains(&stored));
+        }
+    }
+
+    #[tokio::test]
     async fn managed_provider_errors_keep_local_cron_mutations() {
         let executor = Arc::new(BlockingTestExecutor::default());
         let (mut sched, dir) = make_executor_scheduler(executor);
