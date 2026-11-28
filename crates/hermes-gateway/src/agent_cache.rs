@@ -567,6 +567,30 @@ mod tests {
     }
 
     #[test]
+    fn current_time_inserts_enforce_capacity_unless_oldest_is_active() {
+        let mut cache = GatewayAgentCache::new(1, Duration::from_secs(10));
+        cache.insert("busy", "agent-busy", "sig");
+        cache.insert_with_active("idle", "agent-idle", "sig", |key, agent| {
+            key == "busy" && *agent == "agent-busy"
+        });
+        assert_eq!(cache.len(), 2);
+
+        cache.insert_with_active("next", "agent-next", "sig", |_, _| false);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(
+            *cache.get_if_signature("next", "sig").unwrap(),
+            "agent-next"
+        );
+
+        cache.insert("tail", "agent-tail", "sig");
+        assert_eq!(cache.len(), 1);
+        assert_eq!(
+            *cache.get_if_signature("tail", "sig").unwrap(),
+            "agent-tail"
+        );
+    }
+
+    #[test]
     fn idle_sweep_skips_active_agent_and_evicted_session_can_reinsert() {
         let released = Arc::new(Mutex::new(Vec::new()));
         let released_for_hook = released.clone();
