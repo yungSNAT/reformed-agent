@@ -65,6 +65,8 @@ async fn oneshot_diff_reads_the_terminal_workspace_and_reports_dispatch_errors()
         "{names}"
     );
     assert!(!names.contains("diff --git"), "{names}");
+    assert!(!names.contains("Park survey"), "{names}");
+    assert!(!names.contains("Separate notes"), "{names}");
 
     let usage = run_diff(sandbox.path(), &workspace, "/diff session").await;
     assert!(
@@ -72,6 +74,6 @@ async fn oneshot_diff_reads_the_terminal_workspace_and_reports_dispatch_errors()
         "{usage}"
     );
 
-    let error = run_diff(sandbox.path(), sandbox.path(), "/diff").await;
+    let error = run_diff(sandbox.path(), &workspace.join(".git"), "/diff").await;
     assert!(error.contains("Not a git repository."), "{error}");
 }
