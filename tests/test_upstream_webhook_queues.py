@@ -2,7 +2,6 @@ import contextlib
 import io
 import os
 import sqlite3
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +12,7 @@ from scripts.upstream_webhook_sync import (
     SqliteQueue,
     SyncEvent,
     build_parser,
+    main,
 )
 
 
@@ -92,18 +92,23 @@ class WebhookQueueTests(unittest.TestCase):
                     self.assertEqual(error.exception.code, 2)
 
     def test_retired_backend_environment_is_rejected_before_startup(self):
-        script = Path(__file__).resolve().parents[1] / "scripts" / "upstream_webhook_sync.py"
-        with tempfile.TemporaryDirectory() as scratch:
-            queue = Path(scratch) / "queue.sqlite"
+        with (
+            patch("scripts.upstream_webhook_sync.serve_webhook") as serve,
+            patch("scripts.upstream_webhook_sync.worker_loop") as work,
+        ):
             for command in ("listen", "worker"):
                 for backend in ("sqs", "kafka"):
                     for arguments in ([], ["--backend", "sqlite"]):
                         with self.subTest(command=command, backend=backend, arguments=arguments):
-                            result = subprocess.run(
-                                [sys.executable, str(script), command, "--sqlite-path", str(queue), *arguments],
-                                env={**os.environ, "UPSTREAM_SYNC_BACKEND": backend},
-                                capture_output=True, text=True, timeout=10, check=False,
-                            )
-                            self.assertEqual(result.returncode, 2, result.stderr)
-                            self.assertIn("UPSTREAM_SYNC_BACKEND must be sqlite", result.stderr)
-                            self.assertFalse(queue.exists())
+                            stderr = io.StringIO()
+                            with (
+                                patch.dict(os.environ, {"UPSTREAM_SYNC_BACKEND": backend}),
+                                patch.object(sys, "argv", ["upstream_webhook_sync.py", command, *arguments]),
+                                contextlib.redirect_stderr(stderr),
+                                self.assertRaises(SystemExit) as error,
+                            ):
+                                main()
+                            self.assertEqual(error.exception.code, 2)
+                            self.assertIn("UPSTREAM_SYNC_BACKEND must be sqlite", stderr.getvalue())
+            serve.assert_not_called()
+            work.assert_not_called()

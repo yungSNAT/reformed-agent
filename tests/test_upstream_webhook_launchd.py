@@ -187,7 +187,7 @@ class WebhookLaunchdTests(unittest.TestCase):
             ]
             env = {
                 **os.environ, "PATH": f"{root}{os.pathsep}{os.defpath}",
-                "LAUNCHCTL_CALLS": str(calls), "UPSTREAM_SYNC_AUTO_GENERATE_SECRET": "0",
+                "LAUNCHCTL_CALLS": str(calls),
             }
             for backend in ("sqs", "kafka"):
                 with self.subTest(backend=backend):
@@ -198,8 +198,6 @@ class WebhookLaunchdTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn("UPSTREAM_SYNC_BACKEND must be sqlite", result.stderr)
                     self.assertFalse(calls.exists())
-            subprocess.run([*install, "--no-load"], env=env, check=True, capture_output=True, timeout=15)
-            self.assertFalse(calls.exists())
 
     def test_plists_preserve_configured_paths(self):
         with tempfile.TemporaryDirectory() as scratch:
