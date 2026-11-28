@@ -285,6 +285,56 @@ async fn loopback_provider_bounds_and_validates_completion_responses() {
 }
 
 #[tokio::test]
+async fn stale_provider_probes_the_transport_once_before_completing_requests() {
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(405))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "Fixture answer"}, "finish_reason": "stop"}]
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let provider = GenericProvider::new(server.uri(), "fixture-only", "fixture-model")
+        .with_direct_endpoint()
+        .unwrap()
+        .with_request_timeout_seconds(5.0);
+    *provider.client_refreshed_at.lock().unwrap() = Instant::now() - Duration::from_secs(301);
+
+    for _ in 0..2 {
+        let response = provider
+            .chat_completion(
+                &[Message::user("Summarise the fixture")],
+                &[],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.message.content.as_deref(), Some("Fixture answer"));
+    }
+    let requests = server.received_requests().await.unwrap();
+    let methods: Vec<_> = requests
+        .iter()
+        .map(|request| request.method.as_str())
+        .collect();
+    assert_eq!(methods, ["GET", "POST", "POST"]);
+}
+
+#[tokio::test]
 async fn loopback_provider_limits_chunked_completion_without_content_length() {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
