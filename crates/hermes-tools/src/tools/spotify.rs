@@ -972,6 +972,35 @@ fn infer_context_type(value: &str) -> Option<&'static str> {
     }
 }
 
+fn parse_open_spotify_url(cleaned: &str) -> Option<reqwest::Url> {
+    let (authority_tail, has_scheme) = if let Some(rest) = cleaned.strip_prefix("//") {
+        (rest, false)
+    } else if let Some(idx) = cleaned
+        .find("://")
+        .filter(|&idx| !cleaned[..idx].contains(['/', '?', '#']))
+    {
+        (&cleaned[idx + 3..], true)
+    } else {
+        (cleaned, false)
+    };
+    let authority = authority_tail.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('\\') {
+        return None;
+    }
+    let parsed = if has_scheme {
+        reqwest::Url::parse(cleaned).ok()?
+    } else {
+        reqwest::Url::parse(&format!("https://{authority_tail}")).ok()?
+    };
+    (matches!(parsed.scheme(), "http" | "https")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("open.spotify.com")))
+    .then_some(parsed)
+}
+
 fn normalize_spotify_id(value: &str, expected_type: Option<&str>) -> Result<String, ToolError> {
     let cleaned = value.trim();
     if cleaned.is_empty() {
@@ -993,24 +1022,22 @@ fn normalize_spotify_id(value: &str, expected_type: Option<&str>) -> Result<Stri
             return Ok(parts[1].to_string());
         }
     }
-    if cleaned.contains("open.spotify.com") {
-        if let Ok(parsed) = reqwest::Url::parse(cleaned) {
-            let parts: Vec<&str> = parsed
-                .path_segments()
-                .map(|segments| segments.filter(|part| !part.is_empty()).collect())
-                .unwrap_or_default();
-            if parts.len() >= 2 {
-                let item_type = parts[0];
-                let item_id = parts[1];
-                if let Some(expected) = expected_type {
-                    if item_type != expected {
-                        return Err(ToolError::InvalidParams(format!(
-                            "Expected a Spotify {expected}, got {item_type}."
-                        )));
-                    }
+    if let Some(parsed) = parse_open_spotify_url(cleaned) {
+        let parts: Vec<&str> = parsed
+            .path_segments()
+            .map(|segments| segments.filter(|part| !part.is_empty()).collect())
+            .unwrap_or_default();
+        if parts.len() >= 2 {
+            let item_type = parts[0];
+            let item_id = parts[1];
+            if let Some(expected) = expected_type {
+                if item_type != expected {
+                    return Err(ToolError::InvalidParams(format!(
+                        "Expected a Spotify {expected}, got {item_type}."
+                    )));
                 }
-                return Ok(item_id.to_string());
             }
+            return Ok(item_id.to_string());
         }
     }
     Ok(cleaned.to_string())
