@@ -1106,7 +1106,7 @@ fn test_finalizer_retries_need_tools() {
 }
 
 #[tokio::test]
-async fn stream_reissues_final_answers_with_the_required_contract() {
+async fn both_run_modes_reissue_final_answers_with_the_required_contract() {
     let cases = [
         (
             "Verify the fixture session is ready.",
@@ -1127,43 +1127,45 @@ async fn stream_reissues_final_answers_with_the_required_contract() {
             "REPO_RESEARCH_PLAN: blocked\nblocker=path missing\ncmd=list /fixtures/missing-notes",
         ),
     ];
-    for (prompt, first_reply, contract, reply) in cases {
-        let mut config = AgentConfig {
-            skip_context_files: true,
-            skip_memory: true,
-            ..AgentConfig::default()
-        };
-        let _home = isolate_route_learning_home(&mut config);
-        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let agent = AgentLoop::new(
-            config,
-            Arc::new(ToolRegistry::new()),
-            Arc::new(FinalizerReplyProvider {
-                calls: calls.clone(),
-                first_reply: Some(first_reply),
-                reply: reply.to_owned(),
-            }),
-        );
-        let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
-        let result = agent
-            .run_stream(
-                vec![Message::user(prompt)],
-                Some(vec![schema]),
-                Some(Box::new(|_| {})),
-            )
-            .await
-            .expect("stream finalizer completes the fixture turn");
-        assert!(result.finished_naturally, "{prompt}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2, "{prompt}");
-        assert!(result.messages.iter().any(|message| {
-            message.role == MessageRole::System
-                && message.content.as_deref().is_some_and(|text| text.contains(contract))
-        }), "missing retry contract for {prompt}");
-        assert_eq!(
-            result.messages.last().and_then(|message| message.content.as_deref()),
-            Some(reply),
-            "{prompt}"
-        );
+    for stream in [false, true] {
+        for (prompt, first_reply, contract, reply) in cases {
+            let mut config = AgentConfig {
+                skip_context_files: true,
+                skip_memory: true,
+                ..AgentConfig::default()
+            };
+            let _home = isolate_route_learning_home(&mut config);
+            let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let agent = AgentLoop::new(
+                config,
+                Arc::new(ToolRegistry::new()),
+                Arc::new(FinalizerReplyProvider {
+                    calls: calls.clone(),
+                    first_reply: Some(first_reply),
+                    reply: reply.to_owned(),
+                }),
+            );
+            let schema = ToolSchema::new("read_fixture", "Read fixture notes", JsonSchema::new("object"));
+            let messages = vec![Message::user(prompt)];
+            let tools = Some(vec![schema]);
+            let result = if stream {
+                agent.run_stream(messages, tools, Some(Box::new(|_| {}))).await
+            } else {
+                agent.run(messages, tools).await
+            }
+            .unwrap_or_else(|err| panic!("finalizer failed for {prompt:?} (stream={stream}): {err}"));
+            assert!(result.finished_naturally, "{prompt:?} (stream={stream})");
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2, "{prompt:?} (stream={stream})");
+            assert!(result.messages.iter().any(|message| {
+                message.role == MessageRole::System
+                    && message.content.as_deref().is_some_and(|text| text.contains(contract))
+            }), "missing retry contract for {prompt:?} (stream={stream})");
+            assert_eq!(
+                result.messages.last().and_then(|message| message.content.as_deref()),
+                Some(reply),
+                "{prompt:?} (stream={stream})"
+            );
+        }
     }
 }
 
