@@ -315,6 +315,8 @@ mod rest_contract {
 
     #[tokio::test]
     async fn attachments_and_image_embeds_route_to_the_thread() {
+        use base64::Engine as _;
+
         let server = MockServer::start().await;
         let adapter = adapter_for_mock(&server, None);
         let metadata = DiscordSendMetadata::with_thread_id("thread").with_non_conversational(true);
@@ -323,6 +325,11 @@ mod rest_contract {
         let bytes = "café audio fixture";
         tokio::fs::write(&local_file, bytes).await.unwrap();
         let local_file = local_file.to_str().unwrap();
+        let image_file = directory.path().join("poster.png");
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQT+wHAAHKARj0Pn3tAAAAAElFTkSuQmCC")
+            .unwrap();
+        tokio::fs::write(&image_file, &png).await.unwrap();
         Mock::given(method("POST"))
             .and(path("/channels/thread/messages"))
             .and(header("Authorization", "Bot test-token"))
@@ -331,13 +338,19 @@ mod rest_contract {
                     .as_bytes()
                     .starts_with(b"multipart/form-data")
                 {
+                    let filename = b"filename=\"poster.png\"";
+                    let id = if request.body.windows(filename.len()).any(|part| part == filename) {
+                        "image"
+                    } else {
+                        "attachment"
+                    };
                     return ResponseTemplate::new(201)
-                        .set_body_json(json!({"id": "attachment", "channel_id": "thread"}));
+                        .set_body_json(json!({"id": id, "channel_id": "thread"}));
                 }
                 ResponseTemplate::new(201)
                     .set_body_json(json!({"id": "embed", "channel_id": "thread"}))
             })
-            .expect(2)
+            .expect(3)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
@@ -357,7 +370,7 @@ mod rest_contract {
         );
         assert_eq!(
             adapter
-                .send_image_url_with_metadata(
+                .send_image(
                     "parent",
                     "https://example.invalid/fixture.png",
                     Some("image caption"),
@@ -367,8 +380,21 @@ mod rest_contract {
                 .unwrap(),
             "embed",
         );
+        assert_eq!(
+            adapter
+                .send_image_file(
+                    "parent",
+                    image_file.to_str().unwrap(),
+                    Some("poster attachment"),
+                    Some(&metadata),
+                )
+                .await
+                .unwrap(),
+            "image",
+        );
         assert!(adapter.non_conversational_message_contains("attachment"));
         assert!(adapter.non_conversational_message_contains("embed"));
+        assert!(adapter.non_conversational_message_contains("image"));
         assert!(matches!(
             adapter.upload_file("blocked", local_file, None).await,
             Err(GatewayError::SendFailed(error)) if error.contains("fixture upload limit")
@@ -379,8 +405,8 @@ mod rest_contract {
         ));
 
         let requests = server.received_requests().await.unwrap();
-        let [attachment, embed, _rejected] = requests.as_slice() else {
-            panic!("expected two thread messages and one rejected upload");
+        let [attachment, embed, image, _rejected] = requests.as_slice() else {
+            panic!("expected three thread messages and one rejected upload");
         };
         let content_type = attachment.headers["content-type"].to_str().unwrap();
         let boundary = content_type
@@ -424,6 +450,9 @@ mod rest_contract {
             payload["embeds"][0]["image"]["url"],
             "https://example.invalid/fixture.png"
         );
+        for expected in [png.as_slice(), b"filename=\"poster.png\"", b"poster attachment"] {
+            assert!(image.body.windows(expected.len()).any(|part| part == expected));
+        }
     }
 
     #[tokio::test]
