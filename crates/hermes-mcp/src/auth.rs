@@ -143,10 +143,8 @@ impl OAuthConfig {
     /// &client_secret=...
     /// &scope=...
     /// ```
-    async fn fetch_token(&self) -> Result<OAuthToken, McpError> {
+    async fn fetch_token(&self, client: &reqwest::Client) -> Result<String, McpError> {
         info!("Fetching OAuth2 access token from {}", self.token_url);
-
-        let client = reqwest::Client::new();
 
         let mut params = vec![
             ("grant_type", "client_credentials".to_string()),
@@ -186,16 +184,8 @@ impl OAuthConfig {
             .await
             .map_err(|e| McpError::Auth(format!("Failed to parse token response: {}", e)))?;
 
-        Ok(OAuthToken {
-            access_token: token_response.access_token,
-        })
+        Ok(token_response.access_token)
     }
-}
-
-/// Cached OAuth token with expiration information.
-#[derive(Debug, Clone)]
-struct OAuthToken {
-    access_token: String,
 }
 
 /// Response from an OAuth2 token endpoint.
@@ -225,8 +215,7 @@ fn default_token_type() -> String {
 impl McpAuthProvider for OAuthConfig {
     async fn get_token(&self) -> Result<String, McpError> {
         debug!("Getting OAuth token via client credentials flow");
-        let token = self.fetch_token().await?;
-        Ok(token.access_token)
+        self.fetch_token(&reqwest::Client::new()).await
     }
 
     fn provider_type(&self) -> &str {
@@ -324,6 +313,7 @@ mod tests {
         use tokio::net::TcpListener;
         use tokio::time::{timeout, Duration};
 
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let endpoint = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let token_url = format!("http://{}/token", endpoint.local_addr().unwrap());
         let config = configure(OAuthConfig::new(
@@ -337,7 +327,10 @@ mod tests {
             body.len()
         );
         let (result, (head, form)) = timeout(Duration::from_secs(10), async {
-            tokio::join!(config.get_token(), answer_once_with_body(&endpoint, reply))
+            tokio::join!(
+                config.fetch_token(&client),
+                answer_once_with_body(&endpoint, reply)
+            )
         })
         .await
         .expect("loopback token exchange timed out");
@@ -348,39 +341,6 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_exchange_uses_only_the_loopback_endpoint() {
-        use std::time::Duration;
-        use tokio::process::Command;
-
-        const FIXTURE_CHILD: &str = "HERMES_TEST_MCP_OAUTH_LOOPBACK_CHILD";
-        if std::env::var_os(FIXTURE_CHILD).is_none() {
-            // The production client honours proxies. Re-run only this fixture in
-            // a child without the parent's proxy configuration or credentials.
-            let mut command = Command::new(std::env::current_exe().unwrap());
-            command
-                .env_clear()
-                .env(FIXTURE_CHILD, "1")
-                .env("NO_PROXY", "127.0.0.1")
-                .kill_on_drop(true)
-                .args([
-                    "--exact",
-                    "auth::tests::oauth_exchange_uses_only_the_loopback_endpoint",
-                ]);
-            for variable in ["LLVM_PROFILE_FILE", "SystemRoot"] {
-                if let Some(value) = std::env::var_os(variable) {
-                    command.env(variable, value);
-                }
-            }
-            let output = tokio::time::timeout(Duration::from_secs(35), command.output())
-                .await
-                .expect("isolated token exchange timed out")
-                .unwrap();
-            assert!(
-                output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-                "{output:?}"
-            );
-            return;
-        }
         let (result, form) = exchange_with_fixture(
             "200 OK",
             r#"{"access_token":"fixture-access","expires_in":3600}"#,
