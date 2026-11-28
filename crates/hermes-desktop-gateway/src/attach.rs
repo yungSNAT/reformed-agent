@@ -2,7 +2,8 @@
 //! `<working folder>/.hermes/attachments/`, so the next prompt can name it with an `@file:`
 //! reference, which the agent confines to the working folder.
 //!
-//! No host path a client names is read: in remote mode the desktop always sends the bytes.
+//! `file.attach` reads no host path a client names: in remote mode the desktop always sends
+//! the bytes. (`image.attach` does read one, as upstream's does; see `chat/images.rs`.)
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
@@ -113,15 +114,23 @@ pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, I
     let data = base64::engine::general_purpose::STANDARD
         .decode(compact)
         .map_err(|_| ImageError::Invalid("data is not valid base64".into()))?;
+    stage_image_bytes(images, &data)
+}
+
+/// Writes the image `data` to a new file in `images`, as [`stage_image`] does once decoded.
+pub(crate) fn stage_image_bytes(images: &Path, data: &[u8]) -> Result<StagedImage, ImageError> {
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(ImageError::TooLarge);
+    }
     if data.is_empty() {
         return Err(ImageError::Invalid("image is empty".into()));
     }
-    let (ext, mime) = image_kind(&data).ok_or(ImageError::Unsupported)?;
+    let (ext, mime) = image_kind(data).ok_or(ImageError::Unsupported)?;
     private_folder(images).map_err(ImageError::Write)?;
     let name = format!("upload_{}.{ext}", uuid::Uuid::new_v4().simple());
     // Owner-only, as upstream's mkstemp on Unix, whatever the folder allows.
     let (path, mut file) = create_new(images, &name, true).map_err(ImageError::Write)?;
-    if let Err(e) = file.write_all(&data) {
+    if let Err(e) = file.write_all(data) {
         let _ = fs::remove_file(&path);
         return Err(ImageError::Write(format!("cannot write the image: {e}")));
     }
@@ -684,6 +693,10 @@ mod tests {
             stage_image(&dir, "data:image/png,x"),
             Err(ImageError::Invalid(_))
         ));
+        assert_eq!(
+            stage_image(&dir, "data:image/png;base64,").err(),
+            Some(ImageError::Invalid("image is empty".into()))
+        );
         // Over the limit by its length alone, so nothing is decoded or made.
         let large = "A".repeat((MAX_IMAGE_BYTES / 3 + 1) * 4);
         assert_eq!(stage_image(&dir, &large).err(), Some(ImageError::TooLarge));
