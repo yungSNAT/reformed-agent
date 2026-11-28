@@ -402,6 +402,46 @@ impl Gateway {
             .filter(|id| !id.is_empty())
     }
 
+    /// Make a callback that defers notifications whilst the turn has a pending reply.
+    pub fn post_delivery_notify_callback(
+        self: &Arc<Self>,
+        context: &GatewayRuntimeContext,
+    ) -> Arc<dyn Fn(&str) + Send + Sync> {
+        let queue = context.deferred_post_delivery_messages.clone();
+        let released = context.deferred_post_delivery_released.clone();
+        let platform = context.platform.clone();
+        let chat_id = context.chat_id.clone();
+        let thread_id = context.thread_id.clone();
+        let gateway = self.clone();
+        Arc::new(move |text| {
+            if let (Some(queue), Some(released)) = (&queue, &released) {
+                if let Ok(mut pending) = queue.lock() {
+                    // Check before enqueueing under the same lock the reply drain takes.
+                    if !released.load(Ordering::Acquire) {
+                        pending.push(text.to_string());
+                        return;
+                    }
+                }
+            }
+            let gateway = gateway.clone();
+            let platform = platform.clone();
+            let chat_id = chat_id.clone();
+            let thread_id = thread_id.clone();
+            let text = text.to_string();
+            tokio::spawn(async move {
+                let _ = gateway
+                    .send_notify_message_threaded(
+                        &platform,
+                        &chat_id,
+                        &text,
+                        None,
+                        thread_id.as_deref(),
+                    )
+                    .await;
+            });
+        })
+    }
+
     async fn flush_post_delivery_messages(
         &self,
         platform: &str,

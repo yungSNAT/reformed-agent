@@ -1334,56 +1334,159 @@ async fn gateway_context_handler_receives_structured_runtime_context() {
 
 #[tokio::test]
 async fn gateway_deferred_post_delivery_messages_flush_after_main_reply() {
+    assert_gateway_review_notification_order(false).await;
+}
+
+async fn assert_gateway_review_notification_order(streaming: bool) {
     let sent = Arc::new(Mutex::new(Vec::new()));
-    let adapter = Arc::new(TestAdapter {
-        messages: sent.clone(),
+    let adapter = Arc::new(ThreadOptionTestAdapter {
+        sends: sent.clone(),
     });
 
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let mut dm_manager = DmManager::with_pair_behavior();
     dm_manager.authorize_user("user1");
-    let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
-    gw.register_adapter("test", adapter).await;
-    gw.set_message_handler_with_context(Arc::new(|_messages, ctx| {
+    let config = GatewayConfig {
+        streaming_enabled: streaming,
+        ..Default::default()
+    };
+    let gateway = Arc::new(Gateway::new(session_mgr, dm_manager, config));
+    gateway
+        .register_adapter("thread-option-test", adapter)
+        .await;
+    let (sender, mut receiver) = tokio::sync::oneshot::channel();
+    let sender = Mutex::new(Some(sender));
+    let weak_gateway = Arc::downgrade(&gateway);
+    let handler: MessageHandlerWithContext = Arc::new(move |_messages, context| {
+        let gateway = weak_gateway.upgrade().unwrap();
+        let sender = sender.lock().unwrap().take().expect("one fixture turn");
         Box::pin(async move {
-            let pending = ctx
-                .deferred_post_delivery_messages
-                .expect("deferred queue should be present");
-            let released = ctx
+            let released = context
                 .deferred_post_delivery_released
+                .as_ref()
                 .expect("release flag should be present");
             assert!(
                 !released.load(std::sync::atomic::Ordering::Acquire),
                 "release must remain false before main reply delivery"
             );
-            pending
-                .lock()
-                .unwrap()
-                .push("💾 deferred-memory-update".to_string());
+            let notify = gateway.post_delivery_notify_callback(&context);
+            notify("💾 deferred-memory-update");
+            assert!(sender.send(notify).is_ok());
             Ok("main-response".to_string())
         })
-    }))
-    .await;
+    });
+    if streaming {
+        gateway
+            .set_streaming_handler_with_context(Arc::new(move |messages, context, _on_chunk| {
+                handler(messages, context)
+            }))
+            .await;
+    } else {
+        gateway.set_message_handler_with_context(handler).await;
+    }
 
     let incoming = IncomingMessage {
-        platform: "test".into(),
+        platform: "thread-option-test".into(),
         chat_id: "chat1".into(),
         user_id: "user1".into(),
         text: "hello".into(),
         message_id: None,
-        thread_id: None,
+        thread_id: Some("topic".into()),
         is_dm: true,
     };
-    assert!(gw.route_message(&incoming).await.is_ok());
+    gateway.route_message(&incoming).await.unwrap();
 
-    let msgs = sent.lock().unwrap();
-    let ordered: Vec<String> = msgs.iter().map(|(_, t)| t.clone()).collect();
+    let expected: &[&str] = if streaming {
+        &["...", "main-response", "💾 deferred-memory-update"]
+    } else {
+        &["main-response", "💾 deferred-memory-update"]
+    };
+    {
+        let messages = sent.lock().unwrap();
+        let ordered: Vec<_> = messages
+            .iter()
+            .map(|(_, text, _, _)| text.as_str())
+            .collect();
+        assert_eq!(ordered.as_slice(), expected);
+    }
+
+    let notify = receiver
+        .try_recv()
+        .expect("the handler should share the callback");
+    notify("💾 late-memory-update");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while sent.lock().unwrap().len() <= expected.len() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("late notification should be delivered");
     assert_eq!(
-        ordered,
-        vec![
-            "main-response".to_string(),
-            "💾 deferred-memory-update".to_string()
-        ]
+        sent.lock().unwrap()[expected.len()],
+        (
+            "chat1".to_string(),
+            "💾 late-memory-update".to_string(),
+            Some("topic".to_string()),
+            true
+        )
+    );
+}
+
+#[tokio::test]
+async fn gateway_notifications_send_directly_when_the_queue_is_missing_or_poisoned() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let gateway = Arc::new(Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        DmManager::with_pair_behavior(),
+        GatewayConfig::default(),
+    ));
+    gateway
+        .register_adapter(
+            "thread-option-test",
+            Arc::new(ThreadOptionTestAdapter {
+                sends: sent.clone(),
+            }),
+        )
+        .await;
+
+    let poisoned = Arc::new(Mutex::new(Vec::new()));
+    let panic = std::panic::catch_unwind(|| {
+        let _pending = poisoned.lock().unwrap();
+        panic!("fixture poisons the notification queue");
+    });
+    assert!(panic.is_err());
+
+    for (message, pending) in [("no queue", None), ("poisoned queue", Some(poisoned))] {
+        let context = GatewayRuntimeContext {
+            platform: "thread-option-test".into(),
+            chat_id: "chat1".into(),
+            thread_id: Some("topic".into()),
+            deferred_post_delivery_released: pending
+                .as_ref()
+                .map(|_| Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            deferred_post_delivery_messages: pending,
+            ..Default::default()
+        };
+        gateway.post_delivery_notify_callback(&context)(message);
+    }
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while sent.lock().unwrap().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("both fallback notifications should be delivered");
+    let mut messages = sent.lock().unwrap().clone();
+    messages.sort_unstable();
+    assert_eq!(
+        messages,
+        ["no queue", "poisoned queue"].map(|text| (
+            "chat1".to_string(),
+            text.to_string(),
+            Some("topic".to_string()),
+            true
+        ))
     );
 }
 
@@ -1507,63 +1610,7 @@ async fn gateway_status_then_main_then_deferred_order_matches_python_chain() {
 
 #[tokio::test]
 async fn gateway_streaming_flushes_deferred_after_stream_finishes() {
-    let sent = Arc::new(Mutex::new(Vec::new()));
-    let adapter = Arc::new(TestAdapter {
-        messages: sent.clone(),
-    });
-
-    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
-    let mut dm_manager = DmManager::with_pair_behavior();
-    dm_manager.authorize_user("user1");
-    let cfg = GatewayConfig {
-        streaming_enabled: true,
-        ..Default::default()
-    };
-    let gw = Arc::new(Gateway::new(session_mgr, dm_manager, cfg));
-    gw.register_adapter("test", adapter).await;
-
-    gw.set_streaming_handler_with_context(Arc::new(|_messages, ctx, _on_chunk| {
-        Box::pin(async move {
-            let pending = ctx
-                .deferred_post_delivery_messages
-                .expect("deferred queue should be present");
-            let released = ctx
-                .deferred_post_delivery_released
-                .expect("release flag should be present");
-            assert!(
-                !released.load(std::sync::atomic::Ordering::Acquire),
-                "release must stay false while stream handler is running"
-            );
-            pending
-                .lock()
-                .unwrap()
-                .push("💾 stream-bg-review".to_string());
-            Ok("stream-final".to_string())
-        })
-    }))
-    .await;
-
-    let incoming = IncomingMessage {
-        platform: "test".into(),
-        chat_id: "chat1".into(),
-        user_id: "user1".into(),
-        text: "hello".into(),
-        message_id: None,
-        thread_id: None,
-        is_dm: true,
-    };
-    assert!(gw.route_message(&incoming).await.is_ok());
-
-    let msgs = sent.lock().unwrap();
-    let ordered: Vec<String> = msgs.iter().map(|(_, t)| t.clone()).collect();
-    assert_eq!(
-        ordered,
-        vec![
-            "...".to_string(),
-            "stream-final".to_string(),
-            "💾 stream-bg-review".to_string()
-        ]
-    );
+    assert_gateway_review_notification_order(true).await;
 }
 
 #[tokio::test]

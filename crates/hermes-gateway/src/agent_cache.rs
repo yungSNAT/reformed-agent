@@ -489,6 +489,40 @@ mod tests {
     }
 
     #[test]
+    fn nested_cache_keys_ignore_object_order_but_preserve_fallback_order() {
+        let signature = |policy| {
+            agent_config_signature(&AgentConfigSignatureInput {
+                cache_keys: BTreeMap::from([("model.policy".to_string(), policy)]),
+                ..Default::default()
+            })
+        };
+        let policy = serde_json::json!({
+            "token_limit": 256,
+            "fallbacks": [
+                {"model": "primary", "timeout": 15},
+                {"model": "secondary", "timeout": 20}
+            ]
+        });
+        let equivalent = serde_json::json!({
+            "fallbacks": [
+                {"timeout": 15, "model": "primary"},
+                {"timeout": 20, "model": "secondary"}
+            ],
+            "token_limit": 256
+        });
+        let original = signature(policy.clone());
+        assert_eq!(signature(equivalent), original);
+
+        let mut reordered = policy.clone();
+        reordered["fallbacks"].as_array_mut().unwrap().reverse();
+        assert_ne!(signature(reordered), original);
+
+        let mut different_limit = policy;
+        different_limit["token_limit"] = Value::from(512);
+        assert_ne!(signature(different_limit), original);
+    }
+
+    #[test]
     fn cache_hit_miss_evict_lru_and_idle_ttl() {
         let released = Arc::new(Mutex::new(Vec::new()));
         let released_for_hook = released.clone();
@@ -587,6 +621,53 @@ mod tests {
         assert_eq!(
             *cache.get_if_signature("tail", "sig").unwrap(),
             "agent-tail"
+        );
+    }
+
+    #[test]
+    fn zero_limits_keep_all_agents_until_explicit_eviction() {
+        let mut cache = GatewayAgentCache::new(0, Duration::ZERO);
+        let now = Instant::now();
+        cache.insert_at("first", "agent-first", "signature", now);
+        cache.insert_at("second", "agent-second", "signature", now);
+
+        assert_eq!(cache.enforce_cap(), 0);
+        assert_eq!(cache.sweep_idle_at(now + Duration::from_secs(3600)), 0);
+        assert_eq!(cache.sweep_idle(), 0);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(
+            cache
+                .get_if_signature_at("first", "signature", now)
+                .copied(),
+            Some("agent-first")
+        );
+        assert!(cache.evict("second"));
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn explicit_capacity_check_releases_a_previously_active_agent_once() {
+        let released = Arc::new(Mutex::new(Vec::new()));
+        let released_for_hook = released.clone();
+        let mut cache = GatewayAgentCache::new(1, Duration::from_secs(10)).with_release_hook(
+            Arc::new(move |agent: &&str| released_for_hook.lock().unwrap().push(*agent)),
+        );
+        let now = Instant::now();
+        cache.insert_at("busy", "original", "v1", now);
+        cache.insert_at("busy", "replacement", "v2", now);
+        cache.insert_at_with_active("idle", "next", "v1", now, |key, _| key == "busy");
+        assert_eq!(cache.len(), 2);
+        assert_eq!(released.lock().unwrap().as_slice(), ["original"]);
+
+        assert_eq!(cache.enforce_cap(), 1);
+        assert!(!cache.evict("busy"));
+        assert_eq!(
+            cache.get_if_signature_at("idle", "v1", now).copied(),
+            Some("next")
+        );
+        assert_eq!(
+            released.lock().unwrap().as_slice(),
+            ["original", "replacement"]
         );
     }
 
